@@ -5,3 +5,5 @@ google-cloud-functions
 pydantic
 pandas
 pypdf2
+pdfplumber
+python-multipart
