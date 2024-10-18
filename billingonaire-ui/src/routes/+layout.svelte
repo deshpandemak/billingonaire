@@ -1,10 +1,10 @@
 <script>
-	import Header from './Header.svelte';
+	import Login from './login/+page.svelte';
 	import '../app.css';
 </script>
 
 <div class="app">
-	<Header />
+	<Login />
 
 	<main>
 		<slot />
