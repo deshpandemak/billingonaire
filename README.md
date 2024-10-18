@@ -40,6 +40,13 @@ uvicorn main:app --reload
 
 The FastAPI application will be running at `http://127.0.0.1:8000`.
 
+## Accessing OpenAPI Documentation
+
+FastAPI provides built-in support for OpenAPI documentation. Once the FastAPI application is running, you can access the OpenAPI documentation at the following URLs:
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
 ## Backend Deployment
 
 To deploy the backend, follow these steps:

@@ -4,17 +4,26 @@ import pdfplumber
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-app = FastAPI()
+app = FastAPI(
+    title="Billingonaire API",
+    description="API for Billingonaire application",
+    version="1.0.0",
+    openapi_tags=[
+        {"name": "Root", "description": "Root endpoint"},
+        {"name": "PDF Upload", "description": "Upload PDF and extract data"},
+        {"name": "Data Retrieval", "description": "Retrieve stored data"}
+    ]
+)
 
 cred = credentials.Certificate("path/to/your/firebase/credentials.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-@app.get("/")
+@app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Hello, World!"}
 
-@app.post("/upload-pdf")
+@app.post("/upload-pdf", tags=["PDF Upload"])
 async def upload_pdf(file: UploadFile = File(...)):
     with pdfplumber.open(file.file) as pdf:
         first_page = pdf.pages[0]
@@ -30,7 +39,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return df.to_json()
 
-@app.get("/get-data")
+@app.get("/get-data", tags=["Data Retrieval"])
 def get_data():
     docs = db.collection("dataframes").stream()
     data = []
