@@ -1,8 +1,14 @@
 from fastapi import FastAPI, File, UploadFile
 import pandas as pd
 import pdfplumber
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 app = FastAPI()
+
+cred = credentials.Certificate("path/to/your/firebase/credentials.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 @app.get("/")
 def read_root():
@@ -17,6 +23,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     # Assuming the PDF contains tabular data
     data = [line.split() for line in text.split('\n') if line]
     df = pd.DataFrame(data[1:], columns=data[0])
+
+    # Store dataframe in Firestore
+    doc_ref = db.collection("dataframes").document()
+    doc_ref.set(df.to_dict(orient="records"))
 
     return df.to_json()
 
