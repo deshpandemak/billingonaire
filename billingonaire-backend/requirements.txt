@@ -3,3 +3,5 @@ uvicorn
 firebase-admin
 google-cloud-functions
 pydantic
+pandas
+pypdf2
