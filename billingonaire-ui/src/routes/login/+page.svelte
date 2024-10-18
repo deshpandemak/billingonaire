@@ -11,7 +11,7 @@
   const login = async () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      goto('/');
+      goto('/upload');
     } catch (e) {
       error = e.message;
     }
@@ -31,7 +31,7 @@
     </div>
     <div>
       <label for="password">Password</label>
-      <input type="password" id="password" bind:value={password} required />
+      <input type="password" id="password} bind:value={password} required />
     </div>
     {#if error}
       <p class="error">{error}</p>
