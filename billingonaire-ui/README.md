@@ -36,3 +36,31 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://kit.svelte.dev/docs/adapters) for your target environment.
+
+## Frontend Deployment
+
+To deploy the frontend, follow these steps:
+
+1. Navigate to the `billingonaire-ui` directory:
+
+```bash
+cd billingonaire-ui
+```
+
+2. Install the required dependencies:
+
+```bash
+npm install
+```
+
+3. Build the frontend:
+
+```bash
+npm run build
+```
+
+4. Deploy the frontend using the deployment script:
+
+```bash
+../firebase/frontend-deploy.sh
+```
