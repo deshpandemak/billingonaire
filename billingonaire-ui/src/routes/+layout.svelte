@@ -4,6 +4,7 @@
 </script>
 
 <div class="app">
+	<header class="header">Billingonaire</header>
 	<Login />
 
 	<main>
