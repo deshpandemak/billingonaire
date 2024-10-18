@@ -1,0 +1,30 @@
+{
+  "hosting": [
+    {
+      "target": "frontend",
+      "public": "billingonaire-ui/build",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "target": "backend",
+      "source": "billingonaire-backend",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [
+        {
+          "source": "**",
+          "function": "main"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "source": "billingonaire-backend",
+    "runtime": "python310"
+  }
+}
