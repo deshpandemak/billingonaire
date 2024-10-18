@@ -2,13 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: 'YOUR_API_KEY',
-  authDomain: 'YOUR_AUTH_DOMAIN',
-  projectId: 'YOUR_PROJECT_ID',
-  storageBucket: 'YOUR_STORAGE_BUCKET',
-  messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
-  appId: 'YOUR_APP_ID',
-  measurementId: 'YOUR_MEASUREMENT_ID'
+  apiKey: "AIzaSyDPv9Tp-we4lIF81BIfyN3-p3yh2o52fAE",
+  authDomain: "billingonaire.firebaseapp.com",
+  projectId: "billingonaire",
+  storageBucket: "billingonaire.appspot.com",
+  messagingSenderId: "819125105651",
+  appId: "1:819125105651:web:53cfe0b3564110bd335886",
+  measurementId: "G-1KD3K4H7KV"
 };
 
 const app = initializeApp(firebaseConfig);
