@@ -69,6 +69,28 @@ pip install -r requirements.txt
 ../firebase/backend-deploy.sh
 ```
 
+### Windows Backend Deployment
+
+To deploy the backend on Windows, follow these steps:
+
+1. Navigate to the `billingonaire-backend` directory:
+
+```cmd
+cd billingonaire-backend
+```
+
+2. Install the required dependencies:
+
+```cmd
+pip install -r requirements.txt
+```
+
+3. Deploy the backend using the Windows deployment script:
+
+```cmd
+../firebase/backend-deploy.bat
+```
+
 ## Frontend Deployment
 
 To deploy the frontend, follow these steps:
@@ -95,4 +117,32 @@ npm run build
 
 ```bash
 ../firebase/frontend-deploy.sh
+```
+
+### Windows Frontend Deployment
+
+To deploy the frontend on Windows, follow these steps:
+
+1. Navigate to the `billingonaire-ui` directory:
+
+```cmd
+cd billingonaire-ui
+```
+
+2. Install the required dependencies:
+
+```cmd
+npm install
+```
+
+3. Build the frontend:
+
+```cmd
+npm run build
+```
+
+4. Deploy the frontend using the Windows deployment script:
+
+```cmd
+../firebase/frontend-deploy.bat
 ```
