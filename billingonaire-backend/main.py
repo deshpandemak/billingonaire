@@ -30,6 +30,14 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return df.to_json()
 
+@app.get("/get-data")
+def get_data():
+    docs = db.collection("dataframes").stream()
+    data = []
+    for doc in docs:
+        data.extend(doc.to_dict())
+    return data
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
