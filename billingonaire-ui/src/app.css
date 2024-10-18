@@ -105,3 +105,20 @@ button:focus:not(:focus-visible) {
 	width: 1px;
 	white-space: nowrap;
 }
+
+/* P8e90 */
+.login-container {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	min-height: 100vh;
+}
+
+/* Pe047 */
+.header {
+	font-size: 2.5rem;
+	font-weight: bold;
+	text-align: center;
+	margin-bottom: 2rem;
+}
