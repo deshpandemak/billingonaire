@@ -1,6 +1,18 @@
 <script>
 	import Login from './login/+page.svelte';
 	import '../app.css';
+	import { onMount } from 'svelte';
+	import { auth } from '$lib/firebase';
+	import { onAuthStateChanged } from 'firebase/auth';
+	import { goto } from '$app/navigation';
+
+	onMount(() => {
+		onAuthStateChanged(auth, (user) => {
+			if (!user) {
+				goto('/login');
+			}
+		});
+	});
 </script>
 
 <div class="app">

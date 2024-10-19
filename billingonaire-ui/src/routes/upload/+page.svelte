@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { auth } from '$lib/firebase';
+  import { onAuthStateChanged } from 'firebase/auth';
 
   let file;
   let dataframe = null;
@@ -26,6 +28,14 @@
       error = e.message;
     }
   };
+
+  onMount(() => {
+    onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        goto('/login');
+      }
+    });
+  });
 </script>
 
 <svelte:head>
