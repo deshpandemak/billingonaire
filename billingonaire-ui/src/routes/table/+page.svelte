@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { auth } from '$lib/firebase';
+  import { onAuthStateChanged } from 'firebase/auth';
 
   let data = [];
   let searchCriteria = {
@@ -36,7 +38,15 @@
     });
   };
 
-  onMount(fetchData);
+  onMount(() => {
+    onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        goto('/login');
+      } else {
+        fetchData();
+      }
+    });
+  });
 </script>
 
 <svelte:head>

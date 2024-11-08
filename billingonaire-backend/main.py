@@ -1,8 +1,9 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Depends, Request
 import pandas as pd
 import pdfplumber
 import firebase_admin
 from firebase_admin import credentials, firestore
+from fastapi.responses import RedirectResponse
 
 app = FastAPI(
     title="Billingonaire API",
@@ -19,11 +20,21 @@ cred = credentials.Certificate("./firebase/credentials.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-@app.get("/", tags=["Root"])
+def get_session(request: Request):
+    session_token = request.cookies.get("session")
+    if not session_token:
+        return None
+    return session_token
+
+def require_login(session_token: str = Depends(get_session)):
+    if not session_token:
+        return RedirectResponse(url="/login")
+
+@app.get("/", tags=["Root"], dependencies=[Depends(require_login)])
 def read_root():
     return {"message": "Hello, World!"}
 
-@app.post("/upload-pdf", tags=["PDF Upload"])
+@app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def upload_pdf(file: UploadFile = File(...)):
     with pdfplumber.open(file.file) as pdf:
         first_page = pdf.pages[0]
@@ -39,7 +50,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return df.to_json()
 
-@app.get("/get-data", tags=["Data Retrieval"])
+@app.get("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
 def get_data():
     docs = db.collection("dataframes").stream()
     data = []
