@@ -7,7 +7,10 @@
 
 	onMount(() => {
 		onAuthStateChanged(auth, (user) => {
-			if (!user) {
+			if (user) {
+				console.log('User is authenticated:', user);
+			} else {
+				console.log('User is not authenticated');
 				goto('/login');
 			}
 		});

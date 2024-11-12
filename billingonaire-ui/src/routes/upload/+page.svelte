@@ -9,6 +9,7 @@
   let error = '';
 
   const uploadFile = async () => {
+    console.log('File upload attempt:', file.name);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -24,7 +25,9 @@
 
       const data = await response.json();
       dataframe = data;
+      console.log('File upload successful:', file.name);
     } catch (e) {
+      console.error('File upload failed:', file.name, 'error:', e.message);
       error = e.message;
     }
   };

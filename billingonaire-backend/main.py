@@ -4,6 +4,7 @@ import pdfplumber
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from fastapi.responses import RedirectResponse, JSONResponse
+import logging
 
 app = FastAPI(
     title="Billingonaire API",
@@ -37,14 +38,18 @@ async def login(request: Request):
     email = data.get("email")
     password = data.get("password")
 
+    logging.debug(f"Login attempt for email: {email}")
+
     try:
         user = auth.get_user_by_email(email)
         auth.verify_password(password, user.password_hash)
         session_cookie = auth.create_session_cookie(user.uid)
         response = JSONResponse(content={"message": "Login successful"})
         response.set_cookie(key="session", value=session_cookie, httponly=True)
+        logging.info(f"Login successful for email: {email}")
         return response
     except Exception as e:
+        logging.error(f"Login failed for email: {email}, error: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
 @app.post("/logout", tags=["Authentication"])
@@ -59,7 +64,10 @@ def read_root():
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def upload_pdf(file: UploadFile = File(...)):
+    logging.debug(f"File upload attempt: {file.filename}")
+
     if file.content_type != "application/pdf":
+        logging.error(f"Invalid file type: {file.content_type}")
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
     
     try:
@@ -75,18 +83,28 @@ async def upload_pdf(file: UploadFile = File(...)):
         doc_ref = db.collection("dataframes").document()
         doc_ref.set(df.to_dict(orient="records"))
 
+        logging.info(f"File upload successful: {file.filename}")
         return {"message": "Upload successful"}
     except Exception as e:
+        logging.error(f"File upload failed: {file.filename}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
 def get_data():
-    docs = db.collection("dataframes").stream()
-    data = []
-    for doc in docs:
-        data.extend(doc.to_dict())
-    return data
+    logging.debug("Data retrieval attempt")
+
+    try:
+        docs = db.collection("dataframes").stream()
+        data = []
+        for doc in docs:
+            data.extend(doc.to_dict())
+        logging.info("Data retrieval successful")
+        return data
+    except Exception as e:
+        logging.error(f"Data retrieval failed, error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
