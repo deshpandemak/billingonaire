@@ -1,5 +1,4 @@
 <script>
-	import Login from './login/+page.svelte';
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/firebase';
@@ -29,7 +28,13 @@
 		Billingonaire
 		<button on:click={logout}>Logout</button>
 	</header>
-	<Login />
+
+	<nav>
+		<ul>
+			<li><a href="/upload">Upload Board</a></li>
+			<li><a href="/table">Search Board</a></li>
+		</ul>
+	</nav>
 
 	<main>
 		<slot />

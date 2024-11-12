@@ -11,7 +11,7 @@
   const login = async () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      goto('/table');
+      goto('/upload');
     } catch (e) {
       error = e.message;
     }

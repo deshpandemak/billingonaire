@@ -23,10 +23,10 @@
 				<a href="/sverdle">Sverdle</a>
 			</li>
 			<li aria-current={$page.url.pathname === '/upload' ? 'page' : undefined}>
-				<a href="/upload">Upload PDF</a>
+				<a href="/upload">Upload Board</a>
 			</li>
 			<li aria-current={$page.url.pathname === '/table' ? 'page' : undefined}>
-				<a href="/table">Table Data</a>
+				<a href="/table">Search Board</a>
 			</li>
 		</ul>
 		<svg viewBox="0 0 2 3" aria-hidden="true">
