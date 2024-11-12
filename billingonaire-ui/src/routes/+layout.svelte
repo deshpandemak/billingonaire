@@ -36,6 +36,8 @@
 		</ul>
 	</nav>
 
+	<header class="header">Billingonaire</header>
+
 	<main>
 		<slot />
 	</main>
