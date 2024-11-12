@@ -59,19 +59,25 @@ def read_root():
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def upload_pdf(file: UploadFile = File(...)):
-    with pdfplumber.open(file.file) as pdf:
-        first_page = pdf.pages[0]
-        text = first_page.extract_text()
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
+    
+    try:
+        with pdfplumber.open(file.file) as pdf:
+            first_page = pdf.pages[0]
+            text = first_page.extract_text()
 
-    # Assuming the PDF contains tabular data
-    data = [line.split() for line in text.split('\n') if line]
-    df = pd.DataFrame(data[1:], columns=data[0])
+        # Assuming the PDF contains tabular data
+        data = [line.split() for line in text.split('\n') if line]
+        df = pd.DataFrame(data[1:], columns=data[0])
 
-    # Store dataframe in Firestore
-    doc_ref = db.collection("dataframes").document()
-    doc_ref.set(df.to_dict(orient="records"))
+        # Store dataframe in Firestore
+        doc_ref = db.collection("dataframes").document()
+        doc_ref.set(df.to_dict(orient="records"))
 
-    return df.to_json()
+        return {"message": "Upload successful"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
 def get_data():
