@@ -72,7 +72,7 @@ def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(file: UploadFile = File(...), description: str = Form(...)):
+async def upload_pdf(file: UploadFile = File(...)):
     logging.debug(f"File upload attempt: {file.filename}")
 
     if file.content_type != "application/pdf":
@@ -93,7 +93,7 @@ async def upload_pdf(file: UploadFile = File(...), description: str = Form(...))
         doc_ref.set(df.to_dict(orient="records"))
 
         logging.info(f"File upload successful: {file.filename}")
-        return {"message": "Upload successful", "description": description}
+        return {"message": "Upload successful"}
     except Exception as e:
         logging.error(f"File upload failed: {file.filename}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
