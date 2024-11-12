@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { Game } from './game';
+import { logger } from './logger'; // Import logger
 
 export const load = ({ cookies }) => {
 	const game = new Game(cookies.get('sverdle'));
@@ -42,7 +43,14 @@ export const actions = {
 			game.guesses[i] += key;
 		}
 
-		cookies.set('sverdle', game.toString(), { path: '/' });
+		logger.info(`Game state updated: ${game.guesses[i]}`); // Log game state update
+
+		try {
+			cookies.set('sverdle', game.toString(), { path: '/' });
+		} catch (error) {
+			logger.error('Failed to set cookie in update action', error); // Log error
+			throw error;
+		}
 	},
 
 	/**
@@ -56,10 +64,18 @@ export const actions = {
 		const guess = (data.getAll('guess'));
 
 		if (!game.enter(guess)) {
+			logger.warn(`Invalid guess: ${guess}`); // Log invalid guess
 			return fail(400, { badGuess: true });
 		}
 
-		cookies.set('sverdle', game.toString(), { path: '/' });
+		logger.info(`Guessed word entered: ${guess}`); // Log guessed word
+
+		try {
+			cookies.set('sverdle', game.toString(), { path: '/' });
+		} catch (error) {
+			logger.error('Failed to set cookie in enter action', error); // Log error
+			throw error;
+		}
 	},
 
 	restart: async ({ cookies }) => {

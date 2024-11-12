@@ -9,10 +9,13 @@
   let error = '';
 
   const login = async () => {
+    console.log(`Login attempt for email: ${email}`);
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      console.log(`Login successful for email: ${email}`);
       goto('/upload');
     } catch (e) {
+      console.error(`Login failed for email: ${email}, error: ${e.message}`);
       error = e.message;
     }
   };
