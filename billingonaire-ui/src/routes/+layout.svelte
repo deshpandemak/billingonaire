@@ -3,7 +3,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/firebase';
-	import { onAuthStateChanged } from 'firebase/auth';
+	import { onAuthStateChanged, signOut } from 'firebase/auth';
 	import { goto } from '$app/navigation';
 
 	onMount(() => {
@@ -13,10 +13,22 @@
 			}
 		});
 	});
+
+	const logout = async () => {
+		try {
+			await signOut(auth);
+			goto('/login');
+		} catch (error) {
+			console.error('Logout failed', error);
+		}
+	};
 </script>
 
 <div class="app">
-	<header class="header">Billingonaire</header>
+	<header class="header">
+		Billingonaire
+		<button on:click={logout}>Logout</button>
+	</header>
 	<Login />
 
 	<main>

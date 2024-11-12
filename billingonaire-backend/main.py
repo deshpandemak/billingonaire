@@ -1,9 +1,9 @@
-from fastapi import FastAPI, File, UploadFile, Depends, Request
+from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException
 import pandas as pd
 import pdfplumber
 import firebase_admin
-from firebase_admin import credentials, firestore
-from fastapi.responses import RedirectResponse
+from firebase_admin import credentials, firestore, auth
+from fastapi.responses import RedirectResponse, JSONResponse
 
 app = FastAPI(
     title="Billingonaire API",
@@ -12,7 +12,8 @@ app = FastAPI(
     openapi_tags=[
         {"name": "Root", "description": "Root endpoint"},
         {"name": "PDF Upload", "description": "Upload PDF and extract data"},
-        {"name": "Data Retrieval", "description": "Retrieve stored data"}
+        {"name": "Data Retrieval", "description": "Retrieve stored data"},
+        {"name": "Authentication", "description": "User authentication"}
     ]
 )
 
@@ -29,6 +30,28 @@ def get_session(request: Request):
 def require_login(session_token: str = Depends(get_session)):
     if not session_token:
         return RedirectResponse(url="/login")
+
+@app.post("/login", tags=["Authentication"])
+async def login(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+
+    try:
+        user = auth.get_user_by_email(email)
+        auth.verify_password(password, user.password_hash)
+        session_cookie = auth.create_session_cookie(user.uid)
+        response = JSONResponse(content={"message": "Login successful"})
+        response.set_cookie(key="session", value=session_cookie, httponly=True)
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+@app.post("/logout", tags=["Authentication"])
+async def logout(request: Request):
+    response = JSONResponse(content={"message": "Logout successful"})
+    response.delete_cookie("session")
+    return response
 
 @app.get("/", tags=["Root"], dependencies=[Depends(require_login)])
 def read_root():
