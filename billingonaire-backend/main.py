@@ -5,6 +5,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from fastapi.responses import RedirectResponse, JSONResponse
 import logging
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="Billingonaire API",
@@ -16,6 +17,14 @@ app = FastAPI(
         {"name": "Data Retrieval", "description": "Retrieve stored data"},
         {"name": "Authentication", "description": "User authentication"}
     ]
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 cred = credentials.Certificate("./firebase/credentials.json")
