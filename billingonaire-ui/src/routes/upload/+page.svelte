@@ -16,7 +16,8 @@
     try {
       const response = await fetch('http://localhost:8000/upload-pdf', {
         method: 'POST',
-        body: formData
+        body: formData,
+        credentials: 'include'
       });
 
       if (!response.ok) {
