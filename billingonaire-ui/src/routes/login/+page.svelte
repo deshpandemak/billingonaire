@@ -13,6 +13,7 @@
     try {
       await signInWithEmailAndPassword(auth, email, password);
       console.log(`Login successful for email: ${email}`);
+      localStorage.setItem('userEmail', email);
       goto('/upload');
     } catch (e) {
       console.error(`Login failed for email: ${email}, error: ${e.message}`);
