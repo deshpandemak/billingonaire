@@ -47,7 +47,7 @@ class Board:
     def readFile(self, file):
         logging.info("Reading file")
         df = self.read_board(file)
-
+        logging.info("Finished reading file")
         return df
     
     def copy(self, new_dict, old_dict, dict_keys):
@@ -70,8 +70,9 @@ class Board:
         self.matter_dict = new_dict
 
     def extract_board_data(self, lines, filename):
+        logging.info("Extracting board data")
         for line in lines:
-            print(line)
+            logging.debug(f"Processing line: {line}")
             
             for pattern, group_details in self.patterns.items():
                 match = re.match(pattern, line)
@@ -107,11 +108,11 @@ class Board:
     def read_board(self, file):
         df = None
 
-        print('Reading File')
+        logging.info('Reading File')
         need_ocr = False
         with pdfplumber.open(file) as reader:
             number_of_pages = len(reader.pages)
-            print("Number of pages " + str(number_of_pages))
+            logging.info(f"Number of pages: {number_of_pages}")
             text = None
             for i in range(number_of_pages):
                 page = reader.pages[i]
@@ -140,7 +141,8 @@ class Board:
 
 
     def read_page(self, page_txt, filename):
-        print (page_txt)
+        logging.info("Reading page")
+        logging.debug(page_txt)
         data_list = list()
         single_txt_judge_pattern = '(IN THE[\w\s.:\']*|BEFORE[\w\s.:\']*)[\w\s-]*(\d\d/\d\d/\d\d\d\d) *C\.R\. *No: *(\d+)[\s\w,:]*( *\d+ *)'
         
@@ -213,12 +215,13 @@ class Board:
             self.matter_list.append(self.matter_dict)
 
     def saveData(self, df):
+        logging.info("Saving data")
         records = df.to_dict(orient="records")
-        print(type(records))
+        logging.debug(f"Records type: {type(records)}")
         for row in records:
-            print(row)
+            logging.debug(f"Row: {row}")
             formatted_date = row['date'].strftime('%Y/%m/%d')
             document_key = f"{formatted_date}/{row['case_no']}"
             doc_ref = self.db.collection("dataframes").document(document_key)
             doc_ref.set(row)
-        print ("Saved Successful")
+        logging.info("Data saved successfully")
