@@ -83,9 +83,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         board = Board()
         df = board.readFile(file.file)
 
-        # Store dataframe in Firestore
-        doc_ref = db.collection("dataframes").document()
-        doc_ref.set(df.to_dict(orient="records"))
+        # Call the saveBoardData method of the Board class to save the dataframe to Firestore
+        board.saveBoardData(df)
 
         logging.info(f"File upload successful: {file.filename}")
         return {"message": "Upload successful"}
@@ -106,7 +105,7 @@ def get_data():
         return data
     except Exception as e:
         logging.error(f"Data retrieval failed, error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail(str(e)))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
