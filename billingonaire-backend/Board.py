@@ -248,6 +248,15 @@ class Board:
         if search_criteria.get("advocate_name"):
             query = query.where("respondent_advocate", "==", search_criteria["advocate_name"])
 
+        if search_criteria.get("case_type"):
+            case_type = search_criteria["case_type"]
+            if search_criteria.get("case_stage") == "Stamp":
+                case_type += "(ST)"
+            query = query.where("case_type", "==", case_type)
+
+        if search_criteria.get("case_year"):
+            query = query.where("case_year", "==", search_criteria["case_year"])
+
         docs = query.stream()
         data = [doc.to_dict() for doc in docs]
 

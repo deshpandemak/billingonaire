@@ -9,11 +9,14 @@
     startDate: '',
     endDate: '',
     advocateName: '',
-    caseNumber: ''
+    caseNumber: '',
+    caseType: '',
+    caseYear: '',
+    caseStage: ''
   };
 
   const fetchData = async () => {
-    if (!searchCriteria.startDate && !searchCriteria.endDate && !searchCriteria.advocateName && !searchCriteria.caseNumber) {
+    if (!searchCriteria.startDate && !searchCriteria.endDate && !searchCriteria.advocateName && !searchCriteria.caseNumber && !searchCriteria.caseType && !searchCriteria.caseYear && !searchCriteria.caseStage) {
       alert('Please fill at least one search criteria');
       return;
     }
@@ -42,12 +45,18 @@
       const endDate = new Date(searchCriteria.endDate);
       const advocateName = searchCriteria.advocateName.toLowerCase();
       const caseNumber = searchCriteria.caseNumber.toLowerCase();
+      const caseType = searchCriteria.caseType.toLowerCase();
+      const caseYear = searchCriteria.caseYear.toLowerCase();
+      const caseStage = searchCriteria.caseStage.toLowerCase();
 
       return (
         (!searchCriteria.startDate || itemDate >= startDate) &&
         (!searchCriteria.endDate || itemDate <= endDate) &&
         (!searchCriteria.advocateName || item['Advocate Name'].toLowerCase().includes(advocateName)) &&
-        (!searchCriteria.caseNumber || item['Case Number'].toLowerCase().includes(caseNumber))
+        (!searchCriteria.caseNumber || item['Case Number'].toLowerCase().includes(caseNumber)) &&
+        (!searchCriteria.caseType || item['Case Type'].toLowerCase().includes(caseType)) &&
+        (!searchCriteria.caseYear || item['Case Year'].toLowerCase().includes(caseYear)) &&
+        (!searchCriteria.caseStage || item['Case Stage'].toLowerCase().includes(caseStage))
       );
     });
   };
@@ -85,6 +94,26 @@
     <label for="caseNumber">Case Number</label>
     <input type="text" id="caseNumber" bind:value={searchCriteria.caseNumber} />
 
+    <label for="caseType">Case Type</label>
+    <select id="caseType" bind:value={searchCriteria.caseType}>
+      <option value="">Select Case Type</option>
+      <option value="WP">WP</option>
+      <option value="IA">IA</option>
+      <option value="CP">CP</option>
+      <option value="PIL">PIL</option>
+      <option value="CAW">CAW</option>
+    </select>
+
+    <label for="caseYear">Case Year</label>
+    <input type="text" id="caseYear" bind:value={searchCriteria.caseYear} />
+
+    <label for="caseStage">Case Stage</label>
+    <select id="caseStage" bind:value={searchCriteria.caseStage}>
+      <option value="">Select Case Stage</option>
+      <option value="Registration">Registration</option>
+      <option value="Stamp">Stamp</option>
+    </select>
+
     <button on:click={fetchData}>Search</button>
   </div>
 
@@ -95,6 +124,7 @@
         <th>Case Type</th>
         <th>Case Number</th>
         <th>Case Year</th>
+        <th>Case Stage</th>
         <th>Advocate Name</th>
       </tr>
     </thead>
@@ -105,6 +135,7 @@
           <td>{row['Case Type']}</td>
           <td>{row['Case Number']}</td>
           <td>{row['Case Year']}</td>
+          <td>{row['Case Stage']}</td>
           <td>{row['Advocate Name']}</td>
         </tr>
       {/each}
@@ -136,7 +167,8 @@
     margin-bottom: 0.5rem;
   }
 
-  .search-criteria input {
+  .search-criteria input,
+  .search-criteria select {
     margin-bottom: 1rem;
     padding: 0.5rem;
     border: 1px solid #ccc;
