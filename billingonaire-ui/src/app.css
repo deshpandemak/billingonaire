@@ -122,3 +122,21 @@ button:focus:not(:focus-visible) {
 	text-align: center;
 	margin-bottom: 2rem;
 }
+
+/* Pad02 */
+.header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 1rem;
+	background-color: var(--color-bg-0);
+	color: var(--color-text);
+}
+
+/* Pb9a5 */
+.user-email {
+	margin-left: auto;
+	margin-right: 1rem;
+	font-size: 1rem;
+	color: var(--color-text);
+}

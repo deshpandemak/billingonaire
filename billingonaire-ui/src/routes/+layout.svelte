@@ -5,10 +5,13 @@
 	import { onAuthStateChanged, signOut } from 'firebase/auth';
 	import { goto } from '$app/navigation';
 
+	let userEmail = '';
+
 	onMount(() => {
 		onAuthStateChanged(auth, (user) => {
 			if (user) {
 				console.log('User is authenticated:', user);
+				userEmail = user.email;
 			} else {
 				console.log('User is not authenticated');
 				goto('/login');
@@ -28,7 +31,8 @@
 
 <div class="app">
 	<header class="header">
-		Billingonaire
+		<div>Billingonaire</div>
+		<div class="user-email">{userEmail}</div>
 		<button on:click={logout}>Logout</button>
 	</header>
 
@@ -38,8 +42,6 @@
 			<li><a href="/table">Search Board</a></li>
 		</ul>
 	</nav>
-
-	<header class="header">Billingonaire</header>
 
 	<main>
 		<slot />
