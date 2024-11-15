@@ -13,6 +13,6 @@ class Board:
 
         return df
 
-    def saveBoardData(self, df):
+    def saveData(self, df):
         doc_ref = db.collection("dataframes").document()
         doc_ref.set(df.to_dict(orient="records"))

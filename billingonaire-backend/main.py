@@ -84,7 +84,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         df = board.readFile(file.file)
 
         # Call the saveBoardData method of the Board class to save the dataframe to Firestore
-        board.saveBoardData(df)
+        board.saveData(df)
 
         logging.info(f"File upload successful: {file.filename}")
         return {"message": "Upload successful"}
