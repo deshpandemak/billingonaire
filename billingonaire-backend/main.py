@@ -1,11 +1,11 @@
 from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form
 import pandas as pd
-import pdfplumber
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 from fastapi.middleware.cors import CORSMiddleware
+from Board import Board
 
 app = FastAPI(
     title="Billingonaire API",
@@ -80,13 +80,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
     
     try:
-        with pdfplumber.open(file.file) as pdf:
-            first_page = pdf.pages[0]
-            text = first_page.extract_text()
-
-        # Assuming the PDF contains tabular data
-        data = [line.split() for line in text.split('\n') if line]
-        df = pd.DataFrame(data[1:], columns=data[0])
+        board = Board()
+        df = board.readFile(file.file)
 
         # Store dataframe in Firestore
         doc_ref = db.collection("dataframes").document()
