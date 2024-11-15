@@ -87,20 +87,19 @@ async def upload_pdf(file: UploadFile = File(...)):
         logging.error(f"File upload failed: {file.filename}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
-def get_data():
+@app.post("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
+async def get_data(request: Request):
     logging.debug("Data retrieval attempt")
 
     try:
-        docs = db.collection("dataframes").stream()
-        data = []
-        for doc in docs:
-            data.extend(doc.to_dict())
+        search_criteria = await request.json()
+        board = Board()
+        data = board.getData(search_criteria)
         logging.info("Data retrieval successful")
         return data
     except Exception as e:
         logging.error(f"Data retrieval failed, error: {str(e)}")
-        raise HTTPException(status_code=500, detail=(str(e)))
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

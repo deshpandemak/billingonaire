@@ -5,6 +5,7 @@ import logging
 from operator import itemgetter
 import firebase_admin
 from firebase_admin import credentials, firestore
+from fastapi import HTTPException
 
 
 class Board:
@@ -225,3 +226,30 @@ class Board:
             doc_ref = self.db.collection("dataframes").document(document_key)
             doc_ref.set(row)
         logging.info("Data saved successfully")
+
+    def getData(self, search_criteria):
+        logging.info("Fetching data based on search criteria")
+        
+        if not any(search_criteria.values()):
+            logging.error("Validation failed: At least one search criteria must be populated")
+            raise HTTPException(status_code=400, detail="At least one search criteria must be populated")
+
+        query = self.db.collection("dataframes")
+
+        if search_criteria.get("case_number"):
+            query = query.where("case_no", "==", search_criteria["case_number"])
+        
+        if search_criteria.get("start_date"):
+            query = query.where("date", ">=", search_criteria["start_date"])
+        
+        if search_criteria.get("end_date"):
+            query = query.where("date", "<=", search_criteria["end_date"])
+
+        if search_criteria.get("advocate_name"):
+            query = query.where("respondent_advocate", "==", search_criteria["advocate_name"])
+
+        docs = query.stream()
+        data = [doc.to_dict() for doc in docs]
+
+        logging.info("Data fetched successfully")
+        return data

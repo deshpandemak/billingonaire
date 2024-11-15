@@ -8,12 +8,24 @@
   let searchCriteria = {
     startDate: '',
     endDate: '',
-    advocateName: ''
+    advocateName: '',
+    caseNumber: ''
   };
 
   const fetchData = async () => {
+    if (!searchCriteria.startDate && !searchCriteria.endDate && !searchCriteria.advocateName && !searchCriteria.caseNumber) {
+      alert('Please fill at least one search criteria');
+      return;
+    }
+
     try {
-      const response = await fetch('http://localhost:8000/get-data');
+      const response = await fetch('http://localhost:8000/get-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(searchCriteria)
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch data');
       }
@@ -29,11 +41,13 @@
       const startDate = new Date(searchCriteria.startDate);
       const endDate = new Date(searchCriteria.endDate);
       const advocateName = searchCriteria.advocateName.toLowerCase();
+      const caseNumber = searchCriteria.caseNumber.toLowerCase();
 
       return (
         (!searchCriteria.startDate || itemDate >= startDate) &&
         (!searchCriteria.endDate || itemDate <= endDate) &&
-        (!searchCriteria.advocateName || item['Advocate Name'].toLowerCase().includes(advocateName))
+        (!searchCriteria.advocateName || item['Advocate Name'].toLowerCase().includes(advocateName)) &&
+        (!searchCriteria.caseNumber || item['Case Number'].toLowerCase().includes(caseNumber))
       );
     });
   };
@@ -43,6 +57,8 @@
       if (!user) {
         goto('/login');
       } else {
+        const today = new Date().toISOString().split('T')[0];
+        searchCriteria.startDate = today;
         fetchData();
       }
     });
@@ -65,6 +81,9 @@
 
     <label for="advocateName">Advocate Name</label>
     <input type="text" id="advocateName" bind:value={searchCriteria.advocateName} />
+
+    <label for="caseNumber">Case Number</label>
+    <input type="text" id="caseNumber" bind:value={searchCriteria.caseNumber} />
 
     <button on:click={fetchData}>Search</button>
   </div>
