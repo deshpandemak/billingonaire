@@ -5,6 +5,7 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
 from firebase_admin import auth
+from BombayHighCourt import BombayHighCourt
 
 app = FastAPI(
     title="Billingonaire API",
@@ -14,7 +15,9 @@ app = FastAPI(
         {"name": "Root", "description": "Root endpoint"},
         {"name": "PDF Upload", "description": "Upload PDF and extract data"},
         {"name": "Data Retrieval", "description": "Retrieve stored data"},
-        {"name": "Authentication", "description": "User authentication"}
+        {"name": "Authentication", "description": "User authentication"},
+        {"name": "Case Status", "description": "Retrieve case status from Bombay High Court"},
+        {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"}
     ]
 )
 
@@ -99,6 +102,32 @@ async def get_data(request: Request):
         return data
     except Exception as e:
         logging.error(f"Data retrieval failed, error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/case-status/{case_number}", tags=["Case Status"], dependencies=[Depends(require_login)])
+async def get_case_status(case_number: str):
+    logging.debug(f"Case status retrieval attempt for case number: {case_number}")
+
+    try:
+        bombay_high_court = BombayHighCourt()
+        case_status = bombay_high_court.get_case_status(case_number)
+        logging.info(f"Case status retrieval successful for case number: {case_number}")
+        return case_status
+    except Exception as e:
+        logging.error(f"Case status retrieval failed for case number: {case_number}, error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/case-orders/{case_number}", tags=["Case Orders"], dependencies=[Depends(require_login)])
+async def get_case_orders(case_number: str):
+    logging.debug(f"Case orders retrieval attempt for case number: {case_number}")
+
+    try:
+        bombay_high_court = BombayHighCourt()
+        case_orders = bombay_high_court.get_case_orders(case_number)
+        logging.info(f"Case orders retrieval successful for case number: {case_number}")
+        return case_orders
+    except Exception as e:
+        logging.error(f"Case orders retrieval failed for case number: {case_number}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
