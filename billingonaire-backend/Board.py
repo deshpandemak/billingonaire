@@ -217,6 +217,8 @@ class Board:
         print(type(records))
         for row in records:
             print(row)
-            doc_ref = self.db.collection("dataframes").document(row['case_no'])
+            formatted_date = row['date'].strftime('%Y/%m/%d')
+            document_key = f"{formatted_date}/{row['case_no']}"
+            doc_ref = self.db.collection("dataframes").document(document_key)
             doc_ref.set(row)
         print ("Saved Successful")
