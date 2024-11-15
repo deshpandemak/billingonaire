@@ -1,11 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form
 import pandas as pd
-import firebase_admin
-from firebase_admin import credentials, firestore, auth
 from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
+from firebase_admin import auth
 
 app = FastAPI(
     title="Billingonaire API",
@@ -26,10 +25,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-cred = credentials.Certificate("./firebase/credentials.json")
-firebase_admin.initialize_app(cred)
-db = firestore.client()
 
 def get_session(request: Request):
     session_token = request.cookies.get("session")
@@ -105,7 +100,7 @@ def get_data():
         return data
     except Exception as e:
         logging.error(f"Data retrieval failed, error: {str(e)}")
-        raise HTTPException(status_code=500, detail(str(e)))
+        raise HTTPException(status_code=500, detail=(str(e)))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

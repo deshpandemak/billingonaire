@@ -1,8 +1,11 @@
 import re
 import pdfplumber
 import pandas as pd
-from main import db
+import logging
 from operator import itemgetter
+import firebase_admin
+from firebase_admin import credentials, firestore
+
 
 class Board:
 
@@ -36,9 +39,14 @@ class Board:
                     self.case_pattern3: {1: 'linked_cases'},
                     self.case_pattern4: {1: 'additional_respondent_advocate'}
                     }
+        cred = credentials.Certificate("./firebase/credentials.json")
+        firebase_admin.initialize_app(cred)
+        self.db = firestore.client()
+
 
     def readFile(self, file):
-        df = self.read_board()
+        logging.info("Reading file")
+        df = self.read_board(file)
         return df
     
     def copy(self, new_dict, old_dict, dict_keys):
@@ -62,45 +70,46 @@ class Board:
 
     def extract_board_data(self, lines, filename):
         for line in lines:
-            # print (line)
+            logging.info(line)
             for pattern, group_details in self.patterns.items():
                 match = re.match(pattern, line)
                 if match:
                     if pattern == self.case_pattern:
-                        if len(matter_dict) > 0:
-                            self.matter_list.append(matter_dict)
+                        if len(self.matter_dict) > 0:
+                            self.matter_list.append(self.matter_dict)
                             self.copy_data()
                     
                     if pattern == self.stage:
-                        if len(matter_dict) > 0:
-                            self.matter_list.append(matter_dict)
+                        if len(self.matter_dict) > 0:
+                            self.matter_list.append(self.matter_dict)
                             self.copy_data()
                             self.clean(self.patterns[self.stage])     
 
                     if pattern == self.judge_pattern:
-                        if len(matter_dict) > 0:
-                            self.matter_list.append(matter_dict)
-                            matter_dict = dict()
+                        if len(self.matter_dict) > 0:
+                            self.matter_list.append(self.matter_dict)
+                            self.matter_dict = dict()
                             # copy_data()
 
                     for group_count, key in group_details.items():
-                        if key in matter_dict.keys():
+                        if key in self.matter_dict.keys():
                             if key == 'date':
                                 continue
-                            matter_dict[key] = matter_dict[key] + ' ' + match.group(group_count).strip()
+                            self.matter_dict[key] = self.matter_dict[key] + ' ' + match.group(group_count).strip()
                         else:
-                            matter_dict[key] = match.group(group_count).strip()
-                    matter_dict['filename'] = filename
+                            self.matter_dict[key] = match.group(group_count).strip()
+                    self.matter_dict['filename'] = filename
                     break
 
     
     def read_board(self, file):
         df = None
 
-        print('Reading File : ' + file)
+        logging.info('Reading File')
         need_ocr = False
         with pdfplumber.open(file) as reader:
             number_of_pages = len(reader.pages)
+            logging.info("Number of pages " + str(number_of_pages))
             text = None
             for i in range(number_of_pages):
                 page = reader.pages[i]
@@ -202,5 +211,5 @@ class Board:
             self.matter_list.append(self.matter_dict)
 
     def saveData(self, df):
-        doc_ref = db.collection("dataframes").document()
+        doc_ref = self.db.collection("dataframes").document()
         doc_ref.set(df.to_dict(orient="records"))
