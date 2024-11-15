@@ -29,15 +29,15 @@ class Board:
         # filter_agp_name_pattern = [pooja1, pooja2]
 
         self.patterns = {self.judge_pattern: {1: 'judge_name1'}, 
-                    self.judge_pattern2: {1: 'judge_name2'}, 
-                    self.date_pattern: {1: 'date'}, 
-                    self.court_room_no1: {1: 'court_room_no', 2: 'bench_id'}, 
-                    self.court_room_no: {1: 'court_room_no', 2: 'bench_id'}, 
-                    self.stage: {1: 'stage'}, 
-                    self.case_pattern: {1: 'serial_no', 2: 'case_no', 3: 'petitioner_advocate', 4: 'respondent_advocate'}, 
-                    self.case_pattern2: {1: 'linked_cases', 2: 'additional_respondent_advocate'},
-                    self.case_pattern3: {1: 'linked_cases'},
-                    self.case_pattern4: {1: 'additional_respondent_advocate'}
+                        self.judge_pattern2: {1: 'judge_name2'}, 
+                        self.date_pattern: {1: 'date'}, 
+                        self.court_room_no1: {1: 'court_room_no', 2: 'bench_id'}, 
+                        self.court_room_no: {1: 'court_room_no', 2: 'bench_id'}, 
+                        self.stage: {1: 'stage'}, 
+                        self.case_pattern: {1: 'serial_no', 2: 'case_no', 3: 'petitioner_advocate', 4: 'respondent_advocate'}, 
+                        self.case_pattern2: {1: 'linked_cases', 2: 'additional_respondent_advocate'},
+                        self.case_pattern3: {1: 'linked_cases'},
+                        self.case_pattern4: {1: 'additional_respondent_advocate'}
                     }
         cred = credentials.Certificate("./firebase/credentials.json")
         firebase_admin.initialize_app(cred)
@@ -47,6 +47,7 @@ class Board:
     def readFile(self, file):
         logging.info("Reading file")
         df = self.read_board(file)
+
         return df
     
     def copy(self, new_dict, old_dict, dict_keys):
@@ -70,7 +71,8 @@ class Board:
 
     def extract_board_data(self, lines, filename):
         for line in lines:
-            logging.info(line)
+            print(line)
+            
             for pattern, group_details in self.patterns.items():
                 match = re.match(pattern, line)
                 if match:
@@ -98,18 +100,18 @@ class Board:
                             self.matter_dict[key] = self.matter_dict[key] + ' ' + match.group(group_count).strip()
                         else:
                             self.matter_dict[key] = match.group(group_count).strip()
-                    self.matter_dict['filename'] = filename
+                    # self.matter_dict['filename'] = filename
                     break
 
     
     def read_board(self, file):
         df = None
 
-        logging.info('Reading File')
+        print('Reading File')
         need_ocr = False
         with pdfplumber.open(file) as reader:
             number_of_pages = len(reader.pages)
-            logging.info("Number of pages " + str(number_of_pages))
+            print("Number of pages " + str(number_of_pages))
             text = None
             for i in range(number_of_pages):
                 page = reader.pages[i]
@@ -211,5 +213,10 @@ class Board:
             self.matter_list.append(self.matter_dict)
 
     def saveData(self, df):
-        doc_ref = self.db.collection("dataframes").document()
-        doc_ref.set(df.to_dict(orient="records"))
+        records = df.to_dict(orient="records")
+        print(type(records))
+        for row in records:
+            print(row)
+            doc_ref = self.db.collection("dataframes").document(row['case_no'])
+            doc_ref.set(row)
+        print ("Saved Successful")
