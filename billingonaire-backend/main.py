@@ -39,29 +39,6 @@ def require_login(session_token: str = Depends(get_session)):
     if not session_token:
         return RedirectResponse(url="/login")
 
-def check_user_role(session_token: str, required_role: str):
-    try:
-        decoded_claims = auth.verify_session_cookie(session_token, check_revoked=True)
-        user_role = decoded_claims.get("role")
-        if user_role != required_role:
-            raise HTTPException(status_code=403, detail="Access forbidden: insufficient permissions")
-    except Exception as e:
-        raise HTTPException(status_code=403, detail="Access forbidden: insufficient permissions")
-
-def require_role(required_role: str):
-    def role_decorator(func):
-        def wrapper(*args, **kwargs):
-            session_token = get_session(args[0])
-            check_user_role(session_token, required_role)
-            return func(*args, **kwargs)
-        return wrapper
-    return role_decorator
-
-def store_user_role(uid: str, role: str):
-    db = firestore.client()
-    doc_ref = db.collection("roles").document(uid)
-    doc_ref.set({"role": role})
-
 @app.post("/login", tags=["Authentication"])
 async def login(request: Request):
     data = await request.json()
@@ -105,7 +82,7 @@ async def logout(request: Request):
 def read_root():
     return {"message": "Hello, World!"}
 
-@app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login), Depends(require_role("admin"))])
+@app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def upload_pdf(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
@@ -120,7 +97,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login), Depends(require_role("admin"))])
+@app.post("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
 async def get_data(request: Request):
     try:
         search_criteria = await request.json()
@@ -130,7 +107,7 @@ async def get_data(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login), Depends(require_role("admin"))])
+@app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
 async def get_case_status(case_type: str, case_number: str, year: int):
     try:
         bombay_high_court = BombayHighCourt()
@@ -139,7 +116,7 @@ async def get_case_status(case_type: str, case_number: str, year: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login), Depends(require_role("admin"))])
+@app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login)])
 async def get_case_orders(case_type: str, case_number: str, year: int):
     try:
         bombay_high_court = BombayHighCourt()

@@ -1,20 +1,17 @@
 <script>
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { auth, getUserRole } from '$lib/firebase';
+	import { auth } from '$lib/firebase';
 	import { onAuthStateChanged, signOut } from 'firebase/auth';
 	import { goto } from '$app/navigation';
 
 	let userEmail = '';
-	let userRole = '';
 
 	onMount(() => {
 		onAuthStateChanged(auth, async (user) => {
 			if (user) {
 				console.log('User is authenticated:', user);
 				userEmail = user.email;
-				userRole = await getUserRole(user);
-				console.log('User role:', userRole);
 			} else {
 				console.log('User is not authenticated');
 				goto('/login');
@@ -41,10 +38,8 @@
 
 	<nav class="nav">
 		<ul>
-				{#if userRole === 'admin'}
-				<li><a href="/upload">Upload Board</a></li>
-				{/if}
-				<li><a href="/table">Search Board</a></li>
+			<li><a href="/upload">Upload Board</a></li>
+			<li><a href="/table">Search Board</a></li>
 		</ul>
 	</nav>
 
