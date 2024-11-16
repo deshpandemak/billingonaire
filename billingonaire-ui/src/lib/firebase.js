@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDPv9Tp-we4lIF81BIfyN3-p3yh2o52fAE",
@@ -14,4 +14,22 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-export { app, auth };
+const getUserRole = (user) => {
+  return new Promise((resolve, reject) => {
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        user.getIdTokenResult()
+          .then((idTokenResult) => {
+            resolve(idTokenResult.claims.role);
+          })
+          .catch((error) => {
+            reject(error);
+          });
+      } else {
+        resolve(null);
+      }
+    });
+  });
+};
+
+export { app, auth, getUserRole };
