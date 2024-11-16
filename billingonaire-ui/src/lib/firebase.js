@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDPv9Tp-we4lIF81BIfyN3-p3yh2o52fAE",
@@ -13,18 +14,22 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 
 const getUserRole = (user) => {
   return new Promise((resolve, reject) => {
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
       if (user) {
-        user.getIdTokenResult()
-          .then((idTokenResult) => {
-            resolve(idTokenResult.claims.role);
-          })
-          .catch((error) => {
-            reject(error);
-          });
+        try {
+          const userDoc = await getDoc(doc(db, "roles", user.uid));
+          if (userDoc.exists()) {
+            resolve(userDoc.data().role);
+          } else {
+            resolve(null);
+          }
+        } catch (error) {
+          reject(error);
+        }
       } else {
         resolve(null);
       }
