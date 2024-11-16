@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
-from firebase_admin import auth
+from firebase_admin import auth, firestore
 from BombayHighCourt import BombayHighCourt
 
 app = FastAPI(
@@ -57,6 +57,11 @@ def require_role(required_role: str):
         return wrapper
     return role_decorator
 
+def store_user_role(uid: str, role: str):
+    db = firestore.client()
+    doc_ref = db.collection("roles").document(uid)
+    doc_ref.set({"role": role})
+
 @app.post("/login", tags=["Authentication"])
 async def login(request: Request):
     data = await request.json()
@@ -69,11 +74,17 @@ async def login(request: Request):
         user = auth.get_user_by_email(email)
         auth.verify_password(password, user.password_hash)
         
-        # Set custom claims for roles
-        if email == "admin@example.com":
-            auth.set_custom_user_claims(user.uid, {"role": "admin"})
+        # Retrieve user role from Firestore
+        db = firestore.client()
+        doc_ref = db.collection("roles").document(user.uid)
+        doc = doc_ref.get()
+        if doc.exists:
+            user_role = doc.to_dict().get("role")
         else:
-            auth.set_custom_user_claims(user.uid, {"role": "user"})
+            user_role = "user"
+        
+        # Set custom claims for roles
+        auth.set_custom_user_claims(user.uid, {"role": user_role})
         
         session_cookie = auth.create_session_cookie(user.uid)
         response = JSONResponse(content={"message": "Login successful"})
