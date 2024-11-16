@@ -36,18 +36,18 @@
 		<button on:click={logout}>Logout</button>
 	</header>
 
-	<nav>
+	<nav class="nav">
 		<ul>
 			<li><a href="/upload">Upload Board</a></li>
 			<li><a href="/table">Search Board</a></li>
 		</ul>
 	</nav>
 
-	<main>
+	<main class="main">
 		<slot />
 	</main>
 
-	<footer>
+	<footer class="footer">
 		<p>© billingonaire</p>
 	</footer>
 </div>
@@ -86,5 +86,93 @@
 		footer {
 			padding: 12px 0;
 		}
+	}
+
+	.header {
+		background-color: #f8f8f8;
+		border-bottom: 1px solid #ccc;
+	}
+
+	.header a {
+		color: #333;
+		text-decoration: none;
+	}
+
+	.header a:hover {
+		text-decoration: underline;
+	}
+
+	.header .user-email {
+		color: #666;
+	}
+
+	.nav {
+		background-color: #f8f8f8;
+		border-bottom: 1px solid #ccc;
+	}
+
+	.nav ul {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+	}
+
+	.nav li {
+		margin-right: 1rem;
+	}
+
+	.nav a {
+		color: #333;
+		text-decoration: none;
+	}
+
+	.nav a:hover {
+		text-decoration: underline;
+	}
+
+	.main {
+		padding: 2rem;
+		background-color: #fff;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+	}
+
+	.footer {
+		background-color: #f8f8f8;
+		border-top: 1px solid #ccc;
+		padding: 1rem;
+		text-align: center;
+	}
+
+	.footer p {
+		margin: 0;
+		color: #666;
+	}
+
+	.header,
+	.nav,
+	.main,
+	.footer {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.header {
+		flex-direction: row;
+	}
+
+	.nav {
+		flex-direction: row;
+	}
+
+	.main {
+		flex-direction: column;
+	}
+
+	.footer {
+		flex-direction: column;
 	}
 </style>
