@@ -46,9 +46,7 @@ class Board:
 
 
     def readFile(self, file):
-        logging.info("Reading file")
         df = self.read_board(file)
-        logging.info("Finished reading file")
         return df
     
     def copy(self, new_dict, old_dict, dict_keys):
@@ -71,10 +69,7 @@ class Board:
         self.matter_dict = new_dict
 
     def extract_board_data(self, lines, filename):
-        logging.info("Extracting board data")
         for line in lines:
-            logging.debug(f"Processing line: {line}")
-            
             for pattern, group_details in self.patterns.items():
                 match = re.match(pattern, line)
                 if match:
@@ -109,11 +104,9 @@ class Board:
     def read_board(self, file):
         df = None
 
-        logging.info('Reading File')
         need_ocr = False
         with pdfplumber.open(file) as reader:
             number_of_pages = len(reader.pages)
-            logging.info(f"Number of pages: {number_of_pages}")
             text = None
             for i in range(number_of_pages):
                 page = reader.pages[i]
@@ -142,8 +135,6 @@ class Board:
 
 
     def read_page(self, page_txt, filename):
-        logging.info("Reading page")
-        logging.debug(page_txt)
         data_list = list()
         single_txt_judge_pattern = '(IN THE[\w\s.:\']*|BEFORE[\w\s.:\']*)[\w\s-]*(\d\d/\d\d/\d\d\d\d) *C\.R\. *No: *(\d+)[\s\w,:]*( *\d+ *)'
         
@@ -216,22 +207,15 @@ class Board:
             self.matter_list.append(self.matter_dict)
 
     def saveData(self, df):
-        logging.info("Saving data")
         records = df.to_dict(orient="records")
-        logging.debug(f"Records type: {type(records)}")
         for row in records:
-            logging.debug(f"Row: {row}")
             formatted_date = row['date'].strftime('%Y/%m/%d')
             document_key = f"{formatted_date}/{row['case_no']}"
             doc_ref = self.db.collection("dataframes").document(document_key)
             doc_ref.set(row)
-        logging.info("Data saved successfully")
 
     def getData(self, search_criteria):
-        logging.info("Fetching data based on search criteria")
-        
         if not any(search_criteria.values()):
-            logging.error("Validation failed: At least one search criteria must be populated")
             raise HTTPException(status_code=400, detail="At least one search criteria must be populated")
 
         query = self.db.collection("dataframes")
@@ -260,5 +244,4 @@ class Board:
         docs = query.stream()
         data = [doc.to_dict() for doc in docs]
 
-        logging.info("Data fetched successfully")
         return data
