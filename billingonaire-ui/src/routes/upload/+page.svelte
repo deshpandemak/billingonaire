@@ -75,19 +75,23 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background-color: #fff;
   }
 
   h1 {
     text-align: center;
+    color: #333;
   }
 
   form {
     display: flex;
     flex-direction: column;
+    align-items: center;
   }
 
   label {
     margin-bottom: 0.5rem;
+    color: #333;
   }
 
   input {
@@ -95,6 +99,7 @@
     padding: 0.5rem;
     border: 1px solid #ccc;
     border-radius: 4px;
+    width: 100%;
   }
 
   .error {
@@ -109,6 +114,7 @@
     background-color: #007bff;
     color: white;
     cursor: pointer;
+    width: 100%;
   }
 
   button:hover {
@@ -117,6 +123,7 @@
 
   .dataframe {
     margin-top: 1rem;
+    width: 100%;
   }
 
   pre {
@@ -124,5 +131,6 @@
     padding: 1rem;
     border-radius: 4px;
     overflow-x: auto;
+    width: 100%;
   }
 </style>

@@ -27,7 +27,7 @@
 </svelte:head>
 
 <div class="login-container">
-  <!-- <h1 class="header">Billingonaire</h1> -->
+  <h1 class="header">Billingonaire</h1>
   <h1>Login</h1>
   <form on:submit|preventDefault={login}>
     <div>
