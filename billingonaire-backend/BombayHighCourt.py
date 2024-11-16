@@ -1,5 +1,5 @@
 import requests
-from ecourts import ECourt
+from ecourt import ECourt
 import logging
 from fastapi import HTTPException
 

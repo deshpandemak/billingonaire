@@ -248,7 +248,7 @@ class Board:
             for row in records:
                 formatted_date = row['date'].strftime('%Y/%m/%d')
                 document_key = f"{formatted_date}/{row['case_no']}"
-                doc_ref = self.db.collection("dataframes").document(document_key)
+                doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
         except Exception as e:
             logging.error(f"Error saving data: {str(e)}")
@@ -260,7 +260,7 @@ class Board:
             if not any(search_criteria.values()):
                 raise HTTPException(status_code=400, detail="At least one search criteria must be populated")
 
-            query = self.db.collection("dataframes")
+            query = self.db.collection("daily-boards")
 
             if search_criteria.get("case_number"):
                 query = query.where("case_no", "==", search_criteria["case_number"])

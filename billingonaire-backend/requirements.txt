@@ -7,4 +7,4 @@ pandas
 pypdf2
 pdfplumber
 python-multipart
-ecourt
+ecourts
