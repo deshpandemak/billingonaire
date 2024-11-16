@@ -71,10 +71,7 @@ def read_root():
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def upload_pdf(file: UploadFile = File(...)):
-    logging.debug(f"File upload attempt: {file.filename}")
-
     if file.content_type != "application/pdf":
-        logging.error(f"Invalid file type: {file.content_type}")
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
     
     try:
@@ -83,51 +80,36 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # Call the saveBoardData method of the Board class to save the dataframe to Firestore
         board.saveData(df)
-        logging.info("Data saved")
-        logging.info(f"File upload successful: {file.filename}")
         return {"message": "Upload successful"}
     except Exception as e:
-        logging.error(f"File upload failed: {file.filename}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
 async def get_data(request: Request):
-    logging.debug("Data retrieval attempt")
-
     try:
         search_criteria = await request.json()
         board = Board()
         data = board.getData(search_criteria)
-        logging.info("Data retrieval successful")
         return data
     except Exception as e:
-        logging.error(f"Data retrieval failed, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/case-status/{case_number}", tags=["Case Status"], dependencies=[Depends(require_login)])
-async def get_case_status(case_number: str):
-    logging.debug(f"Case status retrieval attempt for case number: {case_number}")
-
+@app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
+async def get_case_status(case_type: str, case_number: str, year: int):
     try:
         bombay_high_court = BombayHighCourt()
-        case_status = bombay_high_court.get_case_status(case_number)
-        logging.info(f"Case status retrieval successful for case number: {case_number}")
+        case_status = bombay_high_court.get_case_status(case_type, case_number, year)
         return case_status
     except Exception as e:
-        logging.error(f"Case status retrieval failed for case number: {case_number}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/case-orders/{case_number}", tags=["Case Orders"], dependencies=[Depends(require_login)])
-async def get_case_orders(case_number: str):
-    logging.debug(f"Case orders retrieval attempt for case number: {case_number}")
-
+@app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login)])
+async def get_case_orders(case_type: str, case_number: str, year: int):
     try:
         bombay_high_court = BombayHighCourt()
-        case_orders = bombay_high_court.get_case_orders(case_number)
-        logging.info(f"Case orders retrieval successful for case number: {case_number}")
+        case_orders = bombay_high_court.get_case_orders(case_type, case_number, year)
         return case_orders
     except Exception as e:
-        logging.error(f"Case orders retrieval failed for case number: {case_number}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
