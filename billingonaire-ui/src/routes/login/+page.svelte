@@ -27,7 +27,6 @@
 </svelte:head>
 
 <div class="login-container">
-  <h1 class="header">Billingonaire</h1>
   <h1>Login</h1>
   <form on:submit|preventDefault={login}>
     <div>
@@ -51,7 +50,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+    min-height: 50vh;
     max-width: 400px;
     margin: 0 auto;
     padding: 1rem;
