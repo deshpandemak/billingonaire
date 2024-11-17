@@ -6,12 +6,14 @@
 	import { goto } from '$app/navigation';
 
 	let userEmail = '';
+	let isAuthenticated = false;
 
 	onMount(() => {
 		onAuthStateChanged(auth, async (user) => {
 			if (user) {
 				console.log('User is authenticated:', user);
 				userEmail = user.email;
+				isAuthenticated = true;
 			} else {
 				console.log('User is not authenticated');
 				goto('/login');
@@ -32,16 +34,20 @@
 <div class="app">
 	<header class="header">
 		<div>Billingonaire</div>
-		<div class="user-email">{userEmail}</div>
-		<button on:click={logout}>Logout</button>
+			{#if isAuthenticated}
+				<div class="user-email">{userEmail}</div>
+				<button on:click={logout}>Logout</button>
+			{/if}
 	</header>
 
-	<nav class="nav">
-		<ul>
-			<li><a href="/upload">Upload Board</a></li>
-			<li><a href="/table">Search Board</a></li>
-		</ul>
-	</nav>
+	{#if isAuthenticated}
+		<nav class="nav">
+			<ul>
+				<li><a href="/upload">Upload Board</a></li>
+				<li><a href="/table">Search Board</a></li>
+			</ul>
+		</nav>
+	{/if}
 
 	<main class="main">
 		<slot />
