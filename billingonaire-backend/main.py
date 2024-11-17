@@ -4,8 +4,9 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
-from firebase_admin import auth, firestore
+from firebase_admin import auth, firestore, credentials
 from BombayHighCourt import BombayHighCourt
+import firebase_admin
 
 app = FastAPI(
     title="Billingonaire API",
@@ -20,6 +21,9 @@ app = FastAPI(
         {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"}
     ]
 )
+
+cred = credentials.Certificate("./firebase/credentials.json")
+firebase_admin.initialize_app(cred)
 
 app.add_middleware(
     CORSMiddleware,

@@ -3,8 +3,7 @@ import pdfplumber
 import pandas as pd
 import logging
 from operator import itemgetter
-import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import firestore
 from fastapi import HTTPException
 
 
@@ -40,8 +39,6 @@ class Board:
                         self.case_pattern3: {1: 'linked_cases'},
                         self.case_pattern4: {1: 'additional_respondent_advocate'}
                     }
-        cred = credentials.Certificate("./firebase/credentials.json")
-        firebase_admin.initialize_app(cred)
         self.db = firestore.client()
 
 
@@ -118,7 +115,14 @@ class Board:
                                     continue
                                 self.matter_dict[key] = self.matter_dict[key] + ' ' + match.group(group_count).strip()
                             else:
+                                if key == 'case_no':
+                                    case_number = match.group(group_count).strip().split('/')
+                                    self.matter_dict['case_type'] = case_number[0]
+                                    self.matter_dict['case_no'] = case_number[1]
+                                    self.matter_dict['case_year'] = case_number[2]
+                                    continue
                                 self.matter_dict[key] = match.group(group_count).strip()
+                        
                         # self.matter_dict['filename'] = filename
                         break
         except Exception as e:
@@ -204,7 +208,9 @@ class Board:
             bench_id = None
             stage = None
             serial_no = None
+            case_type = None
             case_no = None
+            case_year = None
             petitioner_advocate = None
             respondent_advocate = None
             linked_cases = None
@@ -219,7 +225,10 @@ class Board:
                     stage = data_dict['stage']
                 if data_dict['pattern'] == single_txt_case_pattern:
                     serial_no = data_dict['serial_no']
-                    case_no = data_dict['case_no']
+                    case_number = data_dict['case_no']
+                    case_type = case_number.split('/')[0]
+                    case_no = case_number.split('/')[1]
+                    case_year = case_number.split('/')[2]
                     petitioner_advocate = data_dict['petitioner_advocate']
                     respondent_advocate = data_dict['respondent_advocate']
                 self.matter_dict = dict()
@@ -230,7 +239,9 @@ class Board:
                 self.matter_dict['bench_id'] = bench_id
                 self.matter_dict['stage'] = stage
                 self.matter_dict['serial_no'] = serial_no
+                self.matter_dict['case_type'] = case_type
                 self.matter_dict['case_no'] = case_no
+                self.matter_dict['case_year'] = case_year
                 self.matter_dict['petitioner_advocate'] = petitioner_advocate
                 self.matter_dict['respondent_advocate'] = respondent_advocate
                 self.matter_dict['linked_cases'] = linked_cases
@@ -246,8 +257,9 @@ class Board:
         try:
             records = df.to_dict(orient="records")
             for row in records:
-                formatted_date = row['date'].strftime('%Y/%m/%d')
-                document_key = f"{formatted_date}/{row['case_no']}"
+                formatted_date = row['date'].strftime('%Y-%m-%d')
+                document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
+                
                 doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
         except Exception as e:
