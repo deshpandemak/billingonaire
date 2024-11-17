@@ -11,7 +11,7 @@
   const uploadFile = async () => {
     console.log('File upload attempt:', file.name);
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file.files[0]);
 
     try {
       const response = await fetch('http://localhost:8000/upload-pdf', {
