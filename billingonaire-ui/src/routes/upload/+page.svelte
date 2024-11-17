@@ -7,8 +7,12 @@
   let file;
   let dataframe = null;
   let error = '';
+  let isUploading = false;
+  let tableData = [];
+  let editedData = [];
 
   const uploadFile = async () => {
+    isUploading = true;
     console.log('File upload attempt:', file.name);
     const formData = new FormData();
     formData.append('file', file.files[0]);
@@ -26,11 +30,50 @@
 
       const data = await response.json();
       dataframe = data;
+      tableData = data.data;
+      editedData = JSON.parse(JSON.stringify(tableData));
       console.log('File upload successful:', file.name);
     } catch (e) {
       console.error('File upload failed:', file.name, 'error:', e.message);
       error = e.message;
+    } finally {
+      isUploading = false;
     }
+  };
+
+  const saveData = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/save-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(editedData),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save data');
+      }
+
+      const result = await response.json();
+      console.log('Data saved successfully:', result);
+    } catch (e) {
+      console.error('Failed to save data:', e.message);
+      error = e.message;
+    }
+  };
+
+  const cancelEdit = () => {
+    editedData = JSON.parse(JSON.stringify(tableData));
+  };
+
+  const addRow = () => {
+    editedData.push({});
+  };
+
+  const deleteRow = (index) => {
+    editedData.splice(index, 1);
   };
 
   onMount(() => {
@@ -56,13 +99,39 @@
     {#if error}
       <p class="error">{error}</p>
     {/if}
-    <button type="submit">Upload</button>
+    <button type="submit" disabled={isUploading}>Upload</button>
   </form>
 
   {#if dataframe}
     <div class="dataframe">
       <h2>Dataframe</h2>
-      <pre>{JSON.stringify(dataframe, null, 2)}</pre>
+      <table>
+        <thead>
+          <tr>
+            {#each Object.keys(editedData[0] || {}) as key}
+              <th>{key}</th>
+            {/each}
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each editedData as row, index}
+            <tr>
+              {#each Object.keys(row) as key}
+                <td>
+                  <input type="text" bind:value={row[key]} />
+                </td>
+              {/each}
+              <td>
+                <button on:click={() => deleteRow(index)}>Delete</button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <button on:click={addRow}>Add Row</button>
+      <button on:click={saveData}>Save</button>
+      <button on:click={cancelEdit}>Cancel</button>
     </div>
   {/if}
 </div>
@@ -124,6 +193,21 @@
   .dataframe {
     margin-top: 1rem;
     width: 100%;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th, td {
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    text-align: left;
+  }
+
+  th {
+    background-color: #f8f8f8;
   }
 
   pre {
