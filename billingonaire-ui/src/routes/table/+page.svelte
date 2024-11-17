@@ -15,6 +15,8 @@
     caseStage: ''
   };
 
+  let editedData = [];
+
   const fetchData = async () => {
     if (!searchCriteria.startDate && !searchCriteria.endDate && !searchCriteria.advocateName && !searchCriteria.caseNumber && !searchCriteria.caseType && !searchCriteria.caseYear && !searchCriteria.caseStage) {
       alert('Please fill at least one search criteria');
@@ -33,6 +35,7 @@
         throw new Error('Failed to fetch data');
       }
       data = await response.json();
+      editedData = JSON.parse(JSON.stringify(data));
     } catch (e) {
       console.error(e);
     }
@@ -59,6 +62,40 @@
         (!searchCriteria.caseStage || item['Case Stage'].toLowerCase().includes(caseStage))
       );
     });
+  };
+
+  const saveData = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/save-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(editedData),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save data');
+      }
+
+      const result = await response.json();
+      console.log('Data saved successfully:', result);
+    } catch (e) {
+      console.error('Failed to save data:', e.message);
+    }
+  };
+
+  const cancelEdit = () => {
+    editedData = JSON.parse(JSON.stringify(data));
+  };
+
+  const addRow = () => {
+    editedData.push({});
+  };
+
+  const deleteRow = (index) => {
+    editedData.splice(index, 1);
   };
 
   onMount(() => {
@@ -126,21 +163,28 @@
         <th>Case Year</th>
         <th>Case Stage</th>
         <th>Advocate Name</th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
-      {#each filterData() as row}
+      {#each editedData as row, index}
         <tr>
-          <td>{row.Date}</td>
-          <td>{row['Case Type']}</td>
-          <td>{row['Case Number']}</td>
-          <td>{row['Case Year']}</td>
-          <td>{row['Case Stage']}</td>
-          <td>{row['Advocate Name']}</td>
+          <td><input type="text" bind:value={row.Date} /></td>
+          <td><input type="text" bind:value={row['Case Type']} /></td>
+          <td><input type="text" bind:value={row['Case Number']} /></td>
+          <td><input type="text" bind:value={row['Case Year']} /></td>
+          <td><input type="text" bind:value={row['Case Stage']} /></td>
+          <td><input type="text" bind:value={row['Advocate Name']} /></td>
+          <td>
+            <button on:click={() => deleteRow(index)}>Delete</button>
+          </td>
         </tr>
       {/each}
     </tbody>
   </table>
+  <button on:click={addRow}>Add Row</button>
+  <button on:click={saveData}>Save</button>
+  <button on:click={cancelEdit}>Cancel</button>
 </div>
 
 <style>

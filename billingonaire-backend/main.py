@@ -95,9 +95,19 @@ async def upload_pdf(file: UploadFile = File(...)):
         board = Board()
         df = board.readFile(file.file)
 
-        # Call the saveBoardData method of the Board class to save the dataframe to Firestore
+        # Return the extracted data in JSON format
+        data = df.to_dict(orient="records")
+        return {"data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/save-data", tags=["PDF Upload"], dependencies=[Depends(require_login)])
+async def save_data(data: dict):
+    try:
+        board = Board()
+        df = pd.DataFrame(data)
         board.saveData(df)
-        return {"message": "Upload successful"}
+        return {"message": "Data saved successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -109,7 +119,7 @@ async def get_data(request: Request):
         data = board.getData(search_criteria)
         return data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail(str(e))
 
 @app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
 async def get_case_status(case_type: str, case_number: str, year: int):
