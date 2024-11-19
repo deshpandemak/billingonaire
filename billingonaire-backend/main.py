@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form, Query
 import pandas as pd
 from fastapi.responses import RedirectResponse, JSONResponse
 import logging
@@ -87,13 +87,17 @@ def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(False)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
     
     try:
         board = Board()
         df = board.readFile(file.file)
+
+        if skip_preview:
+            board.saveData(df)
+            return {"message": "Data saved successfully"}
 
         # Return the extracted data in JSON format
         data = df.to_dict(orient="records")
