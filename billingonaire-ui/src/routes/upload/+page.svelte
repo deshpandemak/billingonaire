@@ -10,12 +10,15 @@
   let isUploading = false;
   let tableData = [];
   let editedData = [];
+  let skipPreview = false;
+  let successMessage = '';
 
   const uploadFile = async () => {
     isUploading = true;
     console.log('File upload attempt:', file.name);
     const formData = new FormData();
     formData.append('file', file.files[0]);
+    formData.append('skip_preview', skipPreview);
 
     try {
       const response = await fetch('http://localhost:8000/upload-pdf', {
@@ -29,9 +32,13 @@
       }
 
       const data = await response.json();
-      dataframe = data;
-      tableData = data.data;
-      editedData = JSON.parse(JSON.stringify(tableData));
+      if (skipPreview) {
+        successMessage = data.message;
+      } else {
+        dataframe = data;
+        tableData = data.data;
+        editedData = JSON.parse(JSON.stringify(tableData));
+      }
       console.log('File upload successful:', file.name);
     } catch (e) {
       console.error('File upload failed:', file.name, 'error:', e.message);
@@ -96,11 +103,19 @@
       <label for="file">Choose PDF file</label>
       <input type="file" id="file" accept="application/pdf" bind:this={file} required />
     </div>
+    <div>
+      <label for="skipPreview">Skip Preview</label>
+      <input type="checkbox" id="skipPreview" bind:checked={skipPreview} />
+    </div>
     {#if error}
       <p class="error">{error}</p>
     {/if}
     <button type="submit" disabled={isUploading}>Upload</button>
   </form>
+
+  {#if successMessage}
+    <p class="success">{successMessage}</p>
+  {/if}
 
   {#if dataframe}
     <div class="dataframe">
@@ -173,6 +188,11 @@
 
   .error {
     color: red;
+    margin-bottom: 1rem;
+  }
+
+  .success {
+    color: green;
     margin-bottom: 1rem;
   }
 
