@@ -100,7 +100,9 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
             return {"message": "Data saved successfully"}
 
         # Return the extracted data in JSON format
+        df = df.fillna('')
         data = df.to_dict(orient="records")
+        
         return {"data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -109,7 +111,7 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
 async def save_data(data: dict):
     try:
         board = Board()
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(data['data'])
         board.saveData(df)
         return {"message": "Data saved successfully"}
     except Exception as e:
@@ -123,7 +125,7 @@ async def get_data(request: Request):
         data = board.getData(search_criteria)
         return data
     except Exception as e:
-        raise HTTPException(status_code=500, detail(str(e))
+        raise HTTPException(status_code=500, detail=(str(e)))
 
 @app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
 async def get_case_status(case_type: str, case_number: str, year: int):

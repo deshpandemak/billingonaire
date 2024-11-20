@@ -55,7 +55,7 @@
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(editedData),
+        body: JSON.stringify({ "data": editedData }),
         credentials: 'include'
       });
 
