@@ -12,6 +12,7 @@
   let editedData = [];
   let skipPreview = false;
   let successMessage = '';
+  let showModal = false;
 
   const uploadFile = async () => {
     isUploading = true;
@@ -38,6 +39,7 @@
         dataframe = data;
         tableData = data.data;
         editedData = JSON.parse(JSON.stringify(tableData));
+        showModal = true;
       }
       console.log('File upload successful:', file.name);
     } catch (e) {
@@ -83,6 +85,10 @@
     editedData.splice(index, 1);
   };
 
+  const toggleEdit = (index) => {
+    editedData[index].isEditable = !editedData[index].isEditable;
+  };
+
   onMount(() => {
     onAuthStateChanged(auth, (user) => {
       if (!user) {
@@ -117,36 +123,40 @@
     <p class="success">{successMessage}</p>
   {/if}
 
-  {#if dataframe}
-    <div class="dataframe">
-      <h2>Dataframe</h2>
-      <table>
-        <thead>
-          <tr>
-            {#each Object.keys(editedData[0] || {}) as key}
-              <th>{key}</th>
-            {/each}
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each editedData as row, index}
+  {#if showModal}
+    <div class="modal">
+      <div class="modal-content">
+        <span class="close" on:click={() => showModal = false}>&times;</span>
+        <h2>Dataframe</h2>
+        <table>
+          <thead>
             <tr>
-              {#each Object.keys(row) as key}
-                <td>
-                  <input type="text" bind:value={row[key]} />
-                </td>
+              {#each Object.keys(editedData[0] || {}) as key}
+                <th>{key}</th>
               {/each}
-              <td>
-                <button on:click={() => deleteRow(index)}>Delete</button>
-              </td>
+              <th>Actions</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-      <button on:click={addRow}>Add Row</button>
-      <button on:click={saveData}>Save</button>
-      <button on:click={cancelEdit}>Cancel</button>
+          </thead>
+          <tbody>
+            {#each editedData as row, index}
+              <tr>
+                {#each Object.keys(row) as key}
+                  <td>
+                    <input type="text" bind:value={row[key]} readonly={!row.isEditable} />
+                  </td>
+                {/each}
+                <td>
+                  <button on:click={() => toggleEdit(index)}>{row.isEditable ? 'Save' : 'Edit'}</button>
+                  <button on:click={() => deleteRow(index)}>Delete</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <button on:click={addRow}>Add Row</button>
+        <button on:click={saveData}>Save</button>
+        <button on:click={cancelEdit}>Cancel</button>
+      </div>
     </div>
   {/if}
 </div>
@@ -208,6 +218,41 @@
 
   button:hover {
     background-color: #0056b3;
+  }
+
+  .modal {
+    display: block;
+    position: fixed;
+    z-index: 1;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgb(0,0,0);
+    background-color: rgba(0,0,0,0.4);
+  }
+
+  .modal-content {
+    background-color: #fefefe;
+    margin: 15% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+  }
+
+  .close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+  }
+
+  .close:hover,
+  .close:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
   }
 
   .dataframe {
