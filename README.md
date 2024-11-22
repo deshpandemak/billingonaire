@@ -146,3 +146,19 @@ npm run build
 ```cmd
 ../firebase/frontend-deploy.bat
 ```
+
+## Ansible Playbook Deployment
+
+To deploy both the frontend and backend using the Ansible playbook, follow these steps:
+
+1. Navigate to the `ansible` directory:
+
+```bash
+cd ansible
+```
+
+2. Run the Ansible playbook:
+
+```bash
+ansible-playbook deploy.yml
+```
