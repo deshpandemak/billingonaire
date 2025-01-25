@@ -42,10 +42,10 @@ class Board:
         self.db = firestore.client()
 
 
-    def readFile(self, file):
+    def readFile(self, file, date):
         logging.info("Reading file")
         try:
-            df = self.read_board(file)
+            df = self.read_board(file, date)
             return df
         except Exception as e:
             logging.error(f"Error reading file: {str(e)}")
@@ -130,7 +130,7 @@ class Board:
             raise HTTPException(status_code=500, detail="Error extracting board data")
 
     
-    def read_board(self, file):
+    def read_board(self, file, date):
         logging.info("Reading board")
         try:
             df = None
