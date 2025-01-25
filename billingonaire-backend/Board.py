@@ -12,11 +12,11 @@ class Board:
     def __init__(self):
         self.matter_dict = dict()
         self.matter_list = list()
-        # self.judge_pattern = '.*(IN THE.*|BEFORE.*)'
-        # self.judge_pattern2 = '.*(AND HON\'BLE.*)'
+        self.judge_pattern = '.*(IN THE.*|BEFORE.*)'
+        self.judge_pattern2 = '.*(AND HON\'BLE.*)'
         self.date_pattern = '.*(\d *\d */ *\d\d/\d\d\d *\d)'
-        # self.court_room_no = '.*C\.R\..*No: *(\d+).*I *D *: *(\d+)'
-        # self.court_room_no1 = '.*C\.R\..*No: *(\d+ *Annex).*I *D *: *(\d+)'
+        self.court_room_no = '.*C\.R\..*No: *(\d+).*I *D *: *(\d+)'
+        self.court_room_no1 = '.*C\.R\..*No: *(\d+ *Annex).*I *D *: *(\d+)'
         self.stage = '.*\*(.*)\*.*'
         self.case_pattern='^(\d+) +(.*/\d+/\d+)(.*)(SMT.*|SHRI.*|MS.*)'
         # case_pattern5='^(\d+) +(.* \d+/\d+)(.*)(SMT.*|SHRI.*|MS.*)'
@@ -28,13 +28,16 @@ class Board:
         # df_filter_column = ['respondent_advocate', 'additional_respondent_advocate']
         # filter_agp_name_pattern = [pooja1, pooja2]
 
-        self.patterns = { 
-                        self.date_pattern: {1: 'Date'}, 
-                        self.stage: {1: 'Stage'}, 
-                        self.case_pattern: {1: 'Serial No', 2: 'Case No', 3: 'Petitioner Advocate', 4: 'Respondent Advocate'}, 
-                        self.case_pattern2: {1: 'Linked Cases', 2: 'Additional Respondent Advocate'},
-                        self.case_pattern3: {1: 'Linked Cases'},
-                        self.case_pattern4: {1: 'Additional Respondent Advocate'}
+        self.patterns = {self.judge_pattern: {1: 'judge_name1'}, 
+                        self.judge_pattern2: {1: 'judge_name2'}, 
+                        self.date_pattern: {1: 'date'}, 
+                        self.court_room_no1: {1: 'court_room_no', 2: 'bench_id'}, 
+                        self.court_room_no: {1: 'court_room_no', 2: 'bench_id'}, 
+                        self.stage: {1: 'stage'}, 
+                        self.case_pattern: {1: 'serial_no', 2: 'case_no', 3: 'petitioner_advocate', 4: 'respondent_advocate'}, 
+                        self.case_pattern2: {1: 'linked_cases', 2: 'additional_respondent_advocate'},
+                        self.case_pattern3: {1: 'linked_cases'},
+                        self.case_pattern4: {1: 'additional_respondent_advocate'}
                     }
         self.db = firestore.client()
 
@@ -72,11 +75,11 @@ class Board:
         logging.debug("Copying matter data")
         try:
             new_dict = dict()
-            # self.copy(new_dict, self.matter_dict, self.patterns[self.judge_pattern])
-            # self.copy(new_dict, self.matter_dict, self.patterns[self.judge_pattern2])
+            self.copy(new_dict, self.matter_dict, self.patterns[self.judge_pattern])
+            self.copy(new_dict, self.matter_dict, self.patterns[self.judge_pattern2])
             self.copy(new_dict, self.matter_dict, self.patterns[self.date_pattern])
             self.copy(new_dict, self.matter_dict, self.patterns[self.stage])
-            # self.copy(new_dict, self.matter_dict, self.patterns[self.court_room_no])
+            self.copy(new_dict, self.matter_dict, self.patterns[self.court_room_no])
             self.matter_dict = new_dict
         except Exception as e:
             logging.error(f"Error copying matter data: {str(e)}")
@@ -112,11 +115,11 @@ class Board:
                                     continue
                                 self.matter_dict[key] = self.matter_dict[key] + ' ' + match.group(group_count).strip()
                             else:
-                                if key == 'Case No':
+                                if key == 'case_no':
                                     case_number = match.group(group_count).strip().split('/')
-                                    self.matter_dict['Case Type'] = case_number[0]
-                                    self.matter_dict['Case No'] = case_number[1]
-                                    self.matter_dict['Case Year'] = case_number[2]
+                                    self.matter_dict['case_type'] = case_number[0]
+                                    self.matter_dict['case_no'] = case_number[1]
+                                    self.matter_dict['case_year'] = case_number[2]
                                     continue
                                 self.matter_dict[key] = match.group(group_count).strip()
                         
@@ -154,10 +157,10 @@ class Board:
 
             if len(self.matter_list) > 0:
                 matter_df = pd.DataFrame(self.matter_list)
-                matter_df = matter_df[matter_df['Serial No'].notna()]
+                matter_df = matter_df[matter_df['serial_no'].notna()]
                 
-                matter_df['Date'] = matter_df['Date'].str.replace(' ', '')
-                matter_df['Date'] = pd.to_datetime(matter_df['Date'], format = '%d/%m/%Y')
+                matter_df['date'] = matter_df['date'].str.replace(' ', '')
+                matter_df['date'] = pd.to_datetime(matter_df['date'], format = '%d/%m/%Y')
 
             return matter_df
         except Exception as e:
@@ -175,10 +178,10 @@ class Board:
             for m in matches:
                 data_list.append({'start': m.start(), 'end': m.end(), 
                         'pattern': single_txt_judge_pattern,
-                        # 'judge_name1': m.group(1),
-                        'date': m.group(2)})
-                        # 'court_room_no': m.group(3),
-                        # 'bench_id': m.group(4)})
+                        'judge_name1': m.group(1),
+                        'date': m.group(2),
+                        'court_room_no': m.group(3),
+                        'bench_id': m.group(4)})
 
             single_txt_stage_pattern = '\*([\s\w()\d\.]+)\*'
             matches = re.finditer(single_txt_stage_pattern, page_txt)
@@ -192,17 +195,17 @@ class Board:
             for m in matches:
                 data_list.append({'start': m.start(), 'end': m.end(),
                         'pattern': single_txt_case_pattern, 
-                        'Serial No': m.group(1),
-                        'Case No': m.group(2),
-                        'Petitioner Advocate': m.group(4),
-                        'Respondent Advocate': m.group(5)})
+                        'serial_no': m.group(1),
+                        'case_no': m.group(2),
+                        'petitioner_advocate': m.group(4),
+                        'respondent_advocate': m.group(5)})
             
             new_list = sorted(data_list, key=itemgetter('start'))
-            # judge_name1 = None
+            judge_name1 = None
             date = None
-            # judge_name2 = ''
-            # court_room_no = None
-            # bench_id = None
+            judge_name2 = ''
+            court_room_no = None
+            bench_id = None
             stage = None
             serial_no = None
             case_type = None
@@ -214,35 +217,35 @@ class Board:
             additional_respondent_advocate = None
             for data_dict in new_list:
                 if data_dict['pattern'] == single_txt_judge_pattern:
-                    # judge_name1 = data_dict['judge_name1']
-                    date = data_dict['Date']
-                    # court_room_no = data_dict['Court Room No']
-                    # bench_id = data_dict['bench_id']
+                    judge_name1 = data_dict['judge_name1']
+                    date = data_dict['date']
+                    court_room_no = data_dict['court_room_no']
+                    bench_id = data_dict['bench_id']
                 if data_dict['pattern'] == single_txt_stage_pattern:
-                    stage = data_dict['Stage']
+                    stage = data_dict['stage']
                 if data_dict['pattern'] == single_txt_case_pattern:
-                    serial_no = data_dict['Serial No']
-                    case_number = data_dict['Case No']
+                    serial_no = data_dict['serial_no']
+                    case_number = data_dict['case_no']
                     case_type = case_number.split('/')[0]
                     case_no = case_number.split('/')[1]
                     case_year = case_number.split('/')[2]
-                    petitioner_advocate = data_dict['Petitioner Advocate']
-                    respondent_advocate = data_dict['Respondent Advocate']
+                    petitioner_advocate = data_dict['petitioner_advocate']
+                    respondent_advocate = data_dict['respondent_advocate']
                 self.matter_dict = dict()
-                # self.matter_dict['judge_name1'] = judge_name1
-                # self.matter_dict['judge_name2'] = judge_name2
-                self.matter_dict['Date'] = date
-                # self.matter_dict['court_room_no'] = court_room_no
-                # self.matter_dict['bench_id'] = bench_id
-                self.matter_dict['Stage'] = stage
-                self.matter_dict['Serial No'] = serial_no
-                self.matter_dict['Case Type'] = case_type
-                self.matter_dict['Case No'] = case_no
-                self.matter_dict['Case Year'] = case_year
-                self.matter_dict['Petitioner Advocate'] = petitioner_advocate
-                self.matter_dict['Respondent Advocate'] = respondent_advocate
-                self.matter_dict['Linked Cases'] = linked_cases
-                self.matter_dict['Additional Respondent Advocate'] = additional_respondent_advocate
+                self.matter_dict['judge_name1'] = judge_name1
+                self.matter_dict['judge_name2'] = judge_name2
+                self.matter_dict['date'] = date
+                self.matter_dict['court_room_no'] = court_room_no
+                self.matter_dict['bench_id'] = bench_id
+                self.matter_dict['stage'] = stage
+                self.matter_dict['serial_no'] = serial_no
+                self.matter_dict['case_type'] = case_type
+                self.matter_dict['case_no'] = case_no
+                self.matter_dict['case_year'] = case_year
+                self.matter_dict['petitioner_advocate'] = petitioner_advocate
+                self.matter_dict['respondent_advocate'] = respondent_advocate
+                self.matter_dict['linked_cases'] = linked_cases
+                self.matter_dict['additional_respondent_advocate'] = additional_respondent_advocate
                 self.matter_dict['filename'] = filename
                 self.matter_list.append(self.matter_dict)
         except Exception as e:
@@ -254,8 +257,8 @@ class Board:
         try:
             records = df.to_dict(orient="records")
             for row in records:
-                formatted_date = row['Date'].strftime('%Y-%m-%d')
-                document_key = f"{formatted_date}-{row['Case Type']}-{row['Case No']}-{row['Case Year']}"
+                formatted_date = row['date'].strftime('%Y-%m-%d')
+                document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
                 
                 doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
@@ -272,25 +275,25 @@ class Board:
             query = self.db.collection("daily-boards")
 
             if search_criteria.get("case_number"):
-                query = query.where("Case No", "==", search_criteria["case_number"])
+                query = query.where("case_no", "==", search_criteria["case_number"])
             
             if search_criteria.get("start_date"):
-                query = query.where("Date", ">=", search_criteria["start_date"])
+                query = query.where("date", ">=", search_criteria["start_date"])
             
             if search_criteria.get("end_date"):
-                query = query.where("Date", "<=", search_criteria["end_date"])
+                query = query.where("date", "<=", search_criteria["end_date"])
 
             if search_criteria.get("advocate_name"):
-                query = query.where("Respondent Advocate", "==", search_criteria["advocate_name"])
+                query = query.where("respondent_advocate", "==", search_criteria["advocate_name"])
 
-            if search_criteria.get("Case Type"):
+            if search_criteria.get("case_type"):
                 case_type = search_criteria["case_type"]
                 if search_criteria.get("case_stage") == "Stamp":
                     case_type += "(ST)"
-                query = query.where("Case Type", "==", case_type)
+                query = query.where("case_type", "==", case_type)
 
             if search_criteria.get("case_year"):
-                query = query.where("Case Year", "==", search_criteria["case_year"])
+                query = query.where("case_year", "==", search_criteria["case_year"])
 
             docs = query.stream()
             data = [doc.to_dict() for doc in docs]
