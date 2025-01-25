@@ -113,7 +113,7 @@
     </div>
     <div>
       <label for="date">Date</label>
-      <input type="date" id="date" bind:value={date} required />
+      <input type="date" id="date" bind:value={date} required pattern="\d{4}-\d{2}-\d{2}" />
     </div>
     <div>
       <label for="skipPreview">Skip Preview</label>

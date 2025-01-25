@@ -7,6 +7,7 @@ from Board import Board
 from firebase_admin import auth, firestore, credentials
 from BombayHighCourt import BombayHighCourt
 import firebase_admin
+import re
 
 app = FastAPI(
     title="Billingonaire API",
@@ -90,6 +91,10 @@ def read_root():
 async def upload_pdf(file: UploadFile = File(...), date: str = Form(...), skip_preview: bool = Query(False)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
+    
+    # Validate date format
+    if not re.match(r"\d{4}-\d{2}-\d{2}", date):
+        raise HTTPException(status_code=400, detail="Invalid date format. Date must be in yyyy-mm-dd format.")
     
     try:
         board = Board()
