@@ -5,7 +5,7 @@ import logging
 from operator import itemgetter
 from firebase_admin import firestore
 from fastapi import HTTPException
-
+import datetime
 
 class Board:
 
@@ -13,50 +13,63 @@ class Board:
         self.db = firestore.client()
 
 
-    def readFile(self, file, date):
+    def readFile(self, filename, file, date):
         logging.info("Reading file")
         try:
-            df = self.read_board(file, date)
+            df = self.read_board(filename, file, date)
+            # print(df)
             return df
         except Exception as e:
             logging.error(f"Error reading file: {str(e)}")
             raise HTTPException(status_code=500, detail="Error reading file")
 
-    def create_record(self, court_details, file_name, board_date, serial_no, case_number):
+    def create_record(self, court_details, file_name, board_date, serial_no, case_type, case_no, case_year):
         court_data = court_details.strip()
-        lawyers = re.split("\s{3,}", court_data)
+        lawyers = re.match(r"(.*?)(SHRI.*|SMT.*|MS.*)", court_data)
         remaining_data = ""
         additional_cases = re.findall(r"([A-Za-z()]*/\s*\d+/[\d ]+)", court_data)
-        if court_data.startswith("SMT") or court_data.startswith("SHRI") or court_data.startswith("MS"):
-            petitioner_lawyer = ""
-            respondent_lawyer = lawyers[0]
+        # print(str(court_data))
+        # print(str(lawyers.group(1)))
+        # print(str(lawyers.group(2)))
+        if lawyers:
+            petitioner_lawyer = lawyers.group(1) if lawyers.group(1) else ""
+            respondent_lawyer = lawyers.group(2) if lawyers.group(2) else ""
         else:
-            if len(lawyers) < 2:
-                petitioner_lawyer = lawyers[0]
-                respondent_lawyer = ""
-            else:
-                petitioner_lawyer = lawyers[0]
-                respondent_lawyer = lawyers[1]
+            petitioner_lawyer = court_data
+            respondent_lawyer = ""
+        # if court_data.startswith("SMT") or court_data.startswith("SHRI") or court_data.startswith("MS"):
+        #     petitioner_lawyer = ""
+        #     respondent_lawyer = lawyers[0]
+        # else:
+        #     if len(lawyers) < 2:
+        #         petitioner_lawyer = lawyers[0]
+        #         respondent_lawyer = ""
+        #     else:
+        #         petitioner_lawyer = lawyers[0]
+        #         respondent_lawyer = lawyers[1]
         court_data = court_data.replace(petitioner_lawyer, "")
         court_data = court_data.replace(respondent_lawyer, "")
         court_data = court_data.replace("WITH", "")
         court_data = court_data.replace("with", "")
         court_data = court_data.replace("IN", "")
         court_data = court_data.replace("in", "")
+        court_data = court_data.replace("*", "")
         court_data = re.sub(r"([A-Za-z()]*/\s*\d+/[\d ]+)", "", court_data)
         court_data = court_data.strip()
         return {"file_name": file_name, "board_date": board_date,
-                "case_number": case_number, "serial_number": serial_no,
+                "case_type": case_type, "case_no": case_no, "case_year": case_year, 
+                "serial_number": serial_no,
                 "petitioner_lawyer": petitioner_lawyer, "respondent_lawyer": respondent_lawyer,
                 "additional_cases": ",".join(c.strip() for c in additional_cases), "additional_respondent_lawyers": court_data}
 
-    def read_board(self, file, date):
+    def read_board(self, filename, file, date):
         logging.info("Reading board")
         try:
             matter_list = list()
-            court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*RT\s*OF.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
+            court_pattern = r"((.*) IN THE COURT OF (.*)|(.*) BEFORE THE (.*)|(.*) THE COURT OF (.*))"
             case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
-            case_pattern = r"\s{2,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
+            # case_pattern = r"\s{2,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
+            case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_no_pattern = r"([A-Za-z()]*/\s*\d+/[\d ]+)"
             
             with pdfplumber.open(file) as reader:
@@ -65,35 +78,48 @@ class Board:
                 for i in range(number_of_pages):
                     page = reader.pages[i]
                     page_text = page.extract_text()
-                    text += page_text.replace("\n", "")
+                    text += page_text.replace("\n", " ")
 
+                # print(text)
                 result = re.split(case_pattern, text)
                 count = 0
-                case_number = ""
+                case_type = ""
+                case_no = ""
+                case_year = ""
                 serial_no = ""
                 for data in result:
+                    print("$$$$$$$$$$$$$$$$$$$$")
+                    print(data)
+                    print("$$$$$$$$$$$$$$$$$$$$")
                     if "HON'BLE" in data:
-                        court_details = re.findall(court_pattern, data)
+                        court_details = re.match(court_pattern, data)
+                        print("$$$$$$$$$$$$$$$$$$$$")
+                        print(str(court_details.group(0)))
+                        print("$$$$$$$$$$$$$$$$$$$$")
                         if count > 0:
-                            matter_list.append(self.create_record(court_details=court_details[0][0].strip(), file_name=file,
-                                        board_date=date, serial_no=serial_no, case_number=case_number))
+                            matter_list.append(self.create_record(court_details=court_details.group(1).strip(), file_name=filename,
+                                        board_date=date, serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         else:
                             count = count + 1
                     elif " * " in data:
                         stage = re.findall(case_stage1_pattern, data)
 
                         matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
-                                           file_name=file, board_date=date,
-                                           serial_no=serial_no, case_number=case_number))
+                                           file_name=filename, board_date=date,
+                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         
                     elif data.isnumeric():
                         serial_no = data
                     elif re.match(case_no_pattern, data):
-                        case_number = data
+                        data = data.replace(" ", "")
+                        case_number = data.split("/")
+                        case_type = case_number[0]
+                        case_no = case_number[1]
+                        case_year = case_number[2]
                     else:
                         matter_list.append(self.create_record(court_details=data.strip(), 
-                                           file_name=file, board_date=date, 
-                                           serial_no=serial_no, case_number=case_number))
+                                           file_name=filename, board_date=date, 
+                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
 
             matter_df = pd.DataFrame(matter_list)
             matter_df = matter_df.drop_duplicates()
@@ -108,7 +134,8 @@ class Board:
         try:
             records = df.to_dict(orient="records")
             for row in records:
-                formatted_date = row['date'].strftime('%Y-%m-%d')
+                formatted_date = row['board_date']
+                row['board_date'] = datetime.datetime.strptime(row['board_date'], '%Y-%m-%d')
                 document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
                 
                 doc_ref = self.db.collection("daily-boards").document(document_key)

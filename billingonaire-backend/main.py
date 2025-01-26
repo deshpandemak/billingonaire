@@ -98,7 +98,7 @@ async def upload_pdf(file: UploadFile = File(...), date: str = Form(...), skip_p
     
     try:
         board = Board()
-        df = board.readFile(file.file, date)
+        df = board.readFile(file.filename, file.file, date)
 
         if skip_preview:
             board.saveData(df)
