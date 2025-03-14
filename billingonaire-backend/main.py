@@ -8,6 +8,8 @@ from firebase_admin import auth, firestore, credentials
 from BombayHighCourt import BombayHighCourt
 import firebase_admin
 import re
+import asyncio
+import socket
 
 app = FastAPI(
     title="Billingonaire API",
@@ -96,21 +98,30 @@ async def upload_pdf(file: UploadFile = File(...), date: str = Form(...), skip_p
     if not re.match(r"\d{4}-\d{2}-\d{2}", date):
         raise HTTPException(status_code=400, detail="Invalid date format. Date must be in yyyy-mm-dd format.")
     
-    try:
-        board = Board()
-        df = board.readFile(file.filename, file.file, date)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            board = Board()
+            df = board.readFile(file.filename, file.file, date)
 
-        if skip_preview:
-            board.saveData(df)
-            return {"message": "Data saved successfully"}
+            if skip_preview:
+                board.saveData(df)
+                return {"message": "Data saved successfully"}
 
-        # Return the extracted data in JSON format
-        df = df.fillna('')
-        data = df.to_dict(orient="records")
-        
-        return {"data": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            # Return the extracted data in JSON format
+            df = df.fillna('')
+            data = df.to_dict(orient="records")
+            
+            return {"data": data}
+        except ConnectionResetError as e:
+            logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)  # Wait for 1 second before retrying
+                continue
+            else:
+                raise HTTPException(status_code=500, detail="Connection was reset by the remote host. Please try again later.")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/save-data", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def save_data(data: dict):

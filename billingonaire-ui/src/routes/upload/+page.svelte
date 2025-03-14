@@ -23,32 +23,42 @@
     formData.append('date', date);
     formData.append('skip_preview', skipPreview);
 
-    try {
-      const response = await fetch('http://localhost:8000/upload-pdf', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
-      });
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await fetch('http://localhost:8000/upload-pdf', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include'
+        });
 
-      if (!response.ok) {
-        throw new Error('Failed to upload file');
-      }
+        if (!response.ok) {
+          throw new Error('Failed to upload file');
+        }
 
-      const data = await response.json();
-      if (skipPreview) {
-        successMessage = data.message;
-      } else {
-        dataframe = data;
-        tableData = data.data;
-        editedData = JSON.parse(JSON.stringify(tableData));
-        showModal = true;
+        const data = await response.json();
+        if (skipPreview) {
+          successMessage = data.message;
+        } else {
+          dataframe = data;
+          tableData = data.data;
+          editedData = JSON.parse(JSON.stringify(tableData));
+          showModal = true;
+        }
+        console.log('File upload successful:', file.name);
+        break; // Exit the retry loop if successful
+      } catch (e) {
+        console.error('File upload failed:', file.name, 'error:', e.message);
+        error = e.message;
+        if (e.message.includes('Connection was reset by the remote host') && attempt < maxRetries - 1) {
+          console.log(`Retrying file upload (attempt ${attempt + 2}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second before retrying
+        } else {
+          break; // Exit the retry loop if not a ConnectionResetError or max retries reached
+        }
+      } finally {
+        isUploading = false;
       }
-      console.log('File upload successful:', file.name);
-    } catch (e) {
-      console.error('File upload failed:', file.name, 'error:', e.message);
-      error = e.message;
-    } finally {
-      isUploading = false;
     }
   };
 
