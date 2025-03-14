@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/firebase';
   import { onAuthStateChanged } from 'firebase/auth';
+  import Table from 'svelte-table';
 
   let data = [];
   let searchCriteria = {
@@ -109,6 +110,16 @@
       }
     });
   });
+
+  const columns = [
+    { key: 'Date', label: 'Date', editable: true },
+    { key: 'Case Type', label: 'Case Type', editable: true },
+    { key: 'Case Number', label: 'Case Number', editable: true },
+    { key: 'Case Year', label: 'Case Year', editable: true },
+    { key: 'Case Stage', label: 'Case Stage', editable: true },
+    { key: 'Advocate Name', label: 'Advocate Name', editable: true },
+    { key: 'Actions', label: 'Actions', editable: false }
+  ];
 </script>
 
 <svelte:head>
@@ -154,34 +165,8 @@
     <button on:click={fetchData}>Search</button>
   </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Case Type</th>
-        <th>Case Number</th>
-        <th>Case Year</th>
-        <th>Case Stage</th>
-        <th>Advocate Name</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each editedData as row, index}
-        <tr>
-          <td><input type="text" bind:value={row.Date} /></td>
-          <td><input type="text" bind:value={row['Case Type']} /></td>
-          <td><input type="text" bind:value={row['Case Number']} /></td>
-          <td><input type="text" bind:value={row['Case Year']} /></td>
-          <td><input type="text" bind:value={row['Case Stage']} /></td>
-          <td><input type="text" bind:value={row['Advocate Name']} /></td>
-          <td>
-            <button on:click={() => deleteRow(index)}>Delete</button>
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <Table {data} {columns} />
+
   <button on:click={addRow}>Add Row</button>
   <button on:click={saveData}>Save</button>
   <button on:click={cancelEdit}>Cancel</button>
