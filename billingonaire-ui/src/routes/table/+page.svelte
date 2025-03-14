@@ -3,7 +3,6 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/firebase';
   import { onAuthStateChanged } from 'firebase/auth';
-  import Table from 'svelte-table';
 
   let data = [];
   let searchCriteria = {
@@ -131,19 +130,19 @@
 
   <div class="search-criteria">
     <label for="startDate">Start Date</label>
-    <input type="date" id="startDate" bind:value={searchCriteria.startDate} />
+    <input type="date" id="startDate" bind:value={searchCriteria.startDate} class="mb-2 p-2 border border-gray-300 rounded" />
 
     <label for="endDate">End Date</label>
-    <input type="date" id="endDate" bind:value={searchCriteria.endDate} />
+    <input type="date" id="endDate" bind:value={searchCriteria.endDate} class="mb-2 p-2 border border-gray-300 rounded" />
 
     <label for="advocateName">Advocate Name</label>
-    <input type="text" id="advocateName" bind:value={searchCriteria.advocateName} />
+    <input type="text" id="advocateName" bind:value={searchCriteria.advocateName} class="mb-2 p-2 border border-gray-300 rounded" />
 
     <label for="caseNumber">Case Number</label>
-    <input type="text" id="caseNumber" bind:value={searchCriteria.caseNumber} />
+    <input type="text" id="caseNumber" bind:value={searchCriteria.caseNumber} class="mb-2 p-2 border border-gray-300 rounded" />
 
     <label for="caseType">Case Type</label>
-    <select id="caseType" bind:value={searchCriteria.caseType}>
+    <select id="caseType" bind:value={searchCriteria.caseType} class="mb-2 p-2 border border-gray-300 rounded">
       <option value="">Select Case Type</option>
       <option value="WP">WP</option>
       <option value="IA">IA</option>
@@ -153,23 +152,48 @@
     </select>
 
     <label for="caseYear">Case Year</label>
-    <input type="text" id="caseYear" bind:value={searchCriteria.caseYear} />
+    <input type="text" id="caseYear" bind:value={searchCriteria.caseYear} class="mb-2 p-2 border border-gray-300 rounded" />
 
     <label for="caseStage">Case Stage</label>
-    <select id="caseStage" bind:value={searchCriteria.caseStage}>
+    <select id="caseStage" bind:value={searchCriteria.caseStage} class="mb-2 p-2 border border-gray-300 rounded">
       <option value="">Select Case Stage</option>
       <option value="Registration">Registration</option>
       <option value="Stamp">Stamp</option>
     </select>
 
-    <button on:click={fetchData}>Search</button>
+    <button on:click={fetchData} class="mb-2 p-2 bg-blue-500 text-white rounded">Search</button>
   </div>
 
-  <Table {data} {columns} />
+  <div class="overflow-x-auto">
+    <table class="min-w-full bg-white border border-gray-300">
+      <thead>
+        <tr>
+          {#each columns as column}
+            <th class="py-2 px-4 border-b border-gray-300">{column.label}</th>
+          {/each}
+        </tr>
+      </thead>
+      <tbody>
+        {#each editedData as row, index}
+          <tr>
+            {#each columns as column}
+              <td class="py-2 px-4 border-b border-gray-300">
+                {#if column.key === 'Actions'}
+                  <button on:click={() => deleteRow(index)} class="mr-2 p-1 bg-red-500 text-white rounded">Delete</button>
+                {:else}
+                  <input type="text" bind:value={row[column.key]} class="w-full p-1 border border-gray-300 rounded" />
+                {/if}
+              </td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 
-  <button on:click={addRow}>Add Row</button>
-  <button on:click={saveData}>Save</button>
-  <button on:click={cancelEdit}>Cancel</button>
+  <button on:click={addRow} class="mt-2 p-2 bg-green-500 text-white rounded">Add Row</button>
+  <button on:click={saveData} class="mt-2 p-2 bg-blue-500 text-white rounded">Save</button>
+  <button on:click={cancelEdit} class="mt-2 p-2 bg-gray-500 text-white rounded">Cancel</button>
 </div>
 
 <style>
