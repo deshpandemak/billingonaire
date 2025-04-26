@@ -1,3 +1,4 @@
+from collections import Counter
 import re
 import pdfplumber
 import pandas as pd
@@ -70,7 +71,8 @@ class Board:
         logging.info("Reading board")
         try:
             matter_list = list()
-            court_pattern = r"((.*) IN THE COURT OF (.*)|(.*) BEFORE THE (.*)|(.*) THE COURT OF (.*))"
+            date_pattern = r"(\d+/\d+/\d+)"
+            court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
             case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
             # case_pattern = r"\s{2,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
@@ -84,7 +86,12 @@ class Board:
                     page_text = page.extract_text()
                     text += page_text.replace("\n", " ")
 
-                # print(text)
+                date = re.findall(date_pattern, text)
+                date_common = Counter(date).most_common(1)
+                board_date = ""
+                for x in date_common:
+                    board_date = x[0]
+
                 result = re.split(case_pattern, text)
                 count = 0
                 case_type = ""
@@ -92,24 +99,18 @@ class Board:
                 case_year = ""
                 serial_no = ""
                 for data in result:
-                    print("$$$$$$$$$$$$$$$$$$$$")
-                    print(data)
-                    print("$$$$$$$$$$$$$$$$$$$$")
                     if "HON'BLE" in data:
                         court_details = re.match(court_pattern, data)
-                        print("$$$$$$$$$$$$$$$$$$$$")
-                        print(str(court_details.group(0)))
-                        print("$$$$$$$$$$$$$$$$$$$$")
                         if count > 0:
                             matter_list.append(self.create_record(court_details=court_details.group(1).strip(), file_name=filename,
-                                        board_date=date, serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                                        board_date=board_date, serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         else:
                             count = count + 1
                     elif " * " in data:
                         stage = re.findall(case_stage1_pattern, data)
 
                         matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
-                                           file_name=filename, board_date=date,
+                                           file_name=filename, board_date=board_date,
                                            serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         
                     elif data.isnumeric():
@@ -122,7 +123,7 @@ class Board:
                         case_year = case_number[2]
                     else:
                         matter_list.append(self.create_record(court_details=data.strip(), 
-                                           file_name=filename, board_date=date, 
+                                           file_name=filename, board_date=board_date, 
                                            serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
 
             matter_df = pd.DataFrame(matter_list)
