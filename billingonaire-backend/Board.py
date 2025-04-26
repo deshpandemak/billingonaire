@@ -6,6 +6,7 @@ from operator import itemgetter
 from firebase_admin import firestore
 from fastapi import HTTPException
 import datetime
+import numpy as np
 
 class Board:
 
@@ -17,6 +18,9 @@ class Board:
         logging.info("Reading file")
         try:
             df = self.read_board(filename, file, date)
+            # Replace NaN and infinite values
+            df = df.replace([np.nan, np.inf, -np.inf], None)
+
             # print(df)
             return df
         except Exception as e:
