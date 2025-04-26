@@ -3,7 +3,6 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/firebase';
   import { onAuthStateChanged } from 'firebase/auth';
-  import { FaEdit } from 'svelte-icons/fa';
 
   let file;
   let date;
@@ -159,12 +158,36 @@
               <tr>
                 {#each Object.keys(row) as key}
                   <td>
-                    <input type="text" bind:value={row[key]} readonly={!row.isEditable} />
+                    <input
+                      type="text"
+                      bind:value={row[key]}
+                      readonly={!row.isEditable}
+                      class="table-input"
+                    />
                   </td>
                 {/each}
                 <td>
-                  <button on:click={() => toggleEdit(index)}>{row.isEditable ? 'Save' : 'Edit'}</button>
-                  <FaEdit on:click={() => toggleEdit(index)} />
+                  <!-- Icon button for Edit -->
+                  <button
+                    on:click={() => toggleEdit(index)}
+                    class="icon-button"
+                    title={row.isEditable ? 'Save' : 'Edit'}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      class="icon"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M11 17l-4 4m0 0l4-4m-4 4V3m13 13l-4 4m0 0l4-4m-4 4V3"
+                      />
+                    </svg>
+                  </button>
                 </td>
               </tr>
             {/each}
@@ -282,29 +305,62 @@
     width: 100%;
   }
 
+  /* Reduce row width */
   table {
     width: 100%;
     border-collapse: collapse;
-    overflow-x: auto;
-    display: block;
+    table-layout: fixed; /* Ensures consistent column width */
   }
 
-  th, td {
-    padding: 0.5rem;
+  th,
+  td {
+    padding: 0.3rem; /* Reduce padding */
     border: 1px solid #ccc;
     text-align: left;
+    word-wrap: break-word; /* Prevent overflow */
   }
 
   th {
     background-color: #f8f8f8;
   }
 
-  pre {
-    background-color: #f8f8f8;
-    padding: 1rem;
-    border-radius: 4px;
-    overflow-x: auto;
+  /* Style for the input fields in the table */
+  .table-input {
     width: 100%;
+    padding: 0.2rem; /* Reduce padding */
+    border: none;
+    background-color: transparent;
+  }
+
+  .table-input[readonly] {
+    color: #666; /* Dim readonly inputs */
+  }
+
+  /* Icon button styling */
+  .icon-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.2rem; /* Reduce padding */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .icon-button:hover {
+    background-color: #f0f0f0;
+    border-radius: 4px;
+  }
+
+  /* Reduce icon size */
+  .icon {
+    width: 16px; /* Smaller size */
+    height: 16px;
+    color: #007bff; /* Blue color */
+  }
+
+  .icon-button:hover .icon {
+    color: #0056b3; /* Darker blue on hover */
   }
 
   .button-row {
