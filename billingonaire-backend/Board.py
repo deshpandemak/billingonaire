@@ -15,10 +15,10 @@ class Board:
         self.db = firestore.client()
 
 
-    def readFile(self, filename, file, date):
+    def readFile(self, filename, file):
         logging.info("Reading file")
         try:
-            df = self.read_board(filename, file, date)
+            df = self.read_board(filename, file)
             # Replace NaN and infinite values
             df = df.replace([np.nan, np.inf, -np.inf], None)
 
@@ -67,7 +67,7 @@ class Board:
                 "petitioner_lawyer": petitioner_lawyer, "respondent_lawyer": respondent_lawyer,
                 "additional_cases": ",".join(c.strip() for c in additional_cases), "additional_respondent_lawyers": court_data}
 
-    def read_board(self, filename, file, date):
+    def read_board(self, filename, file):
         logging.info("Reading board")
         try:
             matter_list = list()

@@ -90,19 +90,15 @@ def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(file: UploadFile = File(...), date: str = Form(...), skip_preview: bool = Query(False)):
+async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(False)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
-    
-    # Validate date format
-    if not re.match(r"\d{4}-\d{2}-\d{2}", date):
-        raise HTTPException(status_code=400, detail="Invalid date format. Date must be in yyyy-mm-dd format.")
     
     max_retries = 3
     for attempt in range(max_retries):
         try:
             board = Board()
-            df = board.readFile(file.filename, file.file, date)
+            df = board.readFile(file.filename, file.file)
 
             if skip_preview:
                 board.saveData(df)

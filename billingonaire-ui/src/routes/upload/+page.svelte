@@ -5,7 +5,6 @@
   import { onAuthStateChanged } from 'firebase/auth';
 
   let file;
-  let date;
   let dataframe = null;
   let error = '';
   let isUploading = false;
@@ -20,7 +19,6 @@
     console.log('File upload attempt:', file.name);
     const formData = new FormData();
     formData.append('file', file.files[0]);
-    formData.append('date', date);
     formData.append('skip_preview', skipPreview);
 
     const maxRetries = 3;
@@ -120,10 +118,6 @@
     <div>
       <label for="file">Choose PDF file</label>
       <input type="file" id="file" accept="application/pdf" bind:this={file} required />
-    </div>
-    <div>
-      <label for="date">Date</label>
-      <input type="date" id="date" bind:value={date} required pattern="\d{4}-\d{2}-\d{2}" />
     </div>
     <div>
       <label for="skipPreview">Skip Preview</label>
