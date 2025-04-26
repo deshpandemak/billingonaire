@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/firebase';
   import { onAuthStateChanged } from 'firebase/auth';
+  import { FaEdit } from 'svelte-icons/fa';
 
   let file;
   let date;
@@ -163,7 +164,7 @@
                 {/each}
                 <td>
                   <button on:click={() => toggleEdit(index)}>{row.isEditable ? 'Save' : 'Edit'}</button>
-                  <button on:click={() => deleteRow(index)}>Delete</button>
+                  <FaEdit on:click={() => toggleEdit(index)} />
                 </td>
               </tr>
             {/each}
@@ -173,6 +174,7 @@
           <button on:click={addRow}>Add Row</button>
           <button on:click={saveData}>Save</button>
           <button on:click={cancelEdit}>Cancel</button>
+          <button on:click={() => deleteRow()} class="delete-row">Delete Row</button>
         </div>
       </div>
     </div>
@@ -316,5 +318,14 @@
     padding: 0.3rem 0.6rem;
     font-size: 0.9rem;
     border-radius: 4px;
+  }
+
+  .delete-row {
+    background-color: #ff4d4d;
+    color: white;
+  }
+
+  .delete-row:hover {
+    background-color: #cc0000;
   }
 </style>
