@@ -169,9 +169,11 @@
             {/each}
           </tbody>
         </table>
-        <button on:click={addRow}>Add Row</button>
-        <button on:click={saveData}>Save</button>
-        <button on:click={cancelEdit}>Cancel</button>
+        <div class="button-row">
+          <button on:click={addRow}>Add Row</button>
+          <button on:click={saveData}>Save</button>
+          <button on:click={cancelEdit}>Cancel</button>
+        </div>
       </div>
     </div>
   {/if}
@@ -255,6 +257,8 @@
     padding: 20px;
     border: 1px solid #888;
     width: 80%;
+    overflow-y: auto;
+    max-height: 80vh;
   }
 
   .close {
@@ -279,6 +283,8 @@
   table {
     width: 100%;
     border-collapse: collapse;
+    overflow-x: auto;
+    display: block;
   }
 
   th, td {
@@ -297,5 +303,18 @@
     border-radius: 4px;
     overflow-x: auto;
     width: 100%;
+  }
+
+  .button-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .button-row button {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.9rem;
+    border-radius: 4px;
   }
 </style>
