@@ -74,7 +74,7 @@ class Board:
             date_pattern = r"(\d+/\d+/\d+)"
             court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
             case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
-            # case_pattern = r"\s{2,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
+            # case_pattern = r"\s{1,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_no_pattern = r"([A-Za-z()]*/\s*\d+/[\d ]+)"
             
@@ -101,6 +101,8 @@ class Board:
                 for data in result:
                     if "HON'BLE" in data:
                         court_details = re.match(court_pattern, data)
+                        if court_details.group(1) is None:  
+                            continue
                         if count > 0:
                             matter_list.append(self.create_record(court_details=court_details.group(1).strip(), file_name=filename,
                                         board_date=board_date, serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
@@ -131,7 +133,9 @@ class Board:
 
             return matter_df
         except Exception as e:
+            
             logging.error(f"Error reading board: {str(e)}")
+            logging.error("Stack trace:", exc_info=True)
             raise HTTPException(status_code=500, detail="Error reading board")
 
     def saveData(self, df):
