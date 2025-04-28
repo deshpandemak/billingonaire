@@ -6,7 +6,7 @@ import logging
 from operator import itemgetter
 from firebase_admin import firestore
 from fastapi import HTTPException
-import datetime
+from datetime import datetime
 import numpy as np
 
 class Board:
@@ -30,7 +30,7 @@ class Board:
 
     def create_record(self, court_details, file_name, board_date, serial_no, case_type, case_no, case_year):
         court_data = court_details.strip()
-        lawyers = re.match(r"(.*?)(SHRI.*|SMT.*|MS.*)", court_data)
+        lawyers = re.match(r"(.*?)(SHRI.*?|SMT.*?|MS.*?)(WITH|$)", court_data)
         remaining_data = ""
         additional_cases = re.findall(r"([A-Za-z()]*/\s*\d+/[\d ]+)", court_data)
         # print(str(court_data))
@@ -52,6 +52,11 @@ class Board:
         #     else:
         #         petitioner_lawyer = lawyers[0]
         #         respondent_lawyer = lawyers[1]
+        respondent_lawyer = respondent_lawyer.replace("IN", "")
+        respondent_lawyer = respondent_lawyer.replace("in", "")
+        for case in additional_cases:
+            respondent_lawyer = respondent_lawyer.replace(case, "")
+
         court_data = court_data.replace(petitioner_lawyer, "")
         court_data = court_data.replace(respondent_lawyer, "")
         court_data = court_data.replace("WITH", "")
@@ -90,7 +95,7 @@ class Board:
                 date_common = Counter(date).most_common(1)
                 board_date = ""
                 for x in date_common:
-                    board_date = x[0]
+                    board_date = datetime.strptime(x[0], "%y/%d/%Y").strftime("%Y-%m-%d")
 
                 result = re.split(case_pattern, text)
                 count = 0
@@ -144,7 +149,7 @@ class Board:
             records = df.to_dict(orient="records")
             for row in records:
                 formatted_date = row['board_date']
-                row['board_date'] = datetime.datetime.strptime(row['board_date'], '%Y-%m-%d')
+                row['board_date'] = datetime.strptime(row['board_date'], '%Y-%m-%d')
                 document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
                 
                 doc_ref = self.db.collection("daily-boards").document(document_key)
