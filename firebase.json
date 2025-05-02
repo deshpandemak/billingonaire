@@ -3,7 +3,11 @@
     {
       "target": "frontend",
       "public": "billingonaire-ui/build",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "rewrites": [
         {
           "source": "**",
@@ -14,7 +18,11 @@
     {
       "target": "backend",
       "source": "billingonaire-backend",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "rewrites": [
         {
           "source": "**",
@@ -23,8 +31,22 @@
       ]
     }
   ],
-  "functions": {
-    "source": "billingonaire-backend",
-    "runtime": "python310"
-  }
+  "functions": [
+    {
+      "source": "billingonaire-backend",
+      "runtime": "python310",
+      "codebase": "default"
+    },
+    {
+      "source": "billingonaire",
+      "codebase": "backend",
+      "ignore": [
+        "venv",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
 }

@@ -8,3 +8,4 @@ pypdf2
 pdfplumber
 python-multipart
 ecourts
+firebase_functions
