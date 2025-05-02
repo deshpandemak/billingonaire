@@ -5,7 +5,7 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
 from firebase_admin import auth, firestore, credentials
-from BombayHighCourt import BombayHighCourt
+# from BombayHighCourt import BombayHighCourt
 import firebase_admin
 import re
 import asyncio
@@ -139,23 +139,23 @@ async def get_data(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
 
-@app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
-async def get_case_status(case_type: str, case_number: str, year: int):
-    try:
-        bombay_high_court = BombayHighCourt()
-        case_status = bombay_high_court.get_case_status(case_type, case_number, year)
-        return case_status
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
+# async def get_case_status(case_type: str, case_number: str, year: int):
+#     try:
+#         bombay_high_court = BombayHighCourt()
+#         case_status = bombay_high_court.get_case_status(case_type, case_number, year)
+#         return case_status
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login)])
-async def get_case_orders(case_type: str, case_number: str, year: int):
-    try:
-        bombay_high_court = BombayHighCourt()
-        case_orders = bombay_high_court.get_case_orders(case_type, case_number, year)
-        return case_orders
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login)])
+# async def get_case_orders(case_type: str, case_number: str, year: int):
+#     try:
+#         bombay_high_court = BombayHighCourt()
+#         case_orders = bombay_high_court.get_case_orders(case_type, case_number, year)
+#         return case_orders
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
