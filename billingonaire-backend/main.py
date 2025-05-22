@@ -14,6 +14,7 @@ import re
 import asyncio
 import socket
 from mangum import Mangum
+from fastapi.testclient import TestClient
 
 app = FastAPI(
     title="Billingonaire API",
@@ -88,7 +89,7 @@ async def logout(request: Request):
     return response
 
 @app.get("/", tags=["Root"], dependencies=[Depends(require_login)])
-def read_root():
+async def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
@@ -140,7 +141,15 @@ async def get_data(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
 
+client = TestClient(app)
+
 @functions_framework.http
-async def handler(request):
-    # Use the ASGI app directly
-    return await app(request.scope, request.receive, request.send)
+def handler(request):
+    # Map the incoming request to FastAPI using TestClient
+    method = request.method
+    path = request.path
+    headers = dict(request.headers)
+    data = request.get_data()
+    # Forward the request to FastAPI app
+    response = client.request(method, path, headers=headers, data=data)
+    return (response.content, response.status_code, response.headers.items())

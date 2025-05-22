@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 // import { useNavigate } from 'react-router-dom'; // Uncomment if using React Router
 // import { auth } from '../lib/firebase'; // Adjust import if you migrate firebase logic
 // import { onAuthStateChanged } from 'firebase/auth'; // Uncomment if using Firebase Auth
+import { API_BASE_URL } from './config';
 
 const Upload = () => {
   // const navigate = useNavigate(); // Uncomment if using React Router
@@ -39,7 +40,7 @@ const Upload = () => {
     const maxRetries = 3;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const response = await fetch('http://localhost:8000/upload-pdf', {
+        const response = await fetch(`${API_BASE_URL}/upload-pdf`, {
           method: 'POST',
           body: formData,
           credentials: 'include',
@@ -75,7 +76,7 @@ const Upload = () => {
 
   const saveData = async () => {
     try {
-      const response = await fetch('http://localhost:8000/save-data', {
+      const response = await fetch(`${API_BASE_URL}/save-data`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

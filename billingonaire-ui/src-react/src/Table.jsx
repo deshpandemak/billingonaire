@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE_URL } from './config';
 // import { auth } from '../lib/firebase';
 // import { onAuthStateChanged } from 'firebase/auth';
 // import { useNavigate } from 'react-router-dom';
@@ -35,7 +36,7 @@ const Table = () => {
       return;
     }
     try {
-      const response = await fetch('http://localhost:8000/get-data', {
+      const response = await fetch(`${API_BASE_URL}/get-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(searchCriteria)
@@ -51,7 +52,7 @@ const Table = () => {
 
   const saveData = async () => {
     try {
-      const response = await fetch('http://localhost:8000/save-data', {
+      const response = await fetch(`${API_BASE_URL}/save-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData),
