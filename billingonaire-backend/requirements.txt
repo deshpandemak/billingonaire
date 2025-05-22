@@ -9,3 +9,7 @@ pdfplumber
 python-multipart
 ecourts
 firebase_functions
+mangum
+httpx
+functions-framework
+functions-framework[fastapi]

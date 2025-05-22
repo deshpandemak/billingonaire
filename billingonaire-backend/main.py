@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import functions_framework
 from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form, Query
 import pandas as pd
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -5,11 +9,11 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
 from firebase_admin import auth, firestore, credentials
-# from BombayHighCourt import BombayHighCourt
 import firebase_admin
 import re
 import asyncio
 import socket
+from mangum import Mangum
 
 app = FastAPI(
     title="Billingonaire API",
@@ -30,7 +34,7 @@ firebase_admin.initialize_app(cred)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,7 +62,6 @@ async def login(request: Request):
         user = auth.get_user_by_email(email)
         auth.verify_password(password, user.password_hash)
         
-        # Retrieve user role from Firestore
         db = firestore.client()
         doc_ref = db.collection("roles").document(user.uid)
         doc = doc_ref.get()
@@ -67,7 +70,6 @@ async def login(request: Request):
         else:
             user_role = "user"
         
-        # Set custom claims for roles
         auth.set_custom_user_claims(user.uid, {"role": user_role})
         
         session_cookie = auth.create_session_cookie(user.uid)
@@ -104,7 +106,6 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
                 board.saveData(df)
                 return {"message": "Data saved successfully"}
 
-            # Return the extracted data in JSON format
             df = df.fillna('')
             data = df.to_dict(orient="records")
             
@@ -112,7 +113,7 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
         except ConnectionResetError as e:
             logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
             if attempt < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1 second before retrying
+                await asyncio.sleep(1)
                 continue
             else:
                 raise HTTPException(status_code=500, detail="Connection was reset by the remote host. Please try again later.")
@@ -139,25 +140,7 @@ async def get_data(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
 
-# @app.get("/case-status/{case_type}/{case_number}/{year}", tags=["Case Status"], dependencies=[Depends(require_login)])
-# async def get_case_status(case_type: str, case_number: str, year: int):
-#     try:
-#         bombay_high_court = BombayHighCourt()
-#         case_status = bombay_high_court.get_case_status(case_type, case_number, year)
-#         return case_status
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-# @app.get("/case-orders/{case_type}/{case_number}/{year}", tags=["Case Orders"], dependencies=[Depends(require_login)])
-# async def get_case_orders(case_type: str, case_number: str, year: int):
-#     try:
-#         bombay_high_court = BombayHighCourt()
-#         case_orders = bombay_high_court.get_case_orders(case_type, case_number, year)
-#         return case_orders
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@functions_framework.http
+async def handler(request):
+    # Use the ASGI app directly
+    return await app(request.scope, request.receive, request.send)

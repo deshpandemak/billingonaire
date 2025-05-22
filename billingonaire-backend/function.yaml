@@ -1,0 +1,15 @@
+# Google Cloud Function configuration for FastAPI
+name: billingonaire-backend
+entryPoint: handler
+runtime: python312
+trigger: http
+# serviceAccountEmail: YOUR_SERVICE_ACCOUNT@gcp-project.iam.gserviceaccount.com
+serviceAccountEmail: firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com
+# Set the region as needed
+region: asia-south1
+# Increase timeout for large PDF processing
+timeout: 540s
+# Set memory as needed
+availableMemoryMb: "1024"
+envVariables:
+  GOOGLE_APPLICATION_CREDENTIALS: "firebase/credentials.json"

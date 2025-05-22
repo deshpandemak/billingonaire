@@ -1,36 +1,18 @@
 {
-  "hosting": [
-    {
-      "target": "frontend",
-      "public": "billingonaire-ui/build",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    },
-    {
-      "target": "backend",
-      "source": "billingonaire-backend",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "function": "main"
-        }
-      ]
-    }
-  ],
+  "hosting": {
+    "public": "billingonaire-ui/src-react/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "functions": [
     {
       "source": "billingonaire-backend",
