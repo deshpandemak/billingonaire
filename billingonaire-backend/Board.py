@@ -95,7 +95,7 @@ class Board:
                 date_common = Counter(date).most_common(1)
                 board_date = ""
                 for x in date_common:
-                    board_date = datetime.strptime(x[0], "%y/%d/%Y").strftime("%Y-%m-%d")
+                    board_date = datetime.strptime(x[0], "%d/%m/%Y").strftime("%Y-%m-%d")
 
                 result = re.split(case_pattern, text)
                 count = 0
