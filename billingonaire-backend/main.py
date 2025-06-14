@@ -108,7 +108,8 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
             df = board.readFile(file.filename, file.file)
 
             if skip_preview:
-                board.saveData(df)
+                dict = df.to_dict(orient="records")
+                board.saveData({"data": dict})
                 return {"message": "Data saved successfully"}
 
             df = df.fillna('')
