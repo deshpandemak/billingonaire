@@ -147,6 +147,7 @@ class Board:
         logging.info("Saving data")
         try:
             records = df.to_dict(orient="records")
+            
             for row in records:
                 formatted_date = row['board_date']
                 row['board_date'] = datetime.strptime(row['board_date'], '%Y-%m-%d')

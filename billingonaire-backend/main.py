@@ -97,7 +97,11 @@ async def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(False)):
+async def upload_pdf(file: UploadFile = File(...), skip_preview: str = Form("false")):
+
+    # Convert string to boolean
+    skip_preview_bool = skip_preview.lower() == "true"
+
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
     
@@ -106,10 +110,10 @@ async def upload_pdf(file: UploadFile = File(...), skip_preview: bool = Query(Fa
         try:
             board = Board()
             df = board.readFile(file.filename, file.file)
-
-            if skip_preview:
-                dict = df.to_dict(orient="records")
-                board.saveData({"data": dict})
+            print(skip_preview_bool)
+            if skip_preview_bool:
+                logging.info("Skipping preview and saving data directly")
+                board.saveData(df)
                 return {"message": "Data saved successfully"}
 
             df = df.fillna('')

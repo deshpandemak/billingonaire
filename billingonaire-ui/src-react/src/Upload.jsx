@@ -128,7 +128,7 @@ const Upload = () => {
           <input
             type="checkbox"
             id="skipPreview"
-            checked={skipPreview}
+            bind:checked={skipPreview}
             onChange={(e) => setSkipPreview(e.target.checked)}
           />
         </div>
