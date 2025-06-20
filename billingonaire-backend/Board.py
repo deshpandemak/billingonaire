@@ -147,7 +147,13 @@ class Board:
         logging.info("Saving data")
         try:
             records = df.to_dict(orient="records")
+            if not records:
+                raise HTTPException(status_code=400, detail="No data to save")
             
+            # Convert date strings to datetime objects
+            for record in records:
+                if 'board_date' in record and isinstance(record['board_date'], str):
+                    record['board_date'] = datetime.strptime(record['board_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
             for row in records:
                 formatted_date = row['board_date']
                 row['board_date'] = datetime.strptime(row['board_date'], '%Y-%m-%d')

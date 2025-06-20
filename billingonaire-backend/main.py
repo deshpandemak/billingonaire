@@ -15,6 +15,7 @@ import asyncio
 import socket
 from mangum import Mangum
 from fastapi.testclient import TestClient
+from typing import List
 
 app = FastAPI(
     title="Billingonaire API",
@@ -97,38 +98,32 @@ async def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(file: UploadFile = File(...), skip_preview: str = Form("false")):
-
-    # Convert string to boolean
-    skip_preview_bool = skip_preview.lower() == "true"
-
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            board = Board()
-            df = board.readFile(file.filename, file.file)
-            print(skip_preview_bool)
-            if skip_preview_bool:
-                logging.info("Skipping preview and saving data directly")
+async def upload_pdf(files: List[UploadFile] = File(...)):
+    results = []
+    for file in files:
+        if file.content_type != "application/pdf":
+            results.append({"filename": file.filename, "error": "Invalid file type. Only PDF files are allowed."})
+            continue
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                board = Board()
+                df = board.readFile(file.filename, file.file)
                 board.saveData(df)
-                return {"message": "Data saved successfully"}
-
-            df = df.fillna('')
-            data = df.to_dict(orient="records")
-            
-            return {"data": data}
-        except ConnectionResetError as e:
-            logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1)
-                continue
-            else:
-                raise HTTPException(status_code=500, detail="Connection was reset by the remote host. Please try again later.")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+                results.append({"filename": file.filename, "message": "Data saved successfully"})
+                break
+            except ConnectionResetError as e:
+                logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    results.append({"filename": file.filename, "error": "Connection was reset by the remote host. Please try again later."})
+                    break
+            except Exception as e:
+                results.append({"filename": file.filename, "error": str(e)})
+                break
+    return {"results": results}
 
 @app.post("/save-data", tags=["PDF Upload"], dependencies=[Depends(require_login)])
 async def save_data(data: dict):
