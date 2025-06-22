@@ -12,6 +12,7 @@ const Upload = () => {
   const [progress, setProgress] = useState({}); // Track progress per file
   const [fileResults, setFileResults] = useState({}); // Store backend response per file
   const [successMessage, setSuccessMessage] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState([]); // Track selected files
 
   // useEffect(() => {
   //   onAuthStateChanged(auth, (user) => {
@@ -20,6 +21,10 @@ const Upload = () => {
   //     }
   //   });
   // }, [navigate]);
+
+  const handleFileChange = (e) => {
+    setSelectedFiles(Array.from(e.target.files));
+  };
 
   const uploadFile = async (e) => {
     e.preventDefault();
@@ -78,14 +83,45 @@ const Upload = () => {
       <form onSubmit={uploadFile}>
         <div>
           <label htmlFor="file">Choose PDF file(s)</label>
-          <input type="file" id="file" accept="application/pdf" ref={fileInput} multiple required />
+          <input
+            type="file"
+            id="file"
+            accept="application/pdf"
+            ref={fileInput}
+            multiple
+            required
+            onChange={handleFileChange}
+          />
         </div>
+        {/* Show selected file names */}
+        {selectedFiles.length > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
+            <ul>
+              {selectedFiles.map((file) => (
+                <li key={file.name}>{file.name}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={isUploading}>
           Upload
         </button>
       </form>
+      {/* Show currently uploading file names */}
+      {isUploading && selectedFiles.length > 0 && (
+        <div style={{ margin: '1rem 0', color: '#007bff' }}>
+          <strong>Uploading and processing:</strong>
+          <ul>
+            {selectedFiles.map((file) => (
+              <li key={file.name}>{file.name}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {successMessage && <p className="success">{successMessage}</p>}
+      {/* Progress and results UI unchanged */}
       {Object.keys(progress).length > 0 && (
         <div>
           <h4>Upload Progress</h4>
