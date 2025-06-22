@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import Dashboard from './Dashboard';
+import Table from './Table';
+import Upload from './Upload';
+import Login from './Login';
 
 const Layout = ({ children }) => {
-  const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -21,7 +25,7 @@ const Layout = ({ children }) => {
   };
 
   // Only show menu/header if logged in and not on login page
-  const isLoginPage = window.location.pathname === '/login';
+  const isLoginPage = location.pathname === '/login';
 
   return (
     <div className="app">
@@ -34,8 +38,9 @@ const Layout = ({ children }) => {
           </header>
           <nav className="nav">
             <ul>
-              <li><a href="/upload">Upload Board</a></li>
-              <li><a href="/table">Search Board</a></li>
+              <li><Link to="/dashboard">Dashboard</Link></li>
+              <li><Link to="/table">Table</Link></li>
+              <li><Link to="/upload">Upload Board</Link></li>
             </ul>
           </nav>
           <main className="main">{children}</main>
@@ -55,4 +60,18 @@ const Layout = ({ children }) => {
   );
 };
 
-export default Layout;
+const App = () => (
+  <Router>
+    <Layout>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/table" element={<Table />} />
+        <Route path="/upload" element={<Upload />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </Layout>
+  </Router>
+);
+
+export default App;

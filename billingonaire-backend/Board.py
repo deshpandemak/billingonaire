@@ -5,8 +5,9 @@ import pandas as pd
 import logging
 from operator import itemgetter
 from firebase_admin import firestore
-from fastapi import HTTPException
-from datetime import datetime
+from fastapi import HTTPException, APIRouter
+from fastapi.responses import JSONResponse
+from datetime import datetime, timedelta
 import numpy as np
 
 class Board:
@@ -205,3 +206,5 @@ class Board:
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")
             raise HTTPException(status_code=500, detail="Error getting data")
+
+# Remove DashboardData and dashboard router from this file, now in Dashboard.py
