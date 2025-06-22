@@ -1,10 +1,11 @@
+import re
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
+from firebase_admin import firestore
 
 class DashboardData:
     def __init__(self, db=None):
-        from firebase_admin import firestore
         self.db = db or firestore.client()
 
     async def get_weekly_status(self):
@@ -43,9 +44,6 @@ class DashboardData:
             avg = sum(months.values()) / len(months)
             result.append({"agp_name": agp, "monthly_avg": round(avg, 2)})
         return sorted(result, key=lambda x: -x["monthly_avg"])
-
-router = APIRouter()
-dashboard_data = DashboardData()
 
 @router.get("/dashboard/weekly-status")
 async def dashboard_weekly_status():

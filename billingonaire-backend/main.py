@@ -7,7 +7,8 @@ import pandas as pd
 from fastapi.responses import RedirectResponse, JSONResponse
 import logging
 from fastapi.middleware.cors import CORSMiddleware
-from Board import Board, DashboardData
+from Board import Board
+from Dashboard import DashboardData
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -16,7 +17,6 @@ import socket
 from mangum import Mangum
 from fastapi.testclient import TestClient
 from typing import List
-from Dashboard import router as dashboard_router
 
 app = FastAPI(
     title="Billingonaire API",
