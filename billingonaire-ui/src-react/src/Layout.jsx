@@ -5,54 +5,43 @@ import { useNavigate } from 'react-router-dom';
 
 const Layout = ({ children }) => {
   const navigate = useNavigate();
-  const [userEmail, setUserEmail] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setUserEmail(user.email);
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
-        navigate('/login');
-      }
+      setUser(user);
     });
     return () => unsubscribe();
-  }, [navigate]);
+  }, []);
 
-  const logout = async () => {
-    try {
-      await signOut(auth);
-      navigate('/login');
-    } catch (error) {
-      console.error('Logout failed', error);
-    }
+  const handleLogout = async () => {
+    await signOut(auth);
+    setUser(null);
+    window.location.reload();
   };
 
   return (
     <div className="app">
-      <header className="header">
-        <div>Billingonaire</div>
-        {isAuthenticated && (
-          <>
-            <div className="user-email">{userEmail}</div>
-            <button onClick={logout}>Logout</button>
-          </>
-        )}
-      </header>
-      {isAuthenticated && (
-        <nav className="nav">
-          <ul>
-            <li><a href="/upload">Upload Board</a></li>
-            <li><a href="/table">Search Board</a></li>
-          </ul>
-        </nav>
+      {user && (
+        <>
+          <header className="header">
+            <div>Billingonaire</div>
+            <div className="user-email">{user.email}</div>
+            <button onClick={handleLogout} style={{ float: 'right', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer', margin: '1rem' }}>Logout</button>
+          </header>
+          <nav className="nav">
+            <ul>
+              <li><a href="/upload">Upload Board</a></li>
+              <li><a href="/table">Search Board</a></li>
+            </ul>
+          </nav>
+          <main className="main">{children}</main>
+          <footer className="footer">
+            <p>© billingonaire</p>
+          </footer>
+        </>
       )}
-      <main className="main">{children}</main>
-      <footer className="footer">
-        <p>© billingonaire</p>
-      </footer>
+      {!user && <p style={{ color: '#d32f2f', textAlign: 'center', marginTop: '2rem' }}>Please log in to access the app.</p>}
       <style>{`
         .app { display: flex; flex-direction: column; min-height: 100vh; }
         main { flex: 1; display: flex; flex-direction: column; padding: 1rem; width: 100%; max-width: 64rem; margin: 0 auto; box-sizing: border-box; }

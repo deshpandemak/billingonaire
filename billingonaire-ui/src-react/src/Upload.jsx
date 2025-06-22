@@ -1,11 +1,11 @@
 import React, { useRef, useState } from 'react';
-// import { useNavigate } from 'react-router-dom'; // Uncomment if using React Router
-// import { auth } from '../lib/firebase'; // Adjust import if you migrate firebase logic
-// import { onAuthStateChanged } from 'firebase/auth'; // Uncomment if using Firebase Auth
+import { useNavigate } from 'react-router-dom';
+import { auth } from '../lib/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { API_BASE_URL } from './config';
 
 const Upload = () => {
-  // const navigate = useNavigate(); // Uncomment if using React Router
+  const navigate = useNavigate();
   const fileInput = useRef();
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -13,14 +13,20 @@ const Upload = () => {
   const [fileResults, setFileResults] = useState({}); // Store backend response per file
   const [successMessage, setSuccessMessage] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]); // Track selected files
+  const [user, setUser] = useState(null);
 
-  // useEffect(() => {
-  //   onAuthStateChanged(auth, (user) => {
-  //     if (!user) {
-  //       navigate('/login');
-  //     }
-  //   });
-  // }, [navigate]);
+  React.useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setUser(null);
+    window.location.reload();
+  };
 
   const handleFileChange = (e) => {
     setSelectedFiles(Array.from(e.target.files));
@@ -90,72 +96,85 @@ const Upload = () => {
   return (
     <div className="upload-container">
       <h1>Upload PDF</h1>
-      <form onSubmit={uploadFile}>
-        <div>
-          <label htmlFor="file">Choose PDF file(s)</label>
-          <input
-            type="file"
-            id="file"
-            accept="application/pdf"
-            ref={fileInput}
-            multiple
-            required
-            onChange={handleFileChange}
-            disabled={isUploading}
-          />
-        </div>
-        {/* Show selected file icons and names only once */}
-        {selectedFiles.length > 0 && (
-          <div className="file-list">
-            <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
-            <ul style={{listStyle: 'none', padding: 0}}>
-              {selectedFiles.map((file) => (
-                <li key={file.name} style={{display: 'flex', alignItems: 'center', marginBottom: '0.5rem'}}>
-                  {getFileIcon(file)}
-                  <span>{file.name}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
-          {isUploading ? 'Uploading...' : 'Upload'}
-        </button>
-      </form>
-      {/* Show progress bars for each file, but not a separate status table */}
-      {selectedFiles.length > 0 && (
-        <div style={{ marginTop: '1.5rem' }}>
-          <h4>Upload Progress</h4>
-          {selectedFiles.map((file) => {
-            const percent = progress[file.name] || 0;
-            const result = fileResults[file.name] || {};
-            let status = '';
-            if (result.error) {
-              status = `Error: ${result.error}`;
-            } else if (typeof result.records_processed === 'number') {
-              status = `${percent}% - ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
-            } else {
-              status = `${percent}%`;
-            }
-            return (
-              <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
-                {getFileIcon(file)}
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 500 }}>{file.name}</span>
-                    <span style={{ color: result.error ? 'red' : '#388e3c', fontWeight: 500 }}>
-                      {status}
-                    </span>
-                  </div>
-                  <progress value={percent} max="100" style={{ width: '100%' }} />
-                </div>
-              </div>
-            );
-          })}
+      {/* Show logout button and menu only if logged in */}
+      {user && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+          <button onClick={handleLogout} style={{ background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer' }}>Logout</button>
         </div>
       )}
-      {successMessage && <p className="success">{successMessage}</p>}
+      {/* Hide upload form and progress if not logged in */}
+      {user ? (
+        <>
+          <form onSubmit={uploadFile}>
+            <div>
+              <label htmlFor="file">Choose PDF file(s)</label>
+              <input
+                type="file"
+                id="file"
+                accept="application/pdf"
+                ref={fileInput}
+                multiple
+                required
+                onChange={handleFileChange}
+                disabled={isUploading}
+              />
+            </div>
+            {/* Show selected file icons and names only once */}
+            {selectedFiles.length > 0 && (
+              <div className="file-list">
+                <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
+                <ul style={{listStyle: 'none', padding: 0}}>
+                  {selectedFiles.map((file) => (
+                    <li key={file.name} style={{display: 'flex', alignItems: 'center', marginBottom: '0.5rem'}}>
+                      {getFileIcon(file)}
+                      <span>{file.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {error && <p className="error">{error}</p>}
+            <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
+              {isUploading ? 'Uploading...' : 'Upload'}
+            </button>
+          </form>
+          {/* Show progress bars for each file, but not a separate status table */}
+          {selectedFiles.length > 0 && (
+            <div style={{ marginTop: '1.5rem' }}>
+              <h4>Upload Progress</h4>
+              {selectedFiles.map((file) => {
+                const percent = progress[file.name] || 0;
+                const result = fileResults[file.name] || {};
+                let status = '';
+                if (result.error) {
+                  status = `Error: ${result.error}`;
+                } else if (typeof result.records_processed === 'number') {
+                  status = `${percent}% - ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
+                } else {
+                  status = `${percent}%`;
+                }
+                return (
+                  <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
+                    {getFileIcon(file)}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 500 }}>{file.name}</span>
+                        <span style={{ color: result.error ? 'red' : '#388e3c', fontWeight: 500 }}>
+                          {status}
+                        </span>
+                      </div>
+                      <progress value={percent} max="100" style={{ width: '100%' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {successMessage && <p className="success">{successMessage}</p>}
+        </>
+      ) : (
+        <p style={{ color: '#d32f2f', textAlign: 'center', marginTop: '2rem' }}>Please log in to upload files.</p>
+      )}
       <style>{`
         .upload-container {
           max-width: 600px;
