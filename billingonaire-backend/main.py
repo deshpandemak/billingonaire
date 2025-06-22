@@ -109,8 +109,13 @@ async def upload_pdf(files: List[UploadFile] = File(...)):
             try:
                 board = Board()
                 df = board.readFile(file.filename, file.file)
+                record_count = len(df) if df is not None else 0
                 board.saveData(df)
-                results.append({"filename": file.filename, "message": "Data saved successfully"})
+                results.append({
+                    "filename": file.filename,
+                    "message": "Data saved successfully",
+                    "records_processed": record_count
+                })
                 break
             except ConnectionResetError as e:
                 logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")

@@ -77,6 +77,16 @@ const Upload = () => {
     setSuccessMessage('Upload complete!');
   };
 
+  // Helper to get icon for file type (PDF only for now)
+  const getFileIcon = (file) => {
+    return (
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#d32f2f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '0.5rem'}}>
+        <rect x="3" y="3" width="18" height="18" rx="2" fill="#fff" stroke="#d32f2f"/>
+        <text x="7" y="19" fontSize="10" fill="#d32f2f" fontWeight="bold">PDF</text>
+      </svg>
+    );
+  };
+
   return (
     <div className="upload-container">
       <h1>Upload PDF</h1>
@@ -93,13 +103,16 @@ const Upload = () => {
             onChange={handleFileChange}
           />
         </div>
-        {/* Show selected file names */}
+        {/* Show selected file icons and names */}
         {selectedFiles.length > 0 && (
-          <div style={{ marginBottom: '1rem' }}>
+          <div className="file-list">
             <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
-            <ul>
+            <ul style={{listStyle: 'none', padding: 0}}>
               {selectedFiles.map((file) => (
-                <li key={file.name}>{file.name}</li>
+                <li key={file.name} style={{display: 'flex', alignItems: 'center', marginBottom: '0.5rem'}}>
+                  {getFileIcon(file)}
+                  <span>{file.name}</span>
+                </li>
               ))}
             </ul>
           </div>
@@ -109,39 +122,46 @@ const Upload = () => {
           Upload
         </button>
       </form>
-      {/* Show currently uploading file names */}
-      {isUploading && selectedFiles.length > 0 && (
-        <div style={{ margin: '1rem 0', color: '#007bff' }}>
-          <strong>Uploading and processing:</strong>
-          <ul>
-            {selectedFiles.map((file) => (
-              <li key={file.name}>{file.name}</li>
-            ))}
-          </ul>
+      {/* Progress and results UI */}
+      {selectedFiles.length > 0 && (
+        <div style={{ marginTop: '1.5rem' }}>
+          <h4>Upload Progress</h4>
+          {selectedFiles.map((file) => {
+            const percent = progress[file.name] || 0;
+            const result = fileResults[file.name] || {};
+            let status = '';
+            let recordCount = null;
+            if (result.error) {
+              status = `Error: ${result.error}`;
+            } else if (result.message) {
+              status = result.message;
+            } else if (result.data && Array.isArray(result.data)) {
+              status = 'Processed successfully';
+              recordCount = result.data.length;
+            }
+            return (
+              <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
+                {getFileIcon(file)}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 500 }}>{file.name}</span>
+                    {recordCount !== null && (
+                      <span style={{ color: '#388e3c', fontWeight: 500 }}>
+                        {recordCount} record{recordCount !== 1 ? 's' : ''} processed
+                      </span>
+                    )}
+                  </div>
+                  <progress value={percent} max="100" style={{ width: '100%' }} />
+                  <div style={{ marginTop: '0.25rem', color: result.error ? 'red' : 'green' }}>
+                    {status}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
       {successMessage && <p className="success">{successMessage}</p>}
-      {/* Progress and results UI unchanged */}
-      {Object.keys(progress).length > 0 && (
-        <div>
-          <h4>Upload Progress</h4>
-          {Object.entries(progress).map(([name, percent]) => (
-            <div key={name} style={{ marginBottom: '0.5rem' }}>
-              <span>{name}: {percent}%</span>
-              <progress value={percent} max="100" style={{ width: '100%' }} />
-              {fileResults[name] && (
-                <div style={{ marginTop: '0.25rem', color: fileResults[name].error ? 'red' : 'green' }}>
-                  {fileResults[name].error
-                    ? `Error: ${fileResults[name].error}`
-                    : fileResults[name].message
-                      ? fileResults[name].message
-                      : 'Processed successfully'}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
       <style>{`
         .upload-container {
           max-width: 600px;
@@ -171,6 +191,9 @@ const Upload = () => {
           border: 1px solid #ccc;
           border-radius: 4px;
           width: 100%;
+        }
+        .file-list {
+          margin-bottom: 1rem;
         }
         .error {
           color: red;
