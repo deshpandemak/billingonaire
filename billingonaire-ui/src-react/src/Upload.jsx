@@ -25,7 +25,7 @@ const Upload = () => {
   const handleLogout = async () => {
     await signOut(auth);
     setUser(null);
-    window.location.reload();
+    navigate('/login');
   };
 
   const handleFileChange = (e) => {
@@ -96,12 +96,7 @@ const Upload = () => {
   return (
     <div className="upload-container">
       <h1>Upload PDF</h1>
-      {/* Show logout button and menu only if logged in */}
-      {user && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-          <button onClick={handleLogout} style={{ background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer' }}>Logout</button>
-        </div>
-      )}
+      {/* Remove logout button here, as it's already in the main menu */}
       {/* Hide upload form and progress if not logged in */}
       {user ? (
         <>
