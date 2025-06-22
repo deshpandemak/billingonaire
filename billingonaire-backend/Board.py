@@ -79,7 +79,6 @@ class Board:
             date_pattern = r"(\d+/\d+/\d+)"
             court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
             case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
-            # case_pattern = r"\s{1,}(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
             case_no_pattern = r"([A-Za-z()]*/\s*\d+/[\d ]+)"
             
@@ -89,7 +88,12 @@ class Board:
                 for i in range(number_of_pages):
                     page = reader.pages[i]
                     page_text = page.extract_text()
-                    text += page_text.replace("\n", " ")
+                    if page_text:
+                        text += page_text.replace("\n", " ")
+                # Explicit error if no text extracted
+                if not text.strip():
+                    logging.error("No text could be extracted from the PDF file.")
+                    raise HTTPException(status_code=400, detail="No text could be extracted from the PDF file. Please check if the file is valid and not scanned as an image.")
 
                 date = re.findall(date_pattern, text)
                 date_common = Counter(date).most_common(1)
@@ -117,8 +121,8 @@ class Board:
                         stage = re.findall(case_stage1_pattern, data)
 
                         matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
-                                           file_name=filename, board_date=board_date,
-                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                                       file_name=filename, board_date=board_date,
+                                       serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         
                     elif data.isnumeric():
                         serial_no = data
@@ -130,8 +134,8 @@ class Board:
                         case_year = case_number[2]
                     else:
                         matter_list.append(self.create_record(court_details=data.strip(), 
-                                           file_name=filename, board_date=board_date, 
-                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                                       file_name=filename, board_date=board_date, 
+                                       serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
 
             matter_df = pd.DataFrame(matter_list)
             matter_df = matter_df.drop_duplicates()
