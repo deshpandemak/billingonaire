@@ -27,35 +27,35 @@ const Layout = ({ children }) => {
   // Only show menu/header if logged in and not on login page
   const isLoginPage = location.pathname === '/login';
 
+  // Redirect to login if not logged in and not already on login page
+  useEffect(() => {
+    if (!user && !isLoginPage) {
+      window.location.replace('/login');
+    }
+  }, [user, isLoginPage]);
+
   return (
-    <div className="app">
-      {user && !isLoginPage && (
-        <>
-          <header className="header">
-            <div>Billingonaire</div>
-            <div className="user-email">{user.email}</div>
-            <button onClick={handleLogout} style={{ float: 'right', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer', margin: '1rem' }}>Logout</button>
-          </header>
-          <nav className="nav">
-            <ul>
-              <li><Link to="/dashboard">Dashboard</Link></li>
-              <li><Link to="/table">Table</Link></li>
-              <li><Link to="/upload">Upload Board</Link></li>
-            </ul>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Header/Banner */}
+      <header style={{ background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+        Billingonaire
+      </header>
+      {/* Main content and menu */}
+      <div style={{ flex: 1 }}>
+        {user && !isLoginPage && (
+          <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center', background: '#f5f5f5', padding: '1rem', borderBottom: '1px solid #ccc' }}>
+            <Link to="/dashboard">Dashboard</Link>
+            <Link to="/table">Table</Link>
+            <Link to="/upload">Upload</Link>
+            <button onClick={handleLogout} style={{ marginLeft: 'auto', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer' }}>Logout</button>
           </nav>
-          <main className="main">{children}</main>
-          <footer className="footer">
-            <p>© billingonaire</p>
-          </footer>
-        </>
-      )}
-      {user || isLoginPage ? children : <p style={{ color: '#d32f2f', textAlign: 'center', marginTop: '2rem' }}>Please log in to access the app.</p>}
-      <style>{`
-        .app { display: flex; flex-direction: column; min-height: 100vh; }
-        main { flex: 1; display: flex; flex-direction: column; padding: 1rem; width: 100%; max-width: 64rem; margin: 0 auto; box-sizing: border-box; }
-        footer { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 12px; }
-        .header { background-color: #f8f8f8; border-bottom: 1px solid #ccc; }
-      `}</style>
+        )}
+        {user || isLoginPage ? children : null}
+      </div>
+      {/* Footer */}
+      <footer style={{ background: '#f5f5f5', color: '#333', textAlign: 'center', padding: '0.75rem 0', borderTop: '1px solid #ccc', fontSize: '1rem' }}>
+        &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
+      </footer>
     </div>
   );
 };
