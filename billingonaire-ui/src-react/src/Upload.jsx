@@ -101,9 +101,10 @@ const Upload = () => {
             multiple
             required
             onChange={handleFileChange}
+            disabled={isUploading}
           />
         </div>
-        {/* Show selected file icons and names */}
+        {/* Show selected file icons and names only once */}
         {selectedFiles.length > 0 && (
           <div className="file-list">
             <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
@@ -118,11 +119,11 @@ const Upload = () => {
           </div>
         )}
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={isUploading}>
-          Upload
+        <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
+          {isUploading ? 'Uploading...' : 'Upload'}
         </button>
       </form>
-      {/* Progress and results UI */}
+      {/* Show progress bars for each file, but not a separate status table */}
       {selectedFiles.length > 0 && (
         <div style={{ marginTop: '1.5rem' }}>
           <h4>Upload Progress</h4>
@@ -130,14 +131,12 @@ const Upload = () => {
             const percent = progress[file.name] || 0;
             const result = fileResults[file.name] || {};
             let status = '';
-            let recordCount = null;
             if (result.error) {
               status = `Error: ${result.error}`;
-            } else if (result.message) {
-              status = result.message;
-            } else if (result.data && Array.isArray(result.data)) {
-              status = 'Processed successfully';
-              recordCount = result.data.length;
+            } else if (typeof result.records_processed === 'number') {
+              status = `${percent}% - ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
+            } else {
+              status = `${percent}%`;
             }
             return (
               <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
@@ -145,16 +144,11 @@ const Upload = () => {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontWeight: 500 }}>{file.name}</span>
-                    {recordCount !== null && (
-                      <span style={{ color: '#388e3c', fontWeight: 500 }}>
-                        {recordCount} record{recordCount !== 1 ? 's' : ''} processed
-                      </span>
-                    )}
+                    <span style={{ color: result.error ? 'red' : '#388e3c', fontWeight: 500 }}>
+                      {status}
+                    </span>
                   </div>
                   <progress value={percent} max="100" style={{ width: '100%' }} />
-                  <div style={{ marginTop: '0.25rem', color: result.error ? 'red' : 'green' }}>
-                    {status}
-                  </div>
                 </div>
               </div>
             );
@@ -212,7 +206,11 @@ const Upload = () => {
           cursor: pointer;
           width: 100%;
         }
-        button:hover {
+        button[disabled] {
+          background-color: #aaa;
+          cursor: not-allowed;
+        }
+        button:hover:enabled {
           background-color: #0056b3;
         }
         h4 {
