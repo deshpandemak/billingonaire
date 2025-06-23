@@ -151,9 +151,25 @@ async def get_data(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
 
-client = TestClient(app)
+# Dashboard endpoints (with authentication)
+dashboard_data = DashboardData()
 
-app.include_router(dashboard_router)
+@app.get("/dashboard/weekly-status", dependencies=[Depends(require_login)])
+async def dashboard_weekly_status(start_date: str = Query(None), end_date: str = Query(None)):
+    data = await dashboard_data.get_weekly_status(start_date, end_date)
+    return JSONResponse(content=data)
+
+@app.get("/dashboard/agp-stats", dependencies=[Depends(require_login)])
+async def dashboard_agp_stats(agp_name: str = Query(None)):
+    data = await dashboard_data.get_agp_stats(agp_name)
+    return JSONResponse(content=data)
+
+@app.get("/dashboard/monthly-avg", dependencies=[Depends(require_login)])
+async def dashboard_monthly_avg(year: str = Query(None)):
+    data = await dashboard_data.get_monthly_avg(year)
+    return JSONResponse(content=data)
+
+client = TestClient(app)
 
 @functions_framework.http
 def handler(request):

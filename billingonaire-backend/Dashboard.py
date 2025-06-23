@@ -1,5 +1,4 @@
-import re
-from fastapi import APIRouter, Query
+from fastapi import Depends, Query
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 from firebase_admin import firestore
@@ -54,21 +53,3 @@ class DashboardData:
             avg = sum(months.values()) / len(months)
             result.append({"agp_name": agp, "monthly_avg": round(avg, 2)})
         return sorted(result, key=lambda x: -x["monthly_avg"])
-
-router = APIRouter()
-dashboard_data = DashboardData()
-
-@router.get("/dashboard/weekly-status")
-async def dashboard_weekly_status(start_date: str = Query(None), end_date: str = Query(None)):
-    data = await dashboard_data.get_weekly_status(start_date, end_date)
-    return JSONResponse(content=data)
-
-@router.get("/dashboard/agp-stats")
-async def dashboard_agp_stats(agp_name: str = Query(None)):
-    data = await dashboard_data.get_agp_stats(agp_name)
-    return JSONResponse(content=data)
-
-@router.get("/dashboard/monthly-avg")
-async def dashboard_monthly_avg(year: str = Query(None)):
-    data = await dashboard_data.get_monthly_avg(year)
-    return JSONResponse(content=data)
