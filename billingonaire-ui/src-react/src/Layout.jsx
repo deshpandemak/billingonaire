@@ -35,12 +35,8 @@ const Layout = ({ children }) => {
   }, [user, isLoginPage, navigate]);
 
   return (
-    // Header/Navbar - full width
-    <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
-      <div style={{ width: '100%', background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-        Billingonaire
-      </div>
-      <Navbar bg="primary" variant="dark" expand="md" sticky="top">
+    <>
+      <Navbar bg="primary" variant="dark" expand="lg" sticky="top">
         <Container fluid>
           <Navbar.Brand as={Link} to={user ? "/dashboard" : "/login"}>
             Billingonaire
@@ -80,7 +76,7 @@ const Layout = ({ children }) => {
           &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
         </footer>
       </div>
-    </div>
+    </>
   );
 };
 // NOTE: If you have a global style file (e.g., app.css), ensure it does not override Bootstrap's .container, .row, .col, .navbar, .btn, .bg-light, .text-center, .border-top, etc. If you need custom styles, use unique classNames or inline styles scoped to your components.

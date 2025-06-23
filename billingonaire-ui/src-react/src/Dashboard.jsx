@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { API_BASE_URL } from './config';
-import Header from './Header';
 import { Container } from 'react-bootstrap';
 
 const Dashboard = () => {
@@ -64,7 +63,6 @@ const Dashboard = () => {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header />
       <Container fluid className="flex-grow-1 d-flex flex-column p-0">
         <div className="dashboard-container">
           <h1>Dashboard</h1>
@@ -152,9 +150,6 @@ const Dashboard = () => {
           </div>
         </div>
       </Container>
-      <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
-        &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
-      </footer>
     </div>
   );
 };
