@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, Form, Card, Container, Row, Col } from 'react-bootstrap';
-import { auth } from '../lib/firebase';
+import { auth } from './lib/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 
@@ -23,12 +23,6 @@ const Login = () => {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header/Banner - full width */}
-      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
-        <div style={{ background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-          Billingonaire
-        </div>
-      </div>
       {/* Login Form Centered */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Container>

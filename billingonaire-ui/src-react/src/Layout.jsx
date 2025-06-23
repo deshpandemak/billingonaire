@@ -35,32 +35,33 @@ const Layout = ({ children }) => {
   }, [user, isLoginPage, navigate]);
 
   return (
-    <div className="d-flex flex-column min-vh-100">
-      {/* Header/Navbar - full width */}
-      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
-        <Navbar bg="primary" variant="dark" expand="md" sticky="top" className="w-100">
-          <Container fluid>
-            <Navbar.Brand as={Link} to={user ? "/dashboard" : "/login"}>
-              Billingonaire
-            </Navbar.Brand>
-            {user && !isLoginPage && (
-              <>
-                <Navbar.Toggle aria-controls="main-navbar-nav" />
-                <Navbar.Collapse id="main-navbar-nav">
-                  <Nav className="me-auto">
-                    <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
-                    <Nav.Link as={Link} to="/table">Table</Nav.Link>
-                    <Nav.Link as={Link} to="/upload">Upload</Nav.Link>
-                  </Nav>
-                  <Button variant="outline-light" onClick={handleLogout}>
-                    Logout
-                  </Button>
-                </Navbar.Collapse>
-              </>
-            )}
-          </Container>
-        </Navbar>
+    // Header/Navbar - full width
+    <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+      <div style={{ width: '100%', background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+        Billingonaire
       </div>
+      <Navbar bg="primary" variant="dark" expand="md" sticky="top">
+        <Container fluid>
+          <Navbar.Brand as={Link} to={user ? "/dashboard" : "/login"}>
+            Billingonaire
+          </Navbar.Brand>
+          {user && !isLoginPage && (
+            <>
+              <Navbar.Toggle aria-controls="main-navbar-nav" />
+              <Navbar.Collapse id="main-navbar-nav">
+                <Nav className="me-auto">
+                  <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
+                  <Nav.Link as={Link} to="/table">Table</Nav.Link>
+                  <Nav.Link as={Link} to="/upload">Upload</Nav.Link>
+                </Nav>
+                <Button variant="outline-light" onClick={handleLogout}>
+                  Logout
+                </Button>
+              </Navbar.Collapse>
+            </>
+          )}
+        </Container>
+      </Navbar>
 
       {/* Main Content */}
       <div className="flex-grow-1 d-flex align-items-center justify-content-center py-4" style={{ width: '100%' }}>
