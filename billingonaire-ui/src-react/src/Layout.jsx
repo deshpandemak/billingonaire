@@ -37,23 +37,55 @@ const Layout = ({ children }) => {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Header/Banner */}
-      <header style={{ background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+      <header style={{
+        background: '#007bff',
+        color: '#fff',
+        padding: '1rem 0',
+        textAlign: 'center',
+        fontSize: '2rem',
+        fontWeight: 700,
+        letterSpacing: '2px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+        width: '100vw',
+        position: 'relative',
+        left: '50%',
+        right: '50%',
+        marginLeft: '-50vw',
+        marginRight: '-50vw',
+      }}>
         Billingonaire
       </header>
       {/* Main content and menu */}
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
         {user && !isLoginPage && (
-          <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center', background: '#f5f5f5', padding: '1rem', borderBottom: '1px solid #ccc' }}>
+          <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center', background: '#f5f5f5', padding: '1rem', borderBottom: '1px solid #ccc', width: '100%' }}>
             <Link to="/dashboard">Dashboard</Link>
             <Link to="/table">Table</Link>
             <Link to="/upload">Upload</Link>
             <button onClick={handleLogout} style={{ marginLeft: 'auto', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer' }}>Logout</button>
           </nav>
         )}
-        {user || isLoginPage ? children : null}
+        <div style={{ width: '100%', display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 1000, margin: '0 auto' }}>
+            {user || isLoginPage ? children : null}
+          </div>
+        </div>
       </div>
       {/* Footer */}
-      <footer style={{ background: '#f5f5f5', color: '#333', textAlign: 'center', padding: '0.75rem 0', borderTop: '1px solid #ccc', fontSize: '1rem' }}>
+      <footer style={{
+        background: '#f5f5f5',
+        color: '#333',
+        textAlign: 'center',
+        padding: '0.75rem 0',
+        borderTop: '1px solid #ccc',
+        fontSize: '1rem',
+        width: '100vw',
+        position: 'relative',
+        left: '50%',
+        right: '50%',
+        marginLeft: '-50vw',
+        marginRight: '-50vw',
+      }}>
         &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
       </footer>
     </div>
