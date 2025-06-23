@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { API_BASE_URL } from './config';
+import Header from './Header';
+import { Container } from 'react-bootstrap';
 
 const Upload = () => {
   const navigate = useNavigate();
@@ -94,143 +96,90 @@ const Upload = () => {
   };
 
   return (
-    <div className="upload-container">
-      <h1>Upload PDF</h1>
-      {/* Remove logout button here, as it's already in the main menu */}
-      {/* Hide upload form and progress if not logged in */}
-      {user ? (
-        <>
-          <form onSubmit={uploadFile}>
-            <div>
-              <label htmlFor="file">Choose PDF file(s)</label>
-              <input
-                type="file"
-                id="file"
-                accept="application/pdf"
-                ref={fileInput}
-                multiple
-                required
-                onChange={handleFileChange}
-                disabled={isUploading}
-              />
-            </div>
-            {/* Show selected file icons and names only once */}
-            {selectedFiles.length > 0 && (
-              <div className="file-list">
-                <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
-                <ul style={{listStyle: 'none', padding: 0}}>
-                  {selectedFiles.map((file) => (
-                    <li key={file.name} style={{display: 'flex', alignItems: 'center', marginBottom: '0.5rem'}}>
-                      {getFileIcon(file)}
-                      <span>{file.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {error && <p className="error">{error}</p>}
-            <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
-              {isUploading ? 'Uploading...' : 'Upload'}
-            </button>
-          </form>
-          {/* Show progress bars for each file, but not a separate status table */}
-          {selectedFiles.length > 0 && (
-            <div style={{ marginTop: '1.5rem' }}>
-              <h4>Upload Progress</h4>
-              {selectedFiles.map((file) => {
-                const percent = progress[file.name] || 0;
-                const result = fileResults[file.name] || {};
-                let status = '';
-                if (result.error) {
-                  status = `Error: ${result.error}`;
-                } else if (typeof result.records_processed === 'number') {
-                  status = `${percent}% - ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
-                } else {
-                  status = `${percent}%`;
-                }
-                return (
-                  <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
-                    {getFileIcon(file)}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 500 }}>{file.name}</span>
-                        <span style={{ color: result.error ? 'red' : '#388e3c', fontWeight: 500 }}>
-                          {status}
-                        </span>
-                      </div>
-                      <progress value={percent} max="100" style={{ width: '100%' }} />
-                    </div>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Header />
+      <Container fluid className="flex-grow-1 d-flex flex-column p-0">
+        <div className="upload-container">
+          <h1>Upload PDF</h1>
+          {/* Remove logout button here, as it's already in the main menu */}
+          {/* Hide upload form and progress if not logged in */}
+          {user ? (
+            <>
+              <form onSubmit={uploadFile}>
+                <div>
+                  <label htmlFor="file">Choose PDF file(s)</label>
+                  <input
+                    type="file"
+                    id="file"
+                    accept="application/pdf"
+                    ref={fileInput}
+                    multiple
+                    required
+                    onChange={handleFileChange}
+                    disabled={isUploading}
+                  />
+                </div>
+                {/* Show selected file icons and names only once */}
+                {selectedFiles.length > 0 && (
+                  <div className="file-list">
+                    <strong>Selected file{selectedFiles.length > 1 ? 's' : ''}:</strong>
+                    <ul style={{listStyle: 'none', padding: 0}}>
+                      {selectedFiles.map((file) => (
+                        <li key={file.name} style={{display: 'flex', alignItems: 'center', marginBottom: '0.5rem'}}>
+                          {getFileIcon(file)}
+                          <span>{file.name}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                );
-              })}
-            </div>
+                )}
+                {error && <p className="error">{error}</p>}
+                <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
+                  {isUploading ? 'Uploading...' : 'Upload'}
+                </button>
+              </form>
+              {/* Show progress bars for each file, but not a separate status table */}
+              {selectedFiles.length > 0 && (
+                <div style={{ marginTop: '1.5rem' }}>
+                  <h4>Upload Progress</h4>
+                  {selectedFiles.map((file) => {
+                    const percent = progress[file.name] || 0;
+                    const result = fileResults[file.name] || {};
+                    let status = '';
+                    if (result.error) {
+                      status = `Error: ${result.error}`;
+                    } else if (typeof result.records_processed === 'number') {
+                      status = `${percent}% - ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
+                    } else {
+                      status = `${percent}%`;
+                    }
+                    return (
+                      <div key={file.name} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
+                        {getFileIcon(file)}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontWeight: 500 }}>{file.name}</span>
+                            <span style={{ color: result.error ? 'red' : '#388e3c', fontWeight: 500 }}>
+                              {status}
+                            </span>
+                          </div>
+                          <progress value={percent} max="100" style={{ width: '100%' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {successMessage && <p className="success">{successMessage}</p>}
+            </>
+          ) : (
+            <p style={{ color: '#d32f2f', textAlign: 'center', marginTop: '2rem' }}>Please log in to upload files.</p>
           )}
-          {successMessage && <p className="success">{successMessage}</p>}
-        </>
-      ) : (
-        <p style={{ color: '#d32f2f', textAlign: 'center', marginTop: '2rem' }}>Please log in to upload files.</p>
-      )}
-      <style>{`
-        .upload-container {
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 1rem;
-          border: 1px solid #ccc;
-          border-radius: 4px;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-          background-color: #fff;
-        }
-        h1 {
-          text-align: center;
-          color: #333;
-        }
-        form {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-        }
-        label {
-          margin-bottom: 0.5rem;
-          color: #333;
-        }
-        input {
-          margin-bottom: 1rem;
-          padding: 0.5rem;
-          border: 1px solid #ccc;
-          border-radius: 4px;
-          width: 100%;
-        }
-        .file-list {
-          margin-bottom: 1rem;
-        }
-        .error {
-          color: red;
-          margin-bottom: 1rem;
-        }
-        .success {
-          color: green;
-          margin-bottom: 1rem;
-        }
-        button {
-          padding: 0.5rem;
-          border: none;
-          border-radius: 4px;
-          background-color: #007bff;
-          color: white;
-          cursor: pointer;
-          width: 100%;
-        }
-        button[disabled] {
-          background-color: #aaa;
-          cursor: not-allowed;
-        }
-        button:hover:enabled {
-          background-color: #0056b3;
-        }
-        h4 {
-          margin-top: 1.5rem;
-        }
-      `}</style>
+        </div>
+      </Container>
+      <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
+        &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
+      </footer>
     </div>
   );
 };

@@ -3,6 +3,7 @@ import { Button, Form, Card, Container, Row, Col } from 'react-bootstrap';
 import { auth } from './lib/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
+import Header from './Header';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -23,6 +24,7 @@ const Login = () => {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Header />
       {/* Login Form Centered */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Container>
@@ -67,11 +69,9 @@ const Login = () => {
         </Container>
       </div>
       {/* Footer - full width */}
-      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
-        <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
-          &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
-        </footer>
-      </div>
+      <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
+        &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
+      </footer>
     </div>
   );
 };
