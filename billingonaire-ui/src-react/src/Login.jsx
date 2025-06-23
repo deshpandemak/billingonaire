@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { auth } from './lib/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
+import { Container, Row, Col, Form, Button, Alert, Card } from 'react-bootstrap';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -22,65 +23,55 @@ const Login = () => {
   };
 
   return (
-    <div className="login-container">
-      <form onSubmit={login} className="login-form">
-        <h2>Login</h2>
-        <div>
-          <label htmlFor="email">Email</label>
-          <input type="email" id="email" value={email} onChange={e => setEmail(e.target.value)} required />
-        </div>
-        <div>
-          <label htmlFor="password">Password</label>
-          <input type="password" id="password" value={password} onChange={e => setPassword(e.target.value)} required />
-        </div>
-        {error && <p className="error">{error}</p>}
-        <button type="submit">Login</button>
-      </form>
-      <style>{`
-        .login-container {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: #f5f5f5;
-        }
-        .login-form {
-          background: #fff;
-          padding: 2rem 2.5rem;
-          border-radius: 8px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-          display: flex;
-          flex-direction: column;
-          min-width: 320px;
-        }
-        .login-form h2 {
-          text-align: center;
-          margin-bottom: 1.5rem;
-        }
-        .login-form input {
-          margin-bottom: 1rem;
-          padding: 0.5rem;
-          border: 1px solid #ccc;
-          border-radius: 4px;
-        }
-        .login-form button {
-          padding: 0.5rem;
-          border: none;
-          border-radius: 4px;
-          background-color: #007bff;
-          color: white;
-          cursor: pointer;
-        }
-        .login-form button:hover {
-          background-color: #0056b3;
-        }
-        .login-form .error {
-          color: #d32f2f;
-          margin-bottom: 1rem;
-          text-align: center;
-        }
-      `}</style>
-    </div>
+    <Container
+      fluid
+      className="d-flex align-items-center justify-content-center min-vh-100 bg-light"
+      style={{ padding: 0 }}
+    >
+      <Row className="w-100 justify-content-center">
+        <Col xs={12} sm={10} md={8} lg={5} xl={4}>
+          <Card className="shadow-sm" style={{ borderRadius: 12 }}>
+            <Card.Body>
+              <h2 className="text-center mb-4">Login</h2>
+              <Form onSubmit={login}>
+                <Form.Group className="mb-3" controlId="email">
+                  <Form.Label>Email</Form.Label>
+                  <Form.Control
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                    placeholder="Enter your email"
+                    size="lg"
+                  />
+                </Form.Group>
+                <Form.Group className="mb-4" controlId="password">
+                  <Form.Label>Password</Form.Label>
+                  <Form.Control
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    placeholder="Enter your password"
+                    size="lg"
+                  />
+                </Form.Group>
+                {error && <Alert variant="danger" className="text-center">{error}</Alert>}
+                <Button
+                  variant="primary"
+                  type="submit"
+                  className="w-100"
+                  size="lg"
+                  style={{ fontWeight: 500, letterSpacing: 1 }}
+                >
+                  Login
+                </Button>
+              </Form>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+    </Container>
   );
 };
 
