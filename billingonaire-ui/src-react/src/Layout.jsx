@@ -56,17 +56,27 @@ const Layout = ({ children }) => {
         Billingonaire
       </header>
       {/* Main content and menu */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
         {user && !isLoginPage && (
-          <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center', background: '#f5f5f5', padding: '1rem', borderBottom: '1px solid #ccc', width: '100%' }}>
+          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', background: '#f5f5f5', padding: '1rem', borderBottom: '1px solid #ccc', width: '100%' }}>
             <Link to="/dashboard">Dashboard</Link>
             <Link to="/table">Table</Link>
             <Link to="/upload">Upload</Link>
             <button onClick={handleLogout} style={{ marginLeft: 'auto', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 4, padding: '0.4rem 1rem', cursor: 'pointer' }}>Logout</button>
           </nav>
         )}
-        <div style={{ width: '100%', display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: '100%', maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+          <div style={{
+            boxSizing: 'border-box',
+            width: '100%',
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '1rem',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            minHeight: '60vh',
+          }}>
             {user || isLoginPage ? children : null}
           </div>
         </div>
@@ -88,6 +98,27 @@ const Layout = ({ children }) => {
       }}>
         &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
       </footer>
+      <style>{`
+        @media (max-width: 900px) {
+          header, footer {
+            font-size: 1.2rem !important;
+          }
+          nav {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+          }
+        }
+        @media (max-width: 600px) {
+          .dashboard-container, .table-container, .upload-container, .login-container {
+            padding: 0.5rem !important;
+            min-width: 0 !important;
+          }
+          header, footer {
+            font-size: 1rem !important;
+            padding: 0.5rem 0 !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };
