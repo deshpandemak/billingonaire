@@ -22,47 +22,62 @@ const Login = () => {
   };
 
   return (
-    <div style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Container>
-        <Row className="justify-content-center align-items-center" style={{ minHeight: '60vh' }}>
-          <Col xs={12} sm={8} md={6} lg={5} xl={4}>
-            <Card className="shadow p-4">
-              <Card.Body>
-                <h2 className="mb-4 text-center">Login</h2>
-                <Form onSubmit={handleLogin}>
-                  <Form.Group className="mb-3" controlId="formBasicEmail">
-                    <Form.Label>Email address</Form.Label>
-                    <Form.Control
-                      type="email"
-                      placeholder="Enter email"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      required
-                      autoFocus
-                    />
-                  </Form.Group>
-                  <Form.Group className="mb-3" controlId="formBasicPassword">
-                    <Form.Label>Password</Form.Label>
-                    <Form.Control
-                      type="password"
-                      placeholder="Password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      required
-                    />
-                  </Form.Group>
-                  {error && <div className="text-danger mb-3 text-center">{error}</div>}
-                  <div className="d-flex justify-content-end">
-                    <Button variant="primary" type="submit">
-                      Login
-                    </Button>
-                  </div>
-                </Form>
-              </Card.Body>
-            </Card>
-          </Col>
-        </Row>
-      </Container>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Header/Banner - full width */}
+      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+        <div style={{ background: '#007bff', color: '#fff', padding: '1rem 0', textAlign: 'center', fontSize: '2rem', fontWeight: 700, letterSpacing: '2px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+          Billingonaire
+        </div>
+      </div>
+      {/* Login Form Centered */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Container>
+          <Row className="justify-content-center align-items-center" style={{ minHeight: '60vh' }}>
+            <Col xs={12} sm={8} md={6} lg={5} xl={4}>
+              <Card className="shadow p-4">
+                <Card.Body>
+                  <h2 className="mb-4 text-center">Login</h2>
+                  <Form onSubmit={handleLogin}>
+                    <Form.Group className="mb-3" controlId="formBasicEmail">
+                      <Form.Label>Email address</Form.Label>
+                      <Form.Control
+                        type="email"
+                        placeholder="Enter email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        required
+                        autoFocus
+                      />
+                    </Form.Group>
+                    <Form.Group className="mb-3" controlId="formBasicPassword">
+                      <Form.Label>Password</Form.Label>
+                      <Form.Control
+                        type="password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        required
+                      />
+                    </Form.Group>
+                    {error && <div className="text-danger mb-3 text-center">{error}</div>}
+                    <div className="d-flex justify-content-end">
+                      <Button variant="primary" type="submit">
+                        Login
+                      </Button>
+                    </div>
+                  </Form>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        </Container>
+      </div>
+      {/* Footer - full width */}
+      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+        <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
+          &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
+        </footer>
+      </div>
     </div>
   );
 };
