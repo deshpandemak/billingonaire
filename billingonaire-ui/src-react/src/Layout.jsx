@@ -37,8 +37,8 @@ const Layout = ({ children }) => {
   return (
     <div className="d-flex flex-column min-vh-100">
       {/* Header/Navbar - full width */}
-      <div style={{ width: '100%' }}>
-        <Navbar bg="primary" variant="dark" expand="md" sticky="top">
+      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+        <Navbar bg="primary" variant="dark" expand="md" sticky="top" className="w-100">
           <Container fluid>
             <Navbar.Brand as={Link} to={user ? "/dashboard" : "/login"}>
               Billingonaire
@@ -64,9 +64,9 @@ const Layout = ({ children }) => {
 
       {/* Main Content */}
       <div className="flex-grow-1 d-flex align-items-center justify-content-center py-4" style={{ width: '100%' }}>
-        <Container>
-          <Row className="justify-content-center">
-            <Col xs={12} sm={10} md={8} lg={6} xl={5}>
+        <Container fluid className="h-100 d-flex align-items-center justify-content-center">
+          <Row className="justify-content-center w-100">
+            <Col xs={12} sm={10} md={8} lg={6} xl={5} className="d-flex flex-column align-items-center justify-content-center">
               {(user || isLoginPage) ? children : null}
             </Col>
           </Row>
@@ -74,14 +74,15 @@ const Layout = ({ children }) => {
       </div>
 
       {/* Footer - full width */}
-      <div style={{ width: '100%' }}>
-        <footer className="bg-light text-center text-muted py-3 mt-auto border-top">
+      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
+        <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
           &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
         </footer>
       </div>
     </div>
   );
 };
+// NOTE: If you have a global style file (e.g., app.css), ensure it does not override Bootstrap's .container, .row, .col, .navbar, .btn, .bg-light, .text-center, .border-top, etc. If you need custom styles, use unique classNames or inline styles scoped to your components.
 
 const App = () => (
   <Router>
