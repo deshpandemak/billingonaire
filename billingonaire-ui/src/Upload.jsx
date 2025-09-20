@@ -80,7 +80,10 @@ const Upload = () => {
             xhr.onerror = () => reject(new Error('Network error during upload'));
             
             // Configure request
-            xhr.open('POST', '/api/upload-pdf', true);
+            const API_BASE_URL = import.meta.env.PROD 
+              ? "https://asia-south1-billingonaire.cloudfunctions.net/billingonaire-backend"
+              : "/api";
+            xhr.open('POST', `${API_BASE_URL}/upload-pdf`, true);
             xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
             
             // Send the file
