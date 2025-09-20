@@ -111,7 +111,7 @@ class Board:
                 for data in result:
                     if "HON'BLE" in data:
                         court_details = re.match(court_pattern, data)
-                        if court_details.group(1) is None:  
+                        if court_details is None or court_details.group(1) is None:  
                             continue
                         if count > 0:
                             matter_list.append(self.create_record(court_details=court_details.group(1).strip(), file_name=filename,
@@ -120,10 +120,10 @@ class Board:
                             count = count + 1
                     elif " * " in data:
                         stage = re.findall(case_stage1_pattern, data)
-
-                        matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
-                                       file_name=filename, board_date=board_date,
-                                       serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                        if stage and len(stage) > 0 and len(stage[0]) > 0:
+                            matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
+                                           file_name=filename, board_date=board_date,
+                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         
                     elif data.isnumeric():
                         serial_no = data
@@ -146,7 +146,7 @@ class Board:
             
             logging.error(f"Error reading board: {str(e)}")
             logging.error("Stack trace:", exc_info=True)
-            raise HTTPException(status_code=500, detail="Error reading board")
+            raise HTTPException(status_code=500, detail=f"Error reading board: {str(e)}")
 
     def saveData(self, df):
         logging.info("Saving data")

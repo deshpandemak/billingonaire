@@ -83,15 +83,27 @@ async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                logging.info(f"Starting upload processing for file: {file.filename}")
                 board = Board()
                 df = board.readFile(file.filename, file.file)
                 record_count = len(df) if df is not None else 0
-                board.saveData(df)
-                results.append({
-                    "filename": file.filename,
-                    "message": "Data saved successfully",
-                    "records_processed": record_count
-                })
+                logging.info(f"PDF processed successfully. Records found: {record_count}")
+                
+                if record_count > 0:
+                    board.saveData(df)
+                    logging.info(f"Data saved successfully for {file.filename}")
+                    results.append({
+                        "filename": file.filename,
+                        "message": "Data saved successfully",
+                        "records_processed": record_count
+                    })
+                else:
+                    logging.warning(f"No records found in {file.filename}")
+                    results.append({
+                        "filename": file.filename,
+                        "message": "No records found in PDF",
+                        "records_processed": 0
+                    })
                 break
             except ConnectionResetError as e:
                 logging.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
@@ -102,6 +114,8 @@ async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends
                     results.append({"filename": file.filename, "error": "Connection was reset by the remote host. Please try again later."})
                     break
             except Exception as e:
+                logging.error(f"Error processing {file.filename}: {str(e)}")
+                logging.error("Stack trace:", exc_info=True)
                 results.append({"filename": file.filename, "error": str(e)})
                 break
     return {"results": results}
