@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Container, Navbar, Nav, Button, Row, Col } from 'react-bootstrap';
+import { Container, Navbar, Nav, Button } from 'react-bootstrap';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -7,6 +7,8 @@ import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
 import Login from './Login';
+import LandingPage from './components/LandingPage';
+import './styles/professional.css';
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -23,36 +25,98 @@ const Layout = ({ children }) => {
   const handleLogout = async () => {
     await signOut(auth);
     setUser(null);
-    navigate('/login');
+    navigate('/');
   };
 
   const isLoginPage = location.pathname === '/login';
+  const isLandingPage = location.pathname === '/';
+  const isPublicPage = isLoginPage || isLandingPage;
 
   useEffect(() => {
-    if (!user && !isLoginPage) {
+    if (!user && !isPublicPage) {
       navigate('/login');
     }
-  }, [user, isLoginPage, navigate]);
+  }, [user, isPublicPage, navigate]);
 
+  // For login page, render without navigation
+  if (isLoginPage) {
+    return children;
+  }
+
+  // For landing page, show simplified navigation
+  if (isLandingPage) {
+    return (
+      <>
+        <Navbar className="navbar-professional" expand="lg" sticky="top">
+          <Container>
+            <Navbar.Brand as={Link} to="/" className="navbar-brand">
+              ⚖️ Billingonaire
+            </Navbar.Brand>
+            <Navbar.Toggle aria-controls="landing-navbar-nav" />
+            <Navbar.Collapse id="landing-navbar-nav">
+              <Nav className="ms-auto">
+                <Button 
+                  as={Link} 
+                  to="/login" 
+                  className="btn-professional btn-primary"
+                >
+                  Sign In
+                </Button>
+              </Nav>
+            </Navbar.Collapse>
+          </Container>
+        </Navbar>
+        {children}
+      </>
+    );
+  }
+
+  // For authenticated pages, show full navigation
   return (
     <>
-      <Navbar bg="primary" variant="dark" expand="lg" sticky="top">
-        <Container fluid>
-          <Navbar.Brand as={Link} to={user ? "/dashboard" : "/login"}>
-            Billingonaire
+      <Navbar className="navbar-professional" expand="lg" sticky="top">
+        <Container>
+          <Navbar.Brand as={Link} to="/dashboard" className="navbar-brand">
+            ⚖️ Billingonaire
           </Navbar.Brand>
-          {user && !isLoginPage && (
+          {user && (
             <>
               <Navbar.Toggle aria-controls="main-navbar-nav" />
               <Navbar.Collapse id="main-navbar-nav">
                 <Nav className="me-auto">
-                  <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
-                  <Nav.Link as={Link} to="/table">Table</Nav.Link>
-                  <Nav.Link as={Link} to="/upload">Upload</Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
+                    to="/dashboard"
+                    className={location.pathname === '/dashboard' ? 'active' : ''}
+                  >
+                    Dashboard
+                  </Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
+                    to="/upload"
+                    className={location.pathname === '/upload' ? 'active' : ''}
+                  >
+                    Upload Files
+                  </Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
+                    to="/table"
+                    className={location.pathname === '/table' ? 'active' : ''}
+                  >
+                    Search Data
+                  </Nav.Link>
                 </Nav>
-                <Button variant="outline-light" onClick={handleLogout}>
-                  Logout
-                </Button>
+                <div className="d-flex align-items-center gap-3">
+                  <span style={{ color: 'var(--gray-600)', fontSize: '0.875rem' }}>
+                    {user.email}
+                  </span>
+                  <Button 
+                    className="btn-professional btn-secondary"
+                    onClick={handleLogout}
+                  >
+                    Sign Out
+                  </Button>
+                </div>
               </Navbar.Collapse>
             </>
           )}
@@ -60,36 +124,43 @@ const Layout = ({ children }) => {
       </Navbar>
 
       {/* Main Content */}
-      <div className="flex-grow-1 d-flex align-items-center justify-content-center py-4" style={{ width: '100%' }}>
-        <Container fluid className="h-100 d-flex align-items-center justify-content-center">
-          <Row className="justify-content-center w-100">
-            <Col xs={12} sm={10} md={8} lg={6} xl={5} className="d-flex flex-column align-items-center justify-content-center">
-              {(user || isLoginPage) ? children : null}
-            </Col>
-          </Row>
-        </Container>
-      </div>
+      <main style={{ minHeight: 'calc(100vh - 120px)', backgroundColor: 'var(--gray-50)' }}>
+        {user ? children : null}
+      </main>
 
-      {/* Footer - full width */}
-      <div style={{ width: '100vw', position: 'relative', left: '50%', right: '50%', marginLeft: '-50vw', marginRight: '-50vw' }}>
-        <footer className="bg-light text-center text-muted py-3 mt-auto border-top w-100">
-          &copy; {new Date().getFullYear()} Billingonaire. All rights reserved.
-        </footer>
-      </div>
+      {/* Footer */}
+      <footer style={{ 
+        backgroundColor: 'var(--white)', 
+        borderTop: '1px solid var(--gray-200)',
+        padding: '1.5rem 0',
+        marginTop: 'auto'
+      }}>
+        <Container>
+          <div className="text-center">
+            <p style={{ 
+              color: 'var(--gray-600)', 
+              margin: 0, 
+              fontSize: '0.875rem' 
+            }}>
+              &copy; {new Date().getFullYear()} Billingonaire. Professional Legal Practice Management.
+            </p>
+          </div>
+        </Container>
+      </footer>
     </>
   );
 };
-// NOTE: If you have a global style file (e.g., app.css), ensure it does not override Bootstrap's .container, .row, .col, .navbar, .btn, .bg-light, .text-center, .border-top, etc. If you need custom styles, use unique classNames or inline styles scoped to your components.
 
 const App = () => (
   <Router>
     <Layout>
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
   </Router>

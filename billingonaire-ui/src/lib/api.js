@@ -1,5 +1,6 @@
 import { auth } from './firebase.js';
-import { API_BASE_URL } from '../config.js';
+
+const API_BASE_URL = "/api";
 
 // Helper function to make authenticated API calls
 export const authenticatedFetch = async (url, options = {}) => {
@@ -19,7 +20,7 @@ export const authenticatedFetch = async (url, options = {}) => {
       ...options.headers
     };
 
-    // Make the API call
+    // Make the API call - use API_BASE_URL prefix with Vite proxy
     const response = await fetch(`${API_BASE_URL}${url}`, {
       ...options,
       headers
