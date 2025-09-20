@@ -61,11 +61,15 @@ def get_current_user(request: Request):
     id_token = auth_header.split("Bearer ")[1]
     
     try:
-        # Verify the Firebase ID token
+        # Verify the Firebase ID token with more detailed error logging
+        logging.info(f"Attempting to verify ID token: {id_token[:20]}...")
         decoded_token = auth.verify_id_token(id_token)
+        logging.info(f"Token verified successfully for user: {decoded_token.get('uid')}")
         return decoded_token
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
+        logging.error(f"Token verification failed: {str(e)}")
+        logging.error(f"Token details: {id_token[:50]}...")
+        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
 
 # Login/logout endpoints removed - using Firebase client-side authentication
 
@@ -139,6 +143,10 @@ async def get_data(request: Request, current_user = Depends(get_current_user)):
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
+
+@app.get("/debug/auth-test")
+async def auth_test(current_user = Depends(get_current_user)):
+    return {"message": "Authentication successful", "user_id": current_user.get('uid')}
 
 @app.get("/debug/simple-db-check")
 async def simple_database_check():

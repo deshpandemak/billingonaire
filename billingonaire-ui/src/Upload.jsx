@@ -54,7 +54,7 @@ const Upload = () => {
           if (!user) {
             throw new Error('User not authenticated');
           }
-          const idToken = await user.getIdToken();
+          const idToken = await user.getIdToken(true); // Force refresh token
           
           // Create custom upload with progress tracking
           const uploadPromise = new Promise((resolve, reject) => {
