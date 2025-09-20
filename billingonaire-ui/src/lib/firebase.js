@@ -1,6 +1,6 @@
+// Firebase configuration for React app
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDPv9Tp-we4lIF81BIfyN3-p3yh2o52fAE",
@@ -13,7 +13,4 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-export { app, auth };
+export const auth = getAuth(app);

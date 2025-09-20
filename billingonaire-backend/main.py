@@ -50,59 +50,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_session(request: Request):
-    session_token = request.cookies.get("session")
-    if not session_token:
-        return None
-    return session_token
-
-def require_login(session_token: str = Depends(get_session)):
-    if not session_token:
-        return RedirectResponse(url="/login")
-
-@app.post("/login", tags=["Authentication"])
-async def login(request: Request):
-    data = await request.json()
-    email = data.get("email")
-    password = data.get("password")
-
-    logging.debug(f"Login attempt for email: {email}")
-
+def get_current_user(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+    
+    id_token = auth_header.split("Bearer ")[1]
+    
     try:
-        user = auth.get_user_by_email(email)
-        auth.verify_password(password, user.password_hash)
-        
-        db = firestore.client()
-        doc_ref = db.collection("roles").document(user.uid)
-        doc = doc_ref.get()
-        if doc.exists:
-            user_role = doc.to_dict().get("role")
-        else:
-            user_role = "user"
-        
-        auth.set_custom_user_claims(user.uid, {"role": user_role})
-        
-        session_cookie = auth.create_session_cookie(user.uid)
-        response = JSONResponse(content={"message": "Login successful"})
-        response.set_cookie(key="session", value=session_cookie, httponly=True)
-        logging.info(f"Login successful for email: {email}")
-        return response
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(id_token)
+        return decoded_token
     except Exception as e:
-        logging.error(f"Login failed for email: {email}, error: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
-@app.post("/logout", tags=["Authentication"])
-async def logout(request: Request):
-    response = JSONResponse(content={"message": "Logout successful"})
-    response.delete_cookie("session")
-    return response
+# Login/logout endpoints removed - using Firebase client-side authentication
 
-@app.get("/", tags=["Root"], dependencies=[Depends(require_login)])
+@app.get("/", tags=["Root"])
 async def read_root():
     return {"message": "Hello, World!"}
 
-@app.post("/upload-pdf", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def upload_pdf(files: List[UploadFile] = File(...)):
+@app.post("/upload-pdf", tags=["PDF Upload"])
+async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends(get_current_user)):
     results = []
     for file in files:
         if file.content_type != "application/pdf":
@@ -134,8 +103,8 @@ async def upload_pdf(files: List[UploadFile] = File(...)):
                 break
     return {"results": results}
 
-@app.post("/save-data", tags=["PDF Upload"], dependencies=[Depends(require_login)])
-async def save_data(data: dict):
+@app.post("/save-data", tags=["PDF Upload"])
+async def save_data(data: dict, current_user = Depends(get_current_user)):
     try:
         board = Board()
         df = pd.DataFrame(data['data'])
@@ -144,8 +113,8 @@ async def save_data(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/get-data", tags=["Data Retrieval"], dependencies=[Depends(require_login)])
-async def get_data(request: Request):
+@app.post("/get-data", tags=["Data Retrieval"])
+async def get_data(request: Request, current_user = Depends(get_current_user)):
     try:
         search_criteria = await request.json()
         board = Board()
@@ -157,18 +126,18 @@ async def get_data(request: Request):
 # Dashboard endpoints (with authentication)
 dashboard_data = DashboardData()
 
-@app.get("/dashboard/weekly-status", dependencies=[Depends(require_login)])
-async def dashboard_weekly_status(start_date: str = Query(None), end_date: str = Query(None)):
+@app.get("/dashboard/weekly-status")
+async def dashboard_weekly_status(start_date: str = Query(None), end_date: str = Query(None), current_user = Depends(get_current_user)):
     data = await dashboard_data.get_weekly_status(start_date, end_date)
     return JSONResponse(content=data)
 
-@app.get("/dashboard/agp-stats", dependencies=[Depends(require_login)])
-async def dashboard_agp_stats(agp_name: str = Query(None)):
+@app.get("/dashboard/agp-stats")
+async def dashboard_agp_stats(agp_name: str = Query(None), current_user = Depends(get_current_user)):
     data = await dashboard_data.get_agp_stats(agp_name)
     return JSONResponse(content=data)
 
-@app.get("/dashboard/monthly-avg", dependencies=[Depends(require_login)])
-async def dashboard_monthly_avg(year: str = Query(None)):
+@app.get("/dashboard/monthly-avg")
+async def dashboard_monthly_avg(year: str = Query(None), current_user = Depends(get_current_user)):
     data = await dashboard_data.get_monthly_avg(year)
     return JSONResponse(content=data)
 

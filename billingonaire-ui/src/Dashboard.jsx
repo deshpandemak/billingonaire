@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE_URL } from './config';
+import { authenticatedFetchJSON } from './lib/api';
 import { Container } from 'react-bootstrap';
 
 const Dashboard = () => {
@@ -21,42 +21,42 @@ const Dashboard = () => {
 
   // Fetch weekly board status
   const fetchWeeklyStatus = async () => {
-    let url = `${API_BASE_URL}/dashboard/weekly-status`;
+    let url = `/dashboard/weekly-status`;
     const params = [];
     if (weeklyRange.start) params.push(`start_date=${weeklyRange.start}`);
     if (weeklyRange.end) params.push(`end_date=${weeklyRange.end}`);
     if (params.length) url += `?${params.join('&')}`;
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch weekly status');
-      setWeeklyStatus(await response.json());
+      const data = await authenticatedFetchJSON(url);
+      setWeeklyStatus(data);
     } catch (e) {
+      console.error('Failed to fetch weekly status:', e);
       setWeeklyStatus([]);
     }
   };
 
   // Fetch AGP wise data
   const fetchAgpStats = async () => {
-    let url = `${API_BASE_URL}/dashboard/agp-stats`;
+    let url = `/dashboard/agp-stats`;
     if (agpName) url += `?agp_name=${encodeURIComponent(agpName)}`;
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch AGP stats');
-      setAgpStats(await response.json());
+      const data = await authenticatedFetchJSON(url);
+      setAgpStats(data);
     } catch (e) {
+      console.error('Failed to fetch AGP stats:', e);
       setAgpStats([]);
     }
   };
 
   // Fetch monthly average matters per AGP
   const fetchMonthlyAvg = async () => {
-    let url = `${API_BASE_URL}/dashboard/monthly-avg`;
+    let url = `/dashboard/monthly-avg`;
     if (year) url += `?year=${year}`;
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch monthly avg');
-      setMonthlyAvg(await response.json());
+      const data = await authenticatedFetchJSON(url);
+      setMonthlyAvg(data);
     } catch (e) {
+      console.error('Failed to fetch monthly avg:', e);
       setMonthlyAvg([]);
     }
   };
