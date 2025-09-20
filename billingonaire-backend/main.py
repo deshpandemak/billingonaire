@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
 from Dashboard import DashboardData
 from CourtScraper import BombayHighCourtScraper
+from OrderManager import OrderManager
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -29,7 +30,8 @@ app = FastAPI(
         {"name": "Data Retrieval", "description": "Retrieve stored data"},
         {"name": "Authentication", "description": "User authentication"},
         {"name": "Case Status", "description": "Retrieve case status from Bombay High Court"},
-        {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"}
+        {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"},
+        {"name": "Order Management", "description": "Manage court order linking and states"}
     ]
 )
 
@@ -187,6 +189,7 @@ async def dashboard_monthly_avg(year: str = Query(None), current_user = Depends(
 
 # Court integration endpoints
 court_scraper = BombayHighCourtScraper()
+order_manager = OrderManager()
 
 @app.get("/court/case-details", tags=["Case Status"])
 async def get_case_details(
@@ -259,6 +262,106 @@ async def batch_case_lookup(
         return JSONResponse(
             status_code=500,
             content={"error": f"Batch lookup failed: {str(e)}", "total_cases": len(case_refs)}
+        )
+
+# Order Management endpoints
+@app.get("/orders/cases-without-orders", tags=["Order Management"])
+async def get_cases_without_orders(
+    limit: int = Query(100, description="Number of cases to return"),
+    offset: int = Query(0, description="Pagination offset"),
+    current_user = Depends(get_current_user)
+):
+    """
+    Get cases from board data that don't have linked orders
+    Used for order management interface
+    """
+    try:
+        result = order_manager.get_cases_without_orders(limit, offset)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"Error fetching cases without orders: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch cases: {str(e)}"}
+        )
+
+@app.post("/orders/create-link", tags=["Order Management"])
+async def create_order_link(
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """
+    Create or update an order link for a case
+    Body should contain: case_id, status, order_link, order_text, court_bench, notes
+    """
+    try:
+        order_data = await request.json()
+        case_id = order_data.get("case_id")
+        
+        if not case_id:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "case_id is required"}
+            )
+        
+        result = order_manager.create_order_link(case_id, order_data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"Error creating order link: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to create order link: {str(e)}"}
+        )
+
+@app.put("/orders/update-status", tags=["Order Management"])
+async def update_order_status(
+    case_id: str = Query(..., description="Case document ID"),
+    status: str = Query(..., description="Order status: linked, failed, manually_uploaded, not_present"),
+    notes: str = Query("", description="Optional notes"),
+    current_user = Depends(get_current_user)
+):
+    """Update the status of an order"""
+    try:
+        result = order_manager.update_order_status(case_id, status, notes)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"Error updating order status: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to update status: {str(e)}"}
+        )
+
+@app.get("/orders/by-status", tags=["Order Management"])
+async def get_orders_by_status(
+    status: str = Query(..., description="Order status to filter by"),
+    limit: int = Query(100, description="Maximum number of orders"),
+    current_user = Depends(get_current_user)
+):
+    """Get all orders with a specific status"""
+    try:
+        orders = order_manager.get_orders_by_status(status, limit)
+        return JSONResponse(content={"orders": orders, "count": len(orders)})
+    except Exception as e:
+        logging.error(f"Error fetching orders by status: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch orders: {str(e)}"}
+        )
+
+@app.get("/orders/case-details/{case_id}", tags=["Order Management"])
+async def get_case_with_order_info(
+    case_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get complete case information including order status"""
+    try:
+        result = order_manager.get_case_with_order_info(case_id)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"Error fetching case with order info: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch case details: {str(e)}"}
         )
 
 client = TestClient(app)
