@@ -18,6 +18,7 @@ class OrderManager:
     def get_cases_without_orders(self, limit: int = 100, offset: int = 0) -> Dict:
         """
         Fetch cases from board data that don't have linked orders
+        Only includes cases with status 'not_present' or 'failed' for reprocessing
         
         Args:
             limit: Number of cases to return
@@ -27,9 +28,9 @@ class OrderManager:
             Dictionary with cases and pagination info
         """
         try:
-            # Get all board cases
+            # Get board cases efficiently
             board_query = (self.db.collection(self.boards_collection)
-                          .limit(limit)
+                          .limit(limit * 2)  # Get more to account for filtering
                           .offset(offset)
                           .stream())
             
@@ -41,32 +42,46 @@ class OrderManager:
                 case_data = doc.to_dict()
                 case_id = doc.id
                 
-                # Check if this case has an order
-                order_exists = self._check_order_exists(case_id)
+                # Check order status - include cases without orders or failed attempts
+                order_info = self.get_order_details(case_id)
+                order_status = order_info.get("status", "not_present")
                 
-                if not order_exists:
+                # Only include cases that need order linking
+                if order_status in ["not_present", "failed"]:
                     # Format case reference for court lookup
                     case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+                    
+                    # Convert Firebase datetime to string for JSON serialization
+                    board_date = case_data.get("board_date")
+                    if hasattr(board_date, 'strftime'):
+                        board_date = board_date.strftime('%Y-%m-%d')
+                    elif hasattr(board_date, 'isoformat'):
+                        board_date = board_date.isoformat()[:10]  # Get just date part
                     
                     case_info = {
                         "id": case_id,
                         "case_ref": case_ref,
-                        "board_date": case_data.get("board_date"),
+                        "board_date": board_date,
                         "case_type": case_data.get("case_type"),
                         "case_no": case_data.get("case_no"),
                         "case_year": case_data.get("case_year"),
                         "petitioner_lawyer": case_data.get("petitioner_lawyer"),
                         "respondent_lawyer": case_data.get("respondent_lawyer"),
                         "file_name": case_data.get("file_name"),
-                        "order_status": "not_present"
+                        "order_status": order_status,
+                        "order_notes": order_info.get("notes", "")
                     }
                     cases_without_orders.append(case_info)
+                
+                # Stop when we have enough cases
+                if len(cases_without_orders) >= limit:
+                    break
             
             return {
                 "cases": cases_without_orders,
                 "total_returned": len(cases_without_orders),
                 "total_processed": total_processed,
-                "has_more": total_processed == limit,
+                "has_more": len(cases_without_orders) == limit,
                 "offset": offset
             }
             
@@ -187,6 +202,13 @@ class OrderManager:
             
             case_data = case_doc.to_dict()
             case_data["id"] = case_id
+            
+            # Convert Firebase datetime to string for JSON serialization
+            board_date = case_data.get("board_date")
+            if hasattr(board_date, 'strftime'):
+                case_data["board_date"] = board_date.strftime('%Y-%m-%d')
+            elif hasattr(board_date, 'isoformat'):
+                case_data["board_date"] = board_date.isoformat()[:10]  # Get just date part
             
             # Get order information
             order_info = self.get_order_details(case_id)
