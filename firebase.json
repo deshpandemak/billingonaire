@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "billingonaire-ui/src-react/dist",
+    "public": "billingonaire-ui/dist",
     "ignore": [
       "firebase.json",
       "**/.*",
