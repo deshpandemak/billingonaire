@@ -39,8 +39,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://billingonaire.web.app",
+        "http://localhost:5000",
         "http://localhost:5173",
-        "http://localhost:5174"
+        "http://localhost:5174",
+        "https://2856c3cf-582f-4f2b-a0f3-cae6a5c3b647-00-5mlgokfyfmx.pike.replit.dev",
+        "http://2856c3cf-582f-4f2b-a0f3-cae6a5c3b647-00-5mlgokfyfmx.pike.replit.dev"
     ],
     allow_credentials=True,
     allow_methods=["*"],
