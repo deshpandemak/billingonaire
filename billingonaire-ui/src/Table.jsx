@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE_URL } from './config';
-import { Container, Row, Col, Table as RBTable, Button, Form, Collapse, Card } from 'react-bootstrap';
+import { AgGridReact } from 'ag-grid-react';
+import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-alpine.css';
+import { authenticatedFetch } from './lib/api';
+import './styles/professional.css';
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([AllCommunityModule]);
 
 const Table = () => {
   const [data, setData] = useState([]);
@@ -30,33 +37,38 @@ const Table = () => {
       return;
     }
     try {
-      const response = await fetch(`${API_BASE_URL}/get-data`, {
+      const result = await authenticatedFetch('/get-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(criteria)
+        body: JSON.stringify({
+          start_date: criteria.startDate,
+          end_date: criteria.endDate,
+          advocate_name: criteria.advocateName,
+          case_number: criteria.caseNumber,
+          case_type: criteria.caseType,
+          case_year: criteria.caseYear,
+          case_stage: criteria.caseStage
+        })
       });
-      if (!response.ok) throw new Error('Failed to fetch data');
-      const result = await response.json();
       setData(result);
       setEditedData(JSON.parse(JSON.stringify(result)));
     } catch (e) {
-      console.error(e);
+      console.error('Search failed:', e);
+      alert('Search failed. Please check your criteria and try again.');
     }
   };
 
   const saveData = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/save-data`, {
+      await authenticatedFetch('/save-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editedData),
-        credentials: 'include'
+        body: JSON.stringify(editedData)
       });
-      if (!response.ok) throw new Error('Failed to save data');
-      await response.json();
-      // Optionally show a message
+      alert('Data saved successfully!');
     } catch (e) {
       console.error('Failed to save data:', e.message);
+      alert('Failed to save data. Please try again.');
     }
   };
 
@@ -72,161 +84,323 @@ const Table = () => {
     setEditedData((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const columns = [
-    { key: 'Date', label: 'Date', editable: true },
-    { key: 'Case Type', label: 'Case Type', editable: true },
-    { key: 'Case Number', label: 'Case Number', editable: true },
-    { key: 'Case Year', label: 'Case Year', editable: true },
-    { key: 'Case Stage', label: 'Case Stage', editable: true },
-    { key: 'Advocate Name', label: 'Advocate Name', editable: true },
-    { key: 'Actions', label: 'Actions', editable: false }
+  // AG Grid column definitions
+  const columnDefs = [
+    { 
+      headerName: 'Board Date', 
+      field: 'board_date', 
+      sortable: true, 
+      filter: 'agDateColumnFilter',
+      editable: true,
+      width: 150
+    },
+    { 
+      headerName: 'Case Type', 
+      field: 'case_type', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      editable: true,
+      width: 120
+    },
+    { 
+      headerName: 'Case Number', 
+      field: 'case_no', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      editable: true,
+      width: 150
+    },
+    { 
+      headerName: 'Case Year', 
+      field: 'case_year', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      editable: true,
+      width: 120
+    },
+    { 
+      headerName: 'Petitioner', 
+      field: 'petitioner_name', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      editable: true,
+      width: 200
+    },
+    { 
+      headerName: 'Respondent', 
+      field: 'respondent_name', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      editable: true,
+      width: 200
+    },
+    { 
+      headerName: 'AGP Name', 
+      field: 'agp_name', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      editable: true,
+      width: 180
+    },
+    { 
+      headerName: 'Court Order', 
+      field: 'court_order', 
+      sortable: true, 
+      filter: 'agSetColumnFilter',
+      editable: true,
+      width: 150,
+      cellStyle: params => {
+        if (params.value === 'DISPOSAL') return { backgroundColor: '#d4edda', color: '#155724' };
+        if (params.value === 'ADJOURNMENT') return { backgroundColor: '#fff3cd', color: '#856404' };
+        if (params.value === 'HEARD & ADJRN') return { backgroundColor: '#cce7ff', color: '#004085' };
+        return null;
+      }
+    },
+    { 
+      headerName: 'Actions', 
+      field: 'actions',
+      cellRenderer: 'deleteButtonRenderer',
+      width: 100,
+      pinned: 'right'
+    }
   ];
 
+  // Custom cell renderer for delete button
+  const DeleteButtonRenderer = (props) => {
+    const handleDelete = () => {
+      const rowIndex = props.rowIndex;
+      setEditedData(prev => prev.filter((_, i) => i !== rowIndex));
+    };
+
+    return (
+      <button 
+        className="btn-professional btn-danger" 
+        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+        onClick={handleDelete}
+      >
+        Delete
+      </button>
+    );
+  };
+
+  const components = {
+    deleteButtonRenderer: DeleteButtonRenderer
+  };
+
   return (
-    <Container fluid className="py-4">
-      <Row>
-        {/* Collapsible Search Criteria Pane */}
-        <Col xs="auto" className="pe-0">
-          <Button
-            variant="primary"
-            onClick={() => setSearchOpen(open => !open)}
-            aria-controls="search-collapse"
-            aria-expanded={searchOpen}
-            style={{ minHeight: 40, marginBottom: 10 }}
-          >
-            {searchOpen ? '<' : '>'}
-          </Button>
-          <Collapse in={searchOpen}>
-            <div id="search-collapse">
-              <Card style={{ width: 300, minHeight: 400 }}>
-                <Card.Body>
-                  <Card.Title>Search Criteria</Card.Title>
-                  <Form>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Start Date</Form.Label>
-                      <Form.Control
-                        type="date"
-                        value={searchCriteria.startDate}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, startDate: e.target.value }))}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>End Date</Form.Label>
-                      <Form.Control
-                        type="date"
-                        value={searchCriteria.endDate}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, endDate: e.target.value }))}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Advocate Name</Form.Label>
-                      <Form.Control
-                        type="text"
-                        value={searchCriteria.advocateName}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, advocateName: e.target.value }))}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Case Number</Form.Label>
-                      <Form.Control
-                        type="text"
-                        value={searchCriteria.caseNumber}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, caseNumber: e.target.value }))}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Case Type</Form.Label>
-                      <Form.Select
-                        value={searchCriteria.caseType}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, caseType: e.target.value }))}
-                      >
-                        <option value="">Select Case Type</option>
-                        <option value="WP">WP</option>
-                        <option value="IA">IA</option>
-                        <option value="CP">CP</option>
-                        <option value="PIL">PIL</option>
-                        <option value="CAW">CAW</option>
-                      </Form.Select>
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Case Year</Form.Label>
-                      <Form.Control
-                        type="text"
-                        value={searchCriteria.caseYear}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, caseYear: e.target.value }))}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-2">
-                      <Form.Label>Case Stage</Form.Label>
-                      <Form.Select
-                        value={searchCriteria.caseStage}
-                        onChange={e => setSearchCriteria(sc => ({ ...sc, caseStage: e.target.value }))}
-                      >
-                        <option value="">Select Case Stage</option>
-                        <option value="Registration">Registration</option>
-                        <option value="Stamp">Stamp</option>
-                      </Form.Select>
-                    </Form.Group>
-                    <Button variant="success" className="mt-2 w-100" onClick={() => fetchData()}>
-                      Search
-                    </Button>
-                  </Form>
-                </Card.Body>
-              </Card>
+    <div className="dashboard-container">
+      <div className="dashboard-header">
+        <h1 className="dashboard-title">🔍 Advanced Search & Data Management</h1>
+        <p className="dashboard-subtitle">
+          Search court cases and AGP assignments with powerful filters and professional data grid
+        </p>
+      </div>
+
+      <div className="dashboard-section">
+        {/* Elegant Search Criteria Card */}
+        <div className="card-professional" style={{ marginBottom: 'var(--spacing-xl)' }}>
+          <div className="card-header">
+            <h2 className="section-title">📋 Search Criteria</h2>
+            <button 
+              className="btn-professional btn-secondary"
+              onClick={() => setSearchOpen(!searchOpen)}
+              style={{ fontSize: '0.875rem' }}
+            >
+              {searchOpen ? 'Hide Filters' : 'Show Filters'}
+            </button>
+          </div>
+          {searchOpen && (
+            <div className="card-body">
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
+                gap: 'var(--spacing-lg)',
+                marginBottom: 'var(--spacing-lg)'
+              }}>
+                <div className="form-group">
+                  <label className="form-label">Start Date</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={searchCriteria.startDate}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, startDate: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">End Date</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={searchCriteria.endDate}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, endDate: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">AGP/Advocate Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Enter advocate name..."
+                    value={searchCriteria.advocateName}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, advocateName: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Case Number</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Enter case number..."
+                    value={searchCriteria.caseNumber}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, caseNumber: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Case Type</label>
+                  <select
+                    className="form-control"
+                    value={searchCriteria.caseType}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, caseType: e.target.value }))}
+                  >
+                    <option value="">All Case Types</option>
+                    <option value="WP">WP - Writ Petition</option>
+                    <option value="IA">IA - Interim Application</option>
+                    <option value="CP">CP - Civil Petition</option>
+                    <option value="PIL">PIL - Public Interest Litigation</option>
+                    <option value="CAW">CAW - Civil Appeal Writ</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Case Year</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    placeholder="e.g., 2025"
+                    value={searchCriteria.caseYear}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, caseYear: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Case Stage</label>
+                  <select
+                    className="form-control"
+                    value={searchCriteria.caseStage}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, caseStage: e.target.value }))}
+                  >
+                    <option value="">All Stages</option>
+                    <option value="Registration">Registration</option>
+                    <option value="Stamp">Stamp</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
+                  <button 
+                    className="btn-professional btn-primary"
+                    onClick={() => fetchData()}
+                    style={{ flex: 1 }}
+                  >
+                    🔍 Search Cases
+                  </button>
+                  <button 
+                    className="btn-professional btn-secondary"
+                    onClick={() => {
+                      setSearchCriteria({
+                        startDate: '',
+                        endDate: '',
+                        advocateName: '',
+                        caseNumber: '',
+                        caseType: '',
+                        caseYear: '',
+                        caseStage: ''
+                      });
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
             </div>
-          </Collapse>
-        </Col>
-        {/* Data Table */}
-        <Col>
-          <h1>Table Data</h1>
-          <div className="overflow-auto">
-            <RBTable striped bordered hover responsive>
-              <thead>
-                <tr>
-                  {columns.map(column => (
-                    <th key={column.key}>{column.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {editedData.map((row, index) => (
-                  <tr key={index}>
-                    {columns.map(column => (
-                      <td key={column.key}>
-                        {column.key === 'Actions' ? (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => deleteRow(index)}
-                          >
-                            Delete
-                          </Button>
-                        ) : (
-                          <Form.Control
-                            type="text"
-                            value={row[column.key] || ''}
-                            onChange={e => {
-                              const value = e.target.value;
-                              setEditedData(prev => prev.map((r, i) => i === index ? { ...r, [column.key]: value } : r));
-                            }}
-                            size="sm"
-                          />
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </RBTable>
+          )}
+        </div>
+
+        {/* Professional AG Grid */}
+        <div className="card-professional">
+          <div className="card-header">
+            <h2 className="section-title">📊 Case Data ({data.length} records)</h2>
+            <div style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
+              <button 
+                className="btn-professional btn-success"
+                onClick={addRow}
+                style={{ fontSize: '0.875rem' }}
+              >
+                + Add Row
+              </button>
+              <button 
+                className="btn-professional btn-primary"
+                onClick={saveData}
+                style={{ fontSize: '0.875rem' }}
+              >
+                💾 Save Changes
+              </button>
+              <button 
+                className="btn-professional btn-secondary"
+                onClick={cancelEdit}
+                style={{ fontSize: '0.875rem' }}
+              >
+                ↶ Cancel
+              </button>
+            </div>
           </div>
-          <div className="d-flex gap-2 mt-3">
-            <Button variant="success" onClick={addRow}>Add Row</Button>
-            <Button variant="primary" onClick={saveData}>Save</Button>
-            <Button variant="secondary" onClick={cancelEdit}>Cancel</Button>
+          <div className="card-body" style={{ padding: 0 }}>
+            <div 
+              className="ag-theme-alpine"
+              style={{ 
+                height: '600px', 
+                width: '100%',
+                '--ag-font-family': 'var(--font-main)',
+                '--ag-font-size': '14px',
+                '--ag-header-background-color': 'var(--gray-50)',
+                '--ag-header-foreground-color': 'var(--gray-900)',
+                '--ag-odd-row-background-color': 'var(--gray-25)',
+                '--ag-border-color': 'var(--gray-200)'
+              }}
+            >
+              <AgGridReact
+                rowData={editedData}
+                columnDefs={columnDefs}
+                components={components}
+                defaultColDef={{
+                  flex: 1,
+                  minWidth: 100,
+                  resizable: true,
+                  sortable: true,
+                  filter: true,
+                  editable: false
+                }}
+                gridOptions={{
+                  enableRangeSelection: true,
+                  enableColResize: true,
+                  enableSorting: true,
+                  enableFilter: true,
+                  rowSelection: 'multiple',
+                  animateRows: true,
+                  pagination: true,
+                  paginationPageSize: 50,
+                  domLayout: 'normal'
+                }}
+                onCellValueChanged={(params) => {
+                  const rowIndex = params.rowIndex;
+                  const field = params.colDef.field;
+                  const newValue = params.newValue;
+                  setEditedData(prev => prev.map((row, index) => 
+                    index === rowIndex ? { ...row, [field]: newValue } : row
+                  ));
+                }}
+              />
+            </div>
           </div>
-        </Col>
-      </Row>
-    </Container>
+        </div>
+      </div>
+    </div>
   );
 };
 
