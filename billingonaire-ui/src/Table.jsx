@@ -41,13 +41,13 @@ const Table = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          start_date: criteria.startDate,
-          end_date: criteria.endDate,
-          advocate_name: criteria.advocateName,
-          case_number: criteria.caseNumber,
-          case_type: criteria.caseType,
-          case_year: criteria.caseYear,
-          case_stage: criteria.caseStage
+          startDate: criteria.startDate,
+          endDate: criteria.endDate,
+          advocateName: criteria.advocateName,
+          caseNumber: criteria.caseNumber,
+          caseType: criteria.caseType,
+          caseYear: criteria.caseYear,
+          caseStage: criteria.caseStage
         })
       });
       setData(result);
