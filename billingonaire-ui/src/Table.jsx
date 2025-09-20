@@ -381,7 +381,6 @@ const Table = () => {
                   pagination: true,
                   paginationPageSize: 50,
                   domLayout: 'normal',
-                  cellSelection: true,
                   rowSelection: { mode: 'multiRow' }
                 }}
                 onCellValueChanged={(params) => {
