@@ -50,10 +50,6 @@ outputType = "webview"
 localPort = 5000
 externalPort = 80
 
-[[ports]]
-localPort = 33329
-externalPort = 3000
-
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "cd billingonaire-backend && uvicorn main:app --host 0.0.0.0 --port 8000 & cd billingonaire-ui && npm run preview -- --host 0.0.0.0 --port 5000"]
