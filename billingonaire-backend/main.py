@@ -123,32 +123,47 @@ async def get_data(request: Request, current_user = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=(str(e)))
 
-@app.get("/debug/database-info", tags=["Debug"])
-async def database_info(current_user = Depends(get_current_user)):
+@app.get("/debug/simple-db-check")
+async def simple_database_check():
     try:
         board = Board()
-        # Get total count
-        all_docs = list(board.db.collection("daily-boards").limit(100).stream())
+        
+        # Get all documents
+        all_docs = list(board.db.collection("daily-boards").limit(10).stream())
         
         # Get sample documents
         sample_docs = []
-        for i, doc in enumerate(all_docs[:3]):
+        case_years_found = []
+        
+        for doc in all_docs:
             doc_data = doc.to_dict()
+            case_year = doc_data.get('case_year')
+            case_years_found.append(case_year)
+            
             # Convert datetime to string for JSON serialization
             if 'board_date' in doc_data and hasattr(doc_data['board_date'], 'strftime'):
                 doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
+            
             sample_docs.append({
                 "document_id": doc.id,
-                "data": doc_data
+                "case_year": case_year,
+                "case_year_type": str(type(case_year)),
+                "board_date": doc_data.get('board_date'),
+                "all_fields": list(doc_data.keys())
             })
+        
+        # Test query for case_year = "2025"
+        test_query = board.db.collection("daily-boards").where(filter=firestore.FieldFilter("case_year", "==", "2025"))
+        test_results = list(test_query.stream())
         
         return {
             "total_documents": len(all_docs),
-            "sample_documents": sample_docs,
-            "database_status": "connected" if all_docs else "empty_or_connection_issue"
+            "case_years_found": case_years_found,
+            "test_query_for_2025_results": len(test_results),
+            "sample_documents": sample_docs[:3],
+            "database_status": "connected" if all_docs else "empty"
         }
     except Exception as e:
-        logging.error(f"Database debug error: {str(e)}")
         return {"error": str(e), "database_status": "error"}
 
 # Dashboard endpoints (with authentication)

@@ -171,20 +171,27 @@ class Board:
             raise HTTPException(status_code=500, detail="Error saving data")
 
     def getData(self, search_criteria):
+        print("=== SEARCH DEBUG START ===")
+        print(f"Search criteria received: {search_criteria}")
         logging.info("=== SEARCH DEBUG START ===")
         logging.info(f"Search criteria received: {search_criteria}")
         try:
             # First, check total documents in collection
             all_docs = list(self.db.collection("daily-boards").limit(5).stream())
+            print(f"TOTAL DOCUMENTS IN DATABASE: {len(all_docs)}")
             logging.info(f"TOTAL DOCUMENTS IN DATABASE: {len(all_docs)}")
             
             if all_docs:
                 sample_doc = all_docs[0].to_dict()
+                print(f"Sample document fields: {list(sample_doc.keys())}")
+                print(f"Sample board_date: {sample_doc.get('board_date')}")
+                print(f"Sample case_year: {sample_doc.get('case_year')}")
                 logging.info(f"Sample document fields: {list(sample_doc.keys())}")
                 logging.info(f"Sample board_date: {sample_doc.get('board_date')}")
                 logging.info(f"Sample case_year: {sample_doc.get('case_year')}")
                 logging.info(f"Sample case_type: {sample_doc.get('case_type')}")
             else:
+                print("NO DOCUMENTS FOUND IN DATABASE!")
                 logging.warning("NO DOCUMENTS FOUND IN DATABASE!")
             
             if not any(search_criteria.values()):
@@ -227,6 +234,7 @@ class Board:
                     # Convert to string if it's a number
                     if isinstance(case_year, (int, float)):
                         case_year = str(int(case_year))
+                    print(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
                     logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
                     query = query.where(filter=firestore.FieldFilter("case_year", "==", case_year))
 
@@ -239,11 +247,15 @@ class Board:
                     doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
                 data.append(doc_data)
 
+            print(f"=== QUERY RESULTS: {len(data)} records found ===")
             logging.info(f"=== QUERY RESULTS: {len(data)} records found ===")
             if data:
+                print(f"First result sample: {data[0]}")
                 logging.info(f"First result sample: {data[0]}")
             else:
+                print("NO RECORDS MATCHED THE SEARCH CRITERIA!")
                 logging.warning("NO RECORDS MATCHED THE SEARCH CRITERIA!")
+            print("=== SEARCH DEBUG END ===")
             logging.info("=== SEARCH DEBUG END ===")
             return data
         except Exception as e:
