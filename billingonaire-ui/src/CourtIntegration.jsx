@@ -192,6 +192,7 @@ const CourtIntegration = () => {
                     onChange={(e) => setBench(e.target.value)}
                   >
                     <option value="mumbai">Mumbai (Original Side)</option>
+                    <option value="mumbai_appellate">Mumbai (Appellate Side)</option>
                     <option value="aurangabad">Aurangabad Bench</option>
                     <option value="nagpur">Nagpur Bench</option>
                     <option value="goa">Goa Bench</option>

@@ -191,7 +191,7 @@ court_scraper = BombayHighCourtScraper()
 @app.get("/court/case-details", tags=["Case Status"])
 async def get_case_details(
     case_ref: str = Query(..., description="Case reference like 'WP/294/2025'"),
-    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    bench: str = Query("mumbai", description="Court bench: mumbai, mumbai_appellate, aurangabad, nagpur, goa"),
     current_user = Depends(get_current_user)
 ):
     """
@@ -212,7 +212,7 @@ async def get_case_details(
 async def get_case_orders(
     case_ref: str = Query(..., description="Case reference like 'WP/294/2025'"),
     date: str = Query(None, description="Specific date in YYYY-MM-DD format"),
-    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    bench: str = Query("mumbai", description="Court bench: mumbai, mumbai_appellate, aurangabad, nagpur, goa"),
     current_user = Depends(get_current_user)
 ):
     """
@@ -232,7 +232,7 @@ async def get_case_orders(
 @app.post("/court/batch-case-lookup", tags=["Case Status"])
 async def batch_case_lookup(
     case_refs: List[str],
-    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    bench: str = Query("mumbai", description="Court bench: mumbai, mumbai_appellate, aurangabad, nagpur, goa"),
     current_user = Depends(get_current_user)
 ):
     """

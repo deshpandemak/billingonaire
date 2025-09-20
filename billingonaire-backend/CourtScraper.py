@@ -67,10 +67,11 @@ class BombayHighCourtScraper:
             
             # Set court code based on bench
             bench_codes = {
-                "mumbai": "2",      # Original Side, Mumbai
-                "aurangabad": "3",  # Aurangabad Bench 
-                "nagpur": "4",      # Nagpur Bench
-                "goa": "5"          # Goa Bench
+                "mumbai": "2",          # Original Side, Mumbai
+                "mumbai_appellate": "1", # Appellate Side, Mumbai  
+                "aurangabad": "3",      # Aurangabad Bench 
+                "nagpur": "4",          # Nagpur Bench
+                "goa": "5"              # Goa Bench
             }
             court_code = bench_codes.get(bench.lower(), "2")
             
@@ -191,10 +192,11 @@ class BombayHighCourtScraper:
             
             # Set court code based on bench (same as case details)
             bench_codes = {
-                "mumbai": "2",      # Original Side, Mumbai
-                "aurangabad": "3",  # Aurangabad Bench 
-                "nagpur": "4",      # Nagpur Bench
-                "goa": "5"          # Goa Bench
+                "mumbai": "2",          # Original Side, Mumbai
+                "mumbai_appellate": "1", # Appellate Side, Mumbai
+                "aurangabad": "3",      # Aurangabad Bench 
+                "nagpur": "4",          # Nagpur Bench
+                "goa": "5"              # Goa Bench
             }
             court_code = bench_codes.get(bench.lower(), "2")
             
