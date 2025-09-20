@@ -3,7 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
-import { authenticatedFetch } from './lib/api';
+import { authenticatedFetchJSON } from './lib/api';
 import './styles/professional.css';
 
 // Register AG Grid modules
@@ -37,7 +37,7 @@ const Table = () => {
       return;
     }
     try {
-      const result = await authenticatedFetch('/get-data', {
+      const result = await authenticatedFetchJSON('/get-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -50,8 +50,12 @@ const Table = () => {
           caseStage: criteria.caseStage
         })
       });
+      console.log('🔍 API Response received:', result);
+      console.log('📊 Data type:', typeof result, 'Length:', Array.isArray(result) ? result.length : 'Not array');
+      console.log('📋 First 3 records:', Array.isArray(result) ? result.slice(0, 3) : result);
       setData(result);
       setEditedData(JSON.parse(JSON.stringify(result)));
+      console.log('✅ Data set to state. Current data length:', Array.isArray(result) ? result.length : 'Not array');
     } catch (e) {
       console.error('Search failed:', e);
       alert('Search failed. Please check your criteria and try again.');
@@ -60,7 +64,7 @@ const Table = () => {
 
   const saveData = async () => {
     try {
-      await authenticatedFetch('/save-data', {
+      await authenticatedFetchJSON('/save-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData)
