@@ -136,7 +136,7 @@ const Table = () => {
     },
     { 
       headerName: 'AGP Name', 
-      field: 'agp_name', 
+      field: 'respondent_lawyer', 
       sortable: true, 
       filter: 'agTextColumnFilter',
       editable: true,
@@ -374,18 +374,15 @@ const Table = () => {
                   resizable: true,
                   sortable: true,
                   filter: true,
-                  editable: false
+                  editable: true
                 }}
                 gridOptions={{
-                  enableRangeSelection: true,
-                  enableColResize: true,
-                  enableSorting: true,
-                  enableFilter: true,
-                  rowSelection: 'multiple',
                   animateRows: true,
                   pagination: true,
                   paginationPageSize: 50,
-                  domLayout: 'normal'
+                  domLayout: 'normal',
+                  cellSelection: true,
+                  rowSelection: { mode: 'multiRow' }
                 }}
                 onCellValueChanged={(params) => {
                   const rowIndex = params.rowIndex;

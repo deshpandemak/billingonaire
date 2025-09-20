@@ -172,6 +172,7 @@ class Board:
 
     def getData(self, search_criteria):
         logging.info("Getting data")
+        logging.info(f"Search criteria received: {search_criteria}")
         try:
             if not any(search_criteria.values()):
                 raise HTTPException(status_code=400, detail="At least one search criteria must be populated")
@@ -179,32 +180,47 @@ class Board:
             query = self.db.collection("daily-boards")
 
             if search_criteria.get("case_number"):
-                query = query.where("case_no", "==", search_criteria["case_number"])
+                query = query.where(filter=firestore.FieldFilter("case_no", "==", search_criteria["case_number"]))
             
             if search_criteria.get("start_date"):
-                query = query.where("date", ">=", search_criteria["start_date"])
+                query = query.where(filter=firestore.FieldFilter("board_date", ">=", search_criteria["start_date"]))
             
             if search_criteria.get("end_date"):
-                query = query.where("date", "<=", search_criteria["end_date"])
+                query = query.where(filter=firestore.FieldFilter("board_date", "<=", search_criteria["end_date"]))
 
             if search_criteria.get("advocate_name"):
-                query = query.where("respondent_advocate", "==", search_criteria["advocate_name"])
+                # Search in AGP name field, case-insensitive
+                agp_name = search_criteria["advocate_name"]
+                query = query.where(filter=firestore.FieldFilter("respondent_lawyer", ">=", agp_name))
+                query = query.where(filter=firestore.FieldFilter("respondent_lawyer", "<=", agp_name + '\uf8ff'))
 
             if search_criteria.get("case_type"):
                 case_type = search_criteria["case_type"]
                 if search_criteria.get("case_stage") == "Stamp":
                     case_type += "(ST)"
-                query = query.where("case_type", "==", case_type)
+                query = query.where(filter=firestore.FieldFilter("case_type", "==", case_type))
 
             if search_criteria.get("case_year"):
-                query = query.where("case_year", "==", search_criteria["case_year"])
+                case_year = search_criteria["case_year"]
+                # Convert to string if it's a number
+                if isinstance(case_year, (int, float)):
+                    case_year = str(int(case_year))
+                query = query.where(filter=firestore.FieldFilter("case_year", "==", case_year))
 
             docs = query.stream()
-            data = [doc.to_dict() for doc in docs]
+            data = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                # Convert datetime objects to strings for JSON serialization
+                if 'board_date' in doc_data and hasattr(doc_data['board_date'], 'strftime'):
+                    doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
+                data.append(doc_data)
 
+            logging.info(f"Found {len(data)} records")
             return data
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")
+            logging.error("Stack trace:", exc_info=True)
             raise HTTPException(status_code=500, detail="Error getting data")
 
 # Remove DashboardData and dashboard router from this file, now in Dashboard.py
