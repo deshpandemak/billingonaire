@@ -171,17 +171,21 @@ class Board:
             raise HTTPException(status_code=500, detail="Error saving data")
 
     def getData(self, search_criteria):
-        logging.info("Getting data")
+        logging.info("=== SEARCH DEBUG START ===")
         logging.info(f"Search criteria received: {search_criteria}")
         try:
             # First, check total documents in collection
             all_docs = list(self.db.collection("daily-boards").limit(5).stream())
-            logging.info(f"Total sample documents in daily-boards collection: {len(all_docs)}")
+            logging.info(f"TOTAL DOCUMENTS IN DATABASE: {len(all_docs)}")
             
             if all_docs:
                 sample_doc = all_docs[0].to_dict()
-                logging.info(f"Sample document structure: {sample_doc.keys()}")
-                logging.info(f"Sample document: {sample_doc}")
+                logging.info(f"Sample document fields: {list(sample_doc.keys())}")
+                logging.info(f"Sample board_date: {sample_doc.get('board_date')}")
+                logging.info(f"Sample case_year: {sample_doc.get('case_year')}")
+                logging.info(f"Sample case_type: {sample_doc.get('case_type')}")
+            else:
+                logging.warning("NO DOCUMENTS FOUND IN DATABASE!")
             
             if not any(search_criteria.values()):
                 # If no search criteria, return first 10 records
@@ -197,10 +201,12 @@ class Board:
                 
                 start_date = search_criteria.get("startDate") or search_criteria.get("start_date")
                 if start_date:
+                    logging.info(f"FILTERING BY START DATE: {start_date} (field: board_date)")
                     query = query.where(filter=firestore.FieldFilter("board_date", ">=", start_date))
                 
                 end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
                 if end_date:
+                    logging.info(f"FILTERING BY END DATE: {end_date} (field: board_date)")
                     query = query.where(filter=firestore.FieldFilter("board_date", "<=", end_date))
 
                 advocate_name = search_criteria.get("advocateName") or search_criteria.get("advocate_name")
@@ -221,6 +227,7 @@ class Board:
                     # Convert to string if it's a number
                     if isinstance(case_year, (int, float)):
                         case_year = str(int(case_year))
+                    logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
                     query = query.where(filter=firestore.FieldFilter("case_year", "==", case_year))
 
             docs = query.stream()
@@ -232,9 +239,12 @@ class Board:
                     doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
                 data.append(doc_data)
 
-            logging.info(f"Query returned {len(data)} records")
+            logging.info(f"=== QUERY RESULTS: {len(data)} records found ===")
             if data:
                 logging.info(f"First result sample: {data[0]}")
+            else:
+                logging.warning("NO RECORDS MATCHED THE SEARCH CRITERIA!")
+            logging.info("=== SEARCH DEBUG END ===")
             return data
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")
