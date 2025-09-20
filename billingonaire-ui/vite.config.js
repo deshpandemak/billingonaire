@@ -5,17 +5,20 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export default defineConfig({
-	plugins: [sveltekit()],
-	test: {
-		include: ['src/**/*.{test,spec}.{js,ts}']
-	},
-	server: {
-		proxy: {
-			'/api': {
-				target: process.env.VITE_BACKEND_URL,
-				changeOrigin: true,
-				secure: false
-			}
-		}
-	}
+        plugins: [sveltekit()],
+        test: {
+                include: ['src/**/*.{test,spec}.{js,ts}']
+        },
+        server: {
+                host: '0.0.0.0',
+                port: 5000,
+                allowedHosts: true,
+                proxy: {
+                        '/api': {
+                                target: process.env.VITE_BACKEND_URL,
+                                changeOrigin: true,
+                                secure: false
+                        }
+                }
+        }
 });
