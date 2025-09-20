@@ -9,6 +9,7 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 from Board import Board
 from Dashboard import DashboardData
+from CourtScraper import BombayHighCourtScraper
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -184,6 +185,82 @@ async def dashboard_monthly_avg(year: str = Query(None), current_user = Depends(
     data = await dashboard_data.get_monthly_avg(year)
     return JSONResponse(content=data)
 
+# Court integration endpoints
+court_scraper = BombayHighCourtScraper()
+
+@app.get("/court/case-details", tags=["Case Status"])
+async def get_case_details(
+    case_ref: str = Query(..., description="Case reference like 'WP/294/2025'"),
+    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    current_user = Depends(get_current_user)
+):
+    """
+    Fetch case details from Bombay High Court
+    Example: /court/case-details?case_ref=WP/294/2025&bench=mumbai
+    """
+    try:
+        case_details = court_scraper.get_case_details(case_ref, bench)
+        return JSONResponse(content=case_details)
+    except Exception as e:
+        logging.error(f"Error fetching case details for {case_ref}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch case details: {str(e)}", "case_ref": case_ref}
+        )
+
+@app.get("/court/case-orders", tags=["Case Orders"])
+async def get_case_orders(
+    case_ref: str = Query(..., description="Case reference like 'WP/294/2025'"),
+    date: str = Query(None, description="Specific date in YYYY-MM-DD format"),
+    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    current_user = Depends(get_current_user)
+):
+    """
+    Fetch case orders from Bombay High Court for a specific case and date
+    Example: /court/case-orders?case_ref=WP/294/2025&date=2025-01-03
+    """
+    try:
+        case_orders = court_scraper.get_case_orders(case_ref, date, bench)
+        return JSONResponse(content={"case_ref": case_ref, "date": date, "orders": case_orders})
+    except Exception as e:
+        logging.error(f"Error fetching case orders for {case_ref}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch case orders: {str(e)}", "case_ref": case_ref}
+        )
+
+@app.post("/court/batch-case-lookup", tags=["Case Status"])
+async def batch_case_lookup(
+    case_refs: List[str],
+    bench: str = Query("mumbai", description="Court bench: mumbai, aurangabad, nagpur, goa"),
+    current_user = Depends(get_current_user)
+):
+    """
+    Fetch case details for multiple cases in batch
+    Useful for getting court data for multiple cases from your billing records
+    """
+    try:
+        results = []
+        for case_ref in case_refs:
+            case_details = court_scraper.get_case_details(case_ref, bench)
+            results.append({
+                "case_ref": case_ref,
+                "details": case_details,
+                "timestamp": pd.Timestamp.now().isoformat()
+            })
+        
+        return JSONResponse(content={
+            "total_cases": len(case_refs),
+            "results": results,
+            "bench": bench
+        })
+    except Exception as e:
+        logging.error(f"Error in batch case lookup: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Batch lookup failed: {str(e)}", "total_cases": len(case_refs)}
+        )
+
 client = TestClient(app)
 
 @functions_framework.http
@@ -191,6 +268,11 @@ def handler(request):
     # Map the incoming request to FastAPI using TestClient
     method = request.method
     path = request.path
+    
+    # Preserve query string for serverless deployment
+    if request.query_string:
+        path = f"{path}?{request.query_string.decode()}"
+    
     headers = dict(request.headers)
     data = request.get_data()
     # Forward the request to FastAPI app

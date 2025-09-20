@@ -13,6 +13,8 @@ class BombayHighCourtScraper:
         self.base_url = "https://hcservices.ecourts.gov.in/ecourtindiaHC"
         self.search_url = f"{self.base_url}/cases/case_no.php"
         self.session = requests.Session()
+        # Add timeout for all requests
+        self.timeout = 30  # 30 seconds timeout
         # Set headers to mimic a real browser
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -29,8 +31,11 @@ class BombayHighCourtScraper:
         Returns: {'case_type': 'WP', 'case_number': '294', 'year': '2025'}
         """
         try:
+            # Normalize input - convert to uppercase and strip whitespace
+            case_ref = case_ref.strip().upper()
+            
             # Pattern: CASE_TYPE/CASE_NUMBER/YEAR
-            match = re.match(r'^([A-Z]+)\/(\d+)\/(\d{4})$', case_ref.strip())
+            match = re.match(r'^([A-Z]+)\/(\d+)\/(\d{4})$', case_ref)
             if match:
                 return {
                     'case_type': match.group(1),
@@ -38,7 +43,7 @@ class BombayHighCourtScraper:
                     'year': match.group(3)
                 }
             else:
-                raise ValueError(f"Invalid case reference format: {case_ref}")
+                raise ValueError(f"Invalid case reference format: {case_ref}. Expected format: TYPE/NUMBER/YEAR (e.g., WP/294/2025)")
         except Exception as e:
             logging.error(f"Error parsing case number {case_ref}: {e}")
             return {}
@@ -77,7 +82,7 @@ class BombayHighCourtScraper:
                 'stateNm': 'Bombay'
             }
             
-            form_response = self.session.get(self.search_url, params=form_params)
+            form_response = self.session.get(self.search_url, params=form_params, timeout=self.timeout)
             if form_response.status_code != 200:
                 return {"error": "Failed to access court website", "status_code": form_response.status_code}
             
@@ -113,11 +118,12 @@ class BombayHighCourtScraper:
             
             for url in alt_urls:
                 try:
-                    response = self.session.get(url)
+                    response = self.session.get(url, timeout=self.timeout)
                     if response.status_code == 200 and "case" in response.text.lower():
                         soup = BeautifulSoup(response.content, 'html.parser')
                         return self._parse_case_details(soup, case_parts)
-                except:
+                except Exception as e:
+                    logging.debug(f"Alternative URL failed: {url}, error: {e}")
                     continue
             
             # If direct access fails, return a structured response indicating CAPTCHA requirement
@@ -166,13 +172,14 @@ class BombayHighCourtScraper:
         except Exception as e:
             return {"error": f"Failed to parse case details: {str(e)}"}
 
-    def get_case_orders(self, case_ref: str, date: str = None) -> List[Dict]:
+    def get_case_orders(self, case_ref: str, date: Optional[str] = None, bench: str = "mumbai") -> List[Dict]:
         """
         Fetch case orders for a specific case and date
         
         Args:
             case_ref: Case reference like 'WP/294/2025' 
             date: Specific date in YYYY-MM-DD format
+            bench: Court bench - 'mumbai', 'aurangabad', 'nagpur', 'goa'
             
         Returns:
             List of orders with details
@@ -182,14 +189,26 @@ class BombayHighCourtScraper:
             if not case_parts:
                 return [{"error": "Invalid case reference format"}]
             
-            # For now, return a mock structure showing what we'd expect
-            # Once we solve the CAPTCHA issue, this will fetch real data
+            # Set court code based on bench (same as case details)
+            bench_codes = {
+                "mumbai": "2",      # Original Side, Mumbai
+                "aurangabad": "3",  # Aurangabad Bench 
+                "nagpur": "4",      # Nagpur Bench
+                "goa": "5"          # Goa Bench
+            }
+            court_code = bench_codes.get(bench.lower(), "2")
+            
+            # Due to CAPTCHA requirements on the court website, 
+            # automated order fetching is not possible without human intervention
             return [{
                 "status": "captcha_required",
-                "message": "Order lookup requires manual CAPTCHA verification", 
+                "message": "Court order lookup requires manual CAPTCHA verification", 
                 "case_ref": case_ref,
                 "date": date,
-                "instructions": "Please visit the court website manually to get case orders"
+                "bench": bench,
+                "court_code": court_code,
+                "search_url": f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
+                "instructions": "Please visit the court website manually to complete CAPTCHA verification and get case orders"
             }]
             
         except Exception as e:

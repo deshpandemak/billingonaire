@@ -6,6 +6,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
+import CourtIntegration from './CourtIntegration';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
@@ -105,6 +106,13 @@ const Layout = ({ children }) => {
                   >
                     Search Data
                   </Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
+                    to="/court"
+                    className={location.pathname === '/court' ? 'active' : ''}
+                  >
+                    Court Integration
+                  </Nav.Link>
                 </Nav>
                 <div className="d-flex align-items-center gap-3">
                   <span style={{ color: 'var(--gray-600)', fontSize: '0.875rem' }}>
@@ -160,6 +168,7 @@ const App = () => (
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
+        <Route path="/court" element={<CourtIntegration />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
