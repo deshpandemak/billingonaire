@@ -156,7 +156,7 @@ async def simple_database_check():
             })
         
         # Test query for case_year = "2025"
-        test_query = board.db.collection("daily-boards").where(filter=firestore.FieldFilter("case_year", "==", "2025"))
+        test_query = board.db.collection("daily-boards").where("case_year", "==", "2025")
         test_results = list(test_query.stream())
         
         return {
