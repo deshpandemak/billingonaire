@@ -22,6 +22,8 @@ const Table = () => {
     caseStage: ''
   });
   const [searchOpen, setSearchOpen] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
 
   useEffect(() => {
     // By default, show today's data
@@ -33,9 +35,13 @@ const Table = () => {
 
   const fetchData = async (criteria = searchCriteria) => {
     if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage) {
-      alert('Please fill at least one search criteria');
+      setSearchError('Please fill at least one search criteria');
       return;
     }
+
+    setIsSearching(true);
+    setSearchError('');
+    
     try {
       const result = await authenticatedFetchJSON('/get-data', {
         method: 'POST',
@@ -58,7 +64,9 @@ const Table = () => {
       console.log('✅ Data set to state. Current data length:', Array.isArray(result) ? result.length : 'Not array');
     } catch (e) {
       console.error('Search failed:', e);
-      alert('Search failed. Please check your criteria and try again.');
+      setSearchError('Search failed. Please check your criteria and try again.');
+    } finally {
+      setIsSearching(false);
     }
   };
 
@@ -300,12 +308,25 @@ const Table = () => {
                   <button 
                     className="btn-professional btn-primary"
                     onClick={() => fetchData()}
-                    style={{ flex: 1 }}
+                    disabled={isSearching}
+                    style={{ 
+                      flex: 1,
+                      opacity: isSearching ? 0.7 : 1,
+                      cursor: isSearching ? 'not-allowed' : 'pointer'
+                    }}
                   >
-                    🔍 Search Cases
+                    {isSearching ? (
+                      <>
+                        <span className="loading" style={{ marginRight: '8px' }}></span>
+                        Searching...
+                      </>
+                    ) : (
+                      '🔍 Search Cases'
+                    )}
                   </button>
                   <button 
                     className="btn-professional btn-secondary"
+                    disabled={isSearching}
                     onClick={() => {
                       setSearchCriteria({
                         startDate: '',
@@ -316,11 +337,58 @@ const Table = () => {
                         caseYear: '',
                         caseStage: ''
                       });
+                      setSearchError('');
+                    }}
+                    style={{
+                      opacity: isSearching ? 0.7 : 1,
+                      cursor: isSearching ? 'not-allowed' : 'pointer'
                     }}
                   >
                     Clear
                   </button>
                 </div>
+                
+                {/* Progress Bar */}
+                {isSearching && (
+                  <div style={{ marginTop: 'var(--spacing-md)' }}>
+                    <div style={{
+                      width: '100%',
+                      height: '4px',
+                      backgroundColor: 'var(--gray-200)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        width: '100%',
+                        height: '100%',
+                        background: 'linear-gradient(90deg, var(--primary-color) 0%, var(--primary-light) 100%)',
+                        animation: 'progress-slide 2s ease-in-out infinite'
+                      }}></div>
+                    </div>
+                    <p style={{ 
+                      marginTop: '8px', 
+                      fontSize: '0.875rem', 
+                      color: 'var(--gray-600)', 
+                      textAlign: 'center' 
+                    }}>
+                      Searching through case database... Please wait
+                    </p>
+                  </div>
+                )}
+                
+                {/* Error Message */}
+                {searchError && (
+                  <div style={{
+                    marginTop: 'var(--spacing-md)',
+                    padding: 'var(--spacing-sm)',
+                    backgroundColor: 'var(--error-bg)',
+                    border: '1px solid var(--error-border)',
+                    borderRadius: 'var(--radius-md)',
+                    color: 'var(--error-color)'
+                  }}>
+                    {searchError}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -521,6 +521,19 @@ h6 { font-size: 1rem; }
   to { transform: rotate(360deg); }
 }
 
+/* Progress bar animation */
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
 .loading-text {
   color: var(--gray-500);
   font-style: italic;

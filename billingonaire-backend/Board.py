@@ -198,42 +198,43 @@ class Board:
                     # Handle single AGP name (backward compatibility)
                     query = query.where("respondent_lawyer", "==", agp_filter)
 
-                # Handle both camelCase (frontend) and snake_case (legacy) field names
-                case_number = search_criteria.get("caseNumber") or search_criteria.get("case_number")
-                if case_number:
-                    query = query.where("case_no", "==", case_number)
-                
-                start_date = search_criteria.get("startDate") or search_criteria.get("start_date")
-                if start_date:
-                    logging.info(f"FILTERING BY START DATE: {start_date} (field: board_date)")
-                    query = query.where("board_date", ">=", start_date)
-                
-                end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
-                if end_date:
-                    logging.info(f"FILTERING BY END DATE: {end_date} (field: board_date)")
-                    query = query.where("board_date", "<=", end_date)
+            # Apply search criteria - this should work for ALL users, not just those with AGP filters
+            # Handle both camelCase (frontend) and snake_case (legacy) field names
+            case_number = search_criteria.get("caseNumber") or search_criteria.get("case_number")
+            if case_number:
+                query = query.where("case_no", "==", case_number)
+            
+            start_date = search_criteria.get("startDate") or search_criteria.get("start_date")
+            if start_date:
+                logging.info(f"FILTERING BY START DATE: {start_date} (field: board_date)")
+                query = query.where("board_date", ">=", start_date)
+            
+            end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
+            if end_date:
+                logging.info(f"FILTERING BY END DATE: {end_date} (field: board_date)")
+                query = query.where("board_date", "<=", end_date)
 
-                advocate_name = search_criteria.get("advocateName") or search_criteria.get("advocate_name")
-                if advocate_name:
-                    # Search in AGP name field, case-insensitive
-                    query = query.where("respondent_lawyer", ">=", advocate_name)
-                    query = query.where("respondent_lawyer", "<=", advocate_name + '\uf8ff')
+            advocate_name = search_criteria.get("advocateName") or search_criteria.get("advocate_name")
+            if advocate_name:
+                # Search in AGP name field, case-insensitive
+                query = query.where("respondent_lawyer", ">=", advocate_name)
+                query = query.where("respondent_lawyer", "<=", advocate_name + '\uf8ff')
 
-                case_type = search_criteria.get("caseType") or search_criteria.get("case_type")
-                if case_type:
-                    case_stage = search_criteria.get("caseStage") or search_criteria.get("case_stage")
-                    if case_stage == "Stamp":
-                        case_type += "(ST)"
-                    query = query.where("case_type", "==", case_type)
+            case_type = search_criteria.get("caseType") or search_criteria.get("case_type")
+            if case_type:
+                case_stage = search_criteria.get("caseStage") or search_criteria.get("case_stage")
+                if case_stage == "Stamp":
+                    case_type += "(ST)"
+                query = query.where("case_type", "==", case_type)
 
-                case_year = search_criteria.get("caseYear") or search_criteria.get("case_year")
-                if case_year:
-                    # Convert to string if it's a number
-                    if isinstance(case_year, (int, float)):
-                        case_year = str(int(case_year))
-                    print(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
-                    logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
-                    query = query.where("case_year", "==", case_year)
+            case_year = search_criteria.get("caseYear") or search_criteria.get("case_year")
+            if case_year:
+                # Convert to string if it's a number
+                if isinstance(case_year, (int, float)):
+                    case_year = str(int(case_year))
+                print(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
+                logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
+                query = query.where("case_year", "==", case_year)
 
             docs = query.stream()
             data = []
