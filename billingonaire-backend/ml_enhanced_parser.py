@@ -119,38 +119,67 @@ class MLEnhancedParser:
             logging.warning("SpaCy not available. Install with: pip install spacy")
     
     def _create_legal_patterns(self) -> Dict[str, List[str]]:
-        """Create patterns for legal entity recognition"""
+        """Create enhanced patterns for legal entity recognition - addressing architect feedback"""
         return {
             'AGP': [
+                # Standard formats
                 r'\b(?:ASSISTANT\s+GOVERNMENT\s+PLEADER|AGP)\b',
                 r'\bA\.G\.P\b',
+                # Enhanced name + AGP patterns for formats like "SMT.G.R.RAGHUWANSHI,AGP"
+                r'\bSHRI\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AGP\b',
+                r'\bSMT\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AGP\b',
+                r'\bMS\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AGP\b',
+                r'\b[A-Z][A-Za-z]+\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AGP\b',
+                # Legacy patterns
                 r'\bAGP\s+[A-Z][a-z]+',
                 r'\bSHRI\s+[A-Z][a-z]+.*?AGP\b',
                 r'\bSMT\s+[A-Z][a-z]+.*?AGP\b'
             ],
             'GP': [
+                # Standard formats  
                 r'\b(?:GOVERNMENT\s+PLEADER|GP)\b',
                 r'\bG\.P\b',
+                # Enhanced name + GP patterns for formats like "SHRI. P. P. KAKADE, GP"
+                r'\bSHRI\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*GP\b',
+                r'\bSMT\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*GP\b',
+                r'\bMS\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*GP\b', 
+                r'\b[A-Z][A-Za-z]+\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*GP\b',
+                # Legacy patterns
                 r'\bGP\s+[A-Z][a-z]+',
                 r'\bSHRI\s+[A-Z][a-z]+.*?GP\b',
                 r'\bSMT\s+[A-Z][a-z]+.*?GP\b'
             ],
             'AG': [
+                # Standard formats
                 r'\b(?:ADVOCATE\s+GENERAL|AG)\b',
                 r'\bA\.G\b',
+                # Enhanced name + AG patterns for formats like "DR .B .B .SARAF, AG"
+                r'\bDR\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AG\b',
+                r'\bSHRI\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AG\b',
+                r'\bSMT\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AG\b',
+                r'\b[A-Z][A-Za-z]+\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*AG\b',
+                # Legacy patterns
                 r'\bAG\s+[A-Z][a-z]+',
                 r'\bSHRI\s+[A-Z][a-z]+.*?AG\b',
                 r'\bSMT\s+[A-Z][a-z]+.*?AG\b'
             ],
             'ADDL_GP': [
-                r'\b(?:ADDITIONAL\s+GOVERNMENT\s+PLEADER|ADDL\s*GP)\b',
+                # Enhanced ADDL GP patterns for formats like "SHRI.O.A.CHANDURKAR.ADDL GP"
+                r'\b(?:ADDITIONAL\s+GOVERNMENT\s+PLEADER|ADDL\.?\s*GP)\b',
                 r'\bADDL\.?\s*G\.P\b',
-                r'\bADDITIONAL\s+GP\b'
+                r'\bADDITIONAL\s+GP\b',
+                r'\bSHRI\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*ADDL\.?\s*GP\b',
+                r'\bSMT\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*ADDL\.?\s*GP\b',
+                r'\b[A-Z][A-Za-z]+\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*ADDL\.?\s*GP\b'
             ],
             'B_PNL': [
+                # Enhanced B'PNL patterns for formats like "SHRI. K.S.THORAT, B'PNL"
                 r'\bB\s*\'?\s*PNL\b',
                 r'\bB\.PNL\b',
-                r'\bB\s+PANEL\b'
+                r'\bB\s+PANEL\b',
+                r'\bSHRI\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*B\'?PNL\b',
+                r'\bSMT\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*B\'?PNL\b',
+                r'\b[A-Z][A-Za-z]+\.?\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Z][A-Za-z]+\.?\s*,?\s*B\'?PNL\b'
             ]
         }
     
@@ -421,21 +450,53 @@ class MLEnhancedParser:
         return mappings
     
     def _extract_name_from_entity(self, entity_text: str) -> Optional[str]:
-        """Extract actual name from entity text"""
-        # Remove titles and designations
+        """Extract actual name from entity text with robust normalization"""
+        # Convert to uppercase for consistency
         text = entity_text.upper()
         
-        # Remove common prefixes and suffixes
-        removals = ['SHRI', 'SMT', 'MS', 'MR', 'DR', 'AGP', 'GP', 'AG', 'ADDL', 'ADDITIONAL', 'GOVERNMENT', 'PLEADER', 'ADVOCATE', 'GENERAL']
+        # Remove common prefixes, suffixes, and designations
+        removals = [
+            'SHRI', 'SMT', 'MS', 'MR', 'DR', 'MRS',
+            'AGP', 'GP', 'AG', 'ADDL', 'ADDITIONAL', 
+            'GOVERNMENT', 'PLEADER', 'ADVOCATE', 'GENERAL',
+            'B\'PNL', 'BPNL', 'B PNL', 'PANEL'
+        ]
         
+        # More thorough removal with optional dots and spacing
         for removal in removals:
-            text = re.sub(rf'\b{removal}\b\.?', '', text)
+            # Remove with various punctuation patterns
+            text = re.sub(rf'\b{removal}\.?\s*', '', text)
+            text = re.sub(rf'\.{removal}\b\.?', '', text)
         
-        # Clean up and extract name
-        text = re.sub(r'[^\w\s]', ' ', text)
-        text = ' '.join(text.split())
+        # Remove common legal terms
+        text = re.sub(r'\bWITH\b', '', text)
+        text = re.sub(r'\bN/S\b', '', text)  # Not Served
+        text = re.sub(r'\bCONL\b', '', text)  # Counsel
         
-        return text.strip() if text.strip() else None
+        # Clean up punctuation - preserve initials but remove excessive punctuation
+        text = re.sub(r'[,;:]', ' ', text)  # Remove commas, semicolons, colons
+        text = re.sub(r'\.(?!\s*[A-Z])', ' ', text)  # Remove dots not followed by initials
+        text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+        
+        # Extract name tokens (preserve initials like "P. P.")
+        name_tokens = []
+        tokens = text.split()
+        
+        for token in tokens:
+            # Keep tokens that look like names or initials
+            if re.match(r'^[A-Z]\.?$', token):  # Single initial like "P." or "P"
+                name_tokens.append(token)
+            elif re.match(r'^[A-Z][A-Za-z]{1,}$', token):  # Full name like "KAKADE"
+                name_tokens.append(token)
+        
+        # Join and normalize
+        extracted_name = ' '.join(name_tokens).strip()
+        
+        # Final cleanup
+        extracted_name = re.sub(r'\.(\w)', r'. \1', extracted_name)  # Add space after dots
+        extracted_name = re.sub(r'\s+', ' ', extracted_name)  # Normalize whitespace
+        
+        return extracted_name if extracted_name else None
     
     def _get_user_list(self) -> List[Dict[str, str]]:
         """Get list of users for name matching"""
@@ -465,48 +526,154 @@ class MLEnhancedParser:
             logging.error(f"Error fetching users: {e}")
             return []
     
-    def _find_best_user_matches(self, name: str, users: List[Dict[str, str]], threshold: float = 0.7) -> List[Dict[str, Any]]:
-        """Find best matching users using fuzzy string matching"""
+    def _find_best_user_matches(self, name: str, users: List[Dict[str, str]], threshold: float = 0.6) -> List[Dict[str, Any]]:
+        """Find best matching users using robust fuzzy string matching with legal name normalization"""
         if not users:
             return []
         
+        # Normalize the extracted name for better matching
+        normalized_name = self._normalize_legal_name(name)
+        
         result = []
-        name_lower = name.lower().strip()
         
         if RAPIDFUZZ_AVAILABLE:
-            # Use RapidFuzz for advanced matching
+            # Use multiple RapidFuzz algorithms for better matching
             choices = [(user['name'], user) for user in users]
-            choice_names = [choice[0] for choice in choices]
+            choice_names = [self._normalize_legal_name(choice[0]) for choice in choices]
             
-            matches = process.extract(name, choice_names, limit=5, score_cutoff=threshold*100)
+            # Try different fuzzy matching algorithms
+            algorithms = [
+                ('token_set_ratio', fuzz.token_set_ratio),
+                ('token_sort_ratio', fuzz.token_sort_ratio),
+                ('partial_ratio', fuzz.partial_ratio),
+                ('ratio', fuzz.ratio)
+            ]
             
-            for match_name, score, idx in matches:
-                user = choices[idx][1]
-                result.append({
-                    'user': user,
-                    'score': score,
-                    'match_type': 'rapidfuzz'
-                })
-        else:
-            # Fallback to difflib for basic fuzzy matching
-            for user in users:
-                user_name_lower = user['name'].lower().strip()
+            user_scores = {}
+            
+            for algo_name, algo_func in algorithms:
+                matches = process.extract(
+                    normalized_name, 
+                    choice_names, 
+                    scorer=algo_func,
+                    limit=5, 
+                    score_cutoff=threshold*100
+                )
                 
-                # Calculate similarity using difflib
-                similarity = difflib.SequenceMatcher(None, name_lower, user_name_lower).ratio()
+                for match_name, score, idx in matches:
+                    user = choices[idx][1]
+                    user_id = user.get('id', user.get('name', ''))
+                    
+                    if user_id not in user_scores:
+                        user_scores[user_id] = {
+                            'user': user,
+                            'scores': {},
+                            'max_score': 0,
+                            'algorithms': []
+                        }
+                    
+                    user_scores[user_id]['scores'][algo_name] = score
+                    user_scores[user_id]['algorithms'].append(algo_name)
+                    user_scores[user_id]['max_score'] = max(user_scores[user_id]['max_score'], score)
+            
+            # Calculate composite scores and prepare results
+            for user_id, data in user_scores.items():
+                # Use weighted average with preference for token_set_ratio
+                weights = {
+                    'token_set_ratio': 0.4,
+                    'token_sort_ratio': 0.3,
+                    'partial_ratio': 0.2,
+                    'ratio': 0.1
+                }
                 
-                if similarity >= threshold:
+                composite_score = 0
+                total_weight = 0
+                
+                for algo, weight in weights.items():
+                    if algo in data['scores']:
+                        composite_score += data['scores'][algo] * weight
+                        total_weight += weight
+                
+                if total_weight > 0:
+                    final_score = composite_score / total_weight
                     result.append({
-                        'user': user,
-                        'score': similarity * 100,  # Convert to 0-100 scale
-                        'match_type': 'difflib'
+                        'user': data['user'],
+                        'score': final_score,
+                        'match_type': 'rapidfuzz_composite',
+                        'algorithm_scores': data['scores'],
+                        'max_score': data['max_score']
                     })
             
-            # Sort by score and limit to top 5
-            result.sort(key=lambda x: x['score'], reverse=True)
-            result = result[:5]
+        else:
+            # Enhanced difflib fallback with multiple comparison methods
+            for user in users:
+                normalized_user_name = self._normalize_legal_name(user['name'])
+                
+                # Multiple similarity calculations
+                similarities = [
+                    difflib.SequenceMatcher(None, normalized_name, normalized_user_name).ratio(),
+                    difflib.SequenceMatcher(None, name.lower(), user['name'].lower()).ratio(),
+                    self._token_similarity(normalized_name, normalized_user_name),
+                    self._initial_similarity(normalized_name, normalized_user_name)
+                ]
+                
+                # Use the highest similarity
+                max_similarity = max(similarities)
+                
+                if max_similarity >= threshold:
+                    result.append({
+                        'user': user,
+                        'score': max_similarity * 100,
+                        'match_type': 'difflib_enhanced',
+                        'similarities': similarities
+                    })
         
-        return result
+        # Sort by score and limit to top 5
+        result.sort(key=lambda x: x['score'], reverse=True)
+        return result[:5]
+    
+    def _normalize_legal_name(self, name: str) -> str:
+        """Normalize legal names for better fuzzy matching"""
+        if not name:
+            return ""
+        
+        # Convert to uppercase
+        normalized = name.upper()
+        
+        # Remove common titles and designations
+        removals = ['SHRI', 'SMT', 'MS', 'MR', 'DR', 'MRS']
+        for removal in removals:
+            normalized = re.sub(rf'\b{removal}\.?\s*', '', normalized)
+        
+        # Normalize punctuation and spacing
+        normalized = re.sub(r'[^\w\s]', ' ', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized)
+        
+        return normalized.strip()
+    
+    def _token_similarity(self, name1: str, name2: str) -> float:
+        """Calculate similarity based on token overlap"""
+        tokens1 = set(name1.split())
+        tokens2 = set(name2.split())
+        
+        if not tokens1 or not tokens2:
+            return 0.0
+        
+        intersection = tokens1.intersection(tokens2)
+        union = tokens1.union(tokens2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def _initial_similarity(self, name1: str, name2: str) -> float:
+        """Calculate similarity based on initials (important for legal names)"""
+        # Extract initials
+        initials1 = ''.join([word[0] for word in name1.split() if word])
+        initials2 = ''.join([word[0] for word in name2.split() if word])
+        
+        if not initials1 or not initials2:
+            return 0.0
+        
+        return difflib.SequenceMatcher(None, initials1, initials2).ratio()
     
     def _calculate_quality_score(self, text: str, entities: List[Dict], mappings: List[Dict], base_confidence: float) -> float:
         """Calculate overall quality score for the extraction"""
