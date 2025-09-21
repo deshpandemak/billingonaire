@@ -31,6 +31,7 @@ class Board:
         self.ml_parser = None
         if ML_PARSER_AVAILABLE:
             try:
+                from ml_enhanced_parser import MLEnhancedParser
                 self.ml_parser = MLEnhancedParser(fallback_parser=self)
                 logging.info("ML Enhanced Parser initialized successfully")
             except Exception as e:
@@ -67,7 +68,11 @@ class Board:
         file.seek(0)  # Reset file pointer for fallback
         
         # Use ML Enhanced Parser
-        ml_result = self.ml_parser.enhance_pdf_extraction(filename, file_content)
+        if self.ml_parser:
+            ml_result = self.ml_parser.enhance_pdf_extraction(filename, file_content)
+        else:
+            # Fallback if ML parser failed to initialize
+            raise Exception("ML parser not available")
         
         # Process the enhanced text with existing logic
         df = self.process_enhanced_text(filename, ml_result)
