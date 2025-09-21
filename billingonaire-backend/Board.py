@@ -109,10 +109,15 @@ class Board:
         case_year = ""
         serial_no = ""
         
-        for data in result:
+        i = 0
+        while i < len(result):
+            data = result[i]
+            
+            # Handle court header detection
             if "HON'BLE" in data:
                 court_details = re.match(court_pattern, data)
                 if court_details is None or court_details.group(1) is None:  
+                    i += 1
                     continue
                 if count > 0:
                     # Create record with ML enhancements
@@ -129,30 +134,57 @@ class Board:
                     matter_list.append(record)
                 else:
                     count = count + 1
+                i += 1
             elif " * " in data:
-                stage = re.findall(case_stage1_pattern, data)
-                if stage and len(stage) > 0 and len(stage[0]) > 0:
-                    record = self.create_enhanced_record(
-                        court_details=stage[0][0].strip(), 
-                        file_name=filename, 
-                        board_date=board_date,
-                        serial_no=serial_no, 
-                        case_type=case_type, 
-                        case_no=case_no, 
-                        case_year=case_year,
-                        ml_result=ml_result
-                    )
-                    matter_list.append(record)
+                # Skip stage headers to avoid creating unnecessary records
+                # Stage headers like "* FOR SPEAKING TO THE MINUTES *" don't represent actual cases
+                i += 1
             else:
-                if re.match(r"^\s*\d+\s*$", data.strip()):
+                # Check if this is a serial number followed by case number
+                if (i + 2 < len(result) and 
+                    re.match(r"^\s*\d+\s*$", data.strip()) and 
+                    re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", result[i + 1].strip())):
+                    
+                    # Extract case details (normalize spaces for consistency)
                     serial_no = data.strip()
-                elif re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", data.strip()):
-                    case_no_year = data.strip().split("/")
-                    case_type = case_no_year[0].strip()
-                    case_no = case_no_year[1].strip()
-                    case_year = case_no_year[2].strip()
+                    case_data = result[i + 1].replace(" ", "").split("/")
+                    case_type = case_data[0].strip()
+                    case_no = case_data[1].strip()
+                    case_year = case_data[2].strip()
+                    
+                    # Get court/lawyer details from the next part
+                    court_details = result[i + 2].strip() if i + 2 < len(result) else ""
+                    
+                    # Create record for this case
+                    if serial_no and case_type and case_no and case_year:
+                        record = self.create_enhanced_record(
+                            court_details=court_details,
+                            file_name=filename,
+                            board_date=board_date,
+                            serial_no=serial_no,
+                            case_type=case_type,
+                            case_no=case_no,
+                            case_year=case_year,
+                            ml_result=ml_result
+                        )
+                        matter_list.append(record)
+                    
+                    i += 3  # Skip the next 2 parts as they've been processed
+                else:
+                    # Handle standalone patterns
+                    if re.match(r"^\s*\d+\s*$", data.strip()):
+                        serial_no = data.strip()
+                    elif re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", data.strip()):
+                        case_no_year = data.strip().split("/")
+                        case_type = case_no_year[0].strip()
+                        case_no = case_no_year[1].strip()
+                        case_year = case_no_year[2].strip()
+                    i += 1
 
-        return pd.DataFrame(matter_list)
+        # Create DataFrame and remove duplicates for consistency with standard parsing
+        matter_df = pd.DataFrame(matter_list)
+        matter_df = matter_df.drop_duplicates()
+        return matter_df
     
     def create_enhanced_record(self, court_details, file_name, board_date, serial_no, case_type, case_no, case_year, ml_result):
         """Create record with ML enhancements"""
@@ -263,35 +295,70 @@ class Board:
                 case_no = ""
                 case_year = ""
                 serial_no = ""
-                for data in result:
+                i = 0
+                while i < len(result):
+                    data = result[i]
+                    
                     if "HON'BLE" in data:
                         court_details = re.match(court_pattern, data)
                         if court_details is None or court_details.group(1) is None:  
+                            i += 1
                             continue
                         if count > 0:
                             matter_list.append(self.create_record(court_details=court_details.group(1).strip(), file_name=filename,
                                         board_date=board_date, serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
                         else:
                             count = count + 1
+                        i += 1
                     elif " * " in data:
-                        stage = re.findall(case_stage1_pattern, data)
-                        if stage and len(stage) > 0 and len(stage[0]) > 0:
-                            matter_list.append(self.create_record(court_details=stage[0][0].strip(), 
-                                           file_name=filename, board_date=board_date,
-                                           serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
-                        
-                    elif data.isnumeric():
-                        serial_no = data
-                    elif re.match(case_no_pattern, data):
-                        data = data.replace(" ", "")
-                        case_number = data.split("/")
-                        case_type = case_number[0]
-                        case_no = case_number[1]
-                        case_year = case_number[2]
+                        # Skip stage headers to avoid creating unnecessary records
+                        i += 1
                     else:
-                        matter_list.append(self.create_record(court_details=data.strip(), 
-                                       file_name=filename, board_date=board_date, 
-                                       serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                        # Check if this is a serial number followed by case number
+                        if (i + 2 < len(result) and 
+                            data.strip().isnumeric() and 
+                            re.match(case_no_pattern, result[i + 1])):
+                            
+                            # Extract case details
+                            serial_no = data.strip()
+                            case_data = result[i + 1].replace(" ", "").split("/")
+                            case_type = case_data[0]
+                            case_no = case_data[1]
+                            case_year = case_data[2]
+                            
+                            # Get court/lawyer details from the next part
+                            court_details = result[i + 2].strip() if i + 2 < len(result) else ""
+                            
+                            # Create record for this case
+                            if serial_no and case_type and case_no and case_year:
+                                matter_list.append(self.create_record(
+                                    court_details=court_details,
+                                    file_name=filename,
+                                    board_date=board_date,
+                                    serial_no=serial_no,
+                                    case_type=case_type,
+                                    case_no=case_no,
+                                    case_year=case_year
+                                ))
+                            
+                            i += 3  # Skip the next 2 parts as they've been processed
+                        else:
+                            # Handle standalone patterns
+                            if data.isnumeric():
+                                serial_no = data
+                            elif re.match(case_no_pattern, data):
+                                data = data.replace(" ", "")
+                                case_number = data.split("/")
+                                case_type = case_number[0]
+                                case_no = case_number[1]
+                                case_year = case_number[2]
+                            else:
+                                # Only create records for meaningful content
+                                if data.strip() and len(data.strip()) > 3:
+                                    matter_list.append(self.create_record(court_details=data.strip(), 
+                                                   file_name=filename, board_date=board_date, 
+                                                   serial_no=serial_no, case_type=case_type, case_no=case_no, case_year=case_year))
+                            i += 1
 
             matter_df = pd.DataFrame(matter_list)
             matter_df = matter_df.drop_duplicates()
