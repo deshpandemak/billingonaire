@@ -2,7 +2,7 @@ modules = ["nodejs-20", "web", "python-3.11", "postgresql-16"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["google-cloud-sdk"]
+packages = ["freetype", "glibcLocales", "google-cloud-sdk", "lcms2", "libGL", "libGLU", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "poppler_utils", "rapidfuzz-cpp", "taskflow", "tcl", "tesseract", "tk", "zlib"]
 
 [agent]
 expertMode = true

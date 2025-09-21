@@ -10,24 +10,179 @@ from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 import numpy as np
 
+# Import ML Enhanced Parser
+try:
+    from ml_enhanced_parser import MLEnhancedParser
+    ML_PARSER_AVAILABLE = True
+except ImportError:
+    try:
+        from .ml_enhanced_parser import MLEnhancedParser
+        ML_PARSER_AVAILABLE = True
+    except ImportError:
+        ML_PARSER_AVAILABLE = False
+        logging.warning("ML Enhanced Parser not available - continuing with standard parsing")
+
 class Board:
 
     def __init__(self):
         self.db = firestore.client()
+        
+        # Initialize ML Enhanced Parser if available
+        self.ml_parser = None
+        if ML_PARSER_AVAILABLE:
+            try:
+                self.ml_parser = MLEnhancedParser(fallback_parser=self)
+                logging.info("ML Enhanced Parser initialized successfully")
+            except Exception as e:
+                logging.warning(f"Could not initialize ML Enhanced Parser: {e}")
+                self.ml_parser = None
 
 
     def readFile(self, filename, file):
-        logging.info("Reading file")
+        logging.info(f"Reading file: {filename}")
+        
+        # Try ML Enhanced parsing first if available
+        if self.ml_parser:
+            try:
+                return self.readFileWithML(filename, file)
+            except Exception as e:
+                logging.warning(f"ML parsing failed, falling back to standard parsing: {e}")
+        
+        # Fallback to standard parsing
         try:
             df = self.read_board(filename, file)
             # Replace NaN and infinite values
             df = df.replace([np.nan, np.inf, -np.inf], None)
-
-            # print(df)
             return df
         except Exception as e:
             logging.error(f"Error reading file: {str(e)}")
             raise HTTPException(status_code=500, detail="Error reading file")
+    
+    def readFileWithML(self, filename, file):
+        """Enhanced file reading with ML processing"""
+        logging.info(f"Processing {filename} with ML enhancements")
+        
+        # Read file content
+        file_content = file.read()
+        file.seek(0)  # Reset file pointer for fallback
+        
+        # Use ML Enhanced Parser
+        ml_result = self.ml_parser.enhance_pdf_extraction(filename, file_content)
+        
+        # Process the enhanced text with existing logic
+        df = self.process_enhanced_text(filename, ml_result)
+        
+        # Replace NaN and infinite values
+        df = df.replace([np.nan, np.inf, -np.inf], None)
+        
+        # Log ML enhancement results
+        logging.info(f"ML Enhancement Results - Method: {ml_result.extraction_method}, "
+                    f"Quality: {ml_result.quality_score:.2f}, "
+                    f"Entities: {len(ml_result.entities)}, "
+                    f"Mappings: {len(ml_result.name_mappings)}")
+        
+        return df
+    
+    def process_enhanced_text(self, filename, ml_result):
+        """Process ML-enhanced text extraction results"""
+        text = ml_result.text
+        
+        # Use existing parsing logic but with enhanced text
+        matter_list = []
+        date_pattern = r"(\d+/\d+/\d+)"
+        court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
+        case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
+        case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
+        
+        # Extract board date
+        date = re.findall(date_pattern, text)
+        date_common = Counter(date).most_common(1)
+        board_date = ""
+        for x in date_common:
+            board_date = datetime.strptime(x[0], "%d/%m/%Y").strftime("%Y-%m-%d")
+
+        # Process cases with enhanced text
+        result = re.split(case_pattern, text)
+        count = 0
+        case_type = ""
+        case_no = ""
+        case_year = ""
+        serial_no = ""
+        
+        for data in result:
+            if "HON'BLE" in data:
+                court_details = re.match(court_pattern, data)
+                if court_details is None or court_details.group(1) is None:  
+                    continue
+                if count > 0:
+                    # Create record with ML enhancements
+                    record = self.create_enhanced_record(
+                        court_details=court_details.group(1).strip(), 
+                        file_name=filename,
+                        board_date=board_date, 
+                        serial_no=serial_no, 
+                        case_type=case_type, 
+                        case_no=case_no, 
+                        case_year=case_year,
+                        ml_result=ml_result
+                    )
+                    matter_list.append(record)
+                else:
+                    count = count + 1
+            elif " * " in data:
+                stage = re.findall(case_stage1_pattern, data)
+                if stage and len(stage) > 0 and len(stage[0]) > 0:
+                    record = self.create_enhanced_record(
+                        court_details=stage[0][0].strip(), 
+                        file_name=filename, 
+                        board_date=board_date,
+                        serial_no=serial_no, 
+                        case_type=case_type, 
+                        case_no=case_no, 
+                        case_year=case_year,
+                        ml_result=ml_result
+                    )
+                    matter_list.append(record)
+            else:
+                if re.match(r"^\s*\d+\s*$", data.strip()):
+                    serial_no = data.strip()
+                elif re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", data.strip()):
+                    case_no_year = data.strip().split("/")
+                    case_type = case_no_year[0].strip()
+                    case_no = case_no_year[1].strip()
+                    case_year = case_no_year[2].strip()
+
+        return pd.DataFrame(matter_list)
+    
+    def create_enhanced_record(self, court_details, file_name, board_date, serial_no, case_type, case_no, case_year, ml_result):
+        """Create record with ML enhancements"""
+        # Start with standard record creation
+        base_record = self.create_record(court_details, file_name, board_date, serial_no, case_type, case_no, case_year)
+        
+        # Enhance with ML results
+        enhanced_record = base_record.copy()
+        
+        # Add ML-enhanced lawyer name matching
+        if ml_result.name_mappings:
+            enhanced_record['ml_name_mappings'] = []
+            enhanced_record['ml_confidence_scores'] = []
+            
+            for mapping in ml_result.name_mappings:
+                if mapping['matched_users']:
+                    best_match = mapping['matched_users'][0]
+                    enhanced_record['ml_name_mappings'].append({
+                        'extracted_name': mapping['extracted_name'],
+                        'matched_user': best_match['user'],
+                        'confidence': best_match['score'],
+                        'match_type': best_match['match_type']
+                    })
+                    
+        # Add extraction quality metrics
+        enhanced_record['ml_extraction_method'] = ml_result.extraction_method
+        enhanced_record['ml_quality_score'] = ml_result.quality_score
+        enhanced_record['ml_entities_found'] = len(ml_result.entities)
+        
+        return enhanced_record
 
     def create_record(self, court_details, file_name, board_date, serial_no, case_type, case_no, case_year):
         court_data = court_details.strip()
