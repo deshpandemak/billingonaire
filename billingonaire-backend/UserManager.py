@@ -380,12 +380,21 @@ class UserManager:
             
             while page:
                 for user in page.users:
+                    # Handle Firebase Auth timestamps (Unix timestamps in seconds)
+                    created_timestamp = None
+                    if user.user_metadata.creation_timestamp:
+                        created_timestamp = datetime.fromtimestamp(user.user_metadata.creation_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    last_signin_timestamp = None
+                    if user.user_metadata.last_sign_in_timestamp:
+                        last_signin_timestamp = datetime.fromtimestamp(user.user_metadata.last_sign_in_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                    
                     firebase_users.append({
                         'uid': user.uid,
                         'email': user.email,
                         'display_name': user.display_name,
-                        'created': user.user_metadata.creation_timestamp.strftime('%Y-%m-%d %H:%M:%S') if user.user_metadata.creation_timestamp else None,
-                        'last_sign_in': user.user_metadata.last_sign_in_timestamp.strftime('%Y-%m-%d %H:%M:%S') if user.user_metadata.last_sign_in_timestamp else None,
+                        'created': created_timestamp,
+                        'last_sign_in': last_signin_timestamp,
                         'disabled': user.disabled
                     })
                 
