@@ -10,6 +10,7 @@ const AdminUserManagement = () => {
   const [users, setUsers] = useState([]);
   const [allAgpNames, setAllAgpNames] = useState([]);
   const [availableRoles, setAvailableRoles] = useState({});
+  const [availableLegalCategories, setAvailableLegalCategories] = useState({});
   const [unsyncedUsers, setUnsyncedUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncLoading, setSyncLoading] = useState(false);

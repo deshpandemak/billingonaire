@@ -9,19 +9,22 @@ class UserManager:
         self.db = firestore.client()
         self.users_collection = "users"
         
-        # Define valid user categories
-        self.valid_roles = [
-            "admin",
+        # Define valid access control roles (for authorization)
+        self.valid_roles = ["admin", "user"]
+        self.role_display_names = {
+            "admin": "Administrator",
+            "user": "User"
+        }
+        
+        # Define legal professional categories (separate from access control)
+        self.valid_legal_categories = [
             "government_pleader", 
             "additional_government_pleader",
             "assistant_government_pleader",
             "b_panel_advocate",
             "advocate_general"
         ]
-        
-        # Human-readable role names
-        self.role_display_names = {
-            "admin": "Administrator",
+        self.legal_category_display_names = {
             "government_pleader": "Government Pleader",
             "additional_government_pleader": "Additional Government Pleader", 
             "assistant_government_pleader": "Assistant to Government Pleader",
@@ -71,7 +74,7 @@ class UserManager:
             logging.error(f"Error setting up initial admin: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error setting up admin: {str(e)}")
     
-    def create_user_profile(self, uid: str, email: str, role: str = "assistant_government_pleader", agp_names: List[str] = None, full_name: str = None) -> Dict:
+    def create_user_profile(self, uid: str, email: str, role: str = "user", legal_category: str = "assistant_government_pleader", agp_names: List[str] = None, full_name: str = None) -> Dict:
         """
         Create or update user profile in Firestore
         
@@ -85,11 +88,12 @@ class UserManager:
         try:
             # Validate role
             if role not in self.valid_roles:
-                role = "assistant_government_pleader"  # Default to most common role
+                role = "user"  # Default to user role
                 
             # Check if this is the initial admin setup
             if email == "deshpande.mak@gmail.com":
                 role = "admin"
+                legal_category = None  # Admins don't need legal categories
                 agp_names = []  # Admins don't need AGP names
             elif role != "admin" and not agp_names:
                 # For legal professional users, they can be created without AGP names initially
@@ -100,6 +104,7 @@ class UserManager:
                 "uid": uid,
                 "email": email,
                 "role": role,
+                "legal_category": legal_category if role != "admin" else None,
                 "agp_names": agp_names or [],  # Support multiple AGP names
                 "full_name": full_name or email.split("@")[0],
                 "created_at": datetime.now(),
@@ -142,7 +147,8 @@ class UserManager:
                     return {
                         "uid": uid,
                         "email": firebase_user.email,
-                        "role": "agp",  # Default to AGP
+                        "role": "user",  # Default to user role
+                        "legal_category": "assistant_government_pleader",  # Default legal category
                         "agp_names": [],  # Start with empty AGP names
                         "full_name": firebase_user.email.split("@")[0] if firebase_user.email else "Unknown",
                         "is_active": True,
@@ -227,12 +233,13 @@ class UserManager:
                 if role not in self.valid_roles:
                     raise HTTPException(status_code=400, detail=f"Invalid role: {role}. Must be one of: {', '.join(self.valid_roles)}")
                 
-                # Clear agp_names when setting role to admin
+                # Clear agp_names and legal_category when setting role to admin
                 if role == 'admin':
                     updates['agp_names'] = []
+                    updates['legal_category'] = None
             
-            # Allow admin to update role and AGP assignments
-            allowed_updates = ['role', 'agp_names', 'full_name', 'is_active']
+            # Allow admin to update role, legal_category, and AGP assignments
+            allowed_updates = ['role', 'legal_category', 'agp_names', 'full_name', 'is_active']
             filtered_updates = {k: v for k, v in updates.items() if k in allowed_updates}
             filtered_updates['updated_at'] = datetime.now()
             
@@ -370,7 +377,15 @@ class UserManager:
     
     def is_legal_professional(self, role: str) -> bool:
         """Check if a role is a legal professional role (not admin)"""
-        return role in ['government_pleader', 'additional_government_pleader', 'assistant_government_pleader', 'b_panel_advocate', 'advocate_general']
+        return role == 'user'  # Only users (not admin) are legal professionals
+    
+    def get_available_legal_categories(self) -> Dict[str, str]:
+        """Get available legal categories with their display names"""
+        return self.legal_category_display_names
+    
+    def is_valid_legal_category(self, legal_category: str) -> bool:
+        """Check if a legal category is valid"""
+        return legal_category in self.valid_legal_categories
     
     def list_firebase_auth_users(self) -> List[Dict]:
         """List all users from Firebase Authentication"""

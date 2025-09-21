@@ -264,11 +264,12 @@ async def create_or_update_profile(
     try:
         existing_profile = user_manager.get_user_profile(uid)
         if existing_profile.get('needs_setup'):
-            # For new profiles, create AGP user without AGP assignments (admin will assign later)
+            # For new profiles, create user with legal category (admin will assign AGP later)
             return user_manager.create_user_profile(
                 uid=uid,
                 email=email,
-                role='assistant_government_pleader',
+                role='user',
+                legal_category='assistant_government_pleader',
                 agp_names=[],  # Start with empty AGP names - admin will assign
                 full_name=profile_data.get('full_name')
             )
@@ -276,11 +277,12 @@ async def create_or_update_profile(
             # Update existing profile with safe fields only
             return user_manager.update_user_profile(uid, safe_updates)
     except:
-        # Create new profile with AGP role only
+        # Create new profile with user role and legal category
         return user_manager.create_user_profile(
             uid=uid,
             email=email,
-            role='assistant_government_pleader',
+            role='user',
+            legal_category='assistant_government_pleader',
             agp_names=[],
             full_name=profile_data.get('full_name')
         )
@@ -358,6 +360,11 @@ async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
 async def get_available_roles(current_user = Depends(require_admin_active)):
     """Get available user roles for admin interface"""
     return {"roles": user_manager.get_available_roles()}
+
+@app.get("/admin/available-legal-categories", tags=["Admin"])
+async def get_available_legal_categories(current_user = Depends(require_admin_active)):
+    """Get available legal categories for admin interface"""
+    return {"legal_categories": user_manager.get_available_legal_categories()}
 
 @app.get("/admin/firebase-users", tags=["Admin"])
 async def list_firebase_auth_users(current_user = Depends(require_admin_active)):
