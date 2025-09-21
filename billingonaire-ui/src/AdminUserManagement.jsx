@@ -9,6 +9,7 @@ const AdminUserManagement = () => {
   const [profile, setProfile] = useState(null);
   const [users, setUsers] = useState([]);
   const [allAgpNames, setAllAgpNames] = useState([]);
+  const [availableRoles, setAvailableRoles] = useState({});
   const [unsyncedUsers, setUnsyncedUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncLoading, setSyncLoading] = useState(false);
@@ -22,7 +23,7 @@ const AdminUserManagement = () => {
 
   // Form state for editing users
   const [editForm, setEditForm] = useState({
-    role: 'agp',
+    role: 'assistant_government_pleader',
     agp_names: [],
     full_name: '',
     is_active: true
@@ -31,7 +32,7 @@ const AdminUserManagement = () => {
   // Form state for creating new users
   const [createForm, setCreateForm] = useState({
     email: '',
-    role: 'agp',
+    role: 'assistant_government_pleader',
     agp_names: [],
     full_name: ''
   });
@@ -47,6 +48,7 @@ const AdminUserManagement = () => {
         setTimeout(async () => {
           await loadUsers();
           await loadAllAgpNames();
+          await loadAvailableRoles();
           await loadUnsyncedUsers();
         }, 500);
       } else {
@@ -114,6 +116,16 @@ const AdminUserManagement = () => {
     }
   };
 
+  const loadAvailableRoles = async () => {
+    try {
+      const response = await authenticatedFetchJSON('/admin/available-roles');
+      setAvailableRoles(response.roles || {});
+      console.log('Available roles loaded:', response.roles);
+    } catch (error) {
+      console.error('Error loading available roles:', error);
+    }
+  };
+
   const loadUnsyncedUsers = async () => {
     try {
       const unsyncedData = await authenticatedFetchJSON('/admin/unsynced-users');
@@ -160,7 +172,7 @@ const AdminUserManagement = () => {
   const handleEditUser = (user) => {
     setSelectedUser(user);
     setEditForm({
-      role: user.role || 'agp',
+      role: user.role || 'assistant_government_pleader',
       agp_names: user.agp_names || (user.agp_name ? [user.agp_name] : []),
       full_name: user.full_name || '',
       is_active: user.is_active !== false
@@ -185,8 +197,8 @@ const AdminUserManagement = () => {
         })
       });
 
-      // Update AGP names if AGP user
-      if (editForm.role === 'agp') {
+      // Update AGP names if legal professional user (not admin)
+      if (editForm.role !== 'admin') {
         await authenticatedFetchJSON(`/admin/user/${selectedUser.uid}/agp-names`, {
           method: 'POST',
           body: JSON.stringify({
@@ -246,7 +258,7 @@ const AdminUserManagement = () => {
       setShowCreateModal(false);
       setCreateForm({
         email: '',
-        role: 'agp',
+        role: 'assistant_government_pleader',
         agp_names: [],
         full_name: ''
       });
@@ -346,8 +358,11 @@ const AdminUserManagement = () => {
                     }}
                   >
                     <option value="">All Users</option>
-                    <option value="admin">Administrators</option>
-                    <option value="agp">AGP Users</option>
+                    {Object.entries(availableRoles).map(([roleKey, displayName]) => (
+                      <option key={roleKey} value={roleKey}>
+                        {displayName}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="col-md-8">
@@ -531,12 +546,15 @@ const AdminUserManagement = () => {
                       value={createForm.role}
                       onChange={(e) => setCreateForm({...createForm, role: e.target.value, agp_names: []})}
                     >
-                      <option value="agp">AGP (Assistant Government Pleader)</option>
-                      <option value="admin">Administrator</option>
+                      {Object.entries(availableRoles).map(([roleKey, displayName]) => (
+                        <option key={roleKey} value={roleKey}>
+                          {displayName}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  {createForm.role === 'agp' && (
+                  {createForm.role !== 'admin' && (
                     <div className="mb-3">
                       <label className="form-label">AGP Name Assignments</label>
                       <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>
@@ -627,12 +645,15 @@ const AdminUserManagement = () => {
                       value={editForm.role}
                       onChange={(e) => setEditForm({...editForm, role: e.target.value})}
                     >
-                      <option value="agp">AGP (Assistant Government Pleader)</option>
-                      <option value="admin">Administrator</option>
+                      {Object.entries(availableRoles).map(([roleKey, displayName]) => (
+                        <option key={roleKey} value={roleKey}>
+                          {displayName}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  {editForm.role === 'agp' && (
+                  {editForm.role !== 'admin' && (
                     <div className="mb-3">
                       <label className="form-label">AGP Name Assignments</label>
                       <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>

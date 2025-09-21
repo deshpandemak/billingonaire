@@ -268,7 +268,7 @@ async def create_or_update_profile(
             return user_manager.create_user_profile(
                 uid=uid,
                 email=email,
-                role='agp',
+                role='assistant_government_pleader',
                 agp_names=[],  # Start with empty AGP names - admin will assign
                 full_name=profile_data.get('full_name')
             )
@@ -280,7 +280,7 @@ async def create_or_update_profile(
         return user_manager.create_user_profile(
             uid=uid,
             email=email,
-            role='agp',
+            role='assistant_government_pleader',
             agp_names=[],
             full_name=profile_data.get('full_name')
         )
@@ -354,6 +354,11 @@ async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
     """Get all AGP names in the system (admin only)"""
     return {"agp_names": user_manager.get_agp_names_list()}
 
+@app.get("/admin/available-roles", tags=["Admin"])
+async def get_available_roles(current_user = Depends(require_admin_active)):
+    """Get available user roles for admin interface"""
+    return {"roles": user_manager.get_available_roles()}
+
 @app.get("/admin/firebase-users", tags=["Admin"])
 async def list_firebase_auth_users(current_user = Depends(require_admin_active)):
     """List all users from Firebase Authentication"""
@@ -379,7 +384,7 @@ async def create_new_user(
     try:
         admin_uid = current_user.get('uid')
         email = user_data.get('email')
-        role = user_data.get('role', 'agp')
+        role = user_data.get('role', 'assistant_government_pleader')
         full_name = user_data.get('full_name', '')
         agp_names = user_data.get('agp_names', [])
         
@@ -399,7 +404,7 @@ async def create_new_user(
                 uid=firebase_user.uid,
                 email=email,
                 role=role,
-                agp_names=agp_names if role == 'agp' else [],
+                agp_names=agp_names if user_manager.is_legal_professional(role) else [],
                 full_name=full_name
             )
             
