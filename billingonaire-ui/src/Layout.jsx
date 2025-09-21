@@ -6,9 +6,9 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
-import CourtIntegration from './CourtIntegration';
 import OrderManagement from './OrderManagement';
 import UserProfile from './UserProfile';
+import AdminUserManagement from './AdminUserManagement';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
@@ -17,10 +17,29 @@ const Layout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
+      if (user) {
+        try {
+          // Get user profile to check role
+          const response = await fetch('/api/user/profile', {
+            headers: {
+              'Authorization': `Bearer ${await user.getIdToken()}`
+            }
+          });
+          if (response.ok) {
+            const profile = await response.json();
+            setUserProfile(profile);
+          }
+        } catch (error) {
+          console.error('Error loading user profile:', error);
+        }
+      } else {
+        setUserProfile(null);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -108,13 +127,15 @@ const Layout = ({ children }) => {
                   >
                     Search Data
                   </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
-                    to="/court"
-                    className={location.pathname === '/court' ? 'active' : ''}
-                  >
-                    Court Integration
-                  </Nav.Link>
+                  {userProfile?.role === 'admin' && (
+                    <Nav.Link 
+                      as={Link} 
+                      to="/admin/users"
+                      className={location.pathname === '/admin/users' ? 'active' : ''}
+                    >
+                      User Management
+                    </Nav.Link>
+                  )}
                   <Nav.Link 
                     as={Link} 
                     to="/orders"
@@ -184,9 +205,9 @@ const App = () => (
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
-        <Route path="/court" element={<CourtIntegration />} />
         <Route path="/orders" element={<OrderManagement />} />
         <Route path="/profile" element={<UserProfile />} />
+        <Route path="/admin/users" element={<AdminUserManagement />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

@@ -354,6 +354,60 @@ async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
     """Get all AGP names in the system (admin only)"""
     return {"agp_names": user_manager.get_all_agp_names()}
 
+@app.post("/admin/create-user", tags=["Admin"])
+async def create_new_user(
+    user_data: dict,
+    current_user = Depends(require_admin_active)
+):
+    """Create a new user with default password (admin only)"""
+    try:
+        admin_uid = current_user.get('uid')
+        email = user_data.get('email')
+        role = user_data.get('role', 'agp')
+        full_name = user_data.get('full_name', '')
+        agp_names = user_data.get('agp_names', [])
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        
+        # Create user in Firebase Auth with default password
+        try:
+            firebase_user = auth.create_user(
+                email=email,
+                password="password123",  # Default password
+                email_verified=False
+            )
+            
+            # Create user profile in Firestore
+            user_profile = user_manager.create_user_profile(
+                uid=firebase_user.uid,
+                email=email,
+                role=role,
+                agp_names=agp_names if role == 'agp' else [],
+                full_name=full_name
+            )
+            
+            logging.info(f"Admin {admin_uid} created new user {email} with role {role}")
+            
+            return {
+                "message": "User created successfully",
+                "user": user_profile,
+                "default_password": "password123",
+                "note": "User should change password on first login"
+            }
+            
+        except auth.EmailAlreadyExistsError:
+            raise HTTPException(status_code=400, detail="Email already exists in the system")
+        except Exception as e:
+            logging.error(f"Error creating Firebase user: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error creating user account: {str(e)}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error in create_new_user: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error creating user")
+
 @app.get("/user/agp-names", tags=["User Management"])
 async def get_agp_names(current_user = Depends(get_current_user)):
     """Get list of available AGP names"""
