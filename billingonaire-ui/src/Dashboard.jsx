@@ -39,27 +39,33 @@ const Dashboard = () => {
     start: '',
     end: ''
   });
-  const [loading, setLoading] = useState(true);
+  const [weeklyLoading, setWeeklyLoading] = useState(true);
+  const [agpLoading, setAgpLoading] = useState(true);
+  const [monthlyLoading, setMonthlyLoading] = useState(true);
+  const [weeklyError, setWeeklyError] = useState('');
+  const [agpError, setAgpError] = useState('');
+  const [monthlyError, setMonthlyError] = useState('');
   const [agpCurrentPage, setAgpCurrentPage] = useState(0);
   const [monthlyCurrentPage, setMonthlyCurrentPage] = useState(0);
   const ITEMS_PER_PAGE = 20;
 
+  // Independent loading for each widget
   useEffect(() => {
-    loadDashboardData();
-  }, [year, agpName, weeklyRange]);
+    fetchWeeklyStatus();
+  }, [weeklyRange.start, weeklyRange.end]);
 
-  const loadDashboardData = async () => {
-    setLoading(true);
-    await Promise.all([
-      fetchWeeklyStatus(),
-      fetchAgpStats(),
-      fetchMonthlyAvg()
-    ]);
-    setLoading(false);
-  };
+  useEffect(() => {
+    fetchAgpStats();
+  }, [agpName]);
 
-  // Fetch weekly board status
+  useEffect(() => {
+    fetchMonthlyAvg();
+  }, [year]);
+
+  // Fetch weekly board status with independent loading
   const fetchWeeklyStatus = async () => {
+    setWeeklyLoading(true);
+    setWeeklyError('');
     let url = `/dashboard/weekly-status`;
     const params = [];
     if (weeklyRange.start) params.push(`start_date=${weeklyRange.start}`);
@@ -70,12 +76,18 @@ const Dashboard = () => {
       setWeeklyStatus(data);
     } catch (e) {
       console.error('Failed to fetch weekly status:', e);
+      setWeeklyError('Failed to load weekly status');
       setWeeklyStatus([]);
+    } finally {
+      setWeeklyLoading(false);
     }
   };
 
-  // Fetch AGP wise data
+  // Fetch AGP wise data with independent loading
   const fetchAgpStats = async () => {
+    setAgpLoading(true);
+    setAgpError('');
+    setAgpCurrentPage(0); // Reset pagination on new data
     let url = `/dashboard/agp-stats`;
     if (agpName) url += `?agp_name=${encodeURIComponent(agpName)}`;
     try {
@@ -83,12 +95,18 @@ const Dashboard = () => {
       setAgpStats(data);
     } catch (e) {
       console.error('Failed to fetch AGP stats:', e);
+      setAgpError('Failed to load AGP statistics');
       setAgpStats([]);
+    } finally {
+      setAgpLoading(false);
     }
   };
 
-  // Fetch monthly average matters per AGP
+  // Fetch monthly average matters per AGP with independent loading
   const fetchMonthlyAvg = async () => {
+    setMonthlyLoading(true);
+    setMonthlyError('');
+    setMonthlyCurrentPage(0); // Reset pagination on new data
     let url = `/dashboard/monthly-avg`;
     if (year) url += `?year=${year}`;
     try {
@@ -96,7 +114,10 @@ const Dashboard = () => {
       setMonthlyAvg(data);
     } catch (e) {
       console.error('Failed to fetch monthly avg:', e);
+      setMonthlyError('Failed to load monthly averages');
       setMonthlyAvg([]);
+    } finally {
+      setMonthlyLoading(false);
     }
   };
 
@@ -197,16 +218,7 @@ const Dashboard = () => {
         </p>
       </div>
 
-      {loading ? (
-        <div className="text-center" style={{ padding: '3rem' }}>
-          <div className="loading-text">
-            <span className="loading"></span>
-            Loading dashboard data...
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Weekly Board Status Section */}
+      {/* Weekly Board Status Section */}
           <div className="dashboard-section">
             <div className="card-professional">
               <div className="card-header">
@@ -242,7 +254,21 @@ const Dashboard = () => {
                   </div>
                 </div>
                 
-                {weeklyStatus.length === 0 ? (
+                {weeklyLoading ? (
+                  <div className="text-center p-4">
+                    <div className="loading-text">
+                      <span className="loading"></span>
+                      Loading weekly status...
+                    </div>
+                  </div>
+                ) : weeklyError ? (
+                  <div className="text-center p-4">
+                    <p style={{ color: 'var(--error-color)' }}>{weeklyError}</p>
+                    <button className="btn-professional btn-primary" onClick={fetchWeeklyStatus}>
+                      Retry
+                    </button>
+                  </div>
+                ) : weeklyStatus.length === 0 ? (
                   <div className="text-center p-4">
                     <p style={{ color: 'var(--gray-500)' }}>No data available for the selected date range</p>
                   </div>
@@ -297,7 +323,21 @@ const Dashboard = () => {
                     </div>
                   </div>
                   
-                  {agpStats.length === 0 ? (
+                  {agpLoading ? (
+                    <div className="text-center p-4">
+                      <div className="loading-text">
+                        <span className="loading"></span>
+                        Loading AGP statistics...
+                      </div>
+                    </div>
+                  ) : agpError ? (
+                    <div className="text-center p-4">
+                      <p style={{ color: 'var(--error-color)' }}>{agpError}</p>
+                      <button className="btn-professional btn-primary" onClick={fetchAgpStats}>
+                        Retry
+                      </button>
+                    </div>
+                  ) : agpStats.length === 0 ? (
                     <div className="text-center p-4">
                       <p style={{ color: 'var(--gray-500)' }}>No AGP data available</p>
                     </div>
@@ -380,7 +420,14 @@ const Dashboard = () => {
                   <h2 className="section-title">📊 AGP Distribution</h2>
                 </div>
                 <div className="card-body">
-                  {agpStats.length === 0 ? (
+                  {agpLoading ? (
+                    <div className="text-center p-4">
+                      <div className="loading-text">
+                        <span className="loading"></span>
+                        Loading chart...
+                      </div>
+                    </div>
+                  ) : agpStats.length === 0 ? (
                     <div className="text-center p-4">
                       <p style={{ color: 'var(--gray-500)' }}>No data available for chart</p>
                     </div>
@@ -421,7 +468,7 @@ const Dashboard = () => {
             </div>
             
             {/* AGP Bar Chart */}
-            {agpStats.length > 0 && (
+            {!agpLoading && agpStats.length > 0 && (
               <div className="card-professional">
                 <div className="card-header">
                   <h2 className="section-title">📈 Top 10 AGPs by Case Load</h2>
@@ -466,7 +513,21 @@ const Dashboard = () => {
                     </div>
                   </div>
                   
-                  {monthlyAvg.length === 0 ? (
+                  {monthlyLoading ? (
+                    <div className="text-center p-4">
+                      <div className="loading-text">
+                        <span className="loading"></span>
+                        Loading monthly averages...
+                      </div>
+                    </div>
+                  ) : monthlyError ? (
+                    <div className="text-center p-4">
+                      <p style={{ color: 'var(--error-color)' }}>{monthlyError}</p>
+                      <button className="btn-professional btn-primary" onClick={fetchMonthlyAvg}>
+                        Retry
+                      </button>
+                    </div>
+                  ) : monthlyAvg.length === 0 ? (
                     <div className="text-center p-4">
                       <p style={{ color: 'var(--gray-500)' }}>No monthly average data available for {year}</p>
                     </div>
@@ -549,7 +610,14 @@ const Dashboard = () => {
                   <h2 className="section-title">📊 Top 10 Monthly Averages</h2>
                 </div>
                 <div className="card-body">
-                  {monthlyAvg.length === 0 ? (
+                  {monthlyLoading ? (
+                    <div className="text-center p-4">
+                      <div className="loading-text">
+                        <span className="loading"></span>
+                        Loading chart...
+                      </div>
+                    </div>
+                  ) : monthlyAvg.length === 0 ? (
                     <div className="text-center p-4">
                       <p style={{ color: 'var(--gray-500)' }}>No data available for chart</p>
                     </div>
@@ -577,8 +645,6 @@ const Dashboard = () => {
               </div>
             </div>
           </div>
-        </>
-      )}
     </div>
   );
 };

@@ -1,7 +1,8 @@
-from fastapi import Depends, Query
+from fastapi import Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 from firebase_admin import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 class DashboardData:
     def __init__(self, db=None):
@@ -13,11 +14,25 @@ class DashboardData:
         week_ago = today - timedelta(days=6)
         start = start_date or week_ago.strftime("%Y-%m-%d")
         end = end_date or today.strftime("%Y-%m-%d")
-        query = self.db.collection("daily-boards").where("board_date", ">=", start).where("board_date", "<=", end)
+        # Validate date format and range
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+            if start_dt > end_dt:
+                raise HTTPException(status_code=400, detail="Start date must be less than or equal to end date")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Use filter() instead of where() with positional arguments to avoid warnings
+        query = self.db.collection("daily-boards").where(
+            filter=FieldFilter("board_date", ">=", start)
+        ).where(
+            filter=FieldFilter("board_date", "<=", end)
+        )
         
         # Apply AGP filter if specified
         if agp_filter:
-            query = query.where("respondent_lawyer", "==", agp_filter)
+            query = query.where(filter=FieldFilter("respondent_lawyer", "==", agp_filter))
         docs = query.stream()
         date_counts = {}
         for doc in docs:
@@ -31,7 +46,7 @@ class DashboardData:
         # Use agp_filter if provided (for role-based access), otherwise use agp_name parameter
         target_agp = agp_filter or agp_name
         if target_agp:
-            query = query.where("respondent_lawyer", "==", target_agp)
+            query = query.where(filter=FieldFilter("respondent_lawyer", "==", target_agp))
         docs = query.stream()
         agp_counts = {}
         for doc in docs:
@@ -45,10 +60,22 @@ class DashboardData:
         
         # Apply AGP filter if specified
         if agp_filter:
-            query = query.where("respondent_lawyer", "==", agp_filter)
+            query = query.where(filter=FieldFilter("respondent_lawyer", "==", agp_filter))
         
         if year:
-            query = query.where("board_date", ">=", f"{year}-01-01").where("board_date", "<=", f"{year}-12-31")
+            # Validate year format
+            try:
+                year_int = int(year)
+                if year_int < 1900 or year_int > datetime.now().year + 10:
+                    raise HTTPException(status_code=400, detail="Invalid year range")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid year format")
+            
+            query = query.where(
+                filter=FieldFilter("board_date", ">=", f"{year}-01-01")
+            ).where(
+                filter=FieldFilter("board_date", "<=", f"{year}-12-31")
+            )
         docs = query.stream()
         agp_month_counts = {}
         for doc in docs:
