@@ -24,7 +24,8 @@ const AdminUserManagement = () => {
 
   // Form state for editing users
   const [editForm, setEditForm] = useState({
-    role: 'assistant_government_pleader',
+    role: 'user',
+    legal_category: 'assistant_government_pleader',
     agp_names: [],
     full_name: '',
     is_active: true
@@ -33,7 +34,8 @@ const AdminUserManagement = () => {
   // Form state for creating new users
   const [createForm, setCreateForm] = useState({
     email: '',
-    role: 'assistant_government_pleader',
+    role: 'user',
+    legal_category: 'assistant_government_pleader',
     agp_names: [],
     full_name: ''
   });
@@ -50,6 +52,7 @@ const AdminUserManagement = () => {
           await loadUsers();
           await loadAllAgpNames();
           await loadAvailableRoles();
+          await loadAvailableLegalCategories();
           await loadUnsyncedUsers();
         }, 500);
       } else {
@@ -124,6 +127,16 @@ const AdminUserManagement = () => {
       console.log('Available roles loaded:', response.roles);
     } catch (error) {
       console.error('Error loading available roles:', error);
+    }
+  };
+
+  const loadAvailableLegalCategories = async () => {
+    try {
+      const response = await authenticatedFetchJSON('/admin/available-legal-categories');
+      setAvailableLegalCategories(response.legal_categories || {});
+      console.log('Available legal categories loaded:', response.legal_categories);
+    } catch (error) {
+      console.error('Error loading available legal categories:', error);
     }
   };
 
