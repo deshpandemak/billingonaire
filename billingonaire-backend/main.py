@@ -488,6 +488,56 @@ async def dashboard_monthly_avg(
     data = await dashboard_data.get_monthly_avg(year, agp_filter)
     return JSONResponse(content=data)
 
+@app.get("/dashboard/matters-by-date-range")
+async def dashboard_matters_by_date_range(
+    start_date: str = Query(None, description="Start date (YYYY-MM-DD) - defaults to last 5 days"),
+    end_date: str = Query(None, description="End date (YYYY-MM-DD) - defaults to today"),
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    """Get total matters by date range with average for bar chart + line visualization"""
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_matters_by_date_range(start_date, end_date, agp_filter)
+    return JSONResponse(content=data)
+
+@app.get("/dashboard/agp-distribution-weekly")
+async def dashboard_agp_distribution_weekly(
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    """Get AGP distribution for current week (Monday to current date)"""
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_agp_distribution_weekly(agp_filter)
+    return JSONResponse(content=data)
+
+@app.get("/dashboard/agp-distribution-monthly")
+async def dashboard_agp_distribution_monthly(
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    """Get AGP distribution for current month to date"""
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_agp_distribution_monthly(agp_filter)
+    return JSONResponse(content=data)
+
+@app.get("/dashboard/agp-distribution-yearly")
+async def dashboard_agp_distribution_yearly(
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    """Get AGP distribution for current year to date"""
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_agp_distribution_yearly(agp_filter)
+    return JSONResponse(content=data)
+
 # Court integration endpoints
 court_scraper = BombayHighCourtScraper()
 order_manager = OrderManager()
