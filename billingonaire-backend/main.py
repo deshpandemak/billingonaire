@@ -170,6 +170,8 @@ async def get_data(
 ):
     try:
         search_criteria = await request.json()
+        
+        
         board = Board()
         
         # SECURITY: Apply AGP filter for non-admin users - strict enforcement

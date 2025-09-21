@@ -173,6 +173,7 @@ class Board:
     def getData(self, search_criteria, agp_filter=None):
         # SECURITY: Removed debug logging to prevent data leakage
         logging.info("Processing search request")
+        
         try:
             # First, check total documents in collection
             all_docs = list(self.db.collection("daily-boards").limit(5).stream())
@@ -206,12 +207,35 @@ class Board:
             
             start_date = search_criteria.get("startDate") or search_criteria.get("start_date")
             if start_date:
-                logging.info(f"FILTERING BY START DATE: {start_date} (field: board_date)")
+                # Convert date to datetime object to match database storage (datetime objects)
+                if isinstance(start_date, str):
+                    if 'T' in start_date:
+                        # Handle ISO date-time format (e.g., "2025-01-01T00:00:00")
+                        start_date = start_date.split('T')[0]
+                    # Convert string to datetime object
+                    start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                elif not hasattr(start_date, 'strftime'):
+                    # If not a string or datetime, try to parse as string
+                    start_date = datetime.strptime(str(start_date), '%Y-%m-%d')
+                logging.info(f"FILTERING BY START DATE: {start_date} (converted to datetime object) (field: board_date)")
                 query = query.where("board_date", ">=", start_date)
             
             end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
             if end_date:
-                logging.info(f"FILTERING BY END DATE: {end_date} (field: board_date)")
+                # Convert date to datetime object to match database storage (datetime objects)
+                if isinstance(end_date, str):
+                    if 'T' in end_date:
+                        # Handle ISO date-time format (e.g., "2025-01-01T23:59:59")
+                        end_date = end_date.split('T')[0]
+                    # Convert string to datetime object - set to end of day
+                    end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Add 23:59:59 to include the entire end date
+                    end_date = end_date.replace(hour=23, minute=59, second=59)
+                elif not hasattr(end_date, 'strftime'):
+                    # If not a string or datetime, try to parse as string  
+                    end_date = datetime.strptime(str(end_date), '%Y-%m-%d')
+                    end_date = end_date.replace(hour=23, minute=59, second=59)
+                logging.info(f"FILTERING BY END DATE: {end_date} (converted to datetime object) (field: board_date)")
                 query = query.where("board_date", "<=", end_date)
 
             advocate_name = search_criteria.get("advocateName") or search_criteria.get("advocate_name")
@@ -238,12 +262,30 @@ class Board:
 
             docs = query.stream()
             data = []
+            sample_dates = []
             for doc in docs:
                 doc_data = doc.to_dict()
+                # Log sample board_date values for debugging
+                if 'board_date' in doc_data and len(sample_dates) < 3:
+                    sample_dates.append(f"{doc_data['board_date']} (type: {type(doc_data['board_date'])})")
                 # Convert datetime objects to strings for JSON serialization
                 if 'board_date' in doc_data and hasattr(doc_data['board_date'], 'strftime'):
                     doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
                 data.append(doc_data)
+            
+            # Log sample dates for debugging
+            if sample_dates:
+                logging.info(f"SAMPLE BOARD_DATE VALUES: {sample_dates}")
+            else:
+                # Get a few sample documents to see what dates look like
+                sample_query = self.db.collection("daily-boards").limit(3)
+                sample_docs = sample_query.stream()
+                sample_dates = []
+                for doc in sample_docs:
+                    doc_data = doc.to_dict()
+                    if 'board_date' in doc_data:
+                        sample_dates.append(f"{doc_data['board_date']} (type: {type(doc_data['board_date'])})")
+                logging.info(f"SAMPLE BOARD_DATE VALUES FROM DB: {sample_dates}")
 
             logging.info(f"Search query returned {len(data)} records")
             
