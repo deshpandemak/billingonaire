@@ -528,3 +528,60 @@ h6 { font-size: 1rem; }
   align-items: center;
   gap: var(--spacing-sm);
 }
+
+/* User Profile Styles */
+.profile-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.status-item:last-child {
+  border-bottom: none;
+}
+
+.role-badge {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.role-badge.admin {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.role-badge.agp {
+  background-color: var(--secondary-color);
+  color: white;
+}
+
+.status-active {
+  color: var(--secondary-color);
+  font-weight: 500;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xl);
+  text-align: center;
+}
+
+.loading-container p {
+  margin-top: var(--spacing-md);
+  color: var(--gray-600);
+}

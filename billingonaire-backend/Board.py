@@ -170,29 +170,16 @@ class Board:
             logging.error(f"Error saving data: {str(e)}")
             raise HTTPException(status_code=500, detail="Error saving data")
 
-    def getData(self, search_criteria):
-        print("=== SEARCH DEBUG START ===")
-        print(f"Search criteria received: {search_criteria}")
-        logging.info("=== SEARCH DEBUG START ===")
-        logging.info(f"Search criteria received: {search_criteria}")
+    def getData(self, search_criteria, agp_filter=None):
+        # SECURITY: Removed debug logging to prevent data leakage
+        logging.info("Processing search request")
         try:
             # First, check total documents in collection
             all_docs = list(self.db.collection("daily-boards").limit(5).stream())
-            print(f"TOTAL DOCUMENTS IN DATABASE: {len(all_docs)}")
-            logging.info(f"TOTAL DOCUMENTS IN DATABASE: {len(all_docs)}")
+            logging.info(f"Database query returned {len(all_docs)} documents")
             
-            if all_docs:
-                sample_doc = all_docs[0].to_dict()
-                print(f"Sample document fields: {list(sample_doc.keys())}")
-                print(f"Sample board_date: {sample_doc.get('board_date')}")
-                print(f"Sample case_year: {sample_doc.get('case_year')}")
-                logging.info(f"Sample document fields: {list(sample_doc.keys())}")
-                logging.info(f"Sample board_date: {sample_doc.get('board_date')}")
-                logging.info(f"Sample case_year: {sample_doc.get('case_year')}")
-                logging.info(f"Sample case_type: {sample_doc.get('case_type')}")
-            else:
-                print("NO DOCUMENTS FOUND IN DATABASE!")
-                logging.warning("NO DOCUMENTS FOUND IN DATABASE!")
+            if not all_docs:
+                logging.warning("No documents found in database")
             
             if not any(search_criteria.values()):
                 # If no search criteria, return first 10 records
@@ -200,6 +187,11 @@ class Board:
                 query = self.db.collection("daily-boards").limit(10)
             else:
                 query = self.db.collection("daily-boards")
+            
+            # Apply AGP filter if user is restricted to specific AGP
+            if agp_filter:
+                logging.info("Applying AGP access filter")
+                query = query.where("respondent_lawyer", "==", agp_filter)
 
                 # Handle both camelCase (frontend) and snake_case (legacy) field names
                 case_number = search_criteria.get("caseNumber") or search_criteria.get("case_number")
@@ -247,16 +239,10 @@ class Board:
                     doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
                 data.append(doc_data)
 
-            print(f"=== QUERY RESULTS: {len(data)} records found ===")
-            logging.info(f"=== QUERY RESULTS: {len(data)} records found ===")
-            if data:
-                print(f"First result sample: {data[0]}")
-                logging.info(f"First result sample: {data[0]}")
-            else:
-                print("NO RECORDS MATCHED THE SEARCH CRITERIA!")
-                logging.warning("NO RECORDS MATCHED THE SEARCH CRITERIA!")
-            print("=== SEARCH DEBUG END ===")
-            logging.info("=== SEARCH DEBUG END ===")
+            logging.info(f"Search query returned {len(data)} records")
+            
+            if not data:
+                logging.warning("No records matched search criteria")
             return data
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")

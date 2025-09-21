@@ -11,6 +11,7 @@ from Board import Board
 from Dashboard import DashboardData
 from CourtScraper import BombayHighCourtScraper
 from OrderManager import OrderManager
+from UserManager import UserManager
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -53,6 +54,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+user_manager = UserManager()
+
 def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -62,14 +65,34 @@ def get_current_user(request: Request):
     
     try:
         # Verify the Firebase ID token with more detailed error logging
-        logging.info(f"Attempting to verify ID token: {id_token[:20]}...")
+        logging.info(f"Attempting to verify ID token for authentication")
         decoded_token = auth.verify_id_token(id_token)
         logging.info(f"Token verified successfully for user: {decoded_token.get('uid')}")
         return decoded_token
     except Exception as e:
         logging.error(f"Token verification failed: {str(e)}")
-        logging.error(f"Token details: {id_token[:50]}...")
-        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
+        # SECURITY: Do not log token details to prevent leakage
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+def require_admin(current_user: dict = Depends(get_current_user)):
+    """Dependency to require admin role"""
+    if not user_manager.is_admin(current_user.get('uid')):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+def require_active_user(current_user: dict = Depends(get_current_user)):
+    """Dependency to require active user account"""
+    uid = current_user.get('uid')
+    profile = user_manager.get_user_profile(uid)
+    
+    if not profile.get('is_active', True):
+        raise HTTPException(status_code=403, detail="Account is disabled. Contact administrator.")
+    
+    return {**current_user, 'profile': profile}
+
+def get_user_with_profile(current_user: dict = Depends(require_active_user)):
+    """Dependency to get current user with profile (active users only)"""
+    return current_user
 
 # Login/logout endpoints removed - using Firebase client-side authentication
 
@@ -78,7 +101,7 @@ async def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/upload-pdf", tags=["PDF Upload"])
-async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends(get_current_user)):
+async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends(require_admin)):
     results = []
     for file in files:
         if file.content_type != "application/pdf":
@@ -125,7 +148,7 @@ async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends
     return {"results": results}
 
 @app.post("/save-data", tags=["PDF Upload"])
-async def save_data(data: dict, current_user = Depends(get_current_user)):
+async def save_data(data: dict, current_user = Depends(require_admin)):
     try:
         board = Board()
         df = pd.DataFrame(data['data'])
@@ -135,14 +158,23 @@ async def save_data(data: dict, current_user = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get-data", tags=["Data Retrieval"])
-async def get_data(request: Request, current_user = Depends(get_current_user)):
+async def get_data(
+    request: Request, 
+    current_user_with_profile = Depends(get_user_with_profile)
+):
     try:
         search_criteria = await request.json()
         board = Board()
-        data = board.getData(search_criteria)
+        
+        # SECURITY: Apply AGP filter for non-admin users - strict enforcement
+        uid = current_user_with_profile.get('uid')
+        agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+        
+        data = board.getData(search_criteria, agp_filter)
         return data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=(str(e)))
+        logging.error(f"Error in data retrieval: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving data")
 
 @app.get("/debug/auth-test")
 async def auth_test(current_user = Depends(get_current_user)):
@@ -191,22 +223,138 @@ async def simple_database_check():
     except Exception as e:
         return {"error": str(e), "database_status": "error"}
 
+# User management endpoints
+@app.get("/user/profile", tags=["User Management"])
+async def get_user_profile(current_user_with_profile = Depends(get_user_with_profile)):
+    """Get current user's profile"""
+    return current_user_with_profile['profile']
+
+@app.post("/user/profile", tags=["User Management"])
+async def create_or_update_profile(
+    profile_data: dict,
+    current_user = Depends(get_current_user)
+):
+    """Create or update user profile (self-service - no role changes)"""
+    uid = current_user.get('uid')
+    email = current_user.get('email')
+    
+    # SECURITY: Remove role and agp_name from self-service updates to prevent privilege escalation
+    safe_updates = {
+        'full_name': profile_data.get('full_name')
+    }
+    
+    # Check if profile exists
+    try:
+        existing_profile = user_manager.get_user_profile(uid)
+        if existing_profile.get('needs_setup'):
+            # For new profiles, only allow AGP role and require admin approval for role assignment
+            return user_manager.create_user_profile(
+                uid=uid,
+                email=email,
+                role='agp',  # Force AGP role for new users
+                agp_name=None,  # Require admin to assign AGP name
+                full_name=profile_data.get('full_name')
+            )
+        else:
+            # Update existing profile with safe fields only
+            return user_manager.update_user_profile(uid, safe_updates)
+    except:
+        # Create new profile with AGP role only
+        return user_manager.create_user_profile(
+            uid=uid,
+            email=email,
+            role='agp',
+            agp_name=None,
+            full_name=profile_data.get('full_name')
+        )
+
+@app.post("/user/change-password", tags=["User Management"])
+async def change_password(
+    password_data: dict,
+    current_user = Depends(get_current_user)
+):
+    """Change user password"""
+    try:
+        uid = current_user.get('uid')
+        new_password = password_data.get('new_password')
+        
+        if not new_password or len(new_password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
+        # Update password in Firebase Auth
+        auth.update_user(uid, password=new_password)
+        
+        logging.info(f"Password changed for user {uid}")
+        return {"message": "Password changed successfully"}
+        
+    except Exception as e:
+        logging.error(f"Error changing password: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error changing password")
+
+@app.get("/admin/users", tags=["Admin"])
+async def list_users(
+    role_filter: str = Query(None, description="Filter by role: admin or agp"),
+    current_user = Depends(require_admin)
+):
+    """List all users (admin only)"""
+    return user_manager.list_users(role_filter)
+
+@app.post("/admin/user/{target_uid}/role", tags=["Admin"])
+async def update_user_role(
+    target_uid: str,
+    role_data: dict,
+    current_user = Depends(require_admin)
+):
+    """Update user role and AGP assignment (admin only)"""
+    admin_uid = current_user.get('uid')
+    return user_manager.admin_update_user_profile(target_uid, role_data, admin_uid)
+
+@app.get("/user/agp-names", tags=["User Management"])
+async def get_agp_names(current_user = Depends(get_current_user)):
+    """Get list of available AGP names"""
+    return {"agp_names": user_manager.get_all_agp_names()}
+
 # Dashboard endpoints (with authentication)
 dashboard_data = DashboardData()
 
 @app.get("/dashboard/weekly-status")
-async def dashboard_weekly_status(start_date: str = Query(None), end_date: str = Query(None), current_user = Depends(get_current_user)):
-    data = await dashboard_data.get_weekly_status(start_date, end_date)
+async def dashboard_weekly_status(
+    start_date: str = Query(None), 
+    end_date: str = Query(None), 
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_weekly_status(start_date, end_date, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/agp-stats")
-async def dashboard_agp_stats(agp_name: str = Query(None), current_user = Depends(get_current_user)):
-    data = await dashboard_data.get_agp_stats(agp_name)
+async def dashboard_agp_stats(
+    agp_name: str = Query(None), 
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    # For AGP users, use their assigned AGP name; for admins, use query parameter
+    target_agp = agp_filter or agp_name
+    
+    data = await dashboard_data.get_agp_stats(target_agp, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/monthly-avg")
-async def dashboard_monthly_avg(year: str = Query(None), current_user = Depends(get_current_user)):
-    data = await dashboard_data.get_monthly_avg(year)
+async def dashboard_monthly_avg(
+    year: str = Query(None), 
+    current_user_with_profile = Depends(get_user_with_profile)
+):
+    # SECURITY: Get AGP filter for the user - strict enforcement
+    uid = current_user_with_profile.get('uid')
+    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    
+    data = await dashboard_data.get_monthly_avg(year, agp_filter)
     return JSONResponse(content=data)
 
 # Court integration endpoints
