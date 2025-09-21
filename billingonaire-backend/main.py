@@ -74,12 +74,6 @@ def get_current_user(request: Request):
         # SECURITY: Do not log token details to prevent leakage
         raise HTTPException(status_code=401, detail="Invalid authentication token")
 
-def require_admin(current_user: dict = Depends(get_current_user)):
-    """Dependency to require admin role"""
-    if not user_manager.is_admin(current_user.get('uid')):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
-
 def require_active_user(current_user: dict = Depends(get_current_user)):
     """Dependency to require active user account"""
     uid = current_user.get('uid')
@@ -92,6 +86,18 @@ def require_active_user(current_user: dict = Depends(get_current_user)):
 
 def get_user_with_profile(current_user: dict = Depends(require_active_user)):
     """Dependency to get current user with profile (active users only)"""
+    return current_user
+
+def require_admin(current_user: dict = Depends(get_current_user)):
+    """Dependency to require admin role"""
+    if not user_manager.is_admin(current_user.get('uid')):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+def require_admin_active(current_user: dict = Depends(require_active_user)):
+    """Dependency to require active admin user"""
+    if not user_manager.is_admin(current_user.get('uid')):
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 # Login/logout endpoints removed - using Firebase client-side authentication
@@ -180,8 +186,8 @@ async def get_data(
 async def auth_test(current_user = Depends(get_current_user)):
     return {"message": "Authentication successful", "user_id": current_user.get('uid')}
 
-@app.get("/debug/simple-db-check")
-async def simple_database_check():
+@app.get("/debug/simple-db-check", tags=["Admin"])
+async def simple_database_check(current_user = Depends(require_admin)):
     try:
         board = Board()
         
@@ -294,7 +300,7 @@ async def change_password(
 @app.get("/admin/users", tags=["Admin"])
 async def list_users(
     role_filter: str = Query(None, description="Filter by role: admin or agp"),
-    current_user = Depends(require_admin)
+    current_user = Depends(require_admin_active)
 ):
     """List all users (admin only)"""
     return user_manager.list_users(role_filter)
@@ -303,7 +309,7 @@ async def list_users(
 async def update_user_role(
     target_uid: str,
     role_data: dict,
-    current_user = Depends(require_admin)
+    current_user = Depends(require_admin_active)
 ):
     """Update user role and AGP assignment (admin only)"""
     admin_uid = current_user.get('uid')
