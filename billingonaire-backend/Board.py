@@ -188,10 +188,15 @@ class Board:
             else:
                 query = self.db.collection("daily-boards")
             
-            # Apply AGP filter if user is restricted to specific AGP
+            # Apply AGP filter if user is restricted to specific AGPs
             if agp_filter:
                 logging.info("Applying AGP access filter")
-                query = query.where("respondent_lawyer", "==", agp_filter)
+                if isinstance(agp_filter, list):
+                    # Handle multiple AGP names - use 'in' operator
+                    query = query.where("respondent_lawyer", "in", agp_filter)
+                else:
+                    # Handle single AGP name (backward compatibility)
+                    query = query.where("respondent_lawyer", "==", agp_filter)
 
                 # Handle both camelCase (frontend) and snake_case (legacy) field names
                 case_number = search_criteria.get("caseNumber") or search_criteria.get("case_number")

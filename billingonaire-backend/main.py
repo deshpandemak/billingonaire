@@ -244,7 +244,18 @@ async def create_or_update_profile(
     uid = current_user.get('uid')
     email = current_user.get('email')
     
-    # SECURITY: Remove role and agp_name from self-service updates to prevent privilege escalation
+    # Check if this is the initial admin user
+    if email == "deshpande.mak@gmail.com":
+        # Create admin profile directly
+        return user_manager.create_user_profile(
+            uid=uid,
+            email=email,
+            role='admin',
+            agp_names=[],
+            full_name=profile_data.get('full_name')
+        )
+    
+    # SECURITY: Remove role and agp_names from self-service updates to prevent privilege escalation
     safe_updates = {
         'full_name': profile_data.get('full_name')
     }
@@ -253,12 +264,12 @@ async def create_or_update_profile(
     try:
         existing_profile = user_manager.get_user_profile(uid)
         if existing_profile.get('needs_setup'):
-            # For new profiles, only allow AGP role and require admin approval for role assignment
+            # For new profiles, create AGP user without AGP assignments (admin will assign later)
             return user_manager.create_user_profile(
                 uid=uid,
                 email=email,
-                role='agp',  # Force AGP role for new users
-                agp_name=None,  # Require admin to assign AGP name
+                role='agp',
+                agp_names=[],  # Start with empty AGP names - admin will assign
                 full_name=profile_data.get('full_name')
             )
         else:
@@ -270,7 +281,7 @@ async def create_or_update_profile(
             uid=uid,
             email=email,
             role='agp',
-            agp_name=None,
+            agp_names=[],
             full_name=profile_data.get('full_name')
         )
 
@@ -305,6 +316,7 @@ async def list_users(
     """List all users (admin only)"""
     return user_manager.list_users(role_filter)
 
+
 @app.post("/admin/user/{target_uid}/role", tags=["Admin"])
 async def update_user_role(
     target_uid: str,
@@ -314,6 +326,33 @@ async def update_user_role(
     """Update user role and AGP assignment (admin only)"""
     admin_uid = current_user.get('uid')
     return user_manager.admin_update_user_profile(target_uid, role_data, admin_uid)
+
+@app.post("/admin/user/{target_uid}/agp-names", tags=["Admin"])
+async def assign_agp_names(
+    target_uid: str,
+    agp_data: dict,
+    current_user = Depends(require_admin_active)
+):
+    """Assign multiple AGP names to a user (admin only)"""
+    admin_uid = current_user.get('uid')
+    agp_names = agp_data.get('agp_names', [])
+    
+    # Ensure agp_names is a list
+    if isinstance(agp_names, str):
+        agp_names = [agp_names]
+    
+    updates = {'agp_names': agp_names}
+    return user_manager.admin_update_user_profile(target_uid, updates, admin_uid)
+
+@app.post("/admin/setup-initial-admin", tags=["Admin"])
+async def setup_initial_admin():
+    """Set up deshpande.mak@gmail.com as initial administrator"""
+    return user_manager.setup_initial_admin()
+
+@app.get("/admin/agp-names", tags=["Admin"])
+async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
+    """Get all AGP names in the system (admin only)"""
+    return {"agp_names": user_manager.get_all_agp_names()}
 
 @app.get("/user/agp-names", tags=["User Management"])
 async def get_agp_names(current_user = Depends(get_current_user)):
