@@ -26,10 +26,16 @@ const Table = () => {
   const [searchError, setSearchError] = useState('');
 
   useEffect(() => {
-    // By default, show today's data
-    const today = new Date().toISOString().split('T')[0];
-    setSearchCriteria((prev) => ({ ...prev, startDate: today, endDate: today }));
-    fetchData({ ...searchCriteria, startDate: today, endDate: today });
+    // By default, show last 3 months data
+    const today = new Date();
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(today.getMonth() - 3);
+    
+    const endDate = today.toISOString().split('T')[0];
+    const startDate = threeMonthsAgo.toISOString().split('T')[0];
+    
+    setSearchCriteria((prev) => ({ ...prev, startDate, endDate }));
+    fetchData({ ...searchCriteria, startDate, endDate });
     // eslint-disable-next-line
   }, []);
 
