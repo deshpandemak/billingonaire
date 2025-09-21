@@ -261,7 +261,7 @@ const AdminUserManagement = () => {
       const userData = {
         email: createForm.email.trim(),
         role: createForm.role,
-        legal_category: createForm.role !== 'admin' ? createForm.legal_category : undefined,
+        legal_category: createForm.legal_category || undefined,
         full_name: createForm.full_name.trim(),
         agp_names: createForm.role !== 'admin' ? createForm.agp_names : []
       };
@@ -450,9 +450,9 @@ const AdminUserManagement = () => {
                         <th>Email</th>
                         <th>Full Name</th>
                         <th>Role</th>
+                        <th>Legal Category</th>
                         <th>AGP Names</th>
                         <th>Status</th>
-                        <th>Created</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
@@ -470,6 +470,15 @@ const AdminUserManagement = () => {
                             <span className={`role-badge ${user.role}`}>
                               {user.role === 'admin' ? 'Administrator' : 'AGP User'}
                             </span>
+                          </td>
+                          <td>
+                            {user.legal_category ? (
+                              <span className="badge bg-info text-dark">
+                                {availableLegalCategories[user.legal_category] || user.legal_category}
+                              </span>
+                            ) : (
+                              <span className="text-muted">Not set</span>
+                            )}
                           </td>
                           <td>
                             {user.role === 'admin' ? (
@@ -492,9 +501,6 @@ const AdminUserManagement = () => {
                             <span className={`badge ${user.is_active !== false ? 'bg-success' : 'bg-danger'}`}>
                               {user.is_active !== false ? 'Active' : 'Disabled'}
                             </span>
-                          </td>
-                          <td>
-                            {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}
                           </td>
                           <td>
                             <button 
@@ -574,25 +580,26 @@ const AdminUserManagement = () => {
                     </small>
                   </div>
 
-                  {createForm.role !== 'admin' && (
-                    <div className="mb-3">
-                      <label className="form-label">Legal Category *</label>
-                      <select
-                        className="form-control"
-                        value={createForm.legal_category}
-                        onChange={(e) => setCreateForm({...createForm, legal_category: e.target.value})}
-                      >
-                        {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
-                          <option key={categoryKey} value={categoryKey}>
-                            {displayName}
-                          </option>
-                        ))}
-                      </select>
-                      <small className="form-text text-muted">
-                        Legal category for professional classification (not used for authorization)
-                      </small>
-                    </div>
-                  )}
+                  <div className="mb-3">
+                    <label className="form-label">Legal Category {createForm.role === 'admin' ? '(Optional)' : '*'}</label>
+                    <select
+                      className="form-control"
+                      value={createForm.legal_category}
+                      onChange={(e) => setCreateForm({...createForm, legal_category: e.target.value})}
+                    >
+                      {createForm.role === 'admin' && (
+                        <option value="">No legal category</option>
+                      )}
+                      {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
+                        <option key={categoryKey} value={categoryKey}>
+                          {displayName}
+                        </option>
+                      ))}
+                    </select>
+                    <small className="form-text text-muted">
+                      Legal category for professional classification (applies to both administrators and users)
+                    </small>
+                  </div>
 
                   {createForm.role !== 'admin' && (
                     <div className="mb-3">
@@ -696,25 +703,26 @@ const AdminUserManagement = () => {
                     </small>
                   </div>
 
-                  {editForm.role !== 'admin' && (
-                    <div className="mb-3">
-                      <label className="form-label">Legal Category</label>
-                      <select
-                        className="form-control"
-                        value={editForm.legal_category}
-                        onChange={(e) => setEditForm({...editForm, legal_category: e.target.value})}
-                      >
-                        {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
-                          <option key={categoryKey} value={categoryKey}>
-                            {displayName}
-                          </option>
-                        ))}
-                      </select>
-                      <small className="form-text text-muted">
-                        Legal category for professional classification (not used for authorization)
-                      </small>
-                    </div>
-                  )}
+                  <div className="mb-3">
+                    <label className="form-label">Legal Category {editForm.role === 'admin' ? '(Optional)' : ''}</label>
+                    <select
+                      className="form-control"
+                      value={editForm.legal_category || ''}
+                      onChange={(e) => setEditForm({...editForm, legal_category: e.target.value})}
+                    >
+                      {editForm.role === 'admin' && (
+                        <option value="">No legal category</option>
+                      )}
+                      {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
+                        <option key={categoryKey} value={categoryKey}>
+                          {displayName}
+                        </option>
+                      ))}
+                    </select>
+                    <small className="form-text text-muted">
+                      Legal category for professional classification (applies to both administrators and users)
+                    </small>
+                  </div>
 
                   {editForm.role !== 'admin' && (
                     <div className="mb-3">
