@@ -301,3 +301,125 @@ class UserManager:
         except:
             return False
     
+    def get_agp_names_list(self) -> List[str]:
+        """Get all unique AGP names from the system"""
+        try:
+            # Get all users with role 'agp'
+            agp_users = self.list_users(role_filter='agp')
+            
+            # Extract all AGP names
+            all_agp_names = set()
+            for user in agp_users:
+                user_agp_names = user.get('agp_names', [])
+                if isinstance(user_agp_names, list):
+                    all_agp_names.update(user_agp_names)
+                # Handle backward compatibility for single agp_name
+                elif user.get('agp_name'):
+                    all_agp_names.add(user.get('agp_name'))
+            
+            return sorted(list(all_agp_names))
+            
+        except Exception as e:
+            logging.error(f"Error getting AGP names list: {str(e)}")
+            return []
+    
+    def list_firebase_auth_users(self) -> List[Dict]:
+        """List all users from Firebase Authentication"""
+        try:
+            firebase_users = []
+            page = auth.list_users()
+            
+            while page:
+                for user in page.users:
+                    firebase_users.append({
+                        'uid': user.uid,
+                        'email': user.email,
+                        'display_name': user.display_name,
+                        'created': user.user_metadata.creation_timestamp.strftime('%Y-%m-%d %H:%M:%S') if user.user_metadata.creation_timestamp else None,
+                        'last_sign_in': user.user_metadata.last_sign_in_timestamp.strftime('%Y-%m-%d %H:%M:%S') if user.user_metadata.last_sign_in_timestamp else None,
+                        'disabled': user.disabled
+                    })
+                
+                # Get next page if available
+                page = page.get_next_page() if page.has_next_page else None
+            
+            return firebase_users
+            
+        except Exception as e:
+            logging.error(f"Error listing Firebase Auth users: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error listing Firebase Auth users: {str(e)}")
+    
+    def sync_firebase_users_to_firestore(self, admin_uid: str) -> Dict:
+        """Sync Firebase Auth users to Firestore with default AGP role"""
+        try:
+            # Verify admin permissions
+            if not self.is_admin(admin_uid):
+                raise HTTPException(status_code=403, detail="Admin access required")
+            
+            firebase_users = self.list_firebase_auth_users()
+            existing_firestore_users = {user['uid']: user for user in self.list_users()}
+            
+            synced_count = 0
+            errors = []
+            
+            for firebase_user in firebase_users:
+                uid = firebase_user['uid']
+                email = firebase_user['email']
+                
+                # Skip if user already exists in Firestore
+                if uid in existing_firestore_users:
+                    continue
+                
+                # Skip users without email
+                if not email:
+                    continue
+                
+                try:
+                    # Determine role - make deshpande.mak@gmail.com admin, others AGP
+                    role = 'admin' if email == 'deshpande.mak@gmail.com' else 'agp'
+                    
+                    # Create Firestore profile
+                    self.create_user_profile(
+                        uid=uid,
+                        email=email,
+                        role=role,
+                        agp_names=[],  # Will need manual assignment for AGP users
+                        full_name=firebase_user.get('display_name') or email.split('@')[0]
+                    )
+                    
+                    synced_count += 1
+                    logging.info(f"Synced Firebase user {email} to Firestore")
+                    
+                except Exception as e:
+                    error_msg = f"Failed to sync {email}: {str(e)}"
+                    errors.append(error_msg)
+                    logging.error(error_msg)
+            
+            return {
+                'synced_count': synced_count,
+                'total_firebase_users': len(firebase_users),
+                'existing_users': len(existing_firestore_users),
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logging.error(f"Error syncing Firebase users: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error syncing users: {str(e)}")
+    
+    def get_firebase_auth_users_not_in_firestore(self) -> List[Dict]:
+        """Get Firebase Auth users that don't have Firestore profiles"""
+        try:
+            firebase_users = self.list_firebase_auth_users()
+            existing_firestore_users = {user['uid']: user for user in self.list_users()}
+            
+            unsynced_users = []
+            for firebase_user in firebase_users:
+                if firebase_user['uid'] not in existing_firestore_users and firebase_user['email']:
+                    unsynced_users.append(firebase_user)
+            
+            return unsynced_users
+            
+        except Exception as e:
+            logging.error(f"Error getting unsynced Firebase users: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting unsynced users: {str(e)}")
+    

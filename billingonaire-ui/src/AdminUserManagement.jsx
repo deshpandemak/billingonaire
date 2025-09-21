@@ -9,12 +9,15 @@ const AdminUserManagement = () => {
   const [profile, setProfile] = useState(null);
   const [users, setUsers] = useState([]);
   const [allAgpNames, setAllAgpNames] = useState([]);
+  const [unsyncedUsers, setUnsyncedUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncLoading, setSyncLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showUnsyncedModal, setShowUnsyncedModal] = useState(false);
   const [roleFilter, setRoleFilter] = useState('');
 
   // Form state for editing users
@@ -44,6 +47,7 @@ const AdminUserManagement = () => {
         setTimeout(async () => {
           await loadUsers();
           await loadAllAgpNames();
+          await loadUnsyncedUsers();
         }, 500);
       } else {
         console.log('No user authenticated');
@@ -107,6 +111,49 @@ const AdminUserManagement = () => {
       setAllAgpNames(response.agp_names || []);
     } catch (error) {
       console.error('Error loading AGP names:', error);
+    }
+  };
+
+  const loadUnsyncedUsers = async () => {
+    try {
+      const unsyncedData = await authenticatedFetchJSON('/admin/unsynced-users');
+      setUnsyncedUsers(unsyncedData || []);
+      console.log('Unsynced users loaded:', unsyncedData.length);
+    } catch (error) {
+      console.error('Error loading unsynced users:', error);
+    }
+  };
+
+  const handleSyncFirebaseUsers = async () => {
+    try {
+      setSyncLoading(true);
+      setError('');
+      setSuccessMessage('');
+      
+      const result = await authenticatedFetchJSON('/admin/sync-firebase-users', {
+        method: 'POST'
+      });
+      
+      console.log('Sync result:', result);
+      
+      if (result.synced_count > 0) {
+        setSuccessMessage(`Successfully synced ${result.synced_count} Firebase users to the system.`);
+        await loadUsers(); // Refresh the user list
+        await loadUnsyncedUsers(); // Refresh unsynced users
+      } else {
+        setSuccessMessage('No new users found to sync. All Firebase users are already in the system.');
+      }
+      
+      if (result.errors && result.errors.length > 0) {
+        console.warn('Sync errors:', result.errors);
+        setError(`Some users had errors: ${result.errors.join(', ')}`);
+      }
+      
+    } catch (error) {
+      console.error('Error syncing Firebase users:', error);
+      setError(`Failed to sync Firebase users: ${error.message}`);
+    } finally {
+      setSyncLoading(false);
     }
   };
 
@@ -310,6 +357,28 @@ const AdminUserManagement = () => {
                   >
                     🔄 Refresh
                   </button>
+                  <button 
+                    className="btn btn-info me-2"
+                    onClick={handleSyncFirebaseUsers}
+                    disabled={syncLoading}
+                  >
+                    {syncLoading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                        Syncing...
+                      </>
+                    ) : (
+                      <>🔄 Sync Firebase Users</>
+                    )}
+                  </button>
+                  {unsyncedUsers.length > 0 && (
+                    <button 
+                      className="btn btn-warning me-2"
+                      onClick={() => setShowUnsyncedModal(true)}
+                    >
+                      ⚠️ View Unsynced ({unsyncedUsers.length})
+                    </button>
+                  )}
                   <button 
                     className="btn btn-success"
                     onClick={() => setShowCreateModal(true)}
@@ -626,6 +695,106 @@ const AdminUserManagement = () => {
                 >
                   Save Changes
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unsynced Firebase Users Modal */}
+      {showUnsyncedModal && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">🔄 Unsynced Firebase Users</h5>
+                <button 
+                  type="button" 
+                  className="btn-close"
+                  onClick={() => setShowUnsyncedModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="text-muted mb-3">
+                  These users exist in Firebase Authentication but don't have profiles in the system yet. 
+                  Click "Sync Firebase Users" to import them.
+                </p>
+                
+                {unsyncedUsers.length === 0 ? (
+                  <div className="alert alert-success">
+                    <h6>✅ All Firebase users are synced!</h6>
+                    <p className="mb-0">All users from Firebase Authentication have been successfully imported to the system.</p>
+                  </div>
+                ) : (
+                  <div className="table-responsive">
+                    <table className="table table-striped">
+                      <thead>
+                        <tr>
+                          <th>Email</th>
+                          <th>Display Name</th>
+                          <th>Created</th>
+                          <th>Last Sign In</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {unsyncedUsers.map((user, index) => (
+                          <tr key={user.uid || index}>
+                            <td>
+                              <strong>{user.email}</strong>
+                              <br />
+                              <small className="text-muted">UID: {user.uid}</small>
+                            </td>
+                            <td>{user.display_name || <em className="text-muted">Not set</em>}</td>
+                            <td>
+                              {user.created ? (
+                                <small>{user.created}</small>
+                              ) : (
+                                <em className="text-muted">Unknown</em>
+                              )}
+                            </td>
+                            <td>
+                              {user.last_sign_in ? (
+                                <small>{user.last_sign_in}</small>
+                              ) : (
+                                <em className="text-muted">Never</em>
+                              )}
+                            </td>
+                            <td>
+                              {user.disabled ? (
+                                <span className="badge bg-danger">Disabled</span>
+                              ) : (
+                                <span className="badge bg-success">Active</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => setShowUnsyncedModal(false)}
+                >
+                  Close
+                </button>
+                {unsyncedUsers.length > 0 && (
+                  <button 
+                    type="button" 
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setShowUnsyncedModal(false);
+                      handleSyncFirebaseUsers();
+                    }}
+                    disabled={syncLoading}
+                  >
+                    {syncLoading ? 'Syncing...' : `🔄 Sync All ${unsyncedUsers.length} Users`}
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -352,7 +352,23 @@ async def setup_initial_admin():
 @app.get("/admin/agp-names", tags=["Admin"])
 async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
     """Get all AGP names in the system (admin only)"""
-    return {"agp_names": user_manager.get_all_agp_names()}
+    return {"agp_names": user_manager.get_agp_names_list()}
+
+@app.get("/admin/firebase-users", tags=["Admin"])
+async def list_firebase_auth_users(current_user = Depends(require_admin_active)):
+    """List all users from Firebase Authentication"""
+    return user_manager.list_firebase_auth_users()
+
+@app.get("/admin/unsynced-users", tags=["Admin"])
+async def get_unsynced_firebase_users(current_user = Depends(require_admin_active)):
+    """Get Firebase Auth users that don't have Firestore profiles"""
+    return user_manager.get_firebase_auth_users_not_in_firestore()
+
+@app.post("/admin/sync-firebase-users", tags=["Admin"])
+async def sync_firebase_users(current_user = Depends(require_admin_active)):
+    """Sync Firebase Auth users to Firestore database"""
+    uid = current_user.get('uid')
+    return user_manager.sync_firebase_users_to_firestore(uid)
 
 @app.post("/admin/create-user", tags=["Admin"])
 async def create_new_user(
