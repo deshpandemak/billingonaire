@@ -35,11 +35,18 @@ const AdminUserManagement = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed, user:', user?.email || 'No user');
       setUser(user);
       if (user) {
+        console.log('User authenticated, loading profile and data...');
         await loadUserProfile();
-        await loadUsers();
-        await loadAllAgpNames();
+        // Wait a bit for profile to load before loading users
+        setTimeout(async () => {
+          await loadUsers();
+          await loadAllAgpNames();
+        }, 500);
+      } else {
+        console.log('No user authenticated');
       }
       setLoading(false);
     });
@@ -48,14 +55,19 @@ const AdminUserManagement = () => {
 
   const loadUserProfile = async () => {
     try {
+      console.log('Loading user profile...');
       const profileData = await authenticatedFetchJSON('/user/profile');
+      console.log('Profile data received:', profileData);
       setProfile(profileData);
       
       // Check if user is admin
       if (profileData.role !== 'admin') {
+        console.log('User is not admin, role:', profileData.role);
         setError('Access denied. Administrator privileges required.');
         return;
       }
+      
+      console.log('User confirmed as admin, proceeding to load users');
     } catch (error) {
       console.error('Error loading profile:', error);
       setError('Failed to load user profile');
@@ -64,12 +76,28 @@ const AdminUserManagement = () => {
 
   const loadUsers = async () => {
     try {
+      setError('');
       const queryParams = roleFilter ? `?role_filter=${roleFilter}` : '';
+      console.log('Loading users with query:', `/admin/users${queryParams}`);
+      
       const usersData = await authenticatedFetchJSON(`/admin/users${queryParams}`);
-      setUsers(usersData);
+      console.log('Users data received:', usersData);
+      console.log('Users data type:', typeof usersData);
+      console.log('Users data length:', Array.isArray(usersData) ? usersData.length : 'Not an array');
+      
+      // Ensure usersData is an array
+      if (Array.isArray(usersData)) {
+        setUsers(usersData);
+        console.log(`Successfully loaded ${usersData.length} users`);
+      } else {
+        console.error('Expected array but got:', usersData);
+        setUsers([]);
+        setError('Invalid response format from server');
+      }
     } catch (error) {
       console.error('Error loading users:', error);
-      setError('Failed to load users');
+      setError(`Failed to load users: ${error.message}`);
+      setUsers([]); // Clear users on error
     }
   };
 
@@ -204,12 +232,31 @@ const AdminUserManagement = () => {
     );
   }
 
-  if (profile?.role !== 'admin') {
+  if (profile && profile.role !== 'admin') {
     return (
       <div className="container-professional">
         <div className="alert alert-danger">
           <h5>Access Denied</h5>
           <p>Administrator privileges are required to access user management.</p>
+          <p><strong>Your role:</strong> {profile.role || 'Unknown'}</p>
+          <p><strong>Your email:</strong> {user?.email}</p>
+          <button className="btn btn-primary" onClick={loadUserProfile}>
+            🔄 Refresh Profile
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // If profile is still loading or null, show loading message
+  if (!profile) {
+    return (
+      <div className="container-professional">
+        <div className="text-center">
+          <div className="spinner-border text-primary" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+          <p className="mt-2">Loading user profile...</p>
         </div>
       </div>
     );
@@ -280,9 +327,19 @@ const AdminUserManagement = () => {
               <h5 className="card-title mb-0">System Users ({users.length})</h5>
             </div>
             <div className="card-body">
-              {users.length === 0 ? (
+              {loading ? (
+                <div className="text-center py-4">
+                  <div className="spinner-border text-primary" role="status">
+                    <span className="visually-hidden">Loading...</span>
+                  </div>
+                  <p className="mt-2 text-muted">Loading users...</p>
+                </div>
+              ) : users.length === 0 ? (
                 <div className="text-center py-4">
                   <p className="text-muted">No users found</p>
+                  <button className="btn btn-sm btn-outline-primary" onClick={loadUsers}>
+                    🔄 Try Again
+                  </button>
                 </div>
               ) : (
                 <div className="table-responsive">
