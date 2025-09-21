@@ -391,7 +391,8 @@ async def create_new_user(
     try:
         admin_uid = current_user.get('uid')
         email = user_data.get('email')
-        role = user_data.get('role', 'assistant_government_pleader')
+        role = user_data.get('role', 'user')
+        legal_category = user_data.get('legal_category', 'assistant_government_pleader')
         full_name = user_data.get('full_name', '')
         agp_names = user_data.get('agp_names', [])
         
@@ -411,6 +412,7 @@ async def create_new_user(
                 uid=firebase_user.uid,
                 email=email,
                 role=role,
+                legal_category=legal_category if user_manager.is_legal_professional(role) else None,
                 agp_names=agp_names if user_manager.is_legal_professional(role) else [],
                 full_name=full_name
             )

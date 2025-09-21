@@ -186,7 +186,8 @@ const AdminUserManagement = () => {
   const handleEditUser = (user) => {
     setSelectedUser(user);
     setEditForm({
-      role: user.role || 'assistant_government_pleader',
+      role: user.role || 'user',
+      legal_category: user.legal_category || 'assistant_government_pleader',
       agp_names: user.agp_names || (user.agp_name ? [user.agp_name] : []),
       full_name: user.full_name || '',
       is_active: user.is_active !== false
@@ -206,6 +207,7 @@ const AdminUserManagement = () => {
         method: 'POST',
         body: JSON.stringify({
           role: editForm.role,
+          legal_category: editForm.legal_category,
           full_name: editForm.full_name,
           is_active: editForm.is_active
         })
@@ -259,8 +261,9 @@ const AdminUserManagement = () => {
       const userData = {
         email: createForm.email.trim(),
         role: createForm.role,
+        legal_category: createForm.role !== 'admin' ? createForm.legal_category : undefined,
         full_name: createForm.full_name.trim(),
-        agp_names: createForm.role === 'agp' ? createForm.agp_names : []
+        agp_names: createForm.role !== 'admin' ? createForm.agp_names : []
       };
 
       const result = await authenticatedFetchJSON('/admin/create-user', {
@@ -566,7 +569,30 @@ const AdminUserManagement = () => {
                         </option>
                       ))}
                     </select>
+                    <small className="form-text text-muted">
+                      Role is used for access control only (Admin or User)
+                    </small>
                   </div>
+
+                  {createForm.role !== 'admin' && (
+                    <div className="mb-3">
+                      <label className="form-label">Legal Category *</label>
+                      <select
+                        className="form-control"
+                        value={createForm.legal_category}
+                        onChange={(e) => setCreateForm({...createForm, legal_category: e.target.value})}
+                      >
+                        {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
+                          <option key={categoryKey} value={categoryKey}>
+                            {displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="form-text text-muted">
+                        Legal category for professional classification (not used for authorization)
+                      </small>
+                    </div>
+                  )}
 
                   {createForm.role !== 'admin' && (
                     <div className="mb-3">
@@ -665,7 +691,30 @@ const AdminUserManagement = () => {
                         </option>
                       ))}
                     </select>
+                    <small className="form-text text-muted">
+                      Role is used for access control only (Admin or User)
+                    </small>
                   </div>
+
+                  {editForm.role !== 'admin' && (
+                    <div className="mb-3">
+                      <label className="form-label">Legal Category</label>
+                      <select
+                        className="form-control"
+                        value={editForm.legal_category}
+                        onChange={(e) => setEditForm({...editForm, legal_category: e.target.value})}
+                      >
+                        {Object.entries(availableLegalCategories).map(([categoryKey, displayName]) => (
+                          <option key={categoryKey} value={categoryKey}>
+                            {displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="form-text text-muted">
+                        Legal category for professional classification (not used for authorization)
+                      </small>
+                    </div>
+                  )}
 
                   {editForm.role !== 'admin' && (
                     <div className="mb-3">
