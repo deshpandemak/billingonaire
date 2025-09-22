@@ -21,6 +21,15 @@ const Table = () => {
     caseYear: '',
     caseStage: ''
   });
+  const [appliedCriteria, setAppliedCriteria] = useState({
+    startDate: '',
+    endDate: '',
+    advocateName: '',
+    caseNumber: '',
+    caseType: '',
+    caseYear: '',
+    caseStage: ''
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -34,8 +43,19 @@ const Table = () => {
     const endDate = today.toISOString().split('T')[0];
     const startDate = threeMonthsAgo.toISOString().split('T')[0];
     
-    setSearchCriteria((prev) => ({ ...prev, startDate, endDate }));
-    fetchData({ ...searchCriteria, startDate, endDate });
+    const initialCriteria = { 
+      startDate, 
+      endDate, 
+      advocateName: '', 
+      caseNumber: '', 
+      caseType: '', 
+      caseYear: '', 
+      caseStage: '' 
+    };
+    
+    setSearchCriteria(initialCriteria);
+    setAppliedCriteria(initialCriteria);
+    fetchData(initialCriteria);
     // eslint-disable-next-line
   }, []);
 
@@ -47,6 +67,9 @@ const Table = () => {
 
     setIsSearching(true);
     setSearchError('');
+    
+    // Store the criteria that are actually being applied
+    setAppliedCriteria({ ...criteria });
     
     try {
       const result = await authenticatedFetchJSON('/get-data', {
@@ -65,6 +88,7 @@ const Table = () => {
       console.log('🔍 API Response received:', result);
       console.log('📊 Data type:', typeof result, 'Length:', Array.isArray(result) ? result.length : 'Not array');
       console.log('📋 First 3 records:', Array.isArray(result) ? result.slice(0, 3) : result);
+      console.log('🎯 Applied search criteria:', criteria);
       setData(result);
       setEditedData(JSON.parse(JSON.stringify(result)));
       console.log('✅ Data set to state. Current data length:', Array.isArray(result) ? result.length : 'Not array');
@@ -399,6 +423,56 @@ const Table = () => {
             </div>
           )}
         </div>
+
+        {/* Applied Search Criteria Display */}
+        {(appliedCriteria.startDate || appliedCriteria.endDate || appliedCriteria.advocateName || appliedCriteria.caseNumber || appliedCriteria.caseType || appliedCriteria.caseYear || appliedCriteria.caseStage) && (
+          <div className="card-professional" style={{ marginBottom: 'var(--spacing-lg)', backgroundColor: 'var(--success-bg)' }}>
+            <div className="card-header">
+              <h3 className="section-title" style={{ color: 'var(--success-color)', fontSize: '1rem' }}>
+                🎯 Applied Search Filters
+              </h3>
+            </div>
+            <div className="card-body" style={{ padding: 'var(--spacing-md)' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--spacing-sm)' }}>
+                {appliedCriteria.startDate && (
+                  <span className="badge bg-primary">
+                    Start Date: {appliedCriteria.startDate}
+                  </span>
+                )}
+                {appliedCriteria.endDate && (
+                  <span className="badge bg-primary">
+                    End Date: {appliedCriteria.endDate}
+                  </span>
+                )}
+                {appliedCriteria.advocateName && (
+                  <span className="badge bg-primary">
+                    Advocate: {appliedCriteria.advocateName}
+                  </span>
+                )}
+                {appliedCriteria.caseNumber && (
+                  <span className="badge bg-primary">
+                    Case Number: {appliedCriteria.caseNumber}
+                  </span>
+                )}
+                {appliedCriteria.caseType && (
+                  <span className="badge bg-primary">
+                    Case Type: {appliedCriteria.caseType}
+                  </span>
+                )}
+                {appliedCriteria.caseYear && (
+                  <span className="badge bg-primary">
+                    Case Year: {appliedCriteria.caseYear}
+                  </span>
+                )}
+                {appliedCriteria.caseStage && (
+                  <span className="badge bg-primary">
+                    Case Stage: {appliedCriteria.caseStage}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Professional AG Grid */}
         <div className="card-professional">
