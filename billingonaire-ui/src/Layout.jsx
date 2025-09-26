@@ -7,6 +7,7 @@ import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
 import OrderManagement from './OrderManagement';
+import OrderAnalysis from './OrderAnalysis';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import Login from './Login';
@@ -152,6 +153,13 @@ const Layout = ({ children }) => {
                   </Nav.Link>
                   <Nav.Link 
                     as={Link} 
+                    to="/order-analysis"
+                    className={location.pathname === '/order-analysis' ? 'active' : ''}
+                  >
+                    AI Order Analysis
+                  </Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
                     to="/profile"
                     className={location.pathname === '/profile' ? 'active' : ''}
                   >
@@ -213,6 +221,7 @@ const App = () => (
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/orders" element={<OrderManagement />} />
+        <Route path="/order-analysis" element={<OrderAnalysis />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />
         <Route path="*" element={<Navigate to="/" replace />} />

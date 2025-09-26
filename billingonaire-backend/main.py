@@ -12,6 +12,7 @@ from Dashboard import DashboardData
 from CourtScraper import BombayHighCourtScraper
 from OrderManager import OrderManager
 from UserManager import UserManager
+from order_analyzer import OrderDocumentAnalyzer
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -32,7 +33,8 @@ app = FastAPI(
         {"name": "Authentication", "description": "User authentication"},
         {"name": "Case Status", "description": "Retrieve case status from Bombay High Court"},
         {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"},
-        {"name": "Order Management", "description": "Manage court order linking and states"}
+        {"name": "Order Management", "description": "Manage court order linking and states"},
+        {"name": "Order Analysis", "description": "ML-powered analysis of court order documents"}
     ]
 )
 
@@ -55,6 +57,7 @@ app.add_middleware(
 )
 
 user_manager = UserManager()
+order_analyzer = OrderDocumentAnalyzer()
 
 def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
@@ -764,6 +767,212 @@ async def get_case_with_order_info(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to fetch case details: {str(e)}"}
+        )
+
+# ============================================
+# ORDER DOCUMENT ANALYSIS ENDPOINTS
+# ============================================
+
+@app.post("/analyze-order", tags=["Order Analysis"])
+async def analyze_order_document(
+    file: UploadFile = File(...),
+    current_user = Depends(get_current_user)
+):
+    """
+    Analyze a court order document to extract:
+    - Order category (ADJOURNED/HEARD & ADJOURNED/DISPOSED OFF)
+    - Petitioner and respondent names
+    - AGP names and dates
+    - Key phrases and next hearing dates
+    """
+    try:
+        # Validate file type
+        if not file.filename.lower().endswith('.pdf'):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Only PDF files are supported for order analysis"}
+            )
+        
+        # Read file content
+        file_content = await file.read()
+        
+        if len(file_content) == 0:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Uploaded file is empty"}
+            )
+        
+        logging.info(f"Starting order analysis for file: {file.filename}")
+        
+        # Analyze the order document
+        analysis_result = order_analyzer.analyze_order_document(file.filename, file_content)
+        
+        # Save analysis result to database
+        doc_id = order_analyzer.save_analysis_result(file.filename, analysis_result)
+        
+        # Prepare response
+        response_data = {
+            "analysis_id": doc_id,
+            "filename": file.filename,
+            "order_category": analysis_result.order_category,
+            "category_confidence": round(analysis_result.category_confidence, 3),
+            "petitioners": analysis_result.petitioners,
+            "respondents": analysis_result.respondents,
+            "agp_names": analysis_result.agp_names,
+            "dates": analysis_result.dates,
+            "key_phrases": analysis_result.key_phrases,
+            "next_hearing_date": analysis_result.next_hearing_date,
+            "disposal_reason": analysis_result.disposal_reason,
+            "summary": {
+                "total_petitioners": len(analysis_result.petitioners),
+                "total_respondents": len(analysis_result.respondents),
+                "total_agp_names": len(analysis_result.agp_names),
+                "total_dates": len(analysis_result.dates)
+            }
+        }
+        
+        logging.info(f"Order analysis completed successfully for {file.filename}")
+        return JSONResponse(content=response_data)
+        
+    except HTTPException as he:
+        logging.error(f"HTTP error in order analysis: {he.detail}")
+        return JSONResponse(
+            status_code=he.status_code,
+            content={"error": he.detail}
+        )
+    except Exception as e:
+        logging.error(f"Unexpected error in order analysis: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Order analysis failed: {str(e)}"}
+        )
+
+@app.get("/analysis-history", tags=["Order Analysis"])
+async def get_analysis_history(
+    limit: int = Query(50, description="Maximum number of analyses to return"),
+    current_user = Depends(get_current_user)
+):
+    """Get history of order document analyses"""
+    try:
+        db = firestore.client()
+        
+        # Get recent analyses
+        analyses_ref = db.collection('order_analysis').order_by('analysis_timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+        docs = analyses_ref.stream()
+        
+        analyses = []
+        for doc in docs:
+            analysis_data = doc.to_dict()
+            analysis_data['id'] = doc.id
+            # Remove large text field for listing
+            analysis_data.pop('order_text', None)
+            analyses.append(analysis_data)
+        
+        return JSONResponse(content={
+            "analyses": analyses,
+            "count": len(analyses),
+            "total_fetched": len(analyses)
+        })
+        
+    except Exception as e:
+        logging.error(f"Error fetching analysis history: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch analysis history: {str(e)}"}
+        )
+
+@app.get("/analysis/{analysis_id}", tags=["Order Analysis"])
+async def get_analysis_details(
+    analysis_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get detailed analysis results for a specific analysis"""
+    try:
+        db = firestore.client()
+        
+        # Get analysis document
+        doc_ref = db.collection('order_analysis').document(analysis_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Analysis not found"}
+            )
+        
+        analysis_data = doc.to_dict()
+        analysis_data['id'] = doc.id
+        
+        return JSONResponse(content=analysis_data)
+        
+    except Exception as e:
+        logging.error(f"Error fetching analysis details: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch analysis details: {str(e)}"}
+        )
+
+@app.get("/analysis-stats", tags=["Order Analysis"])
+async def get_analysis_statistics(
+    current_user = Depends(get_current_user)
+):
+    """Get statistics about order document analyses"""
+    try:
+        db = firestore.client()
+        
+        # Get all analyses
+        analyses_ref = db.collection('order_analysis')
+        docs = analyses_ref.stream()
+        
+        stats = {
+            "total_analyses": 0,
+            "category_distribution": {
+                "ADJOURNED": 0,
+                "HEARD_AND_ADJOURNED": 0,
+                "DISPOSED_OFF": 0
+            },
+            "avg_confidence": 0.0,
+            "recent_analyses": 0  # Last 30 days
+        }
+        
+        confidences = []
+        recent_cutoff = datetime.now().timestamp() - (30 * 24 * 60 * 60)  # 30 days ago
+        
+        for doc in docs:
+            data = doc.to_dict()
+            stats["total_analyses"] += 1
+            
+            # Category distribution
+            category = data.get("order_category", "UNKNOWN")
+            if category in stats["category_distribution"]:
+                stats["category_distribution"][category] += 1
+            
+            # Confidence scores
+            confidence = data.get("category_confidence", 0)
+            if confidence > 0:
+                confidences.append(confidence)
+            
+            # Recent analyses
+            timestamp_str = data.get("analysis_timestamp", "")
+            if timestamp_str:
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00')).timestamp()
+                    if timestamp > recent_cutoff:
+                        stats["recent_analyses"] += 1
+                except:
+                    pass
+        
+        # Calculate average confidence
+        if confidences:
+            stats["avg_confidence"] = round(sum(confidences) / len(confidences), 3)
+        
+        return JSONResponse(content=stats)
+        
+    except Exception as e:
+        logging.error(f"Error fetching analysis statistics: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch statistics: {str(e)}"}
         )
 
 client = TestClient(app)
