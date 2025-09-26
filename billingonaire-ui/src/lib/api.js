@@ -18,10 +18,14 @@ export const authenticatedFetch = async (url, options = {}) => {
     
     // Set up headers with authentication
     const headers = {
-      'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`,
       ...options.headers
     };
+    
+    // Only set Content-Type for non-FormData requests
+    if (!(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     // Make the API call - use API_BASE_URL prefix with Vite proxy
     const response = await fetch(`${API_BASE_URL}${url}`, {
