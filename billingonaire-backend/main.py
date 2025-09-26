@@ -811,12 +811,31 @@ async def analyze_order_document(
         # Save analysis result to database
         doc_id = order_analyzer.save_analysis_result(file.filename, analysis_result)
         
-        # Prepare response
+        # Prepare enhanced response with structured case information
         response_data = {
             "analysis_id": doc_id,
             "filename": file.filename,
             "order_category": analysis_result.order_category,
             "category_confidence": round(analysis_result.category_confidence, 3),
+            "order_date": analysis_result.order_date,
+            "cases": [
+                {
+                    "case_number": case.case_number,
+                    "petitioners": case.petitioners,
+                    "respondents": case.respondents,
+                    "agp_names": case.agp_names,
+                    "advocates": case.advocates
+                }
+                for case in analysis_result.cases
+            ],
+            "document_structure": {
+                "type": analysis_result.document_structure.get('document_type', 'UNKNOWN'),
+                "has_case_numbers": analysis_result.document_structure.get('has_case_numbers', False),
+                "has_parties": analysis_result.document_structure.get('has_parties', False),
+                "has_advocates": analysis_result.document_structure.get('has_advocates', False),
+                "has_order_date": analysis_result.document_structure.get('has_order_date', False)
+            },
+            # Legacy format for compatibility
             "petitioners": analysis_result.petitioners,
             "respondents": analysis_result.respondents,
             "agp_names": analysis_result.agp_names,
@@ -825,6 +844,7 @@ async def analyze_order_document(
             "next_hearing_date": analysis_result.next_hearing_date,
             "disposal_reason": analysis_result.disposal_reason,
             "summary": {
+                "total_cases": len(analysis_result.cases),
                 "total_petitioners": len(analysis_result.petitioners),
                 "total_respondents": len(analysis_result.respondents),
                 "total_agp_names": len(analysis_result.agp_names),

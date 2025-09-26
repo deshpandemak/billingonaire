@@ -44,18 +44,30 @@ from ml_enhanced_parser import MLEnhancedParser, ExtractionResult
 
 
 @dataclass
+class CaseInfo:
+    """Information about a single case within an order"""
+    case_number: Optional[str]
+    petitioners: List[str]
+    respondents: List[str]
+    agp_names: List[str]
+    advocates: List[str]
+
+@dataclass
 class OrderAnalysisResult:
     """Result from order document analysis"""
     order_category: str  # ADJOURNED, HEARD_AND_ADJOURNED, DISPOSED_OFF
     category_confidence: float
-    petitioners: List[Dict[str, Any]]
-    respondents: List[Dict[str, Any]]
-    agp_names: List[Dict[str, Any]]
+    order_date: Optional[str]  # Specific date of the order
+    cases: List[CaseInfo]  # Multiple cases can be clubbed together
+    petitioners: List[Dict[str, Any]]  # Legacy format for compatibility
+    respondents: List[Dict[str, Any]]  # Legacy format for compatibility
+    agp_names: List[Dict[str, Any]]    # Legacy format for compatibility
     dates: List[Dict[str, Any]]
     order_text: str
     key_phrases: List[str]
     next_hearing_date: Optional[str]
     disposal_reason: Optional[str]
+    document_structure: Dict[str, Any]  # Analysis of document parts
 
 
 class OrderDocumentAnalyzer:
@@ -195,16 +207,16 @@ class OrderDocumentAnalyzer:
     
     def analyze_order_document(self, filename: str, file_content: bytes) -> OrderAnalysisResult:
         """
-        Main method to analyze order document
+        Enhanced method to analyze order document using structured approach
         
         Args:
             filename: Name of the PDF file
             file_content: Raw PDF file content
             
         Returns:
-            OrderAnalysisResult with comprehensive analysis
+            OrderAnalysisResult with comprehensive analysis including case structure
         """
-        logging.info(f"Starting order document analysis for {filename}")
+        logging.info(f"Starting enhanced order document analysis for {filename}")
         
         # First, extract text using existing ML parser
         extraction_result = self.ml_parser.enhance_pdf_extraction(filename, file_content)
@@ -217,18 +229,25 @@ class OrderDocumentAnalyzer:
         
         text = extraction_result.text
         
-        # 1. Classify order category
-        order_category, category_confidence = self._classify_order(text)
+        # 1. Parse document structure (4 parts: case numbers, parties, advocates, date+order)
+        document_structure = self._parse_document_structure(text)
         
-        # 2. Extract entities
+        # 2. Extract structured case information
+        cases = self._extract_structured_cases(document_structure)
+        
+        # 3. Extract order date specifically
+        order_date = self._extract_order_date(text, document_structure)
+        
+        # 4. Classify order category with enhanced logic based on structure
+        order_category, category_confidence = self._classify_order_enhanced(text, document_structure)
+        
+        # 5. Legacy format extraction for compatibility
         petitioners = self._extract_petitioners(text)
         respondents = self._extract_respondents(text)
         agp_names = self._extract_agp_names(text, extraction_result.entities)
-        
-        # 3. Extract dates
         dates = self._extract_dates(text)
         
-        # 4. Extract key phrases and specific information
+        # 6. Extract key phrases and specific information
         key_phrases = self._extract_key_phrases(text, order_category)
         next_hearing_date = self._extract_next_hearing_date(text)
         disposal_reason = self._extract_disposal_reason(text) if order_category == 'DISPOSED_OFF' else None
@@ -236,6 +255,8 @@ class OrderDocumentAnalyzer:
         result = OrderAnalysisResult(
             order_category=order_category,
             category_confidence=category_confidence,
+            order_date=order_date,
+            cases=cases,
             petitioners=petitioners,
             respondents=respondents,
             agp_names=agp_names,
@@ -243,10 +264,11 @@ class OrderDocumentAnalyzer:
             order_text=text,
             key_phrases=key_phrases,
             next_hearing_date=next_hearing_date,
-            disposal_reason=disposal_reason
+            disposal_reason=disposal_reason,
+            document_structure=document_structure
         )
         
-        logging.info(f"Order analysis completed. Category: {order_category}, Confidence: {category_confidence:.2f}")
+        logging.info(f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}")
         return result
     
     def _classify_order(self, text: str) -> Tuple[str, float]:
@@ -287,6 +309,291 @@ class OrderDocumentAnalyzer:
             confidence = min(confidence * 1.2, 1.0)
         
         return best_category, confidence
+    
+    def _parse_document_structure(self, text: str) -> Dict[str, Any]:
+        """
+        Parse the 4-part document structure:
+        1. Case numbers
+        2. Parties names  
+        3. Advocate names (AGP, ADDL GP, GP, AG)
+        4. Date + Order text
+        """
+        structure = {
+            'has_case_numbers': False,
+            'has_parties': False,
+            'has_advocates': False,
+            'has_order_date': False,
+            'case_numbers_section': '',
+            'parties_section': '',
+            'advocates_section': '',
+            'order_section': '',
+            'document_type': 'UNKNOWN'
+        }
+        
+        lines = text.split('\n')
+        current_section = 'header'
+        case_numbers_lines = []
+        parties_lines = []
+        advocates_lines = []
+        order_lines = []
+        
+        # Patterns for section identification
+        case_number_pattern = r'(?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+'
+        parties_pattern = r'\.{3,}.*?(?:Petitioner|Applicant|Appellant|Respondent|Defendant)'
+        advocate_pattern = r'(?:Smt?\.?|Shri\.?|Ms\.?|Mr\.?)\s+[A-Z].*?(?:AGP|GP|ADDL\s*GP|AG)\b'
+        date_pattern = r'(?:DATE|CORAM|Before|Hon\'ble)\s*[:.]?\s*\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)'
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Detect case numbers
+            if re.search(case_number_pattern, line, re.IGNORECASE):
+                current_section = 'case_numbers'
+                structure['has_case_numbers'] = True
+                case_numbers_lines.append(line)
+            # Detect parties section
+            elif re.search(parties_pattern, line, re.IGNORECASE):
+                current_section = 'parties'
+                structure['has_parties'] = True
+                parties_lines.append(line)
+            # Detect advocates section
+            elif re.search(advocate_pattern, line, re.IGNORECASE):
+                current_section = 'advocates'
+                structure['has_advocates'] = True
+                advocates_lines.append(line)
+            # Detect order date/beginning of order
+            elif re.search(date_pattern, line, re.IGNORECASE):
+                current_section = 'order'
+                structure['has_order_date'] = True
+                order_lines.append(line)
+            else:
+                # Continue adding to current section
+                if current_section == 'case_numbers':
+                    case_numbers_lines.append(line)
+                elif current_section == 'parties':
+                    parties_lines.append(line)
+                elif current_section == 'advocates':
+                    advocates_lines.append(line)
+                elif current_section == 'order':
+                    order_lines.append(line)
+        
+        # Populate structure
+        structure['case_numbers_section'] = '\n'.join(case_numbers_lines)
+        structure['parties_section'] = '\n'.join(parties_lines)
+        structure['advocates_section'] = '\n'.join(advocates_lines)
+        structure['order_section'] = '\n'.join(order_lines)
+        
+        # Determine document type based on completeness
+        if structure['has_case_numbers'] and structure['has_parties'] and structure['has_advocates'] and structure['has_order_date']:
+            structure['document_type'] = 'COMPLETE_ORDER'
+        elif structure['has_order_date'] and not (structure['has_case_numbers'] and structure['has_parties']):
+            structure['document_type'] = 'ADJOURNMENT_ONLY'
+        else:
+            structure['document_type'] = 'PARTIAL'
+            
+        return structure
+    
+    def _extract_structured_cases(self, document_structure: Dict[str, Any]) -> List[CaseInfo]:
+        """Extract case information with proper structure and associations"""
+        cases = []
+        
+        if not document_structure['has_case_numbers']:
+            # No case numbers found, create single generic case
+            case_info = CaseInfo(
+                case_number=None,
+                petitioners=[],
+                respondents=[],
+                agp_names=[],
+                advocates=[]
+            )
+            
+            # Extract what we can from parties section
+            if document_structure['has_parties']:
+                petitioners, respondents = self._parse_parties_section(document_structure['parties_section'])
+                case_info.petitioners = petitioners
+                case_info.respondents = respondents
+            
+            # Extract advocates
+            if document_structure['has_advocates']:
+                advocates, agp_names = self._parse_advocates_section(document_structure['advocates_section'])
+                case_info.advocates = advocates
+                case_info.agp_names = agp_names
+                
+            cases.append(case_info)
+        else:
+            # Extract case numbers and associate with parties/advocates
+            case_numbers = self._extract_case_numbers(document_structure['case_numbers_section'])
+            
+            if len(case_numbers) == 1:
+                # Single case - straightforward mapping
+                case_info = CaseInfo(
+                    case_number=case_numbers[0],
+                    petitioners=[],
+                    respondents=[],
+                    agp_names=[],
+                    advocates=[]
+                )
+                
+                # Extract parties for this case
+                if document_structure['has_parties']:
+                    petitioners, respondents = self._parse_parties_section(document_structure['parties_section'])
+                    case_info.petitioners = petitioners
+                    case_info.respondents = respondents
+                
+                # Extract advocates for this case
+                if document_structure['has_advocates']:
+                    advocates, agp_names = self._parse_advocates_section(document_structure['advocates_section'])
+                    case_info.advocates = advocates
+                    case_info.agp_names = agp_names
+                    
+                cases.append(case_info)
+            else:
+                # Multiple cases - need to split and associate
+                cases = self._associate_multiple_cases(case_numbers, document_structure)
+        
+        return cases
+    
+    def _extract_case_numbers(self, text: str) -> List[str]:
+        """Extract case numbers from text"""
+        case_pattern = r'((?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+)'
+        matches = re.findall(case_pattern, text, re.IGNORECASE)
+        return [match.strip() for match in matches]
+    
+    def _parse_parties_section(self, text: str) -> Tuple[List[str], List[str]]:
+        """Parse parties section to extract petitioners and respondents"""
+        petitioners = []
+        respondents = []
+        
+        # Split by lines and process each
+        lines = text.split('\n')
+        current_party = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Look for petitioner indicators
+            if re.search(r'\.{3,}.*?(?:Petitioner|Applicant|Appellant)', line, re.IGNORECASE):
+                # Extract name before the dots
+                name_match = re.match(r'([^.]+?)\.{3,}', line)
+                if name_match:
+                    name = name_match.group(1).strip()
+                    if name and len(name) > 2:
+                        petitioners.append(name)
+            
+            # Look for respondent indicators
+            elif re.search(r'\.{3,}.*?(?:Respondent|Defendant)', line, re.IGNORECASE):
+                # Extract name before the dots
+                name_match = re.match(r'([^.]+?)\.{3,}', line)
+                if name_match:
+                    name = name_match.group(1).strip()
+                    if name and len(name) > 2:
+                        respondents.append(name)
+        
+        return petitioners, respondents
+    
+    def _parse_advocates_section(self, text: str) -> Tuple[List[str], List[str]]:
+        """Parse advocates section to extract all advocates and specifically AGP names"""
+        advocates = []
+        agp_names = []
+        
+        lines = text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Look for advocate patterns
+            advocate_match = re.search(r'((?:Smt?\.?|Shri\.?|Ms\.?|Mr\.?)\s+[A-Z][^,\n]+?)(?:\s*,?\s*(?:AGP|GP|ADDL\s*GP|AG))?', line, re.IGNORECASE)
+            if advocate_match:
+                advocate_name = advocate_match.group(1).strip()
+                advocates.append(advocate_name)
+                
+                # Check if this is an AGP/GP
+                if re.search(r'\b(?:AGP|GP|ADDL\s*GP|AG)\b', line, re.IGNORECASE):
+                    agp_names.append(advocate_name)
+        
+        return advocates, agp_names
+    
+    def _associate_multiple_cases(self, case_numbers: List[str], document_structure: Dict[str, Any]) -> List[CaseInfo]:
+        """Handle multiple cases clubbed together"""
+        cases = []
+        
+        # For multiple cases, we'll create individual case entries
+        # but share the advocates/AGP information across all cases
+        
+        # Extract common parties and advocates
+        petitioners, respondents = [], []
+        advocates, agp_names = [], []
+        
+        if document_structure['has_parties']:
+            petitioners, respondents = self._parse_parties_section(document_structure['parties_section'])
+        
+        if document_structure['has_advocates']:
+            advocates, agp_names = self._parse_advocates_section(document_structure['advocates_section'])
+        
+        # Create case info for each case number
+        for case_number in case_numbers:
+            case_info = CaseInfo(
+                case_number=case_number,
+                petitioners=petitioners.copy(),  # Shared across cases
+                respondents=respondents.copy(),  # Shared across cases
+                agp_names=agp_names.copy(),      # Shared across cases
+                advocates=advocates.copy()        # Shared across cases
+            )
+            cases.append(case_info)
+        
+        return cases
+    
+    def _extract_order_date(self, text: str, document_structure: Dict[str, Any]) -> Optional[str]:
+        """Extract the specific order date from the document"""
+        if not document_structure['has_order_date']:
+            return None
+        
+        order_section = document_structure['order_section']
+        
+        # Look for date patterns in the order section
+        date_patterns = [
+            r'DATE\s*[:.]?\s*(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
+            r'(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
+            r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, order_section, re.IGNORECASE)
+            if match:
+                return match.group().strip()
+        
+        return None
+    
+    def _classify_order_enhanced(self, text: str, document_structure: Dict[str, Any]) -> Tuple[str, float]:
+        """Enhanced classification using document structure information"""
+        
+        # If document is missing key parts (case numbers, parties), likely adjournment
+        if document_structure['document_type'] == 'ADJOURNMENT_ONLY':
+            # Look for adjournment keywords in the limited text
+            adjournment_score = 0
+            for pattern in self.order_patterns['ADJOURNED']:
+                if re.search(pattern, text, re.IGNORECASE):
+                    adjournment_score += 1
+            
+            if adjournment_score > 0:
+                return 'ADJOURNED', min(0.8 + (adjournment_score * 0.1), 1.0)
+            else:
+                return 'ADJOURNED', 0.6  # Default for incomplete documents
+        
+        # For complete documents, use regular classification with bonus confidence
+        category, confidence = self._classify_order(text)
+        
+        # Boost confidence for complete documents
+        if document_structure['document_type'] == 'COMPLETE_ORDER':
+            confidence = min(confidence * 1.15, 1.0)
+        
+        return category, confidence
     
     def _extract_petitioners(self, text: str) -> List[Dict[str, Any]]:
         """Extract petitioner names and information"""
