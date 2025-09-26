@@ -295,20 +295,24 @@ class OrderDocumentAnalyzer:
         for pattern in self.entity_patterns['PETITIONER']:
             matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
             for match in matches:
-                name = match.group(1).strip()
-                # Clean up the name
-                name = re.sub(r'\s+', ' ', name)
-                name = re.sub(r'^(Shri\.?|Smt\.?|Ms\.?|Mr\.?)\s+', '', name, flags=re.IGNORECASE)
-                
-                if name and len(name) > 2:
-                    petitioners.append({
-                        'name': name,
-                        'type': 'PETITIONER',
-                        'raw_text': match.group(),
-                        'start': match.start(),
-                        'end': match.end(),
-                        'confidence': 0.9
-                    })
+                try:
+                    name = match.group(1).strip() if match.groups() else match.group().strip()
+                    # Clean up the name
+                    name = re.sub(r'\s+', ' ', name)
+                    name = re.sub(r'^(Shri\.?|Smt\.?|Ms\.?|Mr\.?)\s+', '', name, flags=re.IGNORECASE)
+                    
+                    if name and len(name) > 2:
+                        petitioners.append({
+                            'name': name,
+                            'type': 'PETITIONER',
+                            'raw_text': match.group(),
+                            'start': match.start(),
+                            'end': match.end(),
+                            'confidence': 0.9
+                        })
+                except IndexError:
+                    logging.warning(f"Pattern {pattern} matched but has no capturing groups")
+                    continue
         
         return self._deduplicate_entities(petitioners)
     
@@ -319,20 +323,24 @@ class OrderDocumentAnalyzer:
         for pattern in self.entity_patterns['RESPONDENT']:
             matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
             for match in matches:
-                name = match.group(1).strip()
-                # Clean up the name
-                name = re.sub(r'\s+', ' ', name)
-                name = re.sub(r'^(The\s+)?State\s+Of\s+Maharashtra.*', 'State Of Maharashtra', name, flags=re.IGNORECASE)
-                
-                if name and len(name) > 2:
-                    respondents.append({
-                        'name': name,
-                        'type': 'RESPONDENT',
-                        'raw_text': match.group(),
-                        'start': match.start(),
-                        'end': match.end(),
-                        'confidence': 0.9
-                    })
+                try:
+                    name = match.group(1).strip() if match.groups() else match.group().strip()
+                    # Clean up the name
+                    name = re.sub(r'\s+', ' ', name)
+                    name = re.sub(r'^(The\s+)?State\s+Of\s+Maharashtra.*', 'State Of Maharashtra', name, flags=re.IGNORECASE)
+                    
+                    if name and len(name) > 2:
+                        respondents.append({
+                            'name': name,
+                            'type': 'RESPONDENT',
+                            'raw_text': match.group(),
+                            'start': match.start(),
+                            'end': match.end(),
+                            'confidence': 0.9
+                        })
+                except IndexError:
+                    logging.warning(f"Pattern {pattern} matched but has no capturing groups")
+                    continue
         
         return self._deduplicate_entities(respondents)
     
