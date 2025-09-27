@@ -811,7 +811,7 @@ async def analyze_order_document(
         # Save analysis result to database
         doc_id = order_analyzer.save_analysis_result(file.filename, analysis_result)
         
-        # Prepare enhanced response with structured case information
+        # Prepare enhanced response with structured case information and tabular data
         response_data = {
             "analysis_id": doc_id,
             "filename": file.filename,
@@ -835,6 +835,8 @@ async def analyze_order_document(
                 "has_advocates": analysis_result.document_structure.get('has_advocates', False),
                 "has_order_date": analysis_result.document_structure.get('has_order_date', False)
             },
+            # New tabular format data
+            "tabular_data": analysis_result.tabular_data or [],
             # Legacy format for compatibility
             "petitioners": analysis_result.petitioners,
             "respondents": analysis_result.respondents,

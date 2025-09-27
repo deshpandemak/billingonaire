@@ -317,8 +317,53 @@ const OrderAnalysis = () => {
               </Col>
             </Row>
 
-            {/* Enhanced Case-by-Case Information */}
-            {analysisResult.cases && analysisResult.cases.length > 0 && (
+            {/* Tabular Format Data - Primary Display */}
+            {analysisResult.tabular_data && analysisResult.tabular_data.length > 0 && (
+              <div className="mb-4">
+                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
+                  📊 Case Analysis - Tabular Format
+                </h4>
+                <Table striped bordered hover className="professional-table" responsive>
+                  <thead>
+                    <tr>
+                      <th>Case Type</th>
+                      <th>Case Number</th>
+                      <th>Year</th>
+                      <th>Date</th>
+                      <th>Petitioner</th>
+                      <th>Respondent</th>
+                      <th>AGP/GP/Addl GP/B'Pnl</th>
+                      <th>Category</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysisResult.tabular_data.map((row, index) => (
+                      <tr key={index}>
+                        <td>{row.case_type}</td>
+                        <td><strong>{row.case_number}</strong></td>
+                        <td>{row.year}</td>
+                        <td>{row.date}</td>
+                        <td>{row.petitioner}</td>
+                        <td>{row.respondent}</td>
+                        <td>
+                          <Badge bg="info" style={{ fontSize: '0.75rem' }}>
+                            {row.agp_gp_addl_gp_bpnl || 'None'}
+                          </Badge>
+                        </td>
+                        <td>
+                          <Badge bg={getCategoryBadgeVariant(row.category)}>
+                            {getCategoryDisplayName(row.category)}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+            )}
+
+            {/* Enhanced Case-by-Case Information (Fallback) */}
+            {(!analysisResult.tabular_data || analysisResult.tabular_data.length === 0) && analysisResult.cases && analysisResult.cases.length > 0 && (
               <div className="mb-4">
                 <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
                   ⚖️ Case-by-Case Analysis

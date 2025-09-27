@@ -68,6 +68,7 @@ class OrderAnalysisResult:
     next_hearing_date: Optional[str]
     disposal_reason: Optional[str]
     document_structure: Dict[str, Any]  # Analysis of document parts
+    tabular_data: Optional[List[Dict[str, str]]] = None  # Tabular format data
 
 
 class OrderDocumentAnalyzer:
@@ -252,6 +253,9 @@ class OrderDocumentAnalyzer:
         next_hearing_date = self._extract_next_hearing_date(text)
         disposal_reason = self._extract_disposal_reason(text) if order_category == 'DISPOSED_OFF' else None
         
+        # Extract tabular data
+        tabular_data = self._extract_tabular_data(text, order_category, order_date)
+        
         result = OrderAnalysisResult(
             order_category=order_category,
             category_confidence=category_confidence,
@@ -267,6 +271,9 @@ class OrderDocumentAnalyzer:
             disposal_reason=disposal_reason,
             document_structure=document_structure
         )
+        
+        # Add tabular data to result
+        result.tabular_data = tabular_data
         
         logging.info(f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}")
         return result
@@ -454,6 +461,104 @@ class OrderDocumentAnalyzer:
                 cases = self._associate_multiple_cases(case_numbers, document_structure)
         
         return cases
+    
+    def _parse_canonical_case_info(self, case_text: str) -> Dict[str, str]:
+        """Parse case information into canonical format with robust pattern matching"""
+        case_info = {
+            "case_type": "",
+            "case_number": "",
+            "year": "",
+            "canonical_id": ""
+        }
+        
+        # Comprehensive patterns for different case formats
+        patterns = [
+            # "WRIT PETITION NO.11347 OF 2024" format
+            r'(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})',
+            # "WP/11347/2024" or "WP-11347-2024" format  
+            r'(WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)[\s\-/]+([0-9]+)[\s\-/]+([0-9]{4})',
+            # "11347/2024" standalone format
+            r'^([0-9]+)[/\-]([0-9]{4})$'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, case_text.strip(), re.IGNORECASE)
+            if match:
+                if len(match.groups()) == 3:
+                    case_type, number, year = match.groups()
+                elif len(match.groups()) == 2:  # Standalone number/year format
+                    number, year = match.groups()
+                    case_type = "WP"  # Default type
+                else:
+                    continue
+                    
+                # Normalize case type
+                if case_type.upper() in ["WRIT PETITION", "CRIMINAL WRIT PETITION", "CIVIL APPLICATION"]:
+                    case_info["case_type"] = case_type.upper()
+                else:
+                    case_info["case_type"] = case_type.upper()
+                
+                case_info["case_number"] = number
+                case_info["year"] = year
+                case_info["canonical_id"] = f"{number}/{year}"
+                break
+        
+        return case_info
+
+    def _extract_tabular_data(self, text: str, order_category: str, order_date: str) -> List[Dict[str, str]]:
+        """Extract data in tabular format: Case Type, Case Number, Year, Date, Petitioner, Respondent, AGP/GP/Addl GP/B'Pnl, Category"""
+        tabular_data = []
+        seen_canonical_ids = set()  # For de-duplication
+        
+        # Get case-specific mappings
+        case_agp_mapping = self._extract_case_specific_agps(text)
+        case_parties_mapping = self._extract_case_specific_parties(text)
+        raw_case_numbers = self._extract_case_numbers(text)
+        
+        for raw_case in raw_case_numbers:
+            # Parse using canonical parser
+            case_info = self._parse_canonical_case_info(raw_case)
+            
+            # Skip if parsing failed or already seen
+            if not case_info["canonical_id"] or case_info["canonical_id"] in seen_canonical_ids:
+                continue
+                
+            seen_canonical_ids.add(case_info["canonical_id"])
+            
+            # Get petitioner and respondent using canonical ID
+            canonical_id = case_info["canonical_id"]
+            petitioner = ""
+            respondent = ""
+            
+            if canonical_id in case_parties_mapping:
+                petitioners = case_parties_mapping[canonical_id].get('petitioners', [])
+                respondents = case_parties_mapping[canonical_id].get('respondents', [])
+                petitioner = petitioners[0] if petitioners else ""
+                respondent = respondents[0] if respondents else ""
+            
+            # Get AGP/GP names using canonical ID
+            agp_names = []
+            if canonical_id in case_agp_mapping:
+                for agp_info in case_agp_mapping[canonical_id]:
+                    agp_names.append(f"{agp_info['name']} ({agp_info['role']})")
+            
+            agp_string = ", ".join(agp_names) if agp_names else ""
+            
+            # Create tabular row with properly parsed data
+            row = {
+                "case_type": case_info["case_type"],
+                "case_number": case_info["case_number"],
+                "year": case_info["year"],
+                "date": order_date or "",
+                "petitioner": petitioner,
+                "respondent": respondent,
+                "agp_gp_addl_gp_bpnl": agp_string,
+                "category": order_category
+            }
+            
+            tabular_data.append(row)
+        
+        return tabular_data
     
     def _extract_case_numbers(self, text: str) -> List[str]:
         """Extract case numbers from text with enhanced pattern matching"""
