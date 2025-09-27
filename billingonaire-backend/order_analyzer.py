@@ -596,25 +596,25 @@ class OrderDocumentAnalyzer:
         return list(set(normalized_cases))
     
     def _extract_case_specific_agps(self, text: str) -> Dict[str, List[Dict[str, str]]]:
-        """Extract AGP/GP names with their case associations"""
+        """Extract AGP/GP names with their case associations - ONLY State advocates"""
         case_agp_mapping = {}
         
-        # Enhanced patterns for different AGP/GP mention formats
+        # REFINED patterns - ONLY for State advocates (AGP/GP)
         patterns = [
             # Pattern 1: "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
             r'(?:Adv\.\s+|Ms\.\s+|Mr\.\s+)([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+(WP/[0-9]+/[0-9]+)',
             
-            # Pattern 2: "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State."
+            # Pattern 2: "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State." (State advocates only)
             r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+Respondent\s+Nos?\.([0-9\s,to\-]+)State',
             
-            # Pattern 3: "Mr. Rakesh Saroj for the Petitioner in all Petitions." (not AGP but advocate info)
-            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+the\s+Petitioner(?:\s+in\s+all\s+Petitions)?',
+            # Pattern 3: "AGP/GP for State" direct mentions
+            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?),?\s+((?:Addl\.\s+)?(?:AGP|GP|A\.?\s*G\.?P\.?|G\.?\s*P\.?))\s+(?:for\s+)?(?:the\s+)?State',
             
-            # Pattern 4: "Ms. Rekha Musale for Respondent Nos.1 and 2."
-            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+Respondent\s+Nos?\.([0-9\s,and\-]+)(?:\.|$)(?!\s*State)'
+            # Pattern 4: "State of Maharashtra" representatives
+            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+(?:the\s+)?State\s+of\s+Maharashtra'
         ]
         
-        # Try each pattern
+        # Try each pattern - ONLY extract State advocates
         for pattern_idx, pattern in enumerate(patterns):
             matches = re.findall(pattern, text, re.IGNORECASE)
             
@@ -627,14 +627,14 @@ class OrderDocumentAnalyzer:
                     if case_num not in case_agp_mapping:
                         case_agp_mapping[case_num] = []
                     
-                    # Add first advocate
+                    # Add first advocate (State representative)
                     case_agp_mapping[case_num].append({
                         'name': advocate1.strip(),
                         'role': role1.strip(),
                         'case_number': case_num
                     })
                     
-                    # Add second advocate if present
+                    # Add second advocate if present (State representative)
                     if advocate2 and advocate2.strip():
                         case_agp_mapping[case_num].append({
                             'name': advocate2.strip(),
@@ -643,7 +643,7 @@ class OrderDocumentAnalyzer:
                         })
                         
                 elif pattern_idx == 1:
-                    # Pattern 2: State advocate
+                    # Pattern 2: State advocate (Respondent Nos.X-State)
                     advocate_name, respondent_nos = match
                     # Apply this to all cases since it mentions "State"
                     for case_num in self._extract_all_case_numbers(text):
@@ -653,28 +653,13 @@ class OrderDocumentAnalyzer:
                         if canonical_case:
                             case_agp_mapping[canonical_case].append({
                                 'name': advocate_name.strip(),
-                                'role': f'GP (Respondent Nos.{respondent_nos.strip()}-State)',
+                                'role': f'GP (State)',
                                 'case_number': canonical_case
                             })
                             
                 elif pattern_idx == 2:
-                    # Pattern 3: Petitioner's advocate (note as such)
-                    advocate_name = match
-                    # Apply to all cases
-                    for case_num in self._extract_all_case_numbers(text):
-                        canonical_case = self._parse_canonical_case_info(case_num)['canonical_id'] 
-                        if canonical_case and canonical_case not in case_agp_mapping:
-                            case_agp_mapping[canonical_case] = []
-                        if canonical_case:
-                            case_agp_mapping[canonical_case].append({
-                                'name': advocate_name.strip(),
-                                'role': 'Petitioner Advocate',
-                                'case_number': canonical_case
-                            })
-                            
-                elif pattern_idx == 3:
-                    # Pattern 4: Respondent advocate (non-state)
-                    advocate_name, respondent_nos = match
+                    # Pattern 3: Direct AGP/GP for State mentions
+                    advocate_name, role = match
                     # Apply to all cases
                     for case_num in self._extract_all_case_numbers(text):
                         canonical_case = self._parse_canonical_case_info(case_num)['canonical_id']
@@ -682,8 +667,23 @@ class OrderDocumentAnalyzer:
                             case_agp_mapping[canonical_case] = []
                         if canonical_case:
                             case_agp_mapping[canonical_case].append({
-                                'name': advocate_name.strip(), 
-                                'role': f'Advocate (Respondent Nos.{respondent_nos.strip()})',
+                                'name': advocate_name.strip(),
+                                'role': role.strip(),
+                                'case_number': canonical_case
+                            })
+                            
+                elif pattern_idx == 3:
+                    # Pattern 4: State of Maharashtra representatives
+                    advocate_name = match
+                    # Apply to all cases
+                    for case_num in self._extract_all_case_numbers(text):
+                        canonical_case = self._parse_canonical_case_info(case_num)['canonical_id']
+                        if canonical_case and canonical_case not in case_agp_mapping:
+                            case_agp_mapping[canonical_case] = []
+                        if canonical_case:
+                            case_agp_mapping[canonical_case].append({
+                                'name': advocate_name.strip(),
+                                'role': 'GP (State of Maharashtra)',
                                 'case_number': canonical_case
                             })
         
