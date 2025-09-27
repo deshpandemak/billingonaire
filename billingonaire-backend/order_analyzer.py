@@ -147,7 +147,13 @@ class OrderDocumentAnalyzer:
                 r'\barguments?\s+(?:heard?|concluded?)\s+(?:and\s+)?adjourned?\b',
                 r'\bafter\s+hearing.*?adjourned?\b',
                 r'\bmatter\s+heard?\s+and\s+(?:kept\s+for|posted\s+to)\b',
-                r'\bheard?\s+(?:the\s+)?(?:parties?|counsel)\s+and\s+adjourned?\b'
+                r'\bheard?\s+(?:the\s+)?(?:parties?|counsel)\s+and\s+adjourned?\b',
+                # Enhanced patterns for implicit hearing + adjournment
+                r'\blist(?:ed)?\s+(?:the\s+same\s+)?on.*?for.*?(?:final\s+)?hearing\b',
+                r'\bproceedings\s+are\s+pending.*?list.*?for.*?hearing\b',
+                r'\bmatter[s]?\s+(?:would\s+be\s+)?called\s+out.*?after\b',
+                r'\bConsidering\s+that.*?pending.*?(?:final\s+)?hearing\b',
+                r'\badmission\s+stage.*?after.*?board\b'
             ]
         }
     
@@ -254,7 +260,7 @@ class OrderDocumentAnalyzer:
         disposal_reason = self._extract_disposal_reason(text) if order_category == 'DISPOSED_OFF' else None
         
         # Extract tabular data
-        tabular_data = self._extract_tabular_data(text, order_category, order_date)
+        tabular_data = self._extract_tabular_data(text, order_category, order_date or "")
         
         result = OrderAnalysisResult(
             order_category=order_category,
@@ -593,66 +599,173 @@ class OrderDocumentAnalyzer:
         """Extract AGP/GP names with their case associations"""
         case_agp_mapping = {}
         
-        # Enhanced pattern for case-specific AGP extraction
-        # Handles: "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
-        pattern = r'Adv\.\s+([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+(WP/[0-9]+/[0-9]+)'
+        # Enhanced patterns for different AGP/GP mention formats
+        patterns = [
+            # Pattern 1: "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
+            r'(?:Adv\.\s+|Ms\.\s+|Mr\.\s+)([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+(WP/[0-9]+/[0-9]+)',
+            
+            # Pattern 2: "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State."
+            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+Respondent\s+Nos?\.([0-9\s,to\-]+)State',
+            
+            # Pattern 3: "Mr. Rakesh Saroj for the Petitioner in all Petitions." (not AGP but advocate info)
+            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+the\s+Petitioner(?:\s+in\s+all\s+Petitions)?',
+            
+            # Pattern 4: "Ms. Rekha Musale for Respondent Nos.1 and 2."
+            r'(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?)\s+for\s+Respondent\s+Nos?\.([0-9\s,and\-]+)(?:\.|$)(?!\s*State)'
+        ]
         
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        
-        for match in matches:
-            advocate1, role1, advocate2, role2, case_num = match
+        # Try each pattern
+        for pattern_idx, pattern in enumerate(patterns):
+            matches = re.findall(pattern, text, re.IGNORECASE)
             
-            # Clean case number format
-            case_num = case_num.replace('WP/', '').replace('/', '/')
-            if case_num not in case_agp_mapping:
-                case_agp_mapping[case_num] = []
-            
-            # Add first advocate
-            advocate1 = advocate1.strip()
-            case_agp_mapping[case_num].append({
-                'name': advocate1,
-                'role': role1.strip(),
-                'case_number': case_num
-            })
-            
-            # Add second advocate if present (a/w format)
-            if advocate2 and advocate2.strip():
-                advocate2 = advocate2.strip()
-                case_agp_mapping[case_num].append({
-                    'name': advocate2,
-                    'role': role2.strip() if role2 else 'AGP',
-                    'case_number': case_num
-                })
+            for match in matches:
+                if pattern_idx == 0:
+                    # Pattern 1: Full AGP format with case reference
+                    advocate1, role1, advocate2, role2, case_num = match
+                    case_num = case_num.replace('WP/', '').replace('/', '/')
+                    
+                    if case_num not in case_agp_mapping:
+                        case_agp_mapping[case_num] = []
+                    
+                    # Add first advocate
+                    case_agp_mapping[case_num].append({
+                        'name': advocate1.strip(),
+                        'role': role1.strip(),
+                        'case_number': case_num
+                    })
+                    
+                    # Add second advocate if present
+                    if advocate2 and advocate2.strip():
+                        case_agp_mapping[case_num].append({
+                            'name': advocate2.strip(),
+                            'role': role2.strip() if role2 else 'AGP',
+                            'case_number': case_num
+                        })
+                        
+                elif pattern_idx == 1:
+                    # Pattern 2: State advocate
+                    advocate_name, respondent_nos = match
+                    # Apply this to all cases since it mentions "State"
+                    for case_num in self._extract_all_case_numbers(text):
+                        canonical_case = self._parse_canonical_case_info(case_num)['canonical_id']
+                        if canonical_case and canonical_case not in case_agp_mapping:
+                            case_agp_mapping[canonical_case] = []
+                        if canonical_case:
+                            case_agp_mapping[canonical_case].append({
+                                'name': advocate_name.strip(),
+                                'role': f'GP (Respondent Nos.{respondent_nos.strip()}-State)',
+                                'case_number': canonical_case
+                            })
+                            
+                elif pattern_idx == 2:
+                    # Pattern 3: Petitioner's advocate (note as such)
+                    advocate_name = match
+                    # Apply to all cases
+                    for case_num in self._extract_all_case_numbers(text):
+                        canonical_case = self._parse_canonical_case_info(case_num)['canonical_id'] 
+                        if canonical_case and canonical_case not in case_agp_mapping:
+                            case_agp_mapping[canonical_case] = []
+                        if canonical_case:
+                            case_agp_mapping[canonical_case].append({
+                                'name': advocate_name.strip(),
+                                'role': 'Petitioner Advocate',
+                                'case_number': canonical_case
+                            })
+                            
+                elif pattern_idx == 3:
+                    # Pattern 4: Respondent advocate (non-state)
+                    advocate_name, respondent_nos = match
+                    # Apply to all cases
+                    for case_num in self._extract_all_case_numbers(text):
+                        canonical_case = self._parse_canonical_case_info(case_num)['canonical_id']
+                        if canonical_case and canonical_case not in case_agp_mapping:
+                            case_agp_mapping[canonical_case] = []
+                        if canonical_case:
+                            case_agp_mapping[canonical_case].append({
+                                'name': advocate_name.strip(), 
+                                'role': f'Advocate (Respondent Nos.{respondent_nos.strip()})',
+                                'case_number': canonical_case
+                            })
         
         return case_agp_mapping
+    
+    def _extract_all_case_numbers(self, text: str) -> List[str]:
+        """Helper method to get all case numbers for AGP mapping"""
+        patterns = [
+            r'(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+\s+OF\s+[0-9]+)',
+            r'((?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s/]*\d+[-/]\d+)',
+            r'(?:in\s+)?(WP/[0-9]+/[0-9]+)',
+        ]
+        
+        case_numbers = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            case_numbers.extend(matches)
+        
+        # Clean and normalize
+        normalized_cases = []
+        for case in case_numbers:
+            case = case.strip()
+            if case and len(case) > 4:
+                case = re.sub(r'\s+OF\s+', '/', case, flags=re.IGNORECASE)
+                case = re.sub(r'[-\s]+', '/', case)
+                normalized_cases.append(case)
+        
+        return list(set(normalized_cases))
     
     def _extract_case_specific_parties(self, text: str) -> Dict[str, Dict[str, List[str]]]:
         """Extract petitioners and respondents with their case associations"""
         case_parties_mapping = {}
         
-        # Pattern to match case blocks with parties
-        case_block_pattern = r'(WRIT PETITION NO\.11[0-9]+\s+OF\s+[0-9]+)(.*?)(?=(?:WRIT PETITION NO\.|WITH|$))'
+        # Enhanced pattern to match case blocks with parties - handles different case number formats
+        case_block_pattern = r'(WRIT PETITION NO\.\s*([0-9]+)\s+OF\s+([0-9]+))(.*?)(?=(?:WRIT PETITION NO\.|WITH|Mr\.\s+\w+\s+\w+\s+for|Ms\.\s+\w+\s+\w+\s+for|$))'
         
         matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
         
-        for case_header, case_content in matches:
-            # Extract case number
-            case_num_match = re.search(r'([0-9]+)\s+OF\s+([0-9]+)', case_header)
-            if case_num_match:
-                case_num = f"{case_num_match.group(1)}/{case_num_match.group(2)}"
-                
-                # Extract petitioner
-                petitioner_pattern = r'([A-Z][a-zA-Z\s]+(?:\s+And\s+Ors\.?)?)[\s\n]*\.{3,}\s*Petitioners?'
-                petitioner_match = re.search(petitioner_pattern, case_content, re.IGNORECASE)
-                
-                # Extract respondent
-                respondent_pattern = r'([A-Z][^\.]*?(?:And\s+Ors\.?)?)[\s\n]*\.{3,}\s*Respondents?'
+        for case_header, case_num, year, case_content in matches:
+            canonical_case_num = f"{case_num}/{year}"
+            
+            # Enhanced petitioner extraction
+            petitioner_pattern = r'((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Shree)\s+[A-Za-z\s\.]+?)(?:\s+\.{2,}\s*(?:Petitioner|Applicant))'
+            petitioner_match = re.search(petitioner_pattern, case_content, re.IGNORECASE)
+            
+            # Enhanced respondent extraction - look after "versus" pattern
+            respondent_pattern = r'versus\s+(.*?)(?:\s+\.{2,}\s*(?:Respondent))'
+            respondent_match = re.search(respondent_pattern, case_content, re.DOTALL | re.IGNORECASE)
+            
+            # If no respondent found with versus, try direct pattern
+            if not respondent_match:
+                respondent_pattern = r'((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|The\s+State\s+Of|Shree)\s+[A-Za-z\s\.]+(?:\s+Through\s+[^\.]+)?(?:\s+And\s+Ors\.?)?)(?:\s+\.{2,}\s*(?:Respondent))'
                 respondent_match = re.search(respondent_pattern, case_content, re.IGNORECASE)
-                
-                case_parties_mapping[case_num] = {
-                    'petitioners': [petitioner_match.group(1).strip()] if petitioner_match else [],
-                    'respondents': [respondent_match.group(1).strip()] if respondent_match else []
-                }
+            
+            # Extract petitioner and clean up
+            petitioner = petitioner_match.group(1).strip() if petitioner_match else ""
+            
+            # Extract and clean respondent
+            respondent = ""
+            if respondent_match:
+                respondent_raw = respondent_match.group(1).strip()
+                # Clean up the respondent text (remove extra whitespace, newlines)
+                respondent = re.sub(r'\s+', ' ', respondent_raw)
+                # Remove any trailing dots before .. Respondents
+                respondent = re.sub(r'\s*\.+\s*$', '', respondent)
+            
+            case_parties_mapping[canonical_case_num] = {
+                'petitioners': [petitioner] if petitioner else [],
+                'respondents': [respondent] if respondent else []
+            }
+        
+        # Also extract State information from advocates section
+        state_pattern = r'for\s+Respondent\s+Nos?\.([0-9\s,and\-]+)State'
+        state_matches = re.findall(state_pattern, text, re.IGNORECASE)
+        if state_matches:
+            state_info = f"Respondent Nos.{state_matches[0].strip()}-State"
+            # Add state info to all cases as additional respondent
+            for case_num in case_parties_mapping:
+                if case_parties_mapping[case_num]['respondents']:
+                    case_parties_mapping[case_num]['respondents'].append(f"The State Of Maharashtra ({state_info})")
+                else:
+                    case_parties_mapping[case_num]['respondents'] = [f"The State Of Maharashtra ({state_info})"]
         
         return case_parties_mapping
     
@@ -745,7 +858,7 @@ class OrderDocumentAnalyzer:
         return cases
     
     def _extract_order_date(self, text: str, document_structure: Dict[str, Any]) -> Optional[str]:
-        """Extract the specific order date from the document"""
+        """Extract the specific order date from the document and format as dd-mmm-yyyy"""
         if not document_structure['has_order_date']:
             return None
         
@@ -761,9 +874,51 @@ class OrderDocumentAnalyzer:
         for pattern in date_patterns:
             match = re.search(pattern, order_section, re.IGNORECASE)
             if match:
-                return match.group().strip()
+                return self._format_date_dd_mmm_yyyy(match.group().strip())
         
         return None
+    
+    def _format_date_dd_mmm_yyyy(self, date_str: str) -> str:
+        """Format date to dd-mmm-yyyy format (e.g., 03-FEB-2025)"""
+        # Month mapping
+        month_map = {
+            'january': 'JAN', 'february': 'FEB', 'march': 'MAR', 'april': 'APR',
+            'may': 'MAY', 'june': 'JUN', 'july': 'JUL', 'august': 'AUG',
+            'september': 'SEP', 'october': 'OCT', 'november': 'NOV', 'december': 'DEC'
+        }
+        
+        # Try different date patterns
+        patterns = [
+            # "3rd February, 2025" or "DATE: 3rd February, 2025"
+            r'(?:DATE\s*[:.]?\s*)?(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
+            # "3/2/2025" format
+            r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, date_str, re.IGNORECASE)
+            if match:
+                if len(match.groups()) == 3:
+                    day, month_or_num, year = match.groups()
+                    
+                    # Check if month is a name or number
+                    if month_or_num.lower() in month_map:
+                        # Month name format
+                        day_formatted = day.zfill(2)
+                        month_formatted = month_map[month_or_num.lower()]
+                        return f"{day_formatted}-{month_formatted}-{year}"
+                    else:
+                        # Numeric format (assume month_or_num is month number)
+                        day_formatted = day.zfill(2) 
+                        month_num = int(month_or_num)
+                        month_names = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                                     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+                        if 1 <= month_num <= 12:
+                            month_formatted = month_names[month_num - 1]
+                            return f"{day_formatted}-{month_formatted}-{year}"
+        
+        # If no pattern matches, return original
+        return date_str
     
     def _classify_order_enhanced(self, text: str, document_structure: Dict[str, Any]) -> Tuple[str, float]:
         """Enhanced classification using document structure information"""
