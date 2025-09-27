@@ -223,6 +223,7 @@ class OrderDocumentAnalyzer:
         Returns:
             OrderAnalysisResult with comprehensive analysis including case structure
         """
+        print(f"🚀 ANALYZE_ORDER_DOCUMENT CALLED for {filename}")
         logging.info(f"Starting enhanced order document analysis for {filename}")
         
         # First, extract text using existing ML parser
@@ -281,6 +282,7 @@ class OrderDocumentAnalyzer:
         # Add tabular data to result
         result.tabular_data = tabular_data
         
+        print(f"🎯 FINAL RESULT: Category={order_category}, Confidence={category_confidence:.2f}")
         logging.info(f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}")
         return result
     

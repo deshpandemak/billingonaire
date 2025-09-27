@@ -808,6 +808,11 @@ async def analyze_order_document(
         # Analyze the order document
         analysis_result = order_analyzer.analyze_order_document(file.filename, file_content)
         
+        # DEBUG: Log the actual category being returned
+        logging.info(f"🔍 CATEGORY DEBUG for {file.filename}:")
+        logging.info(f"   order_category: '{analysis_result.order_category}'")
+        logging.info(f"   category_confidence: {analysis_result.category_confidence}")
+        
         # Save analysis result to database
         doc_id = order_analyzer.save_analysis_result(file.filename, analysis_result)
         
