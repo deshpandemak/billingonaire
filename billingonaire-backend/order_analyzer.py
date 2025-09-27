@@ -356,8 +356,8 @@ class OrderDocumentAnalyzer:
         order_lines = []
         
         # Patterns for section identification
-        case_number_pattern = r'(?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+'
-        parties_pattern = r'\.{3,}.*?(?:Petitioner|Applicant|Appellant|Respondent|Defendant)'
+        case_number_pattern = r'(?:WRIT\s+PETITION\s+NO\.|WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/\s]+OF\s+\d+|\b(?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+'
+        parties_pattern = r'\.{2,}.*?(?:Petitioner|Applicant|Appellant|Respondent|Defendant)'
         advocate_pattern = r'(?:Smt?\.?|Shri\.?|Ms\.?|Mr\.?)\s+[A-Z].*?(?:AGP|GP|ADDL\s*GP|AG)\b'
         date_pattern = r'(?:DATE|CORAM|Before|Hon\'ble)\s*[:.]?\s*\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)'
         
