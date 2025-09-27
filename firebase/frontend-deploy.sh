@@ -6,5 +6,8 @@ cd ../billingonaire-ui
 # Build the frontend
 npm run build
 
-# Deploy the frontend to Firebase
-firebase deploy --only hosting:frontend
+# Navigate back to root for Firebase deployment
+cd ..
+
+# Deploy the frontend to Firebase hosting
+firebase deploy --only hosting

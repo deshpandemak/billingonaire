@@ -223,7 +223,6 @@ class OrderDocumentAnalyzer:
         Returns:
             OrderAnalysisResult with comprehensive analysis including case structure
         """
-        print(f"🚀 ANALYZE_ORDER_DOCUMENT CALLED for {filename}")
         logging.info(f"Starting enhanced order document analysis for {filename}")
         
         # First, extract text using existing ML parser
@@ -247,10 +246,7 @@ class OrderDocumentAnalyzer:
         order_date = self._extract_order_date(text, document_structure)
         
         # 4. Classify order category with enhanced logic based on structure
-        print(f"📄 EXTRACTED TEXT SAMPLE: {text[:500]}...")
-        print(f"📋 Document Structure: {document_structure.get('document_type', 'UNKNOWN')}")
         order_category, category_confidence = self._classify_order_enhanced(text, document_structure)
-        print(f"🔍 Classification Result: {order_category} (confidence: {category_confidence:.2f})")
         
         # 5. Legacy format extraction for compatibility
         petitioners = self._extract_petitioners(text)
@@ -285,7 +281,6 @@ class OrderDocumentAnalyzer:
         # Add tabular data to result
         result.tabular_data = tabular_data
         
-        print(f"🎯 FINAL RESULT: Category={order_category}, Confidence={category_confidence:.2f}")
         logging.info(f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}")
         return result
     
