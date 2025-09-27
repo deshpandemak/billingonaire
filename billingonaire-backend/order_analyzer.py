@@ -456,10 +456,100 @@ class OrderDocumentAnalyzer:
         return cases
     
     def _extract_case_numbers(self, text: str) -> List[str]:
-        """Extract case numbers from text"""
-        case_pattern = r'((?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+)'
-        matches = re.findall(case_pattern, text, re.IGNORECASE)
-        return [match.strip() for match in matches]
+        """Extract case numbers from text with enhanced pattern matching"""
+        patterns = [
+            # Pattern for "WRIT PETITION NO.11347 OF 2024" format  
+            r'(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+\s+OF\s+[0-9]+)',
+            # Standard case format like "WP-11347-2024" or "WP/11347/2024"
+            r'((?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s/]*\d+[-/]\d+)',
+            # Case references in advocate assignments "WP/11347/2024"
+            r'(?:in\s+)?(WP/[0-9]+/[0-9]+)',
+        ]
+        
+        case_numbers = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            case_numbers.extend(matches)
+        
+        # Clean, normalize and deduplicate
+        normalized_cases = []
+        for case in case_numbers:
+            case = case.strip()
+            if case and len(case) > 4:  # Filter out very short matches
+                # Convert "11347 OF 2024" to "11347/2024" format
+                case = re.sub(r'\s+OF\s+', '/', case, flags=re.IGNORECASE)
+                # Normalize separators to forward slash
+                case = re.sub(r'[-\s]+', '/', case)
+                normalized_cases.append(case)
+        
+        return list(set(normalized_cases))
+    
+    def _extract_case_specific_agps(self, text: str) -> Dict[str, List[Dict[str, str]]]:
+        """Extract AGP/GP names with their case associations"""
+        case_agp_mapping = {}
+        
+        # Enhanced pattern for case-specific AGP extraction
+        # Handles: "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
+        pattern = r'Adv\.\s+([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+(WP/[0-9]+/[0-9]+)'
+        
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        
+        for match in matches:
+            advocate1, role1, advocate2, role2, case_num = match
+            
+            # Clean case number format
+            case_num = case_num.replace('WP/', '').replace('/', '/')
+            if case_num not in case_agp_mapping:
+                case_agp_mapping[case_num] = []
+            
+            # Add first advocate
+            advocate1 = advocate1.strip()
+            case_agp_mapping[case_num].append({
+                'name': advocate1,
+                'role': role1.strip(),
+                'case_number': case_num
+            })
+            
+            # Add second advocate if present (a/w format)
+            if advocate2 and advocate2.strip():
+                advocate2 = advocate2.strip()
+                case_agp_mapping[case_num].append({
+                    'name': advocate2,
+                    'role': role2.strip() if role2 else 'AGP',
+                    'case_number': case_num
+                })
+        
+        return case_agp_mapping
+    
+    def _extract_case_specific_parties(self, text: str) -> Dict[str, Dict[str, List[str]]]:
+        """Extract petitioners and respondents with their case associations"""
+        case_parties_mapping = {}
+        
+        # Pattern to match case blocks with parties
+        case_block_pattern = r'(WRIT PETITION NO\.11[0-9]+\s+OF\s+[0-9]+)(.*?)(?=(?:WRIT PETITION NO\.|WITH|$))'
+        
+        matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
+        
+        for case_header, case_content in matches:
+            # Extract case number
+            case_num_match = re.search(r'([0-9]+)\s+OF\s+([0-9]+)', case_header)
+            if case_num_match:
+                case_num = f"{case_num_match.group(1)}/{case_num_match.group(2)}"
+                
+                # Extract petitioner
+                petitioner_pattern = r'([A-Z][a-zA-Z\s]+(?:\s+And\s+Ors\.?)?)[\s\n]*\.{3,}\s*Petitioners?'
+                petitioner_match = re.search(petitioner_pattern, case_content, re.IGNORECASE)
+                
+                # Extract respondent
+                respondent_pattern = r'([A-Z][^\.]*?(?:And\s+Ors\.?)?)[\s\n]*\.{3,}\s*Respondents?'
+                respondent_match = re.search(respondent_pattern, case_content, re.IGNORECASE)
+                
+                case_parties_mapping[case_num] = {
+                    'petitioners': [petitioner_match.group(1).strip()] if petitioner_match else [],
+                    'respondents': [respondent_match.group(1).strip()] if respondent_match else []
+                }
+        
+        return case_parties_mapping
     
     def _parse_parties_section(self, text: str) -> Tuple[List[str], List[str]]:
         """Parse parties section to extract petitioners and respondents"""
