@@ -14,6 +14,7 @@ from OrderManager import OrderManager
 from UserManager import UserManager
 from order_analyzer import OrderDocumentAnalyzer
 from AutoOrderManager import AutoOrderManager
+from UserMatterMatcher import UserMatterMatcher, UserRole, MatterMatch
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -39,7 +40,8 @@ app = FastAPI(
         {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"},
         {"name": "Order Management", "description": "Manage court order linking and states"},
         {"name": "Order Analysis", "description": "ML-powered analysis of court order documents"},
-        {"name": "Queue Management", "description": "Monitor async order processing queue"}
+        {"name": "Queue Management", "description": "Monitor async order processing queue"},
+        {"name": "User Matter Mapping", "description": "Link users to their legal matters using AI-powered name matching"}
     ]
 )
 
@@ -75,6 +77,7 @@ app.add_middleware(
 user_manager = UserManager()
 order_analyzer = OrderDocumentAnalyzer()
 auto_order_manager = AutoOrderManager()
+user_matter_matcher = UserMatterMatcher()
 
 # In-memory queue for async order processing
 order_processing_queue = Queue()
@@ -1294,6 +1297,202 @@ async def restart_queue_processing(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to restart queue processing: {str(e)}"}
+        )
+
+# User Matter Mapping Endpoints
+@app.get("/user-matters/my-matters", tags=["User Matter Mapping"])
+async def get_my_matters(
+    limit: int = Query(100, description="Maximum number of matters to return"),
+    current_user=Depends(get_current_user)
+):
+    """Get matters linked to the current logged-in user"""
+    try:
+        user_id = current_user.get('uid')
+        matches = user_matter_matcher.find_user_matters(user_id, limit)
+        
+        # Convert dataclass objects to dictionaries
+        matters_data = []
+        for match in matches:
+            matters_data.append({
+                'case_id': match.case_id,
+                'case_ref': match.case_ref,
+                'match_source': match.match_source,
+                'match_field': match.match_field,
+                'matched_text': match.matched_text,
+                'confidence_score': match.confidence_score,
+                'role_type': match.role_type,
+                'board_date': match.board_date
+            })
+        
+        return JSONResponse(content={
+            "user_id": user_id,
+            "total_matches": len(matters_data),
+            "matters": matters_data
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting user matters: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get user matters: {str(e)}"}
+        )
+
+@app.get("/user-matters/summary", tags=["User Matter Mapping"])
+async def get_my_matters_summary(
+    current_user=Depends(get_current_user)
+):
+    """Get summary statistics of matters for the current user"""
+    try:
+        user_id = current_user.get('uid')
+        summary = user_matter_matcher.get_matters_summary(user_id)
+        
+        return JSONResponse(content={
+            "user_id": user_id,
+            "summary": summary
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting matters summary: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get matters summary: {str(e)}"}
+        )
+
+@app.get("/user-matters/role-config", tags=["User Matter Mapping"])
+async def get_user_role_config(
+    current_user=Depends(get_current_user)
+):
+    """Get current user's role configuration"""
+    try:
+        user_id = current_user.get('uid')
+        user_role = user_matter_matcher.get_user_role_config(user_id)
+        
+        if not user_role:
+            return JSONResponse(content={
+                "user_id": user_id,
+                "role_configured": False,
+                "message": "No role configuration found. Please configure your legal role and name variations."
+            })
+        
+        return JSONResponse(content={
+            "user_id": user_id,
+            "role_configured": True,
+            "role_config": {
+                "role_type": user_role.role_type,
+                "full_name": user_role.full_name,
+                "name_variations": user_role.name_variations,
+                "pattern_keywords": user_role.pattern_keywords,
+                "confidence_threshold": user_role.confidence_threshold
+            }
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting user role config: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get role config: {str(e)}"}
+        )
+
+@app.post("/user-matters/configure-role", tags=["User Matter Mapping"])
+async def configure_user_role(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Configure user's legal role and name variations for matter matching"""
+    try:
+        user_id = current_user.get('uid')
+        body = await request.json()
+        
+        # Validate required fields
+        role_type = body.get('role_type')
+        full_name = body.get('full_name')
+        
+        if not role_type or not full_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "role_type and full_name are required"}
+            )
+        
+        # Valid role types
+        valid_roles = ['AGP', 'GP', 'Addl_GP', 'B_Pnl', 'State_Advocate', 'AG']
+        if role_type not in valid_roles:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid role_type. Must be one of: {', '.join(valid_roles)}"}
+            )
+        
+        # Generate name variations if not provided
+        name_variations = body.get('name_variations', [])
+        if not name_variations:
+            name_variations = user_matter_matcher.generate_name_variations(full_name)
+        
+        # Create user role configuration
+        user_role = UserRole(
+            role_type=role_type,
+            full_name=full_name,
+            name_variations=name_variations,
+            pattern_keywords=body.get('pattern_keywords', []),
+            confidence_threshold=body.get('confidence_threshold', 0.75)
+        )
+        
+        # Save configuration
+        success = user_matter_matcher.save_user_role_config(user_id, user_role)
+        
+        if success:
+            return JSONResponse(content={
+                "success": True,
+                "message": "Role configuration saved successfully",
+                "user_id": user_id,
+                "role_config": {
+                    "role_type": user_role.role_type,
+                    "full_name": user_role.full_name,
+                    "name_variations": user_role.name_variations,
+                    "pattern_keywords": user_role.pattern_keywords,
+                    "confidence_threshold": user_role.confidence_threshold
+                }
+            })
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to save role configuration"}
+            )
+        
+    except Exception as e:
+        logging.error(f"Error configuring user role: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to configure role: {str(e)}"}
+        )
+
+@app.post("/user-matters/generate-name-variations", tags=["User Matter Mapping"])
+async def generate_name_variations(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Generate name variations for a given full name (helper endpoint)"""
+    try:
+        body = await request.json()
+        full_name = body.get('full_name')
+        
+        if not full_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "full_name is required"}
+            )
+        
+        variations = user_matter_matcher.generate_name_variations(full_name)
+        
+        return JSONResponse(content={
+            "full_name": full_name,
+            "name_variations": variations,
+            "total_variations": len(variations)
+        })
+        
+    except Exception as e:
+        logging.error(f"Error generating name variations: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to generate name variations: {str(e)}"}
         )
 
 @app.get("/auto-orders/search", tags=["Auto Order Management"])
