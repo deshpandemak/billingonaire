@@ -168,15 +168,17 @@ class AutoOrderManager:
                 # Step 2: Create order link in database
                 self._create_order_link(case_id, order_info)
                 
-                # Step 3: Analyze the order if we have PDF content
+                # Step 3: Analyze the order using order_analyzer
                 if order_info.get('pdf_content'):
-                    analysis_result = self._analyze_order(case_id, case_ref, order_info['pdf_content'])
+                    analysis_result = self._analyze_order_with_date_validation(
+                        case_id, case_ref, order_info['pdf_content'], case_data.get('board_date')
+                    )
                     
                     if analysis_result.get('success'):
                         result["analysis_success"] = True
                         result["analysis_data"] = analysis_result.get('data')
                         
-                        # Step 4: Create search index entry
+                        # Step 4: Create search index (analyzed-orders collection already updated)
                         self._create_search_index_entry(case_id, case_data, analysis_result['data'])
                     else:
                         result["error"] = f"Analysis failed: {analysis_result.get('error')}"
@@ -242,9 +244,9 @@ class AutoOrderManager:
             if search_stamp_no:
                 case_type = case_type.replace(' ', '').replace('(ST)', '').strip()
             
-            # Try to download using Bombay High Court API
-            download_result = self._download_pdf_bombay_hc(
-                case_type, case_number, year, case_board_date, search_stamp_no, order_filename
+            # Try to download using Bombay High Court API (simplified - no date validation here)
+            download_result = self._download_pdf_bombay_hc_simple(
+                case_type, case_number, year, search_stamp_no, order_filename
             )
             
             if download_result.get('success'):
@@ -265,12 +267,11 @@ class AutoOrderManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _download_pdf_bombay_hc(self, case_type: str, case_number: str, year: str, 
-                               case_board_date: datetime, search_stamp_no: bool, 
-                               order_filename: str) -> Dict:
+    def _download_pdf_bombay_hc_simple(self, case_type: str, case_number: str, year: str, 
+                                      search_stamp_no: bool, order_filename: str) -> Dict:
         """
-        Download PDF from Bombay High Court using their actual API
-        Based on the provided working download_pdf function
+        Simplified PDF download from Bombay High Court - just get the PDF, no validation
+        Let order_analyzer handle all PDF parsing and validation
         """
         try:
             base_url = 'https://bombayhighcourt.nic.in/'
@@ -280,15 +281,6 @@ class AutoOrderManager:
             # Generate current timestamp
             date_time = datetime.now()
             current_time = date_time.strftime('%d%m%y%H%M%S')
-            
-            # Date patterns for validation
-            date_pattern_fmts = ['%d%B%Y', '%B%d%Y']
-            date_replace_pattern = ['st', 'ST', 'nd', 'ND', 'rd', 'RD', 'th', 'TH', ',', '.']
-            
-            # Order patterns to look for
-            format_dated = '.*DATED *: *(.*)'
-            format_date = '.*DATE *: *(.*)'
-            order_list = [format_dated, format_date]
             
             seq_no = 1
             count = 0
@@ -318,23 +310,16 @@ class AutoOrderManager:
                 try:
                     response = requests.get(full_url, timeout=30)
                     
-                    # Check if response is a PDF
+                    # Check if response is a PDF - just return the first valid PDF found
                     if response.headers.get('Content-Type') == 'application/pdf':
-                        # Validate the PDF content
-                        validation_result = self._validate_order_pdf(
-                            response.content, case_board_date, order_list, 
-                            date_pattern_fmts, date_replace_pattern
-                        )
-                        
-                        if validation_result.get('order_found'):
-                            logging.info(f'Order found for: {order_filename}')
-                            return {
-                                "success": True,
-                                "pdf_content": response.content,
-                                "download_url": full_url,
-                                "filename": order_filename,
-                                "validation": validation_result
-                            }
+                        logging.info(f'PDF found for: {order_filename} (seq: {seq_no-1})')
+                        return {
+                            "success": True,
+                            "pdf_content": response.content,
+                            "download_url": full_url,
+                            "filename": order_filename,
+                            "sequence_number": seq_no - 1
+                        }
                     
                 except requests.RequestException as e:
                     logging.debug(f"Request failed for seq {seq_no-1}: {e}")
@@ -342,7 +327,7 @@ class AutoOrderManager:
             
             return {
                 "success": False,
-                "error": f"No order found after trying {count} sequence numbers",
+                "error": f"No PDF found after trying {count} sequence numbers",
                 "last_url_tried": full_url if 'full_url' in locals() else None
             }
             
@@ -350,81 +335,12 @@ class AutoOrderManager:
             logging.error(f"Error downloading PDF from Bombay HC: {e}")
             return {"success": False, "error": str(e)}
 
-    def _validate_order_pdf(self, pdf_content: bytes, case_board_date: datetime, 
-                           order_list: List[str], date_pattern_fmts: List[str], 
-                           date_replace_pattern: List[str]) -> Dict:
+    def _analyze_order_with_date_validation(self, case_id: str, case_ref: str, 
+                                          pdf_content: bytes, expected_board_date: str) -> Dict:
         """
-        Validate that the downloaded PDF is the correct order by checking the date
-        Based on the validation logic from the provided download_pdf function
+        Analyze the downloaded order using order_analyzer and validate date
+        Let order_analyzer handle all PDF parsing and date extraction
         """
-        try:
-            pdf_data = PdfReader(BytesIO(pdf_content))
-            pages = len(pdf_data.pages)
-            order_found = False
-            
-            for i in range(pages):
-                page = pdf_data.pages[i]
-                text = page.extract_text()
-                lines = text.splitlines()
-                
-                for line in lines:
-                    for pattern in order_list:
-                        matches = re.match(pattern, line)
-                        if matches:
-                            date_formatted = matches.group(1)
-                            
-                            # Clean up the date string
-                            head, sep, tail = text.partition('2024')
-                            date_formatted = date_formatted.replace(tail, '')
-                            
-                            for sub in date_replace_pattern:
-                                date_formatted = date_formatted.replace(sub, '')
-                            date_formatted = date_formatted.replace(' ', '')
-                            
-                            # Handle August variations
-                            if 'AUGUST' in date_formatted.upper():
-                                date_formatted = date_formatted
-                            elif 'AUGU' in date_formatted.upper():
-                                date_formatted = date_formatted.upper().replace('AUGU', 'AUGUST')
-                            
-                            # Try to parse the date
-                            try:
-                                order_date = None
-                                for format_str in date_pattern_fmts:
-                                    try:
-                                        order_date = datetime.strptime(date_formatted, format_str)
-                                        break
-                                    except ValueError:
-                                        continue
-                                
-                                if order_date and order_date.date() == case_board_date.date():
-                                    order_found = True
-                                    return {
-                                        "order_found": True,
-                                        "order_date": order_date.isoformat(),
-                                        "matched_pattern": pattern,
-                                        "raw_date_text": date_formatted
-                                    }
-                                    
-                            except ValueError as e:
-                                logging.debug(f'Date format invalid: {date_formatted} - {e}')
-                                continue
-            
-            return {
-                "order_found": False,
-                "error": "No matching date found in PDF",
-                "expected_date": case_board_date.isoformat()
-            }
-            
-        except Exception as e:
-            logging.error(f"Error validating PDF: {e}")
-            return {
-                "order_found": False,
-                "error": f"PDF validation failed: {str(e)}"
-            }
-
-    def _analyze_order(self, case_id: str, case_ref: str, pdf_content: bytes) -> Dict:
-        """Analyze the downloaded order using order_analyzer"""
         try:
             # Create temporary filename for analysis
             temp_filename = f"{case_ref.replace('/', '-')}.pdf"
@@ -432,27 +348,47 @@ class AutoOrderManager:
             # Analyze using existing order analyzer
             analysis_result = self.order_analyzer.analyze_order_document(temp_filename, pdf_content)
             
-            # Extract key information for search index
+            # Validate the extracted order date against expected board date
+            date_validation = self._validate_order_date(analysis_result.order_date, expected_board_date)
+            
+            # Extract comprehensive data from analysis result and merge with order link
             analysis_data = {
                 "case_id": case_id,
                 "case_ref": case_ref,
                 "order_category": analysis_result.order_category,
                 "category_confidence": analysis_result.category_confidence,
+                
+                # Core tabular data from order_analyzer
                 "order_date": analysis_result.order_date,
                 "petitioners": analysis_result.petitioners,
                 "respondents": analysis_result.respondents,
                 "agp_names": analysis_result.agp_names,
+                
+                # Complete tabular data structure
+                "tabular_data": analysis_result.tabular_data,
+                
+                # Additional analysis details
                 "key_phrases": analysis_result.key_phrases,
                 "next_hearing_date": analysis_result.next_hearing_date,
                 "disposal_reason": analysis_result.disposal_reason,
-                "tabular_data": analysis_result.tabular_data,
                 "order_text": analysis_result.order_text[:1000],  # Store first 1000 chars
+                "cases": analysis_result.cases,
+                
+                # Date validation
+                "date_validation": date_validation,
+                "expected_board_date": expected_board_date,
+                
+                # Order link from case-orders collection
+                "order_link": self._get_order_link(case_id),
+                
+                # Timestamps
                 "analysis_timestamp": datetime.now().isoformat(),
-                "cases": analysis_result.cases
+                "created_at": datetime.now().isoformat(),
+                "last_updated": datetime.now().isoformat()
             }
             
-            # Save to analyzed orders collection
-            self.db.collection(self.analyzed_orders_collection).document(case_id).set(analysis_data)
+            # Update analyzed orders collection with comprehensive data
+            self.db.collection(self.analyzed_orders_collection).document(case_id).set(analysis_data, merge=True)
             
             return {"success": True, "data": analysis_data}
             
@@ -460,10 +396,81 @@ class AutoOrderManager:
             logging.error(f"Error analyzing order for case {case_id}: {e}")
             return {"success": False, "error": str(e)}
 
+    def _validate_order_date(self, extracted_order_date: str, expected_board_date: str) -> Dict:
+        """
+        Validate extracted order date against expected board date
+        Returns validation result with details
+        """
+        try:
+            if not extracted_order_date or not expected_board_date:
+                return {
+                    "valid": False,
+                    "reason": "Missing date information",
+                    "extracted_date": extracted_order_date,
+                    "expected_date": expected_board_date
+                }
+            
+            # Parse dates for comparison
+            try:
+                if isinstance(expected_board_date, str):
+                    expected_date = datetime.strptime(expected_board_date, '%Y-%m-%d').date()
+                elif isinstance(expected_board_date, datetime):
+                    expected_date = expected_board_date.date()
+                else:
+                    expected_date = expected_board_date
+                
+                # Try to parse extracted order date
+                if isinstance(extracted_order_date, str):
+                    # Try different date formats
+                    for fmt in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%dT%H:%M:%S']:
+                        try:
+                            extracted_date = datetime.strptime(extracted_order_date, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        return {
+                            "valid": False,
+                            "reason": "Could not parse extracted date format",
+                            "extracted_date": extracted_order_date,
+                            "expected_date": expected_board_date
+                        }
+                else:
+                    extracted_date = extracted_order_date
+                
+                # Compare dates
+                date_match = extracted_date == expected_date
+                
+                return {
+                    "valid": date_match,
+                    "reason": "Date matches" if date_match else "Date mismatch",
+                    "extracted_date": extracted_date.isoformat(),
+                    "expected_date": expected_date.isoformat(),
+                    "date_difference_days": (extracted_date - expected_date).days if date_match is False else 0
+                }
+                
+            except Exception as e:
+                return {
+                    "valid": False,
+                    "reason": f"Date parsing error: {str(e)}",
+                    "extracted_date": extracted_order_date,
+                    "expected_date": expected_board_date
+                }
+                
+        except Exception as e:
+            logging.error(f"Error validating order date: {e}")
+            return {
+                "valid": False,
+                "reason": f"Validation error: {str(e)}",
+                "extracted_date": extracted_order_date,
+                "expected_date": expected_board_date
+            }
+
+
     def _create_search_index_entry(self, case_id: str, case_data: Dict, analysis_data: Dict) -> None:
         """Create optimized search index entry for fast searching"""
         try:
-            # Extract petitioner and respondent names
+            # Extract petitioner and respondent names from analysis
             petitioners = analysis_data.get('petitioners', [])
             respondents = analysis_data.get('respondents', [])
             
@@ -476,17 +483,20 @@ class AutoOrderManager:
                 "case_year": case_data.get('case_year'),
                 "board_date": case_data.get('board_date'),
                 
-                # Parties information
+                # Parties information (cleaned by order_analyzer)
                 "petitioner_names": petitioners,
                 "respondent_names": respondents,
                 "petitioner_text": " ".join(petitioners).lower(),  # For text search
                 "respondent_text": " ".join(respondents).lower(),   # For text search
                 
-                # Order information
+                # Order information from analyzer
                 "order_category": analysis_data.get('order_category'),
                 "order_date": analysis_data.get('order_date'),
                 "agp_names": analysis_data.get('agp_names', []),
                 "key_phrases": analysis_data.get('key_phrases', []),
+                
+                # Date validation status
+                "date_validation_valid": analysis_data.get('date_validation', {}).get('valid', False),
                 
                 # Links
                 "order_link": self._get_order_link(case_id),

@@ -1155,6 +1155,116 @@ async def get_search_index_stats(current_user=Depends(get_current_user)):
             content={"error": f"Failed to get search stats: {str(e)}"}
         )
 
+@app.get("/auto-orders/tabular-data", tags=["Auto Order Management"])
+async def get_order_tabular_data(
+    petitioner_search: str = Query(None),
+    respondent_search: str = Query(None),
+    case_type: str = Query(None),
+    case_year: str = Query(None),
+    order_category: str = Query(None),
+    date_validation_valid: bool = Query(None),
+    limit: int = Query(100, le=1000),
+    current_user=Depends(get_current_user)
+):
+    """Get structured tabular data from analyzed-orders collection with Order Date, Petitioner, Respondent, AGP/GP list, Category, and order links"""
+    try:
+        db = firestore.client()
+        query_ref = db.collection("analyzed-orders")
+        
+        # Apply filters - only filter on indexed fields
+        if order_category:
+            query_ref = query_ref.where("order_category", "==", order_category)
+        if date_validation_valid is not None:
+            query_ref = query_ref.where("date_validation.valid", "==", date_validation_valid)
+        
+        # Execute query with limit
+        docs = query_ref.limit(limit).stream()
+        
+        results = []
+        for doc in docs:
+            data = doc.to_dict()
+            
+            # Apply text-based filters (post-query)
+            if petitioner_search:
+                petitioners = data.get("petitioners", [])
+                if not any(petitioner_search.lower() in pet.lower() for pet in petitioners):
+                    continue
+                    
+            if respondent_search:
+                respondents = data.get("respondents", [])
+                if not any(respondent_search.lower() in resp.lower() for resp in respondents):
+                    continue
+            
+            # Apply additional filters (post-query)
+            if case_type and data.get("case_ref", "").split("-")[0] != case_type:
+                continue
+            if case_year and data.get("case_ref", "").split("-")[-1] != case_year:
+                continue
+            
+            # Format result for frontend consumption with comprehensive tabular data
+            result = {
+                "case_id": data.get("case_id"),
+                "case_ref": data.get("case_ref"),
+                "case_type": data.get("case_ref", "").split("-")[0] if data.get("case_ref") else None,
+                "case_number": data.get("case_ref", "").split("-")[1] if data.get("case_ref") and len(data.get("case_ref", "").split("-")) > 1 else None,
+                "case_year": data.get("case_ref", "").split("-")[-1] if data.get("case_ref") else None,
+                "board_date": data.get("expected_board_date"),
+                
+                # Core tabular data from order_analyzer (exactly what user requested)
+                "order_date": data.get("order_date"),
+                "order_category": data.get("order_category"),
+                "category_confidence": data.get("category_confidence"),
+                
+                # Parties (cleaned by order_analyzer)
+                "petitioners": data.get("petitioners", []),
+                "respondents": data.get("respondents", []),
+                
+                # AGP/GP/State advocates list (cleaned by order_analyzer)
+                "agp_names": data.get("agp_names", []),
+                
+                # Complete structured tabular data from order_analyzer
+                "tabular_data": data.get("tabular_data", []),
+                
+                # Additional details
+                "next_hearing_date": data.get("next_hearing_date"),
+                "disposal_reason": data.get("disposal_reason"),
+                "key_phrases": data.get("key_phrases", []),
+                
+                # Date validation info
+                "date_validation": data.get("date_validation", {}),
+                
+                # Order link (fetched and stored with analysis)
+                "order_link": data.get("order_link"),
+                
+                # Timestamps
+                "analysis_timestamp": data.get("analysis_timestamp"),
+                "created_at": data.get("created_at")
+            }
+            
+            results.append(result)
+        
+        return JSONResponse(content={
+            "success": True,
+            "results": results,
+            "count": len(results),
+            "filters_applied": {
+                "petitioner_search": petitioner_search,
+                "respondent_search": respondent_search,
+                "case_type": case_type,
+                "case_year": case_year,
+                "order_category": order_category,
+                "date_validation_valid": date_validation_valid,
+                "limit": limit
+            }
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting tabular data: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get tabular data: {str(e)}"}
+        )
+
 client = TestClient(app)
 
 @functions_framework.http
