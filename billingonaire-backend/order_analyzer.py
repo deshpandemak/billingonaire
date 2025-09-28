@@ -296,9 +296,15 @@ class OrderDocumentAnalyzer:
                 regex_matches = re.findall(pattern, text, re.IGNORECASE)
                 if regex_matches:
                     matches += len(regex_matches)
-                    # Weight certain patterns higher
+                    # Weight patterns based on specificity and importance
                     if 'disposed' in pattern.lower():
-                        score += len(regex_matches) * 2
+                        score += len(regex_matches) * 2.5  # Disposal is definitive
+                    elif 'heard' in pattern.lower() and 'adjourned' in pattern.lower():
+                        score += len(regex_matches) * 2.0  # Heard+adjourned is specific
+                    elif 'partly' in pattern.lower() or 'partial' in pattern.lower():
+                        score += len(regex_matches) * 2.0  # Partial hearing indicators
+                    elif 'arguments' in pattern.lower() and 'heard' in pattern.lower():
+                        score += len(regex_matches) * 2.0  # Arguments heard indicates hearing
                     elif 'stand over' in pattern.lower():
                         score += len(regex_matches) * 1.5
                     else:
@@ -310,15 +316,32 @@ class OrderDocumentAnalyzer:
                 'confidence': min(score / 10.0, 1.0)  # Normalize to 0-1
             }
         
-        # Determine best category
+        # Determine best category with enhanced logic
         if not any(scores[cat]['score'] > 0 for cat in scores):
             return 'ADJOURNED', 0.5  # Default assumption
         
+        # Enhanced category selection logic
         best_category = max(scores.keys(), key=lambda x: scores[x]['score'])
         confidence = scores[best_category]['confidence']
         
+        # CRITICAL FIX: Prioritize HEARD_AND_ADJOURNED over ADJOURNED when both match
+        if (scores.get('HEARD_AND_ADJOURNED', {}).get('score', 0) > 0 and 
+            scores.get('ADJOURNED', {}).get('score', 0) > 0):
+            # If both categories have matches, prefer HEARD_AND_ADJOURNED if scores are close
+            heard_score = scores['HEARD_AND_ADJOURNED']['score']
+            adj_score = scores['ADJOURNED']['score']
+            
+            # If HEARD_AND_ADJOURNED has at least 70% of ADJOURNED's score, prefer it
+            if heard_score >= (adj_score * 0.7):
+                best_category = 'HEARD_AND_ADJOURNED'
+                confidence = scores['HEARD_AND_ADJOURNED']['confidence']
+                # Boost confidence for proper classification
+                confidence = min(confidence * 1.3, 1.0)
+        
         # Boost confidence for clear indicators
         if best_category == 'DISPOSED_OFF' and scores[best_category]['score'] >= 2:
+            confidence = min(confidence * 1.2, 1.0)
+        elif best_category == 'HEARD_AND_ADJOURNED' and scores[best_category]['score'] >= 2:
             confidence = min(confidence * 1.2, 1.0)
         
         return best_category, confidence
@@ -923,24 +946,21 @@ class OrderDocumentAnalyzer:
     def _classify_order_enhanced(self, text: str, document_structure: Dict[str, Any]) -> Tuple[str, float]:
         """Enhanced classification using document structure information"""
         
-        # If document is missing key parts (case numbers, parties), likely adjournment
-        if document_structure['document_type'] == 'ADJOURNMENT_ONLY':
-            # Look for adjournment keywords in the limited text
-            adjournment_score = 0
-            for pattern in self.order_patterns['ADJOURNED']:
-                if re.search(pattern, text, re.IGNORECASE):
-                    adjournment_score += 1
-            
-            if adjournment_score > 0:
-                return 'ADJOURNED', min(0.8 + (adjournment_score * 0.1), 1.0)
-            else:
-                return 'ADJOURNED', 0.6  # Default for incomplete documents
-        
-        # For complete documents, use regular classification with bonus confidence
+        # For all document types, use the improved classification logic
         category, confidence = self._classify_order(text)
         
-        # Boost confidence for complete documents
-        if document_structure['document_type'] == 'COMPLETE_ORDER':
+        # Apply document-type-specific adjustments
+        if document_structure['document_type'] == 'ADJOURNMENT_ONLY':
+            # For incomplete documents, check if we found hearing evidence despite missing structure
+            if category == 'HEARD_AND_ADJOURNED':
+                # Keep HEARD_AND_ADJOURNED classification but adjust confidence
+                confidence = min(confidence * 0.9, 1.0)  # Slight reduction due to incomplete structure
+            elif category == 'ADJOURNED':
+                # Standard adjournment for incomplete docs
+                confidence = min(0.8 + (confidence * 0.2), 1.0)
+            # For DISPOSED_OFF, keep as-is since disposal is definitive regardless of structure
+        elif document_structure['document_type'] == 'COMPLETE_ORDER':
+            # Boost confidence for complete documents
             confidence = min(confidence * 1.15, 1.0)
         
         return category, confidence
