@@ -13,6 +13,7 @@ from CourtScraper import BombayHighCourtScraper
 from OrderManager import OrderManager
 from UserManager import UserManager
 from order_analyzer import OrderDocumentAnalyzer
+from AutoOrderManager import AutoOrderManager
 from firebase_admin import auth, firestore, credentials
 import firebase_admin
 import re
@@ -59,6 +60,7 @@ app.add_middleware(
 
 user_manager = UserManager()
 order_analyzer = OrderDocumentAnalyzer()
+auto_order_manager = AutoOrderManager()
 
 def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
@@ -1001,6 +1003,156 @@ async def get_analysis_statistics(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to fetch statistics: {str(e)}"}
+        )
+
+# Auto Order Management Endpoints
+@app.post("/auto-orders/process-cases", tags=["Auto Order Management"])
+async def auto_process_orders(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Automatically process cases for order download and analysis"""
+    try:
+        body = await request.json()
+        filters = body.get("filters", {})
+        limit = body.get("limit", 50)
+        
+        result = auto_order_manager.get_orders_for_cases(filters, limit)
+        
+        if result.get("success"):
+            return JSONResponse(content=result)
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"error": result.get("error", "Unknown error")}
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in auto-process-orders: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to process orders: {str(e)}"}
+        )
+
+@app.post("/auto-orders/bulk-process", tags=["Auto Order Management"])
+async def bulk_process_orders(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Bulk process specific cases by IDs"""
+    try:
+        body = await request.json()
+        case_ids = body.get("case_ids", [])
+        
+        if not case_ids:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No case IDs provided"}
+            )
+        
+        result = auto_order_manager.bulk_process_orders(case_ids)
+        
+        if result.get("success"):
+            return JSONResponse(content=result)
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"error": result.get("error", "Unknown error")}
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in bulk-process-orders: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to bulk process orders: {str(e)}"}
+        )
+
+@app.get("/auto-orders/search", tags=["Auto Order Management"])
+async def search_orders(
+    petitioner_search: str = Query(None, description="Search in petitioner names"),
+    respondent_search: str = Query(None, description="Search in respondent names"),
+    case_type: str = Query(None, description="Filter by case type"),
+    case_year: str = Query(None, description="Filter by case year"),
+    order_category: str = Query(None, description="Filter by order category"),
+    limit: int = Query(100, description="Maximum results to return"),
+    current_user=Depends(get_current_user)
+):
+    """Search orders with petitioner, respondent, and order links"""
+    try:
+        search_params = {}
+        
+        if petitioner_search:
+            search_params["petitioner_search"] = petitioner_search
+        if respondent_search:
+            search_params["respondent_search"] = respondent_search
+        if case_type:
+            search_params["case_type"] = case_type
+        if case_year:
+            search_params["case_year"] = case_year
+        if order_category:
+            search_params["order_category"] = order_category
+        
+        search_params["limit"] = limit
+        
+        result = auto_order_manager.search_orders(search_params)
+        
+        if result.get("success"):
+            return JSONResponse(content=result)
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"error": result.get("error", "Unknown error")}
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in search-orders: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to search orders: {str(e)}"}
+        )
+
+@app.get("/auto-orders/search-index-stats", tags=["Auto Order Management"])
+async def get_search_index_stats(current_user=Depends(get_current_user)):
+    """Get statistics about the search index"""
+    try:
+        db = firestore.client()
+        
+        # Count total indexed orders
+        search_docs = list(db.collection("order-search-index").stream())
+        total_indexed = len(search_docs)
+        
+        # Count by categories
+        categories = {}
+        case_types = {}
+        years = {}
+        
+        for doc in search_docs:
+            data = doc.to_dict()
+            
+            # Count categories
+            category = data.get("order_category", "UNKNOWN")
+            categories[category] = categories.get(category, 0) + 1
+            
+            # Count case types
+            case_type = data.get("case_type", "UNKNOWN")
+            case_types[case_type] = case_types.get(case_type, 0) + 1
+            
+            # Count years
+            year = data.get("case_year", "UNKNOWN")
+            years[year] = years.get(year, 0) + 1
+        
+        return JSONResponse(content={
+            "total_indexed_orders": total_indexed,
+            "category_distribution": categories,
+            "case_type_distribution": case_types,
+            "year_distribution": years
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting search index stats: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get search stats: {str(e)}"}
         )
 
 client = TestClient(app)

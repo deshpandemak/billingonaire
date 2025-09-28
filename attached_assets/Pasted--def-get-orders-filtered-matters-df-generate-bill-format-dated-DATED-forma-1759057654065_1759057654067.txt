@@ -1,0 +1,98 @@
+
+def get_orders(filtered_matters_df, generate_bill):
+    format_dated = '.*DATED *: *(.*)'
+    format_date = '.*DATE *: *(.*)'
+    petitioner = '(.*) +\.+ *Petitioner'
+    respondent = '(.*) +\.+ *Respondent'
+    gp_name = '(.*GP).*'
+    bill_list = list()
+    parties_dict = dict()
+    order_list = [petitioner, respondent, format_dated, format_date, gp_name]
+    for index, row in filtered_matters_df.iterrows():            
+        case_number = row['case_no'] #'WP/3394/2009'
+        case_board_date = datetime.strptime(row['date'], '%d/%m/%Y')
+        print('Finding Order for ' + case_number + ' for date: ' + case_board_date.strftime('%d%m%Y'))
+        case_number_pattern = '(.*)[/| ](\d+)/(\d+)'
+        matches = re.match(case_number_pattern, case_number)
+        case_type = matches.group(1)
+        search_stamp_no = False
+        if 'ST' in case_type:
+            case_type = case_type.replace(' ', '')
+            case_type = case_type.replace('(ST)', '')
+            # case_type = case_type.strip()
+            search_stamp_no = True
+        case_number = matches.group(2)
+        year = matches.group(3)
+        case_number = case_number.zfill(7)
+        casetype_dict = {'WP': '2001', 'IA': '2069', 'CP': '2010', 'RPW': '2019'}
+        date_time = datetime.now()
+        current_time = date_time.strftime('%d%m%y%H%M%S')
+
+        date_pattern_fmts = ['%d%B%Y', '%B%d%Y']
+        date_replace_pattern = ['st', 'ST','nd','ND','rd','RD','th','TH',',', '.']
+        advocate_name = 'Pooja *(Joshi)?(?:-| )*Deshpande'
+        result_str = None
+        fees = None
+        parties = ''
+        seq_no = 1
+        order_file_name = row['case_no'].replace('/', '-') + '-' + case_board_date.strftime('%d%m%Y') + '.pdf'        
+        if os.path.isfile('orders' + '/' + order_file_name):
+            print('Order file found for case_no ' + row['case_no'] + ' for date: ' + case_board_date.strftime('%d%m%Y'))
+            
+            if generate_bill:
+                fd = open('orders/' + order_file_name, 'rb')
+                reader = PdfReader(fd)
+                number_of_pages = len(reader.pages)
+                text = None
+                add_hash = '#'
+                page_text = ''
+                for i in range(number_of_pages):
+                    page = reader.pages[i]
+                    page_text = page_text + page.extract_text()
+                fd.close()
+                advocate_name = 'P(ooja)?\.? *(M\.)? ?(J\.)? *(Joshi|Des(h)?pande)+'
+                if re.search(advocate_name, page_text):
+                    add_hash = ''
+                if re.search('Due to paucity of time', page_text, re.IGNORECASE | re.MULTILINE):
+                    result_str = 'ADJOURNED'
+                    fees = 1250
+                elif re.search('dispose', page_text, re.IGNORECASE | re.MULTILINE) or re.search('disposal', page_text, re.IGNORECASE | re.MULTILINE):
+                    result_str = add_hash + 'WP DISPOSED OF' + add_hash
+                    fees = 2500
+                else:
+                    result_str = add_hash + 'HEARD & ADJN.' + add_hash
+                    fees = 1875
+                # print(page_text.replace('\n', ' '))
+                pattern = case_number.strip('0') + ' *(?:OF|Of) *' + year + '([\s\w\.…&,()/-]*)(?:PETITIONER|PETITIONERS|Petitioner|Petitioners)\s*(?:V/S|v/s|Versus|Vs\.|versus|vs|vs\.|V/s\.)\s*([\s\w\.…&,()/-]*)\s*(?:RESPONDENT|RESPONDENTS|Respondent|Respondents)'
+                # print(pattern)
+                matches = re.findall(pattern, page_text.replace('\n', ' '), re.IGNORECASE)
+                # print(matches)
+                if matches:
+                    for match in matches:
+                        parties = match[0].strip() + ' V/S ' + match[1].strip()
+                        parties = parties.replace('\n', ' ')
+                        parties_dict[row['case_no'].strip()] = parties
+            else:
+                continue
+        else:
+            if generate_bill:
+                result_str = '*ADJOURNED*'
+                fees = 1250
+            else:
+                download_pdf(format_dated, format_date, order_list, row, case_number, case_board_date, case_type, search_stamp_no, year, casetype_dict, current_time, date_pattern_fmts, date_replace_pattern, seq_no, order_file_name)
+
+        if generate_bill:
+            bill_dict = dict()
+            bill_dict['DATE'] = case_board_date
+            bill_dict['CASE DETAIL'] = row['case_no'].strip()
+            # bill_dict['PARTIES NAME'] = parties_dict[row['case_no'].strip()] if row['case_no'].strip() in parties_dict.keys() else ''
+            bill_dict['RESULTS'] = result_str
+            bill_dict['FEES (RS.)'] = fees
+            bill_list.append(bill_dict)
+
+    if len(bill_list) > 0:
+        for bill_dict in bill_list:
+            bill_dict['PARTIES NAME'] = parties_dict[bill_dict['CASE DETAIL']] if bill_dict['CASE DETAIL'] in parties_dict.keys() else ''
+        bill_df = pd.DataFrame(bill_list)
+        bill_df = bill_df.drop_duplicates()
+        bill_df.to_excel('BILL.xlsx')

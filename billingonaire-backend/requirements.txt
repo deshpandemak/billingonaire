@@ -10,7 +10,7 @@ google-cloud-firestore==2.13.1
 functions-framework==3.5.0
 
 # PDF processing libraries
-pypdf2==3.0.1
+PyPDF2==3.0.1
 pdfplumber==0.10.3
 
 # Data processing
