@@ -6,9 +6,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
-import OrderManagement from './OrderManagement';
-import AutoOrderProcessor from './AutoOrderProcessor';
-import OrderAnalysis from './OrderAnalysis';
+import OrderCenter from './OrderCenter';
 import BillGeneration from './BillGeneration';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
@@ -148,24 +146,10 @@ const Layout = ({ children }) => {
                   )}
                   <Nav.Link 
                     as={Link} 
-                    to="/orders"
-                    className={location.pathname === '/orders' ? 'active' : ''}
+                    to="/order-center"
+                    className={location.pathname === '/order-center' ? 'active' : ''}
                   >
-                    Order Management
-                  </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
-                    to="/auto-orders"
-                    className={location.pathname === '/auto-orders' ? 'active' : ''}
-                  >
-                    Auto Order Processing
-                  </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
-                    to="/order-analysis"
-                    className={location.pathname === '/order-analysis' ? 'active' : ''}
-                  >
-                    AI Order Analysis
+                    ⚖️ Order Center
                   </Nav.Link>
                   <Nav.Link 
                     as={Link} 
@@ -236,9 +220,7 @@ const App = () => (
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
-        <Route path="/orders" element={<OrderManagement />} />
-        <Route path="/auto-orders" element={<AutoOrderProcessor />} />
-        <Route path="/order-analysis" element={<OrderAnalysis />} />
+        <Route path="/order-center" element={<OrderCenter />} />
         <Route path="/bills" element={<BillGeneration />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />

@@ -1569,6 +1569,117 @@ async def generate_name_variations(
             content={"error": f"Failed to generate name variations: {str(e)}"}
         )
 
+# Order Management Center Endpoints
+@app.get("/orders/overview-stats", tags=["Order Management"])
+async def get_order_overview_stats(current_user=Depends(get_current_user)):
+    """Get comprehensive overview statistics for Order Management Center"""
+    try:
+        # Get total cases count
+        boards_ref = db.collection('daily-boards')
+        total_cases_query = boards_ref.limit(10000)  # Reasonable limit for counting
+        total_cases_docs = list(total_cases_query.stream())
+        total_cases = len(total_cases_docs)
+        
+        # Count cases with orders (orders collection exists)
+        orders_ref = db.collection('case-orders')
+        orders_docs = list(orders_ref.limit(10000).stream())
+        cases_with_orders = len(orders_docs)
+        
+        # Calculate cases without orders
+        cases_without_orders = total_cases - cases_with_orders
+        
+        # Calculate analysis completion rate
+        analysis_completion_rate = round((cases_with_orders / total_cases * 100) if total_cases > 0 else 0, 1)
+        
+        # Get recent processing statistics
+        recent_successful = 0
+        recent_failed = 0
+        
+        # Count recent successful analyses from board data with analysis results
+        for doc in total_cases_docs[:100]:  # Check recent 100 cases
+            case_data = doc.to_dict()
+            if case_data.get('order_analysis_result'):
+                recent_successful += 1
+        
+        return JSONResponse(content={
+            'total_cases': total_cases,
+            'cases_with_orders': cases_with_orders,
+            'cases_without_orders': cases_without_orders,
+            'analysis_completion_rate': analysis_completion_rate,
+            'recent_successful_analyses': recent_successful,
+            'recent_failed_analyses': recent_failed,
+            'last_updated': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting order overview stats: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get overview stats: {str(e)}"}
+        )
+
+@app.get("/orders/queue-status", tags=["Order Management"])
+async def get_queue_status(current_user=Depends(get_current_user)):
+    """Get current processing queue status"""
+    try:
+        global processing_active, order_processing_queue
+        
+        # Get approximate queue size (this is in-memory, so basic check)
+        pending_items = order_processing_queue.qsize() if order_processing_queue else 0
+        
+        return JSONResponse(content={
+            'active': processing_active,
+            'pending': pending_items,
+            'last_checked': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting queue status: {e}")
+        return JSONResponse(content={
+            'active': False,
+            'pending': 0,
+            'error': str(e)
+        })
+
+@app.get("/orders/recent-activity", tags=["Order Management"])
+async def get_recent_activity(
+    limit: int = Query(10, description="Number of recent activities to return"),
+    current_user=Depends(get_current_user)
+):
+    """Get recent order processing activity"""
+    try:
+        # This would typically come from a dedicated activity log collection
+        # For now, we'll return a mock structure that can be implemented later
+        recent_activity = [
+            {
+                'timestamp': datetime.now().isoformat(),
+                'action': 'Auto Download',
+                'case_ref': 'WP/123/2025',
+                'status': 'success'
+            },
+            {
+                'timestamp': (datetime.now() - timedelta(minutes=5)).isoformat(),
+                'action': 'Analysis Complete',
+                'case_ref': 'WP/124/2025', 
+                'status': 'success'
+            },
+            {
+                'timestamp': (datetime.now() - timedelta(minutes=10)).isoformat(),
+                'action': 'Manual Link',
+                'case_ref': 'CP/125/2024',
+                'status': 'success'
+            }
+        ]
+        
+        return JSONResponse(content=recent_activity[:limit])
+        
+    except Exception as e:
+        logging.error(f"Error getting recent activity: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get recent activity: {str(e)}"}
+        )
+
 # Bill Generation Endpoints
 @app.get("/bills/generate", tags=["Bill Generation"])
 async def generate_bill_data(
