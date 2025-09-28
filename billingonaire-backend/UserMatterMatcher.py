@@ -406,3 +406,81 @@ class UserMatterMatcher:
         }
         
         return summary
+
+    def find_user_matters_for_case(self, user_id: str, user_role: UserRole, case_id: str) -> List[MatterMatch]:
+        """Find user matches for a specific case ID"""
+        try:
+            matches = []
+            
+            # Get the specific case from daily-boards
+            doc_ref = self.db.collection('daily-boards').document(case_id)
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                logging.warning(f"Case {case_id} not found in daily-boards")
+                return matches
+            
+            doc_data = doc.to_dict()
+            case_ref = f"{doc_data.get('case_type')}/{doc_data.get('case_no')}/{doc_data.get('case_year')}"
+            
+            # Search board data fields
+            board_fields = {
+                'petitioner_lawyer': doc_data.get('petitioner_lawyer', ''),
+                'respondent_lawyer': doc_data.get('respondent_lawyer', '')
+            }
+            
+            for field_name, field_value in board_fields.items():
+                if field_value:
+                    text_matches = self.find_user_matches_in_text(field_value, user_role, field_name)
+                    for matched_text, confidence in text_matches:
+                        matches.append(MatterMatch(
+                            case_id=case_id,
+                            case_ref=case_ref,
+                            match_source='board_data',
+                            match_field=field_name,
+                            matched_text=matched_text,
+                            confidence_score=confidence,
+                            role_type=user_role.role_type,
+                            board_date=str(doc_data.get('board_date', ''))
+                        ))
+            
+            # Search order analysis fields if available
+            if doc_data.get('order_analysis_completed'):
+                order_fields = {
+                    'order_agp_names': doc_data.get('order_agp_names'),
+                    'order_petitioners': doc_data.get('order_petitioners'),
+                    'order_respondents': doc_data.get('order_respondents')
+                }
+                
+                for field_name, field_value in order_fields.items():
+                    if field_value:
+                        # Handle both list and string fields
+                        if isinstance(field_value, list):
+                            text_to_search = ' '.join(str(item) for item in field_value)
+                        else:
+                            text_to_search = str(field_value)
+                        
+                        if text_to_search:
+                            text_matches = self.find_user_matches_in_text(text_to_search, user_role, field_name)
+                            for matched_text, confidence in text_matches:
+                                # Boost score for order analysis matches
+                                boosted_confidence = min(1.0, confidence + 0.05)
+                                matches.append(MatterMatch(
+                                    case_id=case_id,
+                                    case_ref=case_ref,
+                                    match_source='order_analysis',
+                                    match_field=field_name,
+                                    matched_text=matched_text,
+                                    confidence_score=boosted_confidence,
+                                    role_type=user_role.role_type,
+                                    board_date=str(doc_data.get('board_date', ''))
+                                ))
+            
+            # Sort by confidence and remove duplicates
+            matches.sort(key=lambda x: x.confidence_score, reverse=True)
+            
+            return matches
+            
+        except Exception as e:
+            logging.error(f"Error finding user matters for case {case_id}: {e}")
+            return []

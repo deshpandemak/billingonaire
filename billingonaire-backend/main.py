@@ -22,7 +22,7 @@ import asyncio
 import socket
 from mangum import Mangum
 from fastapi.testclient import TestClient
-from typing import List
+from typing import List, Dict
 from datetime import datetime
 from asyncio import Queue
 import json
@@ -190,6 +190,14 @@ async def process_order_queue():
                 
                 if result.get("analysis_success"):
                     logging.info(f"✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
+                    
+                    # Automatically map case to users after successful analysis
+                    try:
+                        await auto_map_case_to_users(case_info.get('id'), case_info)
+                        logging.info(f"✅ Successfully mapped case {case_info['case_ref']} to users")
+                    except Exception as mapping_error:
+                        logging.error(f"❌ Error mapping case {case_info['case_ref']} to users: {mapping_error}")
+                        
                 elif result.get("download_success"):
                     logging.warning(f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
                 else:
@@ -210,6 +218,72 @@ async def process_order_queue():
         except Exception as e:
             logging.error(f"Background order processing error: {e}")
             await asyncio.sleep(5)  # Wait before retrying
+
+async def auto_map_case_to_users(case_id: str, case_info: Dict):
+    """Automatically map case to users after order analysis completion"""
+    try:
+        # Get all users who have configured roles
+        users_ref = db.collection('user-roles')
+        user_docs = users_ref.stream()
+        
+        mapped_users = []
+        
+        for user_doc in user_docs:
+            try:
+                user_id = user_doc.id
+                user_data = user_doc.to_dict()
+                
+                # Create UserRole object from stored data
+                user_role = UserRole(
+                    role_type=user_data.get('role_type'),
+                    full_name=user_data.get('full_name'),
+                    name_variations=user_data.get('name_variations', []),
+                    pattern_keywords=user_data.get('pattern_keywords', []),
+                    confidence_threshold=user_data.get('confidence_threshold', 0.75)
+                )
+                
+                # Check if this case matches the user
+                user_matches = user_matter_matcher.find_user_matters_for_case(user_id, user_role, case_id)
+                
+                if user_matches:
+                    # Store the mapping in user-case-mappings collection
+                    for match in user_matches:
+                        mapping_data = {
+                            'user_id': user_id,
+                            'case_id': case_id,
+                            'case_ref': case_info.get('case_ref'),
+                            'match_source': match.match_source,
+                            'match_field': match.match_field,
+                            'matched_text': match.matched_text,
+                            'confidence_score': match.confidence_score,
+                            'role_type': match.role_type,
+                            'board_date': match.board_date,
+                            'mapped_at': firestore.SERVER_TIMESTAMP,
+                            'auto_mapped': True
+                        }
+                        
+                        # Use composite key to prevent duplicates
+                        mapping_key = f"{user_id}_{case_id}_{match.match_source}_{match.match_field}"
+                        db.collection('user-case-mappings').document(mapping_key).set(mapping_data, merge=True)
+                        
+                        mapped_users.append({
+                            'user_id': user_id,
+                            'role_type': user_role.role_type,
+                            'confidence': match.confidence_score
+                        })
+                        
+            except Exception as user_error:
+                logging.error(f"Error processing user {user_doc.id} for case mapping: {user_error}")
+                continue
+        
+        if mapped_users:
+            logging.info(f"Case {case_info.get('case_ref')} mapped to {len(mapped_users)} users: {[u['user_id'] for u in mapped_users]}")
+        else:
+            logging.info(f"No user matches found for case {case_info.get('case_ref')}")
+            
+    except Exception as e:
+        logging.error(f"Error in auto_map_case_to_users: {e}")
+        raise
 
 async def ensure_background_processing_active():
     """Ensure background order processing is running"""
@@ -1493,6 +1567,420 @@ async def generate_name_variations(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to generate name variations: {str(e)}"}
+        )
+
+# Bill Generation Endpoints
+@app.get("/bills/generate", tags=["Bill Generation"])
+async def generate_bill_data(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    current_user=Depends(get_current_user)
+):
+    """Generate bill data for logged-in user based on date range"""
+    try:
+        user_id = current_user.get('uid')
+        
+        # Parse dates
+        from datetime import datetime
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        
+        # Get user's mapped cases within date range
+        mappings_ref = db.collection('user-case-mappings')
+        query = mappings_ref.where('user_id', '==', user_id)
+        mappings = query.stream()
+        
+        bill_entries = []
+        case_ids = set()
+        
+        for mapping_doc in mappings:
+            mapping_data = mapping_doc.to_dict()
+            case_id = mapping_data.get('case_id')
+            
+            # Get case details from daily-boards
+            case_ref = db.collection('daily-boards').document(case_id)
+            case_doc = case_ref.get()
+            
+            if case_doc.exists:
+                case_data = case_doc.to_dict()
+                board_date_str = case_data.get('board_date')
+                
+                if board_date_str:
+                    try:
+                        board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
+                        
+                        # Check if case falls within date range
+                        if start_dt <= board_date <= end_dt and case_id not in case_ids:
+                            case_ids.add(case_id)
+                            
+                            # Determine fee and result based on order analysis
+                            fee_info = calculate_case_fee(case_data)
+                            
+                            # Extract parties information
+                            parties = extract_parties_info(case_data)
+                            
+                            bill_entry = {
+                                'id': case_id,
+                                'date': board_date_str,
+                                'case_detail': f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                                'parties_name': parties,
+                                'results': fee_info['result'],
+                                'fees_rs': fee_info['fee'],
+                                'confidence_score': mapping_data.get('confidence_score', 0.0),
+                                'match_source': mapping_data.get('match_source'),
+                                'editable': True
+                            }
+                            bill_entries.append(bill_entry)
+                            
+                    except ValueError as date_error:
+                        logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
+                        continue
+        
+        # Sort by date
+        bill_entries.sort(key=lambda x: x['date'])
+        
+        return JSONResponse(content={
+            "user_id": user_id,
+            "date_range": {"start": start_date, "end": end_date},
+            "total_entries": len(bill_entries),
+            "total_fees": sum(entry['fees_rs'] for entry in bill_entries),
+            "bill_entries": bill_entries
+        })
+        
+    except Exception as e:
+        logging.error(f"Error generating bill data: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to generate bill data: {str(e)}"}
+        )
+
+@app.post("/bills/save", tags=["Bill Generation"])
+async def save_bill_entries(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Save/update bill entries for logged-in user"""
+    try:
+        user_id = current_user.get('uid')
+        body = await request.json()
+        
+        bill_entries = body.get('bill_entries', [])
+        bill_metadata = body.get('metadata', {})
+        
+        # Create a bill document
+        bill_data = {
+            'user_id': user_id,
+            'created_at': firestore.SERVER_TIMESTAMP,
+            'updated_at': firestore.SERVER_TIMESTAMP,
+            'metadata': bill_metadata,
+            'entries': bill_entries,
+            'total_entries': len(bill_entries),
+            'total_fees': sum(entry.get('fees_rs', 0) for entry in bill_entries)
+        }
+        
+        # Save to user-bills collection
+        bill_ref = db.collection('user-bills').document()
+        bill_ref.set(bill_data)
+        bill_id = bill_ref.id
+        
+        return JSONResponse(content={
+            "success": True,
+            "bill_id": bill_id,
+            "total_entries": len(bill_entries),
+            "total_fees": bill_data['total_fees']
+        })
+        
+    except Exception as e:
+        logging.error(f"Error saving bill entries: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to save bill entries: {str(e)}"}
+        )
+
+@app.get("/bills/my-bills", tags=["Bill Generation"])
+async def get_my_bills(
+    limit: int = Query(20, description="Maximum number of bills to return"),
+    current_user=Depends(get_current_user)
+):
+    """Get saved bills for logged-in user"""
+    try:
+        user_id = current_user.get('uid')
+        
+        bills_ref = db.collection('user-bills')
+        query = bills_ref.where('user_id', '==', user_id).order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
+        bills = query.stream()
+        
+        bills_list = []
+        for bill_doc in bills:
+            bill_data = bill_doc.to_dict()
+            bill_data['id'] = bill_doc.id
+            
+            # Convert timestamps
+            if 'created_at' in bill_data and bill_data['created_at']:
+                bill_data['created_at'] = bill_data['created_at'].isoformat()
+            if 'updated_at' in bill_data and bill_data['updated_at']:
+                bill_data['updated_at'] = bill_data['updated_at'].isoformat()
+                
+            bills_list.append(bill_data)
+        
+        return JSONResponse(content={
+            "user_id": user_id,
+            "bills": bills_list,
+            "total_bills": len(bills_list)
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting user bills: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get user bills: {str(e)}"}
+        )
+
+def calculate_case_fee(case_data: Dict) -> Dict:
+    """Calculate fee and result based on order analysis"""
+    try:
+        # Check if order analysis is available
+        if not case_data.get('order_analysis_completed'):
+            return {'result': '*ADJOURNED*', 'fee': 1250}
+        
+        # Get order analysis data
+        order_result = case_data.get('order_result', '').lower()
+        order_type = case_data.get('order_type', '').lower()
+        order_text = case_data.get('order_summary', '').lower()
+        
+        # Fee calculation logic based on order content
+        if 'due to paucity of time' in order_text or 'adjourned' in order_result:
+            return {'result': 'ADJOURNED', 'fee': 1250}
+        elif 'dispose' in order_result or 'disposal' in order_result or 'disposed' in order_text:
+            return {'result': 'WP DISPOSED OF', 'fee': 2500}
+        elif 'heard' in order_result or order_type == 'heard_adjourned':
+            return {'result': 'HEARD & ADJN.', 'fee': 1875}
+        else:
+            # Default case
+            return {'result': 'HEARD & ADJN.', 'fee': 1875}
+            
+    except Exception as e:
+        logging.error(f"Error calculating case fee: {e}")
+        return {'result': '*ADJOURNED*', 'fee': 1250}
+
+def extract_parties_info(case_data: Dict) -> str:
+    """Extract parties information from case data"""
+    try:
+        # Try to get from order analysis first
+        if case_data.get('order_analysis_completed'):
+            petitioners = case_data.get('order_petitioners', [])
+            respondents = case_data.get('order_respondents', [])
+            
+            if petitioners and respondents:
+                if isinstance(petitioners, list):
+                    petitioner_str = ', '.join(petitioners[:2])  # Take first 2
+                else:
+                    petitioner_str = str(petitioners)
+                    
+                if isinstance(respondents, list):
+                    respondent_str = ', '.join(respondents[:2])  # Take first 2
+                else:
+                    respondent_str = str(respondents)
+                    
+                return f"{petitioner_str} V/S {respondent_str}"
+        
+        # Fallback to case reference
+        case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+        return f"Matter in {case_ref}"
+        
+    except Exception as e:
+        logging.error(f"Error extracting parties info: {e}")
+        return "Parties information not available"
+
+@app.get("/bills/export/excel", tags=["Bill Generation"])
+async def export_bill_excel(
+    bill_id: str = Query(None, description="Bill ID to export"),
+    start_date: str = Query(None, description="Start date for generating fresh export"),
+    end_date: str = Query(None, description="End date for generating fresh export"),
+    current_user=Depends(get_current_user)
+):
+    """Export bill data as Excel format"""
+    try:
+        user_id = current_user.get('uid')
+        
+        # Get bill data - either from saved bill or generate fresh
+        if bill_id:
+            # Export saved bill
+            bill_ref = db.collection('user-bills').document(bill_id)
+            bill_doc = bill_ref.get()
+            
+            if not bill_doc.exists:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Bill not found"}
+                )
+            
+            bill_data = bill_doc.to_dict()
+            if bill_data.get('user_id') != user_id:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Access denied"}
+                )
+            
+            entries = bill_data.get('entries', [])
+            metadata = bill_data.get('metadata', {})
+            filename = f"bill_{bill_id}.csv"
+            
+        elif start_date and end_date:
+            # Generate fresh export
+            response = await generate_bill_data(start_date, end_date, current_user)
+            if response.status_code != 200:
+                return response
+            
+            response_data = json.loads(response.body.decode())
+            entries = response_data.get('bill_entries', [])
+            metadata = {"date_range": {"start": start_date, "end": end_date}}
+            filename = f"bill_{start_date}_to_{end_date}.csv"
+            
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Either bill_id or both start_date and end_date are required"}
+            )
+        
+        if not entries:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "No bill entries found"}
+            )
+        
+        # Create CSV content
+        import io
+        output = io.StringIO()
+        
+        # Write headers
+        headers = ['DATE', 'CASE DETAIL', 'PARTIES NAME', 'RESULTS', 'FEES (RS.)']
+        output.write(','.join(headers) + '\n')
+        
+        # Write data rows
+        total_fees = 0
+        for entry in entries:
+            row = [
+                entry.get('date', ''),
+                f'"{entry.get("case_detail", "")}"',
+                f'"{entry.get("parties_name", "")}"',
+                f'"{entry.get("results", "")}"',
+                str(entry.get('fees_rs', 0))
+            ]
+            output.write(','.join(row) + '\n')
+            total_fees += entry.get('fees_rs', 0)
+        
+        # Add summary row
+        output.write('\n')
+        output.write(f',,,"TOTAL:",{total_fees}\n')
+        
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Return as downloadable file
+        from fastapi.responses import StreamingResponse
+        import io
+        
+        def generate():
+            yield csv_content.encode('utf-8')
+        
+        return StreamingResponse(
+            io.BytesIO(csv_content.encode('utf-8')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        logging.error(f"Error exporting bill to Excel: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to export bill: {str(e)}"}
+        )
+
+@app.get("/bills/{bill_id}", tags=["Bill Generation"])
+async def get_bill_details(
+    bill_id: str,
+    current_user=Depends(get_current_user)
+):
+    """Get details of a specific saved bill"""
+    try:
+        user_id = current_user.get('uid')
+        
+        bill_ref = db.collection('user-bills').document(bill_id)
+        bill_doc = bill_ref.get()
+        
+        if not bill_doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Bill not found"}
+            )
+        
+        bill_data = bill_doc.to_dict()
+        
+        # Check ownership
+        if bill_data.get('user_id') != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access denied"}
+            )
+        
+        bill_data['id'] = bill_doc.id
+        
+        # Convert timestamps
+        if 'created_at' in bill_data and bill_data['created_at']:
+            bill_data['created_at'] = bill_data['created_at'].isoformat()
+        if 'updated_at' in bill_data and bill_data['updated_at']:
+            bill_data['updated_at'] = bill_data['updated_at'].isoformat()
+        
+        return JSONResponse(content=bill_data)
+        
+    except Exception as e:
+        logging.error(f"Error getting bill details: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get bill details: {str(e)}"}
+        )
+
+@app.delete("/bills/{bill_id}", tags=["Bill Generation"])
+async def delete_bill(
+    bill_id: str,
+    current_user=Depends(get_current_user)
+):
+    """Delete a saved bill"""
+    try:
+        user_id = current_user.get('uid')
+        
+        bill_ref = db.collection('user-bills').document(bill_id)
+        bill_doc = bill_ref.get()
+        
+        if not bill_doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Bill not found"}
+            )
+        
+        bill_data = bill_doc.to_dict()
+        
+        # Check ownership
+        if bill_data.get('user_id') != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access denied"}
+            )
+        
+        # Delete the bill
+        bill_ref.delete()
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "Bill deleted successfully"
+        })
+        
+    except Exception as e:
+        logging.error(f"Error deleting bill: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to delete bill: {str(e)}"}
         )
 
 @app.get("/auto-orders/search", tags=["Auto Order Management"])

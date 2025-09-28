@@ -9,6 +9,7 @@ import Upload from './Upload';
 import OrderManagement from './OrderManagement';
 import AutoOrderProcessor from './AutoOrderProcessor';
 import OrderAnalysis from './OrderAnalysis';
+import BillGeneration from './BillGeneration';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import Login from './Login';
@@ -168,6 +169,13 @@ const Layout = ({ children }) => {
                   </Nav.Link>
                   <Nav.Link 
                     as={Link} 
+                    to="/bills"
+                    className={location.pathname === '/bills' ? 'active' : ''}
+                  >
+                    📊 Bill Generation
+                  </Nav.Link>
+                  <Nav.Link 
+                    as={Link} 
                     to="/profile"
                     className={location.pathname === '/profile' ? 'active' : ''}
                   >
@@ -231,6 +239,7 @@ const App = () => (
         <Route path="/orders" element={<OrderManagement />} />
         <Route path="/auto-orders" element={<AutoOrderProcessor />} />
         <Route path="/order-analysis" element={<OrderAnalysis />} />
+        <Route path="/bills" element={<BillGeneration />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />
         <Route path="*" element={<Navigate to="/" replace />} />
