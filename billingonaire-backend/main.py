@@ -23,6 +23,8 @@ from mangum import Mangum
 from fastapi.testclient import TestClient
 from typing import List
 from datetime import datetime
+from asyncio import Queue
+import json
 
 app = FastAPI(
     title="Billingonaire API",
@@ -36,9 +38,21 @@ app = FastAPI(
         {"name": "Case Status", "description": "Retrieve case status from Bombay High Court"},
         {"name": "Case Orders", "description": "Retrieve case orders from Bombay High Court"},
         {"name": "Order Management", "description": "Manage court order linking and states"},
-        {"name": "Order Analysis", "description": "ML-powered analysis of court order documents"}
+        {"name": "Order Analysis", "description": "ML-powered analysis of court order documents"},
+        {"name": "Queue Management", "description": "Monitor async order processing queue"}
     ]
 )
+
+# Startup event to initialize background processing
+@app.on_event("startup")
+async def startup_event():
+    """Initialize background order processing on app startup"""
+    logging.info("🚀 Billingonaire API starting up...")
+    try:
+        await ensure_background_processing_active()
+        logging.info("✅ Background order processing initialized")
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize background processing: {e}")
 
 cred = credentials.Certificate("./firebase/credentials.json")
 firebase_admin.initialize_app(cred)
@@ -61,6 +75,10 @@ app.add_middleware(
 user_manager = UserManager()
 order_analyzer = OrderDocumentAnalyzer()
 auto_order_manager = AutoOrderManager()
+
+# In-memory queue for async order processing
+order_processing_queue = Queue()
+processing_active = False
 
 def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
@@ -106,11 +124,104 @@ def require_admin_active(current_user: dict = Depends(require_active_user)):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
+# Async Order Processing Functions
+async def trigger_async_order_processing(df: pd.DataFrame):
+    """Add uploaded cases to async order processing queue"""
+    try:
+        # Extract case information from uploaded board data
+        records = df.to_dict(orient="records")
+        case_list = []
+        
+        for record in records:
+            # Create document ID using same scheme as Board.saveData
+            formatted_date = record['board_date']
+            if isinstance(formatted_date, str):
+                formatted_date = datetime.strptime(formatted_date, '%Y-%m-%d').strftime('%Y-%m-%d')
+            else:
+                formatted_date = formatted_date.strftime('%Y-%m-%d')
+            
+            document_id = f"{formatted_date}-{record['case_type']}-{record['case_no']}-{record['case_year']}"
+            
+            # Create case info for queue processing - include 'id' field for AutoOrderManager
+            case_info = {
+                "id": document_id,  # Firestore document ID that AutoOrderManager expects
+                "case_id": document_id,  # For backward compatibility
+                "case_ref": f"{record['case_type']}/{record['case_no']}/{record['case_year']}",
+                "case_type": record['case_type'],
+                "case_no": record['case_no'],
+                "case_year": record['case_year'],
+                "board_date": record['board_date'],
+                "petitioner_lawyer": record.get('petitioner_lawyer'),
+                "respondent_lawyer": record.get('respondent_lawyer')
+            }
+            case_list.append(case_info)
+        
+        # Add cases to processing queue
+        for case_info in case_list:
+            await order_processing_queue.put(case_info)
+            logging.info(f"Added case {case_info['case_ref']} to order processing queue")
+        
+        # Start background processing if not already active
+        await ensure_background_processing_active()
+        
+    except Exception as e:
+        logging.error(f"Error adding cases to processing queue: {e}")
+
+async def process_order_queue():
+    """Background worker to process order queue"""
+    global processing_active
+    processing_active = True
+    
+    logging.info("🚀 Order processing background worker started")
+    
+    while True:
+        try:
+            # Get case from queue (wait up to 30 seconds)
+            case_info = await asyncio.wait_for(order_processing_queue.get(), timeout=30.0)
+            
+            logging.info(f"📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})")
+            
+            # Use AutoOrderManager to process single case
+            try:
+                result = auto_order_manager._process_single_case(case_info)
+                
+                if result.get("analysis_success"):
+                    logging.info(f"✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
+                elif result.get("download_success"):
+                    logging.warning(f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
+                else:
+                    logging.warning(f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
+            
+            except Exception as e:
+                logging.error(f"❌ Error processing order for {case_info['case_ref']}: {e}")
+                import traceback
+                logging.error(f"Full traceback: {traceback.format_exc()}")
+            
+            # Mark task as done
+            order_processing_queue.task_done()
+            
+        except asyncio.TimeoutError:
+            # No more items in queue, continue waiting
+            logging.debug("Queue timeout - waiting for more cases...")
+            continue
+        except Exception as e:
+            logging.error(f"Background order processing error: {e}")
+            await asyncio.sleep(5)  # Wait before retrying
+
+async def ensure_background_processing_active():
+    """Ensure background order processing is running"""
+    global processing_active
+    
+    if not processing_active:
+        # Start background task
+        asyncio.create_task(process_order_queue())
+        logging.info("Started background order processing task")
+
 # Login/logout endpoints removed - using Firebase client-side authentication
 
 @app.get("/", tags=["Root"])
 async def read_root():
-    return {"message": "Hello, World!"}
+    return {"message": "Hello, World! 🚀 Billingonaire API is running with async order processing."}
 
 @app.post("/upload-pdf", tags=["PDF Upload"])
 async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends(require_admin)):
@@ -131,9 +242,13 @@ async def upload_pdf(files: List[UploadFile] = File(...), current_user = Depends
                 if record_count > 0:
                     board.saveData(df)
                     logging.info(f"Data saved successfully for {file.filename}")
+                    
+                    # Trigger async order processing for uploaded cases
+                    await trigger_async_order_processing(df)
+                    
                     results.append({
                         "filename": file.filename,
-                        "message": "Data saved successfully",
+                        "message": "Data saved successfully - Order processing started in background",
                         "records_processed": record_count
                     })
                 else:
@@ -1132,6 +1247,53 @@ async def bulk_process_orders(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to bulk process orders: {str(e)}"}
+        )
+
+# Queue Management Endpoints
+@app.get("/queue/status", tags=["Queue Management"])
+async def get_queue_status(
+    current_user=Depends(get_current_user)
+):
+    """Get status of async order processing queue"""
+    try:
+        queue_size = order_processing_queue.qsize()
+        
+        return JSONResponse(content={
+            "queue_size": queue_size,
+            "processing_active": processing_active,
+            "status": "active" if processing_active else "inactive",
+            "message": f"Queue has {queue_size} pending cases" if queue_size > 0 else "Queue is empty"
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting queue status: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get queue status: {str(e)}"}
+        )
+
+@app.post("/queue/restart", tags=["Queue Management"])
+async def restart_queue_processing(
+    current_user=Depends(require_admin)
+):
+    """Restart the background order processing (admin only)"""
+    try:
+        global processing_active
+        processing_active = False
+        await asyncio.sleep(1)  # Allow current processing to finish
+        await ensure_background_processing_active()
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "Background order processing restarted",
+            "processing_active": processing_active
+        })
+        
+    except Exception as e:
+        logging.error(f"Error restarting queue processing: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to restart queue processing: {str(e)}"}
         )
 
 @app.get("/auto-orders/search", tags=["Auto Order Management"])
