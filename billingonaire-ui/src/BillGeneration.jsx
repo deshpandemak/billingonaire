@@ -14,6 +14,11 @@ const BillGeneration = () => {
     const [tempEditData, setTempEditData] = useState({});
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveBillLoading, setSaveBillLoading] = useState(false);
+    const [bulkEditMode, setBulkEditMode] = useState(false);
+    const [selectedRows, setSelectedRows] = useState(new Set());
+    const [bulkFeeValue, setBulkFeeValue] = useState('');
+    const [processingProgress, setProcessingProgress] = useState(0);
+    const [processingStatus, setProcessingStatus] = useState('');
 
     // Set default date range to current month
     useEffect(() => {
@@ -22,8 +27,8 @@ const BillGeneration = () => {
         const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
         
         setDateRange({
-            startDate: startOfMonth.toISOString().split('T')[0],
-            endDate: endOfMonth.toISOString().split('T')[0]
+            startDate: formatDateSafe(startOfMonth),
+            endDate: formatDateSafe(endOfMonth)
         });
     }, []);
 
@@ -34,6 +39,69 @@ const BillGeneration = () => {
         }));
     };
 
+    const formatDateSafe = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const getDatePresets = () => {
+        const today = new Date();
+        const presets = {};
+        
+        // This Week
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay());
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        presets.thisWeek = {
+            startDate: formatDateSafe(startOfWeek),
+            endDate: formatDateSafe(endOfWeek)
+        };
+        
+        // Last Week
+        const lastWeekStart = new Date(startOfWeek);
+        lastWeekStart.setDate(startOfWeek.getDate() - 7);
+        const lastWeekEnd = new Date(lastWeekStart);
+        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+        presets.lastWeek = {
+            startDate: formatDateSafe(lastWeekStart),
+            endDate: formatDateSafe(lastWeekEnd)
+        };
+        
+        // This Month
+        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        presets.thisMonth = {
+            startDate: formatDateSafe(startOfMonth),
+            endDate: formatDateSafe(endOfMonth)
+        };
+        
+        // Last Month
+        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+        presets.lastMonth = {
+            startDate: formatDateSafe(lastMonth),
+            endDate: formatDateSafe(lastMonthEnd)
+        };
+        
+        // This Quarter
+        const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
+        const quarterEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);
+        presets.thisQuarter = {
+            startDate: formatDateSafe(quarterStart),
+            endDate: formatDateSafe(quarterEnd)
+        };
+        
+        return presets;
+    };
+
+    const applyDatePreset = (presetKey) => {
+        const presets = getDatePresets();
+        setDateRange(presets[presetKey]);
+    };
+
     const generateBillData = async () => {
         if (!dateRange.startDate || !dateRange.endDate) {
             setError('Please select both start and end dates');
@@ -42,14 +110,33 @@ const BillGeneration = () => {
 
         setLoading(true);
         setError('');
+        setProcessingProgress(0);
+        setProcessingStatus('Initializing bill generation...');
 
         try {
+            // Status updates for user feedback
+            setProcessingProgress(20);
+            setProcessingStatus('Fetching case data...');
+            
             const response = await authenticatedFetchJSON(`/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`);
+            
+            setProcessingProgress(60);
+            setProcessingStatus('Processing entries...');
+            
+            // Brief delay to show status transition
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            setProcessingProgress(100);
+            setProcessingStatus('Bill generation complete!');
+            
             setBillData(response);
         } catch (err) {
             setError(err.message || 'Failed to generate bill data');
+            setProcessingStatus('Generation failed');
         } finally {
             setLoading(false);
+            setProcessingProgress(0);
+            setProcessingStatus('');
         }
     };
 
@@ -65,12 +152,18 @@ const BillGeneration = () => {
 
     const saveEdit = () => {
         const updatedEntries = [...billData.bill_entries];
-        updatedEntries[editingRow] = { ...tempEditData };
+        const feeAmount = Number(tempEditData.fees_rs) || 0;
+        const updatedEntry = {
+            ...tempEditData,
+            fees_rs: feeAmount,
+            results: getResultFromFee(feeAmount)
+        };
+        updatedEntries[editingRow] = updatedEntry;
         
         setBillData(prev => ({
             ...prev,
             bill_entries: updatedEntries,
-            total_fees: updatedEntries.reduce((sum, entry) => sum + (entry.fees_rs || 0), 0)
+            total_fees: updatedEntries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0)
         }));
         
         setEditingRow(null);
@@ -79,22 +172,35 @@ const BillGeneration = () => {
 
     const deleteRow = (index) => {
         const updatedEntries = billData.bill_entries.filter((_, i) => i !== index);
+        
+        // Clear selection for deleted row and adjust indices
+        const newSelected = new Set();
+        selectedRows.forEach(selectedIndex => {
+            if (selectedIndex < index) {
+                newSelected.add(selectedIndex);
+            } else if (selectedIndex > index) {
+                newSelected.add(selectedIndex - 1);
+            }
+        });
+        setSelectedRows(newSelected);
+        
         setBillData(prev => ({
             ...prev,
             bill_entries: updatedEntries,
             total_entries: updatedEntries.length,
-            total_fees: updatedEntries.reduce((sum, entry) => sum + (entry.fees_rs || 0), 0)
+            total_fees: updatedEntries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0)
         }));
     };
 
     const addNewRow = () => {
+        const feeAmount = 1875;
         const newEntry = {
             id: `new_${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
+            date: formatDateSafe(new Date()),
             case_detail: '',
             parties_name: '',
-            results: 'HEARD & ADJN.',
-            fees_rs: 1875,
+            results: getResultFromFee(feeAmount),
+            fees_rs: feeAmount,
             confidence_score: 1.0,
             match_source: 'manual',
             editable: true
@@ -104,8 +210,69 @@ const BillGeneration = () => {
             ...prev,
             bill_entries: [...prev.bill_entries, newEntry],
             total_entries: prev.bill_entries.length + 1,
-            total_fees: prev.total_fees + newEntry.fees_rs
+            total_fees: Number(prev.total_fees || 0) + Number(newEntry.fees_rs)
         }));
+    };
+
+    const toggleRowSelection = (index) => {
+        const newSelected = new Set(selectedRows);
+        if (newSelected.has(index)) {
+            newSelected.delete(index);
+        } else {
+            newSelected.add(index);
+        }
+        setSelectedRows(newSelected);
+    };
+
+    const selectAllRows = () => {
+        if (selectedRows.size === billData?.bill_entries?.length) {
+            setSelectedRows(new Set());
+        } else {
+            setSelectedRows(new Set(billData?.bill_entries?.map((_, index) => index)));
+        }
+    };
+
+    const applyBulkFeeUpdate = () => {
+        if (!bulkFeeValue || selectedRows.size === 0) return;
+        
+        const updatedEntries = [...billData.bill_entries];
+        const feeAmount = Number(bulkFeeValue) || 0;
+        const resultText = getResultFromFee(feeAmount);
+        
+        selectedRows.forEach(index => {
+            updatedEntries[index] = {
+                ...updatedEntries[index],
+                fees_rs: feeAmount,
+                results: resultText
+            };
+        });
+        
+        setBillData(prev => ({
+            ...prev,
+            bill_entries: updatedEntries,
+            total_fees: updatedEntries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0)
+        }));
+        
+        setSelectedRows(new Set());
+        setBulkFeeValue('');
+        setBulkEditMode(false);
+    };
+
+    const exportMultipleFormats = async () => {
+        if (!billData?.bill_entries?.length) return;
+        
+        // Export CSV
+        exportToExcel();
+        
+        // Also trigger backend Excel export if available
+        try {
+            const response = await authenticatedFetchJSON(`/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`);
+            if (response.download_url) {
+                window.open(response.download_url, '_blank');
+            }
+        } catch (err) {
+            console.log('Excel export not available, CSV exported instead');
+        }
     };
 
     const saveBill = async () => {
@@ -150,7 +317,7 @@ const BillGeneration = () => {
 
         // Create CSV content with proper escaping
         const headers = ['DATE', 'CASE DETAIL', 'PARTIES NAME', 'RESULTS', 'FEES (RS.)'];
-        const totalFees = billData.bill_entries.reduce((sum, entry) => sum + (entry.fees_rs || 0), 0);
+        const totalFees = billData.bill_entries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0);
         
         const csvContent = [
             headers.map(escapeCSVField).join(','),
@@ -229,6 +396,29 @@ const BillGeneration = () => {
                                         />
                                     </Form.Group>
                                 </Col>
+                                <Col md={6}>
+                                    <Form.Label>Quick Date Presets</Form.Label>
+                                    <div className="d-flex gap-2 flex-wrap">
+                                        <Button size="sm" variant="outline-secondary" onClick={() => applyDatePreset('thisWeek')}>
+                                            This Week
+                                        </Button>
+                                        <Button size="sm" variant="outline-secondary" onClick={() => applyDatePreset('lastWeek')}>
+                                            Last Week
+                                        </Button>
+                                        <Button size="sm" variant="outline-secondary" onClick={() => applyDatePreset('thisMonth')}>
+                                            This Month
+                                        </Button>
+                                        <Button size="sm" variant="outline-secondary" onClick={() => applyDatePreset('lastMonth')}>
+                                            Last Month
+                                        </Button>
+                                        <Button size="sm" variant="outline-secondary" onClick={() => applyDatePreset('thisQuarter')}>
+                                            This Quarter
+                                        </Button>
+                                    </div>
+                                </Col>
+                            </Row>
+
+                            <Row className="mb-4">
                                 <Col md={3} className="d-flex align-items-end">
                                     <Button 
                                         variant="success" 
@@ -261,6 +451,31 @@ const BillGeneration = () => {
                                 </Alert>
                             )}
 
+                            {/* Progress Indicator */}
+                            {loading && processingProgress > 0 && (
+                                <Card className="mb-4">
+                                    <Card.Body>
+                                        <div className="d-flex justify-content-between align-items-center mb-2">
+                                            <span>Status</span>
+                                            <span className="badge bg-primary">{processingProgress}%</span>
+                                        </div>
+                                        <div className="progress">
+                                            <div 
+                                                className="progress-bar" 
+                                                role="progressbar" 
+                                                style={{width: `${processingProgress}%`}}
+                                                aria-valuenow={processingProgress} 
+                                                aria-valuemin="0" 
+                                                aria-valuemax="100"
+                                            ></div>
+                                        </div>
+                                        {processingStatus && (
+                                            <small className="text-muted mt-1 d-block">{processingStatus}</small>
+                                        )}
+                                    </Card.Body>
+                                </Card>
+                            )}
+
                             {/* Bill Data Table */}
                             {billData && (
                                 <>
@@ -276,8 +491,14 @@ const BillGeneration = () => {
                                             <Button variant="outline-success" size="sm" onClick={addNewRow} className="me-2">
                                                 + Add Row
                                             </Button>
+                                            <Button variant="outline-warning" size="sm" onClick={() => setBulkEditMode(!bulkEditMode)} className="me-2">
+                                                {bulkEditMode ? 'Cancel Bulk Edit' : '✏️ Bulk Edit'}
+                                            </Button>
                                             <Button variant="info" size="sm" onClick={exportToExcel} className="me-2">
-                                                📊 Export Excel
+                                                📊 Export CSV
+                                            </Button>
+                                            <Button variant="outline-info" size="sm" onClick={exportMultipleFormats} className="me-2">
+                                                📄 Export All Formats
                                             </Button>
                                             <Button variant="primary" size="sm" onClick={() => setShowSaveModal(true)}>
                                                 💾 Save Bill
@@ -285,10 +506,61 @@ const BillGeneration = () => {
                                         </div>
                                     </div>
 
+                                    {/* Bulk Operations Panel */}
+                                    {bulkEditMode && (
+                                        <Card className="mb-3 border-warning">
+                                            <Card.Body className="bg-light">
+                                                <Row className="align-items-center">
+                                                    <Col md={4}>
+                                                        <div className="d-flex align-items-center">
+                                                            <Form.Check
+                                                                type="checkbox"
+                                                                label="Select All"
+                                                                checked={selectedRows.size === billData?.bill_entries?.length && billData?.bill_entries?.length > 0}
+                                                                onChange={selectAllRows}
+                                                                className="me-3"
+                                                            />
+                                                            <span className="text-muted">
+                                                                {selectedRows.size} row(s) selected
+                                                            </span>
+                                                        </div>
+                                                    </Col>
+                                                    <Col md={4}>
+                                                        <Form.Group>
+                                                            <Form.Label className="small mb-1">Update Fee for Selected Rows</Form.Label>
+                                                            <Form.Select
+                                                                size="sm"
+                                                                value={bulkFeeValue}
+                                                                onChange={(e) => setBulkFeeValue(e.target.value)}
+                                                            >
+                                                                <option value="">Select Fee Amount</option>
+                                                                <option value="1250">ADJOURNED (₹1,250)</option>
+                                                                <option value="1875">HEARD & ADJN. (₹1,875)</option>
+                                                                <option value="2500">WP DISPOSED OF (₹2,500)</option>
+                                                            </Form.Select>
+                                                        </Form.Group>
+                                                    </Col>
+                                                    <Col md={4}>
+                                                        <Button 
+                                                            variant="warning" 
+                                                            size="sm" 
+                                                            onClick={applyBulkFeeUpdate}
+                                                            disabled={!bulkFeeValue || selectedRows.size === 0}
+                                                            className="w-100"
+                                                        >
+                                                            Apply to {selectedRows.size} rows
+                                                        </Button>
+                                                    </Col>
+                                                </Row>
+                                            </Card.Body>
+                                        </Card>
+                                    )}
+
                                     <div className="table-responsive">
                                         <Table striped bordered hover>
                                             <thead className="table-dark">
                                                 <tr>
+                                                    {bulkEditMode && <th width="50px">☑️</th>}
                                                     <th>Date</th>
                                                     <th>Case Detail</th>
                                                     <th>Parties Name</th>
@@ -300,7 +572,16 @@ const BillGeneration = () => {
                                             </thead>
                                             <tbody>
                                                 {billData.bill_entries.map((entry, index) => (
-                                                    <tr key={index}>
+                                                    <tr key={index} className={selectedRows.has(index) ? 'table-warning' : ''}>
+                                                        {bulkEditMode && (
+                                                            <td>
+                                                                <Form.Check
+                                                                    type="checkbox"
+                                                                    checked={selectedRows.has(index)}
+                                                                    onChange={() => toggleRowSelection(index)}
+                                                                />
+                                                            </td>
+                                                        )}
                                                         <td>
                                                             {editingRow === index ? (
                                                                 <Form.Control
