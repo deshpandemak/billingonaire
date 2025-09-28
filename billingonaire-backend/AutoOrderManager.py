@@ -29,7 +29,6 @@ class AutoOrderManager:
         # Collections
         self.boards_collection = "daily-boards"
         self.orders_collection = "case-orders" 
-        self.analyzed_orders_collection = "analyzed-orders"
         self.search_index_collection = "order-search-index"
         
         # Case type mappings for court lookup
@@ -117,7 +116,7 @@ class AutoOrderManager:
                 if filters.get('date_to'):
                     query = query.where("board_date", "<=", filters['date_to'])
             
-            # Get cases without orders or failed orders
+            # Get cases without order analysis
             query = query.limit(limit * 2)  # Get more to filter
             cases = []
             
@@ -125,9 +124,14 @@ class AutoOrderManager:
                 case_data = doc.to_dict()
                 case_data['id'] = doc.id
                 
-                # Check if case needs order processing
+                # Check if case needs order processing - look for order analysis completion
+                order_analysis_completed = case_data.get('order_analysis_completed', False)
                 order_status = self._get_order_status(doc.id)
-                if order_status in ['not_present', 'failed']:
+                
+                # Include cases that:
+                # 1. Don't have order analysis completed, OR
+                # 2. Have failed order status
+                if not order_analysis_completed or order_status in ['not_present', 'failed']:
                     # Format case reference
                     case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
                     case_data['case_ref'] = case_ref
@@ -339,7 +343,7 @@ class AutoOrderManager:
                                           pdf_content: bytes, expected_board_date: str) -> Dict:
         """
         Analyze the downloaded order using order_analyzer and validate date
-        Let order_analyzer handle all PDF parsing and date extraction
+        Store analysis results directly in daily-boards collection
         """
         try:
             # Create temporary filename for analysis
@@ -351,46 +355,49 @@ class AutoOrderManager:
             # Validate the extracted order date against expected board date
             date_validation = self._validate_order_date(analysis_result.order_date, expected_board_date)
             
-            # Extract comprehensive data from analysis result and merge with order link
-            analysis_data = {
-                "case_id": case_id,
-                "case_ref": case_ref,
+            # Create order analysis data to merge with board data - ALL FIELDS PREFIXED
+            order_analysis = {
+                # Order analysis results
                 "order_category": analysis_result.order_category,
-                "category_confidence": analysis_result.category_confidence,
-                
-                # Core tabular data from order_analyzer
+                "order_category_confidence": analysis_result.category_confidence,
                 "order_date": analysis_result.order_date,
-                "petitioners": analysis_result.petitioners,
-                "respondents": analysis_result.respondents,
-                "agp_names": analysis_result.agp_names,
+                "order_petitioners": analysis_result.petitioners,
+                "order_respondents": analysis_result.respondents,
+                "order_agp_names": analysis_result.agp_names,
                 
                 # Complete tabular data structure
-                "tabular_data": analysis_result.tabular_data,
+                "order_tabular_data": analysis_result.tabular_data,
                 
                 # Additional analysis details
-                "key_phrases": analysis_result.key_phrases,
-                "next_hearing_date": analysis_result.next_hearing_date,
-                "disposal_reason": analysis_result.disposal_reason,
+                "order_key_phrases": analysis_result.key_phrases,
+                "order_next_hearing_date": analysis_result.next_hearing_date,
+                "order_disposal_reason": analysis_result.disposal_reason,
                 "order_text": analysis_result.order_text[:1000],  # Store first 1000 chars
-                "cases": analysis_result.cases,
+                "order_cases": analysis_result.cases,
                 
                 # Date validation
-                "date_validation": date_validation,
-                "expected_board_date": expected_board_date,
+                "order_date_validation": date_validation,
                 
                 # Order link from case-orders collection
                 "order_link": self._get_order_link(case_id),
                 
-                # Timestamps
-                "analysis_timestamp": datetime.now().isoformat(),
-                "created_at": datetime.now().isoformat(),
-                "last_updated": datetime.now().isoformat()
+                # Analysis metadata
+                "order_analysis_timestamp": datetime.now().isoformat(),
+                "order_analysis_completed": True,
+                "order_last_updated": datetime.now().isoformat()
             }
             
-            # Update analyzed orders collection with comprehensive data
-            self.db.collection(self.analyzed_orders_collection).document(case_id).set(analysis_data, merge=True)
+            # Update the daily-boards document directly with order analysis
+            self.db.collection(self.boards_collection).document(case_id).update(order_analysis)
             
-            return {"success": True, "data": analysis_data}
+            # Prepare full analysis data for response (includes case_id and case_ref for compatibility)
+            full_analysis_data = {
+                "case_id": case_id,
+                "case_ref": case_ref,
+                **order_analysis
+            }
+            
+            return {"success": True, "data": full_analysis_data}
             
         except Exception as e:
             logging.error(f"Error analyzing order for case {case_id}: {e}")
@@ -468,38 +475,58 @@ class AutoOrderManager:
 
 
     def _create_search_index_entry(self, case_id: str, case_data: Dict, analysis_data: Dict) -> None:
-        """Create optimized search index entry for fast searching"""
+        """Create optimized search index entry for fast searching from consolidated daily-boards data"""
         try:
-            # Extract petitioner and respondent names from analysis
-            petitioners = analysis_data.get('petitioners', [])
-            respondents = analysis_data.get('respondents', [])
+            # Get the complete board document with analysis data
+            board_doc = self.db.collection(self.boards_collection).document(case_id).get()
+            if not board_doc.exists:
+                logging.error(f"Board document not found for case {case_id}")
+                return
+                
+            board_data = board_doc.to_dict()
+            
+            # Extract data with consistent field names
+            petitioners = board_data.get('order_petitioners', [])
+            respondents = board_data.get('order_respondents', [])
+            agp_names = board_data.get('order_agp_names', [])
+            key_phrases = board_data.get('order_key_phrases', [])
             
             # Create search-optimized document
             search_doc = {
                 "case_id": case_id,
-                "case_ref": case_data['case_ref'],
-                "case_type": case_data.get('case_type'),
-                "case_number": case_data.get('case_no'),
-                "case_year": case_data.get('case_year'),
-                "board_date": case_data.get('board_date'),
+                "case_ref": f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
+                "case_type": board_data.get('case_type'),
+                "case_number": board_data.get('case_no'),
+                "case_year": board_data.get('case_year'),
+                "board_date": board_data.get('board_date'),
                 
-                # Parties information (cleaned by order_analyzer)
+                # Board data
+                "petitioner_lawyer": board_data.get('petitioner_lawyer'),
+                "respondent_lawyer": board_data.get('respondent_lawyer'),
+                "serial_number": board_data.get('serial_number'),
+                
+                # Parties information from order analysis
                 "petitioner_names": petitioners,
                 "respondent_names": respondents,
                 "petitioner_text": " ".join(petitioners).lower(),  # For text search
                 "respondent_text": " ".join(respondents).lower(),   # For text search
                 
-                # Order information from analyzer
-                "order_category": analysis_data.get('order_category'),
-                "order_date": analysis_data.get('order_date'),
-                "agp_names": analysis_data.get('agp_names', []),
-                "key_phrases": analysis_data.get('key_phrases', []),
+                # Order information with consistent field names
+                "order_category": board_data.get('order_category'),
+                "order_date": board_data.get('order_date'),
+                "order_category_confidence": board_data.get('order_category_confidence'),
+                "agp_names": agp_names,
+                "key_phrases": key_phrases,
                 
                 # Date validation status
-                "date_validation_valid": analysis_data.get('date_validation', {}).get('valid', False),
+                "date_validation_valid": board_data.get('order_date_validation', {}).get('valid', False),
                 
                 # Links
-                "order_link": self._get_order_link(case_id),
+                "order_link": board_data.get('order_link'),
+                
+                # Analysis metadata
+                "order_analysis_completed": board_data.get('order_analysis_completed', False),
+                "order_analysis_timestamp": board_data.get('order_analysis_timestamp'),
                 
                 # Timestamps
                 "created_at": datetime.now().isoformat(),

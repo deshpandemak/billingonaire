@@ -882,20 +882,46 @@ async def get_analysis_history(
     limit: int = Query(50, description="Maximum number of analyses to return"),
     current_user = Depends(get_current_user)
 ):
-    """Get history of order document analyses"""
+    """Get history of order document analyses from consolidated daily-boards"""
     try:
         db = firestore.client()
         
-        # Get recent analyses
-        analyses_ref = db.collection('order_analysis').order_by('analysis_timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+        # Get cases with completed order analysis from daily-boards
+        analyses_ref = db.collection('daily-boards').where('order_analysis_completed', '==', True).order_by('order_analysis_timestamp', direction=firestore.Query.DESCENDING).limit(limit)
         docs = analyses_ref.stream()
         
         analyses = []
         for doc in docs:
-            analysis_data = doc.to_dict()
-            analysis_data['id'] = doc.id
-            # Remove large text field for listing
-            analysis_data.pop('order_text', None)
+            board_data = doc.to_dict()
+            
+            # Extract order analysis data from the board document
+            analysis_data = {
+                'id': doc.id,
+                'case_id': doc.id,
+                'case_ref': f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
+                'case_type': board_data.get('case_type'),
+                'case_no': board_data.get('case_no'),
+                'case_year': board_data.get('case_year'),
+                'board_date': board_data.get('board_date'),
+                'petitioner_lawyer': board_data.get('petitioner_lawyer'),
+                'respondent_lawyer': board_data.get('respondent_lawyer'),
+                
+                # Order analysis results
+                'order_category': board_data.get('order_category'),
+                'category_confidence': board_data.get('order_category_confidence'),
+                'order_date': board_data.get('order_date'),
+                'order_petitioners': board_data.get('order_petitioners', []),
+                'order_respondents': board_data.get('order_respondents', []),
+                'order_agp_names': board_data.get('order_agp_names', []),
+                'order_key_phrases': board_data.get('order_key_phrases', []),
+                'next_hearing_date': board_data.get('order_next_hearing_date'),
+                'disposal_reason': board_data.get('order_disposal_reason'),
+                'date_validation': board_data.get('order_date_validation'),
+                'order_link': board_data.get('order_link'),
+                'analysis_timestamp': board_data.get('order_analysis_timestamp'),
+                'order_tabular_data': board_data.get('order_tabular_data', [])
+            }
+            
             analyses.append(analysis_data)
         
         return JSONResponse(content={
@@ -916,22 +942,63 @@ async def get_analysis_details(
     analysis_id: str,
     current_user = Depends(get_current_user)
 ):
-    """Get detailed analysis results for a specific analysis"""
+    """Get detailed analysis results for a specific case from daily-boards"""
     try:
         db = firestore.client()
         
-        # Get analysis document
-        doc_ref = db.collection('order_analysis').document(analysis_id)
+        # Get board document with analysis data
+        doc_ref = db.collection('daily-boards').document(analysis_id)
         doc = doc_ref.get()
         
         if not doc.exists:
             return JSONResponse(
                 status_code=404,
-                content={"error": "Analysis not found"}
+                content={"error": "Case not found"}
             )
         
-        analysis_data = doc.to_dict()
-        analysis_data['id'] = doc.id
+        board_data = doc.to_dict()
+        
+        # Check if analysis is completed
+        if not board_data.get('order_analysis_completed', False):
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Order analysis not completed for this case"}
+            )
+        
+        # Combine board data with analysis data
+        analysis_data = {
+            'id': doc.id,
+            'case_id': doc.id,
+            'case_ref': f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
+            
+            # Original board data
+            'case_type': board_data.get('case_type'),
+            'case_no': board_data.get('case_no'),
+            'case_year': board_data.get('case_year'),
+            'board_date': board_data.get('board_date'),
+            'petitioner_lawyer': board_data.get('petitioner_lawyer'),
+            'respondent_lawyer': board_data.get('respondent_lawyer'),
+            'serial_number': board_data.get('serial_number'),
+            'additional_cases': board_data.get('additional_cases'),
+            
+            # Complete order analysis results
+            'order_category': board_data.get('order_category'),
+            'category_confidence': board_data.get('order_category_confidence'),
+            'order_date': board_data.get('order_date'),
+            'order_petitioners': board_data.get('order_petitioners', []),
+            'order_respondents': board_data.get('order_respondents', []),
+            'order_agp_names': board_data.get('order_agp_names', []),
+            'order_tabular_data': board_data.get('order_tabular_data', []),
+            'order_key_phrases': board_data.get('order_key_phrases', []),
+            'next_hearing_date': board_data.get('order_next_hearing_date'),
+            'disposal_reason': board_data.get('order_disposal_reason'),
+            'order_text': board_data.get('order_text'),
+            'order_cases': board_data.get('order_cases', []),
+            'date_validation': board_data.get('order_date_validation'),
+            'order_link': board_data.get('order_link'),
+            'analysis_timestamp': board_data.get('order_analysis_timestamp'),
+            'last_updated': board_data.get('order_last_updated')
+        }
         
         return JSONResponse(content=analysis_data)
         
@@ -946,12 +1013,12 @@ async def get_analysis_details(
 async def get_analysis_statistics(
     current_user = Depends(get_current_user)
 ):
-    """Get statistics about order document analyses"""
+    """Get statistics about order document analyses from daily-boards"""
     try:
         db = firestore.client()
         
-        # Get all analyses
-        analyses_ref = db.collection('order_analysis')
+        # Get all cases with completed order analysis from daily-boards
+        analyses_ref = db.collection('daily-boards').where('order_analysis_completed', '==', True)
         docs = analyses_ref.stream()
         
         stats = {
@@ -978,12 +1045,12 @@ async def get_analysis_statistics(
                 stats["category_distribution"][category] += 1
             
             # Confidence scores
-            confidence = data.get("category_confidence", 0)
+            confidence = data.get("order_category_confidence", 0)
             if confidence > 0:
                 confidences.append(confidence)
             
-            # Recent analyses
-            timestamp_str = data.get("analysis_timestamp", "")
+            # Recent analyses - use order_analysis_timestamp
+            timestamp_str = data.get("order_analysis_timestamp", "")
             if timestamp_str:
                 try:
                     timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00')).timestamp()
