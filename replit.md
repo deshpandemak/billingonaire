@@ -38,7 +38,8 @@ Billingonaire is a professional legal billing management system that processes d
 ## Key Features
 - **PDF Processing**: Upload and parse daily court board files
 - **AGP Management**: Track Assistant Government Pleader assignments
-- **Court Order Integration**: Fetch and classify court orders (Adjournment/Disposal/Heard & Adjourned)
+- **Unified Search & Order Management**: Search cases, download court orders, and analyze them all from one interface
+- **Court Order Integration**: Automated order download from Bombay High Court with ML-powered analysis
 - **Analytics Dashboard**: Weekly status, AGP statistics, and monthly averages
 - **Professional Authentication**: Secure Firebase-based user management
 - **Modern UI/UX**: Beautiful, responsive interface designed for legal professionals
@@ -58,8 +59,23 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - Authentication via Firebase ID tokens
 - RESTful API endpoints for dashboard data and file processing
 
+## Recent Updates (Sept 30, 2025)
+### Order Management Consolidation
+- **Unified Interface**: Consolidated separate order management screens into single "Search & Orders" interface
+- **Inline Actions**: Users can now download orders, view PDFs, analyze, all from search results table
+- **Enhanced UX**: Eliminated need to navigate between multiple screens for order operations
+- **Backend Endpoints**: Added `/auto-orders/process-case` and `/auto-orders/analyze-case/{case_id}` for single-case operations
+- **Navigation**: Redirect `/order-center` → `/table` for seamless user experience
+
+### Critical Fixes
+- ✅ Fixed Firestore serialization error with CaseInfo dataclass objects
+- ✅ Fixed order link visibility by updating both case-orders and daily-boards collections
+- ✅ Fixed filtering logic to properly check order_downloaded flag in case documents
+- ✅ AG Grid framework components properly registered for custom cell renderers
+
 ## Status
 ✅ Professional UI transformation completed with modern design
+✅ Unified order management interface fully operational
 ✅ All components successfully configured and running in Replit environment
 ✅ API routing and authentication working correctly
 ✅ Responsive design optimized for legal professionals

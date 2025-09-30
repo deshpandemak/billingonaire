@@ -394,7 +394,7 @@ const Table = () => {
     setShowOrderDrawer(true);
   };
 
-  const components = {
+  const frameworkComponents = {
     deleteButtonRenderer: DeleteButtonRenderer,
     orderStatusRenderer: OrderStatusRenderer,
     orderActionsRenderer: OrderActionsRenderer
@@ -690,7 +690,7 @@ const Table = () => {
               <AgGridReact
                 rowData={editedData}
                 columnDefs={columnDefs}
-                components={components}
+                components={frameworkComponents}
                 defaultColDef={{
                   flex: 1,
                   minWidth: 100,
