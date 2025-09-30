@@ -152,6 +152,9 @@ class AutoOrderManager:
         case_id = case_data['id']
         case_ref = case_data['case_ref']
         
+        # Check if this is a second attempt (case already has an order)
+        is_second_attempt = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
+        
         result = {
             "case_id": case_id,
             "case_ref": case_ref,
@@ -160,7 +163,8 @@ class AutoOrderManager:
             "order_link": None,
             "analysis_data": None,
             "error": None,
-            "retry_attempts": []
+            "retry_attempts": [],
+            "is_second_attempt": is_second_attempt
         }
         
         MAX_RETRIES = 50
@@ -271,6 +275,11 @@ class AutoOrderManager:
                 error_parts.append(f"{date_mismatches} orders had date mismatches.")
             result["error"] = " ".join(error_parts)
             logging.warning(f"Case {case_ref}: {result['error']}")
+            
+            # If this was a second attempt and it failed, clean up old order data
+            if is_second_attempt:
+                logging.info(f"Case {case_ref}: Second attempt failed, cleaning up old order data")
+                self._cleanup_order_data(case_id, case_ref)
                 
         except Exception as e:
             result["error"] = str(e)
@@ -706,6 +715,50 @@ class AutoOrderManager:
             return None
         except:
             return None
+
+    def _cleanup_order_data(self, case_id: str, case_ref: str) -> None:
+        """
+        Clean up order data when second download attempt fails
+        Removes order link and analysis from database
+        """
+        try:
+            # Delete order document from case-orders collection
+            self.db.collection(self.orders_collection).document(case_id).delete()
+            logging.info(f"Deleted order document for {case_ref}")
+            
+            # Remove order-related fields from daily-boards collection
+            case_update = {
+                "order_downloaded": False,
+                "order_link": None,
+                "order_filename": None,
+                "order_source": None,
+                "order_downloaded_at": None,
+                "order_analysis_completed": False,
+                "order_category": None,
+                "order_category_confidence": None,
+                "order_date": None,
+                "order_next_hearing_date": None,
+                "order_petitioners": None,
+                "order_respondents": None,
+                "order_cases": None,
+                "order_key_phrases": None,
+                "order_text": None,
+                "order_analysis_timestamp": None,
+                "order_last_updated": None
+            }
+            
+            self.db.collection(self.boards_collection).document(case_id).update(case_update)
+            logging.info(f"Cleaned up order fields in daily-boards for {case_ref}")
+            
+            # Also remove from search index if exists
+            try:
+                self.db.collection(self.search_index_collection).document(case_id).delete()
+                logging.info(f"Removed search index entry for {case_ref}")
+            except Exception as e:
+                logging.warning(f"Could not remove search index for {case_ref}: {e}")
+            
+        except Exception as e:
+            logging.error(f"Error cleaning up order data for {case_ref}: {e}")
 
     def _parse_case_reference(self, case_ref: str) -> Optional[Tuple[str, str, str]]:
         """Parse case reference like 'WP/294/2025' into components"""
