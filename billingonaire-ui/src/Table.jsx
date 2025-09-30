@@ -19,7 +19,8 @@ const Table = () => {
     caseNumber: '',
     caseType: '',
     caseYear: '',
-    caseStage: ''
+    caseStage: '',
+    orderStatus: ''
   });
   const [appliedCriteria, setAppliedCriteria] = useState({
     startDate: '',
@@ -28,7 +29,8 @@ const Table = () => {
     caseNumber: '',
     caseType: '',
     caseYear: '',
-    caseStage: ''
+    caseStage: '',
+    orderStatus: ''
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -55,7 +57,8 @@ const Table = () => {
       caseNumber: '', 
       caseType: '', 
       caseYear: '', 
-      caseStage: '' 
+      caseStage: '',
+      orderStatus: ''
     };
     
     setSearchCriteria(initialCriteria);
@@ -65,7 +68,7 @@ const Table = () => {
   }, []);
 
   const fetchData = async (criteria = searchCriteria) => {
-    if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage) {
+    if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage && !criteria.orderStatus) {
       setSearchError('Please fill at least one search criteria');
       return;
     }
@@ -225,16 +228,6 @@ const Table = () => {
         if (params.value === 'HEARD & ADJN') return { backgroundColor: '#cce7ff', color: '#004085' };
         return null;
       }
-    },
-    { 
-      headerName: 'Order Actions', 
-      field: 'order_actions',
-      cellRenderer: 'orderActionsRenderer',
-      width: 300,
-      flex: 0,
-      suppressSizeToFit: true,
-      pinned: 'right',
-      editable: false
     }
   ];
 
@@ -253,63 +246,6 @@ const Table = () => {
     }
     
     return <span className="badge" style={{ backgroundColor: '#17a2b8', color: 'white' }}>Downloaded</span>;
-  };
-
-  // Custom cell renderer for order action buttons
-  const OrderActionsRenderer = (props) => {
-    const { data } = props;
-    const caseId = data?.id;
-    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
-    const hasOrder = data?.order_downloaded || data?.order_link;
-    const isProcessing = processingOrders.has(caseId);
-    
-    return (
-      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-        {hasOrder && data?.order_link ? (
-          <>
-            <button 
-              className="btn-professional btn-primary" 
-              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-              onClick={() => window.open(data.order_link, '_blank')}
-              title="View Order PDF"
-            >
-              📄 View
-            </button>
-            {!data?.order_analysis_completed && (
-              <button 
-                className="btn-professional btn-success" 
-                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-                onClick={() => handleAnalyzeOrder(caseId, caseRef)}
-                disabled={isProcessing}
-                title="Analyze Order"
-              >
-                {isProcessing ? '⏳' : '🤖'} Analyze
-              </button>
-            )}
-          </>
-        ) : (
-          <button 
-            className="btn-professional btn-primary" 
-            style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-            onClick={() => handleDownloadOrder(caseId, caseRef, data)}
-            disabled={isProcessing}
-            title="Download from Court"
-          >
-            {isProcessing ? '⏳ Downloading...' : '⬇️ Download'}
-          </button>
-        )}
-        {data?.order_analysis_completed && (
-          <button 
-            className="btn-professional btn-info" 
-            style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', backgroundColor: '#17a2b8' }}
-            onClick={() => viewOrderDetails(caseId)}
-            title="View Analysis Details"
-          >
-            📊 Details
-          </button>
-        )}
-      </div>
-    );
   };
 
   // Order management functions
@@ -504,8 +440,7 @@ const Table = () => {
   };
 
   const frameworkComponents = {
-    orderStatusRenderer: OrderStatusRenderer,
-    orderActionsRenderer: OrderActionsRenderer
+    orderStatusRenderer: OrderStatusRenderer
   };
 
   return (
@@ -613,6 +548,18 @@ const Table = () => {
                     <option value="Stamp">Stamp</option>
                   </select>
                 </div>
+                <div className="form-group">
+                  <label className="form-label">Order Status</label>
+                  <select
+                    className="form-control"
+                    value={searchCriteria.orderStatus}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, orderStatus: e.target.value }))}
+                  >
+                    <option value="">All Cases</option>
+                    <option value="has_order">Has Order</option>
+                    <option value="no_order">No Order</option>
+                  </select>
+                </div>
                 <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
                   <button 
                     className="btn-professional btn-primary"
@@ -644,7 +591,8 @@ const Table = () => {
                         caseNumber: '',
                         caseType: '',
                         caseYear: '',
-                        caseStage: ''
+                        caseStage: '',
+                        orderStatus: ''
                       });
                       setSearchError('');
                     }}
@@ -704,7 +652,7 @@ const Table = () => {
         </div>
 
         {/* Applied Search Criteria Display */}
-        {(appliedCriteria.startDate || appliedCriteria.endDate || appliedCriteria.advocateName || appliedCriteria.caseNumber || appliedCriteria.caseType || appliedCriteria.caseYear || appliedCriteria.caseStage) && (
+        {(appliedCriteria.startDate || appliedCriteria.endDate || appliedCriteria.advocateName || appliedCriteria.caseNumber || appliedCriteria.caseType || appliedCriteria.caseYear || appliedCriteria.caseStage || appliedCriteria.orderStatus) && (
           <div className="card-professional" style={{ marginBottom: 'var(--spacing-lg)', backgroundColor: 'var(--success-bg)' }}>
             <div className="card-header">
               <h3 className="section-title" style={{ color: 'var(--success-color)', fontSize: '1rem' }}>
@@ -746,6 +694,11 @@ const Table = () => {
                 {appliedCriteria.caseStage && (
                   <span className="badge bg-primary">
                     Case Stage: {appliedCriteria.caseStage}
+                  </span>
+                )}
+                {appliedCriteria.orderStatus && (
+                  <span className="badge bg-primary">
+                    Order Status: {appliedCriteria.orderStatus === 'has_order' ? 'Has Order' : 'No Order'}
                   </span>
                 )}
               </div>
