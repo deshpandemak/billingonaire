@@ -152,11 +152,11 @@ class AutoOrderManager:
         case_id = case_data['id']
         case_ref = case_data['case_ref']
         
-        # Check if this is a second attempt (case already has an order)
-        is_second_attempt = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
+        # Check if case has existing order data
+        has_existing_order = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
         
         # Debug logging
-        logging.info(f"Processing {case_ref}: order_downloaded={case_data.get('order_downloaded')}, order_link={case_data.get('order_link')}, is_second_attempt={is_second_attempt}")
+        logging.info(f"Processing {case_ref}: order_downloaded={case_data.get('order_downloaded')}, order_link={case_data.get('order_link')}, has_existing_order={has_existing_order}")
         
         result = {
             "case_id": case_id,
@@ -167,7 +167,7 @@ class AutoOrderManager:
             "analysis_data": None,
             "error": None,
             "retry_attempts": [],
-            "is_second_attempt": is_second_attempt
+            "has_existing_order": has_existing_order
         }
         
         MAX_RETRIES = 50
@@ -279,9 +279,9 @@ class AutoOrderManager:
             result["error"] = " ".join(error_parts)
             logging.warning(f"Case {case_ref}: {result['error']}")
             
-            # If this was a second attempt and it failed, clean up old order data
-            if is_second_attempt:
-                logging.info(f"Case {case_ref}: Second attempt failed, cleaning up old order data")
+            # If case has existing order data and download failed, clean it up
+            if has_existing_order:
+                logging.info(f"Case {case_ref}: Download failed, cleaning up existing order data")
                 self._cleanup_order_data(case_id, case_ref)
                 
         except Exception as e:

@@ -92,7 +92,7 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Comprehensive Logging**: Tracks each retry attempt with status (download_failed, date_mismatch, success)
 - **Clear Failure Messages**: Reports "No matching order found after 50 attempts" when no match exists
 - **Process Flow**: For each sequence (1-50): Download → Extract Date → Validate → Link if Match → Stop, else Continue
-- **Auto Cleanup**: If a case already has an order and re-download fails after 50 attempts, automatically removes old order data
+- **Auto Cleanup on Failure**: If a case has existing order data and download fails after 50 attempts, automatically removes old order data to keep database clean
 
 ### Data Display Optimization (Sept 30, 2025)
 - **AGP Names from Board Data**: Shows all AGPs from board data (respondent_lawyer + additional_respondent_lawyers)
