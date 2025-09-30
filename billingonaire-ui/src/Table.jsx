@@ -174,7 +174,18 @@ const Table = () => {
       sortable: true, 
       filter: 'agTextColumnFilter',
       editable: true,
-      width: 200
+      width: 250,
+      valueGetter: params => {
+        // Show order petitioners if available, otherwise show petitioner_name
+        if (params.data?.order_petitioners && Array.isArray(params.data.order_petitioners) && params.data.order_petitioners.length > 0) {
+          const names = params.data.order_petitioners.map(p => {
+            if (typeof p === 'string') return p;
+            return p.name || p.raw_text || '';
+          }).filter(n => n);
+          if (names.length > 0) return names.join(', ');
+        }
+        return params.data?.petitioner_name || params.data?.petitioner_lawyer || '';
+      }
     },
     { 
       headerName: 'Respondent', 
@@ -182,7 +193,18 @@ const Table = () => {
       sortable: true, 
       filter: 'agTextColumnFilter',
       editable: true,
-      width: 200
+      width: 250,
+      valueGetter: params => {
+        // Show order respondents if available, otherwise show respondent_name
+        if (params.data?.order_respondents && Array.isArray(params.data.order_respondents) && params.data.order_respondents.length > 0) {
+          const names = params.data.order_respondents.map(r => {
+            if (typeof r === 'string') return r;
+            return r.name || r.raw_text || '';
+          }).filter(n => n);
+          if (names.length > 0) return names.join(', ');
+        }
+        return params.data?.respondent_name || params.data?.respondent_lawyer || '';
+      }
     },
     { 
       headerName: 'AGP Name', 
@@ -198,7 +220,8 @@ const Table = () => {
       sortable: true, 
       filter: 'agSetColumnFilter',
       editable: true,
-      width: 150,
+      width: 200,
+      cellRenderer: 'courtOrderRenderer',
       cellStyle: params => {
         if (params.value === 'DISPOSAL') return { backgroundColor: '#d4edda', color: '#155724' };
         if (params.value === 'ADJOURNMENT') return { backgroundColor: '#fff3cd', color: '#856404' };
@@ -230,6 +253,35 @@ const Table = () => {
       }
     }
   ];
+
+  // Custom cell renderer for court order column
+  const CourtOrderRenderer = (props) => {
+    const { data, value } = props;
+    const orderLink = data?.order_link;
+    
+    if (orderLink) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <a 
+            href={orderLink} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ 
+              color: 'var(--primary-color)', 
+              textDecoration: 'none',
+              fontWeight: 500
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            📄 View Order
+          </a>
+          {value && <span style={{ fontSize: '0.75rem', color: 'var(--gray-600)' }}>({value})</span>}
+        </div>
+      );
+    }
+    
+    return <span>{value || '-'}</span>;
+  };
 
   // Custom cell renderer for order status badge
   const OrderStatusRenderer = (props) => {
@@ -446,7 +498,8 @@ const Table = () => {
   };
 
   const frameworkComponents = {
-    orderStatusRenderer: OrderStatusRenderer
+    orderStatusRenderer: OrderStatusRenderer,
+    courtOrderRenderer: CourtOrderRenderer
   };
 
   return (
