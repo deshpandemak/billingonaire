@@ -85,15 +85,17 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Better Accuracy**: System now correctly identifies hearings even without explicit "heard and adjourned" text
 
 ### Order Date Validation & Retry Logic (Sept 30, 2025)
-- **Intelligent Retry System**: Automatically tries up to 50 sequence numbers (0-49) to find order with matching date
+- **Intelligent Retry System**: Automatically tries up to 50 sequence numbers (1-50) to find order with matching date
 - **Date Matching Enforcement**: Orders are only linked to cases when order date matches board date
 - **Pre-Link Validation**: Order date is validated BEFORE creating the order link in database
 - **Smart Date Extraction**: Enhanced date parsing handles formats like "DATE : 24 JULY 2024" and returns YYYY-MM-DD
 - **Comprehensive Logging**: Tracks each retry attempt with status (download_failed, date_mismatch, success)
 - **Clear Failure Messages**: Reports "No matching order found after 50 attempts" when no match exists
-- **Process Flow**: For each sequence (0-49): Download → Extract Date → Validate → Link if Match → Stop, else Continue
+- **Process Flow**: For each sequence (1-50): Download → Extract Date → Validate → Link if Match → Stop, else Continue
+- **Auto Cleanup**: If a case already has an order and re-download fails after 50 attempts, automatically removes old order data
 
 ### Data Display Optimization (Sept 30, 2025)
+- **AGP Names from Board Data**: Shows all AGPs from board data (respondent_lawyer + additional_respondent_lawyers)
 - **Existing Columns Enhanced**: Court Order, Petitioner, and Respondent columns now display order analysis data
 - **Smart Fallback**: Shows ML-extracted party names when available, falls back to board data otherwise
 - **Clickable Order Links**: Court Order column displays "View Order" link when order is available
