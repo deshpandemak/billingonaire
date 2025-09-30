@@ -131,9 +131,9 @@ const Layout = ({ children }) => {
                   <Nav.Link 
                     as={Link} 
                     to="/table"
-                    className={location.pathname === '/table' ? 'active' : ''}
+                    className={location.pathname === '/table' || location.pathname === '/order-center' ? 'active' : ''}
                   >
-                    Search Data
+                    🔍 Search & Orders
                   </Nav.Link>
                   {userProfile?.role === 'admin' && (
                     <Nav.Link 
@@ -144,13 +144,6 @@ const Layout = ({ children }) => {
                       User Management
                     </Nav.Link>
                   )}
-                  <Nav.Link 
-                    as={Link} 
-                    to="/order-center"
-                    className={location.pathname === '/order-center' ? 'active' : ''}
-                  >
-                    ⚖️ Order Center
-                  </Nav.Link>
                   <Nav.Link 
                     as={Link} 
                     to="/bills"
@@ -220,7 +213,7 @@ const App = () => (
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
-        <Route path="/order-center" element={<OrderCenter />} />
+        <Route path="/order-center" element={<Navigate to="/table" replace />} />
         <Route path="/bills" element={<BillGeneration />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />

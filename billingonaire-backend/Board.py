@@ -492,12 +492,20 @@ class Board:
             sample_dates = []
             for doc in docs:
                 doc_data = doc.to_dict()
+                # Add document ID for reference
+                doc_data['id'] = doc.id
+                
                 # Log sample board_date values for debugging
                 if 'board_date' in doc_data and len(sample_dates) < 3:
                     sample_dates.append(f"{doc_data['board_date']} (type: {type(doc_data['board_date'])})")
                 # Convert datetime objects to strings for JSON serialization
                 if 'board_date' in doc_data and hasattr(doc_data['board_date'], 'strftime'):
                     doc_data['board_date'] = doc_data['board_date'].strftime('%Y-%m-%d')
+                
+                # Include order status fields for UI (these are already in the document from order processing)
+                # Fields: order_downloaded, order_link, order_filename, order_analysis_completed, order_category
+                # If not present, they will be None/undefined in the response
+                
                 data.append(doc_data)
             
             # Log sample dates for debugging

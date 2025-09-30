@@ -1293,6 +1293,115 @@ async def auto_process_orders(
             content={"error": f"Failed to process orders: {str(e)}"}
         )
 
+@app.post("/auto-orders/process-case", tags=["Auto Order Management"])
+async def process_single_case(
+    request: Request,
+    current_user=Depends(get_current_user)
+):
+    """Process a single case for order download and analysis"""
+    try:
+        body = await request.json()
+        case_id = body.get("case_id")
+        case_ref = body.get("case_ref")
+        board_date = body.get("board_date")
+        
+        if not case_id or not case_ref:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "case_id and case_ref are required"}
+            )
+        
+        # Create case data dict for processing
+        case_data = {
+            "id": case_id,
+            "case_ref": case_ref,
+            "board_date": board_date
+        }
+        
+        # Process the single case
+        result = auto_order_manager._process_single_case(case_data)
+        
+        return JSONResponse(content=result)
+            
+    except Exception as e:
+        logging.error(f"Error processing single case: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to process case: {str(e)}"}
+        )
+
+@app.post("/auto-orders/analyze-case/{case_id}", tags=["Auto Order Management"])
+async def analyze_single_case(
+    case_id: str,
+    current_user=Depends(get_current_user)
+):
+    """Analyze an already downloaded order for a case"""
+    try:
+        # Get case data from database
+        case_doc = db.collection("daily-boards").document(case_id).get()
+        if not case_doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Case not found"}
+            )
+        
+        case_data = case_doc.to_dict()
+        
+        # Check if order is downloaded
+        if not case_data.get("order_link"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No order available to analyze. Please download the order first."}
+            )
+        
+        # If already analyzed, return existing analysis
+        if case_data.get("order_analysis_completed"):
+            return JSONResponse(content={
+                "success": True,
+                "message": "Order already analyzed",
+                "data": {
+                    "order_category": case_data.get("order_category"),
+                    "order_date": case_data.get("order_date"),
+                    "order_petitioners": case_data.get("order_petitioners"),
+                    "order_respondents": case_data.get("order_respondents")
+                }
+            })
+        
+        # Download the PDF from the link and analyze
+        try:
+            import requests
+            order_link = case_data.get("order_link")
+            response = requests.get(order_link, timeout=30)
+            
+            if response.status_code == 200 and response.headers.get('Content-Type') == 'application/pdf':
+                # Analyze the PDF
+                case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                analysis_result = auto_order_manager._analyze_order_with_date_validation(
+                    case_id, case_ref, response.content, 
+                    case_data.get('board_date'), order_link
+                )
+                
+                return JSONResponse(content=analysis_result)
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Failed to download order PDF from link"}
+                )
+                
+        except Exception as e:
+            logging.error(f"Error downloading/analyzing order: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to analyze order: {str(e)}"}
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in analyze-case: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to analyze case: {str(e)}"}
+        )
+
 @app.post("/auto-orders/bulk-process", tags=["Auto Order Management"])
 async def bulk_process_orders(
     request: Request,

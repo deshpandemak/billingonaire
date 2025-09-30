@@ -33,6 +33,9 @@ const Table = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [selectedCaseId, setSelectedCaseId] = useState(null);
+  const [showOrderDrawer, setShowOrderDrawer] = useState(false);
+  const [processingOrders, setProcessingOrders] = useState(new Set());
 
   useEffect(() => {
     // By default, show last 3 months data
@@ -199,6 +202,34 @@ const Table = () => {
       }
     },
     { 
+      headerName: 'Order Status', 
+      field: 'order_downloaded', 
+      sortable: true, 
+      filter: 'agSetColumnFilter',
+      width: 130,
+      cellRenderer: 'orderStatusRenderer'
+    },
+    { 
+      headerName: 'Order Analysis', 
+      field: 'order_category', 
+      sortable: true, 
+      filter: 'agTextColumnFilter',
+      width: 150,
+      cellStyle: params => {
+        if (params.value === 'WP DISPOSED OF') return { backgroundColor: '#d4edda', color: '#155724' };
+        if (params.value === 'ADJOURNED') return { backgroundColor: '#fff3cd', color: '#856404' };
+        if (params.value === 'HEARD & ADJN') return { backgroundColor: '#cce7ff', color: '#004085' };
+        return null;
+      }
+    },
+    { 
+      headerName: 'Order Actions', 
+      field: 'order_actions',
+      cellRenderer: 'orderActionsRenderer',
+      width: 280,
+      pinned: 'right'
+    },
+    { 
       headerName: 'Actions', 
       field: 'actions',
       cellRenderer: 'deleteButtonRenderer',
@@ -206,6 +237,80 @@ const Table = () => {
       pinned: 'right'
     }
   ];
+
+  // Custom cell renderer for order status badge
+  const OrderStatusRenderer = (props) => {
+    const { data } = props;
+    const hasOrder = data?.order_downloaded || data?.order_link;
+    const hasAnalysis = data?.order_analysis_completed;
+    
+    if (!hasOrder) {
+      return <span className="badge" style={{ backgroundColor: '#6c757d', color: 'white' }}>No Order</span>;
+    }
+    
+    if (hasAnalysis) {
+      return <span className="badge" style={{ backgroundColor: '#28a745', color: 'white' }}>✓ Analyzed</span>;
+    }
+    
+    return <span className="badge" style={{ backgroundColor: '#17a2b8', color: 'white' }}>Downloaded</span>;
+  };
+
+  // Custom cell renderer for order action buttons
+  const OrderActionsRenderer = (props) => {
+    const { data } = props;
+    const caseId = data?.id;
+    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
+    const hasOrder = data?.order_downloaded || data?.order_link;
+    const isProcessing = processingOrders.has(caseId);
+    
+    return (
+      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+        {hasOrder && data?.order_link ? (
+          <>
+            <button 
+              className="btn-professional btn-primary" 
+              style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
+              onClick={() => window.open(data.order_link, '_blank')}
+              title="View Order PDF"
+            >
+              📄 View
+            </button>
+            {!data?.order_analysis_completed && (
+              <button 
+                className="btn-professional btn-success" 
+                style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
+                onClick={() => handleAnalyzeOrder(caseId, caseRef)}
+                disabled={isProcessing}
+                title="Analyze Order"
+              >
+                {isProcessing ? '⏳' : '🤖'} Analyze
+              </button>
+            )}
+          </>
+        ) : (
+          <button 
+            className="btn-professional btn-primary" 
+            style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
+            onClick={() => handleDownloadOrder(caseId, caseRef, data)}
+            disabled={isProcessing}
+            title="Download from Court"
+          >
+            {isProcessing ? '⏳ Downloading...' : '⬇️ Download'}
+          </button>
+        )}
+        {data?.order_analysis_completed && (
+          <button 
+            className="btn-professional btn-info" 
+            style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', backgroundColor: '#17a2b8' }}
+            onClick={() => viewOrderDetails(caseId)}
+            title="View Analysis Details"
+          >
+            📊 Details
+          </button>
+        )}
+      </div>
+    );
+  };
 
   // Custom cell renderer for delete button
   const DeleteButtonRenderer = (props) => {
@@ -225,16 +330,82 @@ const Table = () => {
     );
   };
 
+  // Order management functions
+  const handleDownloadOrder = async (caseId, caseRef, caseData) => {
+    setProcessingOrders(prev => new Set(prev).add(caseId));
+    try {
+      const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: caseId,
+          case_ref: caseRef,
+          board_date: caseData.board_date
+        })
+      });
+
+      if (response.success || response.download_success) {
+        alert(`Order downloaded successfully for ${caseRef}!`);
+        // Refresh the data to show updated order status
+        fetchData();
+      } else {
+        alert(`Failed to download order: ${response.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error downloading order:', error);
+      alert(`Error downloading order: ${error.message}`);
+    } finally {
+      setProcessingOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(caseId);
+        return newSet;
+      });
+    }
+  };
+
+  const handleAnalyzeOrder = async (caseId, caseRef) => {
+    setProcessingOrders(prev => new Set(prev).add(caseId));
+    try {
+      const response = await authenticatedFetchJSON(`/auto-orders/analyze-case/${caseId}`, {
+        method: 'POST'
+      });
+
+      if (response.success) {
+        alert(`Order analyzed successfully for ${caseRef}!`);
+        // Refresh the data to show analysis results
+        fetchData();
+      } else {
+        alert(`Failed to analyze order: ${response.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error analyzing order:', error);
+      alert(`Error analyzing order: ${error.message}`);
+    } finally {
+      setProcessingOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(caseId);
+        return newSet;
+      });
+    }
+  };
+
+  const viewOrderDetails = (caseId) => {
+    setSelectedCaseId(caseId);
+    setShowOrderDrawer(true);
+  };
+
   const components = {
-    deleteButtonRenderer: DeleteButtonRenderer
+    deleteButtonRenderer: DeleteButtonRenderer,
+    orderStatusRenderer: OrderStatusRenderer,
+    orderActionsRenderer: OrderActionsRenderer
   };
 
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1 className="dashboard-title">🔍 Advanced Search & Data Management</h1>
+        <h1 className="dashboard-title">🔍 Search & Order Management</h1>
         <p className="dashboard-subtitle">
-          Search court cases and AGP assignments with powerful filters and professional data grid
+          Search court cases, download orders, and analyze them all from one unified interface
         </p>
       </div>
 
