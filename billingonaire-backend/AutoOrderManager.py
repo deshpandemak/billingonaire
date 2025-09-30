@@ -155,9 +155,6 @@ class AutoOrderManager:
         # Check if case has existing order data
         has_existing_order = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
         
-        # Debug logging
-        logging.info(f"Processing {case_ref}: order_downloaded={case_data.get('order_downloaded')}, order_link={case_data.get('order_link')}, has_existing_order={has_existing_order}")
-        
         result = {
             "case_id": case_id,
             "case_ref": case_ref,

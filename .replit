@@ -73,10 +73,6 @@ localPort = 38703
 externalPort = 5173
 
 [[ports]]
-localPort = 38879
-externalPort = 6000
-
-[[ports]]
 localPort = 42865
 externalPort = 3000
 
@@ -90,5 +86,5 @@ externalPort = 4200
 
 [deployment]
 deploymentTarget = "vm"
-run = ["bash", "-c", "cd billingonaire-backend && uvicorn main:app --host 0.0.0.0 --port 8000 & cd ../billingonaire-ui && npm start -- --host 0.0.0.0 --port 5000"]
+run = ["bash", "-c", "cd billingonaire-backend && uvicorn main:app --host 0.0.0.0 --port 8000 & cd ../billingonaire-ui && npx vite preview --host 0.0.0.0 --port 5000"]
 build = ["bash", "-c", "cd billingonaire-ui && npm install && npm run build"]
