@@ -148,7 +148,7 @@ class AutoOrderManager:
             return []
 
     def _process_single_case(self, case_data: Dict) -> Dict:
-        """Process a single case for order download and analysis"""
+        """Process a single case with retry logic - try up to 50 sequence numbers"""
         case_id = case_data['id']
         case_ref = case_data['case_ref']
         
@@ -159,37 +159,66 @@ class AutoOrderManager:
             "analysis_success": False,
             "order_link": None,
             "analysis_data": None,
-            "error": None
+            "error": None,
+            "retry_attempts": []
         }
         
+        MAX_RETRIES = 50
+        
         try:
-            # Step 1: Try to download/fetch order
-            order_info = self._download_order_for_case(case_data)
-            
-            if order_info.get('success'):
-                result["download_success"] = True
-                result["order_link"] = order_info.get('order_link')
+            # Retry loop: Try sequence numbers 0 through 49
+            for sequence_num in range(MAX_RETRIES):
+                attempt_log = {
+                    "sequence": sequence_num,
+                    "status": "attempting",
+                    "message": None
+                }
                 
-                # Step 2: Analyze order and validate date BEFORE linking
-                if order_info.get('pdf_content'):
-                    # Quick analysis to extract order date for validation
+                try:
+                    # Step 1: Try to download order with specific sequence number
+                    order_info = self._download_order_for_case(case_data, sequence_num)
+                    
+                    if not order_info.get('success'):
+                        # Download failed for this sequence
+                        attempt_log["status"] = "download_failed"
+                        attempt_log["message"] = order_info.get('error', 'Unknown error')
+                        result["retry_attempts"].append(attempt_log)
+                        continue
+                    
+                    # Step 2: Analyze order to extract date
+                    if not order_info.get('pdf_content'):
+                        attempt_log["status"] = "no_pdf_content"
+                        attempt_log["message"] = "No PDF content available"
+                        result["retry_attempts"].append(attempt_log)
+                        continue
+                    
                     temp_filename = f"{case_ref.replace('/', '-')}.pdf"
                     quick_analysis = self.order_analyzer.analyze_order_document(temp_filename, order_info['pdf_content'])
                     
-                    # Validate that order date matches board date
+                    # Step 3: Validate order date matches board date
                     date_validation = self._validate_order_date(quick_analysis.order_date, case_data.get('board_date'))
                     
                     if not date_validation.get('valid'):
-                        # Date mismatch - don't link the order
-                        result["error"] = f"Order date mismatch: {date_validation.get('reason')}"
-                        result["date_validation"] = date_validation
-                        logging.warning(f"Case {case_id}: Order date does not match board date. Expected: {date_validation.get('expected_date')}, Found: {date_validation.get('extracted_date')}")
-                        return result
+                        # Date mismatch - log and continue to next sequence
+                        attempt_log["status"] = "date_mismatch"
+                        attempt_log["message"] = f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
+                        result["retry_attempts"].append(attempt_log)
+                        logging.info(f"Case {case_ref} seq {sequence_num}: {attempt_log['message']}")
+                        continue
                     
-                    # Step 3: Date matches - now create order link in database
+                    # SUCCESS! Date matches - process this order
+                    attempt_log["status"] = "success"
+                    attempt_log["message"] = f"Order found with matching date {date_validation.get('extracted_date')}"
+                    result["retry_attempts"].append(attempt_log)
+                    result["download_success"] = True
+                    result["order_link"] = order_info.get('order_link')
+                    
+                    logging.info(f"Case {case_ref}: Found matching order at sequence {sequence_num}")
+                    
+                    # Step 4: Create order link in database
                     self._create_order_link(case_id, order_info)
                     
-                    # Step 4: Perform full analysis and store results
+                    # Step 5: Perform full analysis and store results
                     analysis_result = self._analyze_order_with_date_validation(
                         case_id, case_ref, order_info['pdf_content'], 
                         case_data.get('board_date'), order_info.get('order_link')
@@ -199,15 +228,25 @@ class AutoOrderManager:
                         result["analysis_success"] = True
                         result["analysis_data"] = analysis_result.get('data')
                         
-                        # Step 5: Create search index (analyzed-orders collection already updated)
+                        # Step 6: Create search index
                         self._create_search_index_entry(case_id, case_data, analysis_result['data'])
                     else:
                         result["error"] = f"Analysis failed: {analysis_result.get('error')}"
-                else:
-                    result["error"] = "No PDF content available for analysis"
                     
-            else:
-                result["error"] = f"Download failed: {order_info.get('error')}"
+                    # Stop retrying - we found a matching order
+                    return result
+                    
+                except Exception as e:
+                    # Log this attempt's error and continue
+                    attempt_log["status"] = "error"
+                    attempt_log["message"] = str(e)
+                    result["retry_attempts"].append(attempt_log)
+                    logging.warning(f"Case {case_ref} seq {sequence_num} error: {e}")
+                    continue
+            
+            # If we get here, all 50 attempts failed
+            result["error"] = f"No matching order found after {MAX_RETRIES} attempts. Tried sequence numbers 0-{MAX_RETRIES-1}."
+            logging.warning(f"Case {case_ref}: Failed to find matching order after {MAX_RETRIES} attempts")
                 
         except Exception as e:
             result["error"] = str(e)
@@ -215,10 +254,13 @@ class AutoOrderManager:
         
         return result
 
-    def _download_order_for_case(self, case_data: Dict) -> Dict:
+    def _download_order_for_case(self, case_data: Dict, sequence_number: int = 0) -> Dict:
         """
         Download order for a specific case using the Bombay High Court API
-        Based on the provided working download_pdf function
+        
+        Args:
+            case_data: Case data dictionary
+            sequence_number: Specific sequence number to try (0-49)
         """
         try:
             case_ref = case_data['case_ref']
@@ -265,9 +307,9 @@ class AutoOrderManager:
             if search_stamp_no:
                 case_type = case_type.replace(' ', '').replace('(ST)', '').strip()
             
-            # Try to download using Bombay High Court API (simplified - no date validation here)
+            # Try to download using specific sequence number
             download_result = self._download_pdf_bombay_hc_simple(
-                case_type, case_number, year, search_stamp_no, order_filename
+                case_type, case_number, year, search_stamp_no, order_filename, sequence_number
             )
             
             if download_result.get('success'):
@@ -276,7 +318,8 @@ class AutoOrderManager:
                     "order_link": download_result.get('download_url'),
                     "pdf_content": download_result.get('pdf_content'),
                     "filename": order_filename,
-                    "source": "bombay_hc_api"
+                    "source": "bombay_hc_api",
+                    "sequence_number": sequence_number
                 }
             else:
                 return {
@@ -289,10 +332,17 @@ class AutoOrderManager:
             return {"success": False, "error": str(e)}
 
     def _download_pdf_bombay_hc_simple(self, case_type: str, case_number: str, year: str, 
-                                      search_stamp_no: bool, order_filename: str) -> Dict:
+                                      search_stamp_no: bool, order_filename: str, sequence_number: int = 0) -> Dict:
         """
-        Simplified PDF download from Bombay High Court - just get the PDF, no validation
-        Let order_analyzer handle all PDF parsing and validation
+        Download PDF from Bombay High Court for a specific sequence number
+        
+        Args:
+            case_type: Type of case (e.g., 'CP', 'WP')
+            case_number: Case number with leading zeros
+            year: Year of the case
+            search_stamp_no: Whether to search with stamp number
+            order_filename: Filename for the order
+            sequence_number: Specific sequence number to try (0-49)
         """
         try:
             base_url = 'https://bombayhighcourt.nic.in/'
@@ -303,54 +353,52 @@ class AutoOrderManager:
             date_time = datetime.now()
             current_time = date_time.strftime('%d%m%y%H%M%S')
             
-            seq_no = 1
-            count = 0
+            # Use the specific sequence number provided
+            # Note: Court API uses 1-indexed sequences, so we add 1
+            api_seq_no = sequence_number + 1
             
-            while count < 20:  # Try up to 20 sequence numbers
-                count += 1
-                
-                # Format the query
-                query_fmt = query.format(
-                    case_type=self.casetype_dict[case_type],
-                    case_number=case_number,
-                    year=year,
-                    seq=str(seq_no),
-                    current_time=current_time,
-                    stamp_no='F' if search_stamp_no else ''
-                )
-                
-                seq_no += 1
-                
-                # Encode the query
-                query_utf_8 = query_fmt.encode('utf-8')
-                encoded_query = base64.b64encode(query_utf_8)
-                query_str = encoded_query.decode('utf-8')
-                full_url = base_url + url + query_str
-                
-                # Make the request
-                try:
-                    response = requests.get(full_url, timeout=30)
-                    
-                    # Check if response is a PDF - just return the first valid PDF found
-                    if response.headers.get('Content-Type') == 'application/pdf':
-                        logging.info(f'PDF found for: {order_filename} (seq: {seq_no-1})')
-                        return {
-                            "success": True,
-                            "pdf_content": response.content,
-                            "download_url": full_url,
-                            "filename": order_filename,
-                            "sequence_number": seq_no - 1
-                        }
-                    
-                except requests.RequestException as e:
-                    logging.debug(f"Request failed for seq {seq_no-1}: {e}")
-                    continue
+            # Format the query
+            query_fmt = query.format(
+                case_type=self.casetype_dict[case_type],
+                case_number=case_number,
+                year=year,
+                seq=str(api_seq_no),
+                current_time=current_time,
+                stamp_no='F' if search_stamp_no else ''
+            )
             
-            return {
-                "success": False,
-                "error": f"No PDF found after trying {count} sequence numbers",
-                "last_url_tried": full_url if 'full_url' in locals() else None
-            }
+            # Encode the query
+            query_utf_8 = query_fmt.encode('utf-8')
+            encoded_query = base64.b64encode(query_utf_8)
+            query_str = encoded_query.decode('utf-8')
+            full_url = base_url + url + query_str
+            
+            # Make the request
+            try:
+                response = requests.get(full_url, timeout=30)
+                
+                # Check if response is a PDF
+                if response.headers.get('Content-Type') == 'application/pdf':
+                    logging.info(f'PDF found for: {order_filename} (seq: {sequence_number})')
+                    return {
+                        "success": True,
+                        "pdf_content": response.content,
+                        "download_url": full_url,
+                        "filename": order_filename,
+                        "sequence_number": sequence_number
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"No PDF found at sequence {sequence_number}"
+                    }
+                
+            except requests.RequestException as e:
+                logging.warning(f"Request failed for sequence {sequence_number}: {e}")
+                return {
+                    "success": False,
+                    "error": f"Request failed: {str(e)}"
+                }
             
         except Exception as e:
             logging.error(f"Error downloading PDF from Bombay HC: {e}")
