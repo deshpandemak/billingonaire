@@ -145,28 +145,18 @@ const Table = () => {
       width: 150
     },
     { 
-      headerName: 'Case Type', 
-      field: 'case_type', 
-      sortable: true, 
-      filter: 'agTextColumnFilter',
-      editable: true,
-      width: 120
-    },
-    { 
       headerName: 'Case Number', 
-      field: 'case_no', 
+      field: 'case_number', 
       sortable: true, 
       filter: 'agTextColumnFilter',
-      editable: true,
-      width: 150
-    },
-    { 
-      headerName: 'Case Year', 
-      field: 'case_year', 
-      sortable: true, 
-      filter: 'agNumberColumnFilter',
-      editable: true,
-      width: 120
+      editable: false,
+      width: 180,
+      valueGetter: params => {
+        const caseType = params.data?.case_type || '';
+        const caseNo = params.data?.case_no || '';
+        const caseYear = params.data?.case_year || '';
+        return `${caseType}/${caseNo}/${caseYear}`;
+      }
     },
     { 
       headerName: 'Petitioner', 
@@ -176,15 +166,18 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Show order petitioners if available, otherwise show petitioner_name
-        if (params.data?.order_petitioners && Array.isArray(params.data.order_petitioners) && params.data.order_petitioners.length > 0) {
-          const names = params.data.order_petitioners.map(p => {
-            if (typeof p === 'string') return p;
-            return p.name || p.raw_text || '';
-          }).filter(n => n);
-          if (names.length > 0) return names.join(', ');
+        // Get petitioners from order_cases (ML extracted)
+        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
+          const petitioners = params.data.order_cases[0].petitioners || [];
+          if (petitioners.length > 0) {
+            const names = petitioners.map(p => {
+              if (typeof p === 'string') return p;
+              return p.name || p.raw_text || '';
+            }).filter(n => n);
+            if (names.length > 0) return names.join(', ');
+          }
         }
-        return params.data?.petitioner_name || params.data?.petitioner_lawyer || '';
+        return '';
       }
     },
     { 
@@ -195,24 +188,37 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Show order respondents if available, otherwise show respondent_name
-        if (params.data?.order_respondents && Array.isArray(params.data.order_respondents) && params.data.order_respondents.length > 0) {
-          const names = params.data.order_respondents.map(r => {
-            if (typeof r === 'string') return r;
-            return r.name || r.raw_text || '';
-          }).filter(n => n);
-          if (names.length > 0) return names.join(', ');
+        // Get respondents from order_cases (ML extracted)
+        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
+          const respondents = params.data.order_cases[0].respondents || [];
+          if (respondents.length > 0) {
+            const names = respondents.map(r => {
+              if (typeof r === 'string') return r;
+              return r.name || r.raw_text || '';
+            }).filter(n => n);
+            if (names.length > 0) return names.join(', ');
+          }
         }
-        return params.data?.respondent_name || params.data?.respondent_lawyer || '';
+        return '';
       }
     },
     { 
       headerName: 'AGP Name', 
-      field: 'respondent_lawyer', 
+      field: 'agp_name', 
       sortable: true, 
       filter: 'agTextColumnFilter',
       editable: true,
-      width: 180
+      width: 200,
+      valueGetter: params => {
+        // Get all AGP names from order_cases (ML extracted)
+        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
+          const agpNames = params.data.order_cases[0].agp_names || [];
+          if (agpNames.length > 0) {
+            return agpNames.join(', ');
+          }
+        }
+        return '';
+      }
     },
     { 
       headerName: 'Court Order', 
