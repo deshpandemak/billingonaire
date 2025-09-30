@@ -367,15 +367,18 @@ const Table = () => {
     let failCount = 0;
 
     for (const row of selectedRows) {
+      const caseId = row.id;
+      const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
+      
       try {
-        setProcessingOrders(prev => new Set(prev).add(row.case_id));
+        setProcessingOrders(prev => new Set(prev).add(caseId));
         
         const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            case_id: row.case_id,
-            case_ref: row.case_ref,
+            case_id: caseId,
+            case_ref: caseRef,
             board_date: row.board_date
           })
         });
@@ -386,12 +389,12 @@ const Table = () => {
           failCount++;
         }
       } catch (error) {
-        console.error(`Error downloading order for ${row.case_ref}:`, error);
+        console.error(`Error downloading order for ${caseRef}:`, error);
         failCount++;
       } finally {
         setProcessingOrders(prev => {
           const newSet = new Set(prev);
-          newSet.delete(row.case_id);
+          newSet.delete(caseId);
           return newSet;
         });
       }
@@ -419,13 +422,16 @@ const Table = () => {
     let failCount = 0;
 
     for (const row of selectedRows) {
+      const caseId = row.id;
+      const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
+      
       try {
-        await authenticatedFetchJSON(`/delete_case/${row.case_id}`, {
+        await authenticatedFetchJSON(`/delete_case/${caseId}`, {
           method: 'DELETE'
         });
         successCount++;
       } catch (error) {
-        console.error(`Error deleting case ${row.case_ref}:`, error);
+        console.error(`Error deleting case ${caseRef}:`, error);
         failCount++;
       }
     }
