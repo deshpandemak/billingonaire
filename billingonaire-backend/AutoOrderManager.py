@@ -176,7 +176,8 @@ class AutoOrderManager:
                 # Step 3: Analyze the order using order_analyzer
                 if order_info.get('pdf_content'):
                     analysis_result = self._analyze_order_with_date_validation(
-                        case_id, case_ref, order_info['pdf_content'], case_data.get('board_date')
+                        case_id, case_ref, order_info['pdf_content'], 
+                        case_data.get('board_date'), order_info.get('order_link')
                     )
                     
                     if analysis_result.get('success'):
@@ -341,7 +342,7 @@ class AutoOrderManager:
             return {"success": False, "error": str(e)}
 
     def _analyze_order_with_date_validation(self, case_id: str, case_ref: str, 
-                                          pdf_content: bytes, expected_board_date: str) -> Dict:
+                                          pdf_content: bytes, expected_board_date: str, order_link: Optional[str] = None) -> Dict:
         """
         Analyze the downloaded order using order_analyzer and validate date
         Store analysis results directly in daily-boards collection
@@ -390,8 +391,8 @@ class AutoOrderManager:
                 # Date validation
                 "order_date_validation": date_validation,
                 
-                # Order link from case-orders collection
-                "order_link": self._get_order_link(case_id),
+                # Order link - use passed link or fallback to querying case-orders
+                "order_link": order_link or self._get_order_link(case_id),
                 
                 # Analysis metadata
                 "order_analysis_timestamp": datetime.now().isoformat(),
