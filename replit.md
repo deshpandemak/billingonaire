@@ -67,11 +67,21 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Backend Endpoints**: Added `/auto-orders/process-case` and `/auto-orders/analyze-case/{case_id}` for single-case operations
 - **Navigation**: Redirect `/order-center` → `/table` for seamless user experience
 
+### Batch Operations Toolbar (Latest)
+- **Toolbar Buttons**: Added "Download Selected Orders" and "Delete Selected" buttons above the AG Grid table
+- **Multi-Select**: Users can now select multiple rows and perform batch operations
+- **Space Optimization**: Removed individual delete button column, freeing up horizontal space for data columns
+- **Better UX**: Toolbar shows selection count and enables/disables buttons based on selection
+- **Confirmation Prompts**: Safe batch operations with confirmation dialogs showing operation summary
+
 ### Critical Fixes
 - ✅ Fixed Firestore serialization error with CaseInfo dataclass objects
 - ✅ Fixed order link visibility by updating both case-orders and daily-boards collections
 - ✅ Fixed filtering logic to properly check order_downloaded flag in case documents
 - ✅ AG Grid framework components properly registered for custom cell renderers
+- ✅ Fixed backend search index serialization error with party name dictionaries
+- ✅ Enhanced error handling with detailed user feedback for order operations
+- ✅ AG Grid row height and column width optimizations for better button display
 
 ## Status
 ✅ Professional UI transformation completed with modern design
