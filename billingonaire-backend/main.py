@@ -1311,12 +1311,20 @@ async def process_single_case(
                 content={"error": "case_id and case_ref are required"}
             )
         
-        # Create case data dict for processing
-        case_data = {
-            "id": case_id,
-            "case_ref": case_ref,
-            "board_date": board_date
-        }
+        # Fetch existing case data from database to check order status
+        case_doc = db.collection('daily-boards').document(case_id).get()
+        
+        if not case_doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Case not found"}
+            )
+        
+        # Get full case data including order status
+        case_data = case_doc.to_dict()
+        case_data["id"] = case_id
+        case_data["case_ref"] = case_ref
+        case_data["board_date"] = board_date
         
         # Process the single case
         result = auto_order_manager._process_single_case(case_data)
