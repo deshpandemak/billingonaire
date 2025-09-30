@@ -1300,6 +1300,8 @@ async def process_single_case(
 ):
     """Process a single case for order download and analysis"""
     try:
+        db = firestore.client()
+        
         body = await request.json()
         case_id = body.get("case_id")
         case_ref = body.get("case_ref")
