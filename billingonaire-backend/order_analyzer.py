@@ -909,39 +909,47 @@ class OrderDocumentAnalyzer:
     
     def _extract_order_date(self, text: str, document_structure: Dict[str, Any]) -> Optional[str]:
         """Extract the specific order date from the document and format as dd-mmm-yyyy"""
-        if not document_structure['has_order_date']:
-            return None
+        # Try to search in order section first if available
+        search_text = document_structure.get('order_section', '')
         
-        order_section = document_structure['order_section']
+        # If no order section or empty, search entire text
+        if not search_text:
+            search_text = text
         
-        # Look for date patterns in the order section
+        # Look for date patterns - prioritize DATE: prefix but also search without it
         date_patterns = [
-            r'DATE\s*[:.]?\s*(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
+            # DATE: 24 JULY 2024 (most common format in court orders)
+            r'DATE\s*[:.]?\s*(\d{1,2})(?:st|nd|rd|th)?\s+(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER),?\s+(\d{4})',
+            # 24th July, 2024 or 24 July 2024
             r'(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
+            # DD/MM/YYYY or DD-MM-YYYY
             r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
         ]
         
         for pattern in date_patterns:
-            match = re.search(pattern, order_section, re.IGNORECASE)
+            match = re.search(pattern, search_text, re.IGNORECASE)
             if match:
-                return self._format_date_dd_mmm_yyyy(match.group().strip())
+                date_str = match.group().strip()
+                formatted_date = self._format_date_dd_mmm_yyyy(date_str)
+                if formatted_date:
+                    return formatted_date
         
         return None
     
     def _format_date_dd_mmm_yyyy(self, date_str: str) -> str:
-        """Format date to dd-mmm-yyyy format (e.g., 03-FEB-2025)"""
-        # Month mapping
-        month_map = {
-            'january': 'JAN', 'february': 'FEB', 'march': 'MAR', 'april': 'APR',
-            'may': 'MAY', 'june': 'JUN', 'july': 'JUL', 'august': 'AUG',
-            'september': 'SEP', 'october': 'OCT', 'november': 'NOV', 'december': 'DEC'
+        """Format date to YYYY-MM-DD format for validation (e.g., 2024-07-24)"""
+        # Month name to number mapping
+        month_to_num = {
+            'january': 1, 'february': 2, 'march': 3, 'april': 4,
+            'may': 5, 'june': 6, 'july': 7, 'august': 8,
+            'september': 9, 'october': 10, 'november': 11, 'december': 12
         }
         
         # Try different date patterns
         patterns = [
-            # "3rd February, 2025" or "DATE: 3rd February, 2025"
+            # "3rd February, 2025" or "DATE: 3rd February, 2025" or "24 JULY 2024"
             r'(?:DATE\s*[:.]?\s*)?(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})',
-            # "3/2/2025" format
+            # "3/2/2025" or "03-02-2025" format
             r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
         ]
         
@@ -952,23 +960,25 @@ class OrderDocumentAnalyzer:
                     day, month_or_num, year = match.groups()
                     
                     # Check if month is a name or number
-                    if month_or_num.lower() in month_map:
-                        # Month name format
+                    if month_or_num.lower() in month_to_num:
+                        # Month name format - convert to YYYY-MM-DD
                         day_formatted = day.zfill(2)
-                        month_formatted = month_map[month_or_num.lower()]
-                        return f"{day_formatted}-{month_formatted}-{year}"
+                        month_num = month_to_num[month_or_num.lower()]
+                        month_formatted = str(month_num).zfill(2)
+                        return f"{year}-{month_formatted}-{day_formatted}"
                     else:
                         # Numeric format (assume month_or_num is month number)
-                        day_formatted = day.zfill(2) 
-                        month_num = int(month_or_num)
-                        month_names = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-                                     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-                        if 1 <= month_num <= 12:
-                            month_formatted = month_names[month_num - 1]
-                            return f"{day_formatted}-{month_formatted}-{year}"
+                        try:
+                            day_formatted = day.zfill(2) 
+                            month_num = int(month_or_num)
+                            if 1 <= month_num <= 12:
+                                month_formatted = str(month_num).zfill(2)
+                                return f"{year}-{month_formatted}-{day_formatted}"
+                        except ValueError:
+                            continue
         
-        # If no pattern matches, return original
-        return date_str
+        # If no pattern matches, return None to indicate failure
+        return None
     
     def _classify_order_enhanced(self, text: str, document_structure: Dict[str, Any]) -> Tuple[str, float]:
         """Enhanced classification using document structure information"""
