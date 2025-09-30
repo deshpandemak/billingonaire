@@ -208,16 +208,22 @@ const Table = () => {
       sortable: true, 
       filter: 'agTextColumnFilter',
       editable: true,
-      width: 200,
+      width: 250,
       valueGetter: params => {
-        // Get all AGP names from order_cases (ML extracted)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          const agpNames = params.data.order_cases[0].agp_names || [];
-          if (agpNames.length > 0) {
-            return agpNames.join(', ');
-          }
+        // Show all AGP names from board data
+        const agpNames = [];
+        
+        // Primary AGP
+        if (params.data?.respondent_lawyer) {
+          agpNames.push(params.data.respondent_lawyer);
         }
-        return '';
+        
+        // Additional AGPs
+        if (params.data?.additional_respondent_lawyers) {
+          agpNames.push(params.data.additional_respondent_lawyers);
+        }
+        
+        return agpNames.filter(n => n).join(', ');
       }
     },
     { 
