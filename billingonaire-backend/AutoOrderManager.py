@@ -170,11 +170,26 @@ class AutoOrderManager:
                 result["download_success"] = True
                 result["order_link"] = order_info.get('order_link')
                 
-                # Step 2: Create order link in database
-                self._create_order_link(case_id, order_info)
-                
-                # Step 3: Analyze the order using order_analyzer
+                # Step 2: Analyze order and validate date BEFORE linking
                 if order_info.get('pdf_content'):
+                    # Quick analysis to extract order date for validation
+                    temp_filename = f"{case_ref.replace('/', '-')}.pdf"
+                    quick_analysis = self.order_analyzer.analyze_order_document(temp_filename, order_info['pdf_content'])
+                    
+                    # Validate that order date matches board date
+                    date_validation = self._validate_order_date(quick_analysis.order_date, case_data.get('board_date'))
+                    
+                    if not date_validation.get('valid'):
+                        # Date mismatch - don't link the order
+                        result["error"] = f"Order date mismatch: {date_validation.get('reason')}"
+                        result["date_validation"] = date_validation
+                        logging.warning(f"Case {case_id}: Order date does not match board date. Expected: {date_validation.get('expected_date')}, Found: {date_validation.get('extracted_date')}")
+                        return result
+                    
+                    # Step 3: Date matches - now create order link in database
+                    self._create_order_link(case_id, order_info)
+                    
+                    # Step 4: Perform full analysis and store results
                     analysis_result = self._analyze_order_with_date_validation(
                         case_id, case_ref, order_info['pdf_content'], 
                         case_data.get('board_date'), order_info.get('order_link')
@@ -184,7 +199,7 @@ class AutoOrderManager:
                         result["analysis_success"] = True
                         result["analysis_data"] = analysis_result.get('data')
                         
-                        # Step 4: Create search index (analyzed-orders collection already updated)
+                        # Step 5: Create search index (analyzed-orders collection already updated)
                         self._create_search_index_entry(case_id, case_data, analysis_result['data'])
                     else:
                         result["error"] = f"Analysis failed: {analysis_result.get('error')}"

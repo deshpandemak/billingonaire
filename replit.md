@@ -74,6 +74,28 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Better UX**: Toolbar shows selection count and enables/disables buttons based on selection
 - **Confirmation Prompts**: Safe batch operations with confirmation dialogs showing operation summary
 
+### ML Order Analysis Improvements (Sept 30, 2025)
+- **Enhanced "HEARD & ADJOURNED" Detection**: Added 15+ new patterns for detecting hearings including:
+  - "On hearing", "Upon hearing", "Having heard" phrases
+  - Counsel submission/appearance patterns (e.g., "learned counsel submits", "AGP appears")
+  - Court observations (e.g., "court observes that", "considering the submissions")
+  - Document review indicators (e.g., "perused the papers")
+- **Improved Scoring Logic**: Weighted scoring gives higher priority to hearing indicators (2.0x-2.5x weight)
+- **Lower Classification Threshold**: Reduced from 70% to 50% for preferring "HEARD & ADJOURNED" over "ADJOURNED"
+- **Better Accuracy**: System now correctly identifies hearings even without explicit "heard and adjourned" text
+
+### Order Date Validation (Sept 30, 2025)
+- **Date Matching Enforcement**: Orders are now only linked to cases when order date matches board date
+- **Pre-Link Validation**: Order date is validated BEFORE creating the order link in database
+- **Mismatch Handling**: Cases with date mismatches are logged but not linked, preventing incorrect associations
+- **Process Flow**: Download → Analyze & Validate Date → Link (only if valid) → Full Analysis
+
+### Data Display Optimization (Sept 30, 2025)
+- **Existing Columns Enhanced**: Court Order, Petitioner, and Respondent columns now display order analysis data
+- **Smart Fallback**: Shows ML-extracted party names when available, falls back to board data otherwise
+- **Clickable Order Links**: Court Order column displays "View Order" link when order is available
+- **No New Columns**: Maximized table space by reusing existing columns for additional data
+
 ### Critical Fixes
 - ✅ Fixed Firestore serialization error with CaseInfo dataclass objects
 - ✅ Fixed order link visibility by updating both case-orders and daily-boards collections
@@ -82,6 +104,7 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - ✅ Fixed backend search index serialization error with party name dictionaries
 - ✅ Enhanced error handling with detailed user feedback for order operations
 - ✅ AG Grid row height and column width optimizations for better button display
+- ✅ Fixed AG Grid SetFilter error by using TextColumnFilter for Court Order column
 
 ## Status
 ✅ Professional UI transformation completed with modern design
