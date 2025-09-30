@@ -139,7 +139,7 @@ class OrderDocumentAnalyzer:
                 r'\binterim\s+order.*?to\s+continue\b'
             ],
             'HEARD_AND_ADJOURNED': [
-                # Partial hearing phrases
+                # Explicit hearing phrases
                 r'\bheard?\s+and\s+adjourned?\b',
                 r'\bpartly\s+heard?\b',
                 r'\bpartial\s+hearing\b',
@@ -148,6 +148,23 @@ class OrderDocumentAnalyzer:
                 r'\bafter\s+hearing.*?adjourned?\b',
                 r'\bmatter\s+heard?\s+and\s+(?:kept\s+for|posted\s+to)\b',
                 r'\bheard?\s+(?:the\s+)?(?:parties?|counsel)\s+and\s+adjourned?\b',
+                # On hearing / Upon hearing patterns
+                r'\bon\s+hearing\b',
+                r'\bupon\s+hearing\b',
+                r'\bhaving\s+heard?\b',
+                r'\bafter\s+hearing\s+(?:the\s+)?(?:learned\s+)?(?:counsel|counsels?|advocates?)\b',
+                r'\bafter\s+hearing\s+(?:learned\s+)?(?:counsel|advocate)\s+for\s+(?:the\s+)?(?:petitioner|respondent)\b',
+                # Counsel submissions patterns (indicates hearing)
+                r'\b(?:learned\s+)?counsel.*?submits?\b',
+                r'\b(?:learned\s+)?counsel.*?(?:appears?|appeared)\b',
+                r'\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b',
+                r'\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appears?)\b',
+                r'\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b',
+                # Court observations after hearing
+                r'\bcourt.*?observes?\s+that\b',
+                r'\b(?:having\s+)?perused\s+(?:the\s+)?(?:papers?|records?|pleadings?)\b',
+                r'\bconsidering\s+(?:the\s+)?submissions?\b',
+                r'\bin\s+view\s+of\s+(?:the\s+)?(?:above|submissions?)\b',
                 # Enhanced patterns for implicit hearing + adjournment
                 r'\blist(?:ed)?\s+(?:the\s+same\s+)?on.*?for.*?(?:final\s+)?hearing\b',
                 r'\bproceedings\s+are\s+pending.*?list.*?for.*?hearing\b',
@@ -305,6 +322,15 @@ class OrderDocumentAnalyzer:
                         score += len(regex_matches) * 2.0  # Partial hearing indicators
                     elif 'arguments' in pattern.lower() and 'heard' in pattern.lower():
                         score += len(regex_matches) * 2.0  # Arguments heard indicates hearing
+                    elif ('on\\s+hearing' in pattern.lower() or 'upon\\s+hearing' in pattern.lower() or 
+                          'having\\s+heard' in pattern.lower()):
+                        score += len(regex_matches) * 2.5  # Very strong hearing indicators
+                    elif ('counsel.*?submits' in pattern.lower() or 'counsel.*?appears' in pattern.lower() or
+                          'agp.*?submits' in pattern.lower() or 'agp.*?appears' in pattern.lower()):
+                        score += len(regex_matches) * 2.0  # Strong hearing indicators (counsel activity)
+                    elif ('considering\\s+.*?submissions' in pattern.lower() or 
+                          'court.*?observes' in pattern.lower() or 'perused' in pattern.lower()):
+                        score += len(regex_matches) * 1.8  # Moderate hearing indicators
                     elif 'stand over' in pattern.lower():
                         score += len(regex_matches) * 1.5
                     else:
@@ -331,8 +357,9 @@ class OrderDocumentAnalyzer:
             heard_score = scores['HEARD_AND_ADJOURNED']['score']
             adj_score = scores['ADJOURNED']['score']
             
-            # If HEARD_AND_ADJOURNED has at least 70% of ADJOURNED's score, prefer it
-            if heard_score >= (adj_score * 0.7):
+            # If HEARD_AND_ADJOURNED has at least 50% of ADJOURNED's score, prefer it
+            # Lower threshold because hearing is more significant than simple adjournment
+            if heard_score >= (adj_score * 0.5):
                 best_category = 'HEARD_AND_ADJOURNED'
                 confidence = scores['HEARD_AND_ADJOURNED']['confidence']
                 # Boost confidence for proper classification

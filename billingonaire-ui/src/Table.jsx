@@ -218,7 +218,7 @@ const Table = () => {
       headerName: 'Court Order', 
       field: 'court_order', 
       sortable: true, 
-      filter: 'agSetColumnFilter',
+      filter: 'agTextColumnFilter',
       editable: true,
       width: 200,
       cellRenderer: 'courtOrderRenderer',
