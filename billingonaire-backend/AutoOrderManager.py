@@ -169,8 +169,8 @@ class AutoOrderManager:
         date_mismatches = 0
         
         try:
-            # Retry loop: Try sequence numbers 0 through 49
-            for sequence_num in range(MAX_RETRIES):
+            # Retry loop: Try sequence numbers 1 through 50
+            for sequence_num in range(1, MAX_RETRIES + 1):
                 attempt_log = {
                     "sequence": sequence_num,
                     "status": "attempting",
@@ -378,8 +378,8 @@ class AutoOrderManager:
             current_time = date_time.strftime('%d%m%y%H%M%S')
             
             # Use the specific sequence number provided
-            # Note: Court API uses 1-indexed sequences, so we add 1
-            api_seq_no = sequence_number + 1
+            # Sequence numbers now start from 1, so use as-is
+            api_seq_no = sequence_number
             
             # Format the query
             query_fmt = query.format(
