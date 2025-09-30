@@ -300,6 +300,9 @@ const Table = () => {
     const { data } = props;
     const hasOrder = data?.order_downloaded || data?.order_link;
     const hasAnalysis = data?.order_analysis_completed;
+    const caseId = data?.id;
+    const caseRef = data?.case_ref;
+    const isProcessing = processingOrders.has(caseId);
     
     if (!hasOrder) {
       return <span className="badge" style={{ backgroundColor: '#6c757d', color: 'white' }}>No Order</span>;
@@ -309,7 +312,20 @@ const Table = () => {
       return <span className="badge" style={{ backgroundColor: '#28a745', color: 'white' }}>✓ Analyzed</span>;
     }
     
-    return <span className="badge" style={{ backgroundColor: '#17a2b8', color: 'white' }}>Downloaded</span>;
+    // Order downloaded but not analyzed - show analyze button
+    return (
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <span className="badge" style={{ backgroundColor: '#17a2b8', color: 'white' }}>Downloaded</span>
+        <button 
+          className="btn btn-sm btn-warning"
+          onClick={() => handleAnalyzeOrder(caseId, caseRef)}
+          disabled={isProcessing}
+          style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+        >
+          {isProcessing ? '...' : 'Analyze'}
+        </button>
+      </div>
+    );
   };
 
   // Order management functions
