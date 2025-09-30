@@ -205,8 +205,9 @@ const Table = () => {
       headerName: 'Order Status', 
       field: 'order_downloaded', 
       sortable: true, 
-      filter: 'agSetColumnFilter',
+      filter: false,
       width: 130,
+      flex: 0,
       cellRenderer: 'orderStatusRenderer'
     },
     { 
@@ -215,6 +216,7 @@ const Table = () => {
       sortable: true, 
       filter: 'agTextColumnFilter',
       width: 150,
+      flex: 0,
       cellStyle: params => {
         if (params.value === 'WP DISPOSED OF') return { backgroundColor: '#d4edda', color: '#155724' };
         if (params.value === 'ADJOURNED') return { backgroundColor: '#fff3cd', color: '#856404' };
@@ -226,7 +228,9 @@ const Table = () => {
       headerName: 'Order Actions', 
       field: 'order_actions',
       cellRenderer: 'orderActionsRenderer',
-      width: 280,
+      width: 300,
+      flex: 0,
+      suppressSizeToFit: true,
       pinned: 'right'
     },
     { 
@@ -234,6 +238,8 @@ const Table = () => {
       field: 'actions',
       cellRenderer: 'deleteButtonRenderer',
       width: 100,
+      flex: 0,
+      suppressSizeToFit: true,
       pinned: 'right'
     }
   ];
@@ -344,16 +350,34 @@ const Table = () => {
         })
       });
 
-      if (response.success || response.download_success) {
-        alert(`Order downloaded successfully for ${caseRef}!`);
+      console.log('Download response:', response);
+
+      if (response.download_success && response.order_link) {
+        // Download successful and we have the order link
+        const hasAnalysis = response.analysis_success;
+        const category = response.analysis_data?.order_category;
+        
+        let message = `✅ Order downloaded successfully for ${caseRef}!\n\n`;
+        message += `📄 Order Link: ${response.order_link}\n`;
+        
+        if (hasAnalysis && category) {
+          message += `\n🤖 Analysis Complete:\n`;
+          message += `Category: ${category}\n`;
+          message += `Confidence: ${(response.analysis_data?.order_category_confidence || 0) * 100}%`;
+        }
+        
+        alert(message);
+        
         // Refresh the data to show updated order status
-        fetchData();
+        await fetchData();
+      } else if (response.error) {
+        alert(`❌ Failed to download order for ${caseRef}:\n\n${response.error}`);
       } else {
-        alert(`Failed to download order: ${response.error || 'Unknown error'}`);
+        alert(`⚠️ Order processing incomplete for ${caseRef}\n\nPlease try again or check the logs.`);
       }
     } catch (error) {
       console.error('Error downloading order:', error);
-      alert(`Error downloading order: ${error.message}`);
+      alert(`❌ Error downloading order for ${caseRef}:\n\n${error.message}`);
     } finally {
       setProcessingOrders(prev => {
         const newSet = new Set(prev);
@@ -370,16 +394,39 @@ const Table = () => {
         method: 'POST'
       });
 
+      console.log('Analysis response:', response);
+
       if (response.success) {
-        alert(`Order analyzed successfully for ${caseRef}!`);
+        const category = response.data?.order_category;
+        const date = response.data?.order_date;
+        const petitioners = response.data?.order_petitioners;
+        const respondents = response.data?.order_respondents;
+        
+        let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;
+        
+        if (category) {
+          message += `📊 Category: ${category}\n`;
+        }
+        if (date) {
+          message += `📅 Order Date: ${date}\n`;
+        }
+        if (petitioners && petitioners.length > 0) {
+          message += `\n👤 Petitioners: ${petitioners.length} found\n`;
+        }
+        if (respondents && respondents.length > 0) {
+          message += `👥 Respondents: ${respondents.length} found\n`;
+        }
+        
+        alert(message);
+        
         // Refresh the data to show analysis results
-        fetchData();
+        await fetchData();
       } else {
-        alert(`Failed to analyze order: ${response.error || 'Unknown error'}`);
+        alert(`❌ Failed to analyze order for ${caseRef}:\n\n${response.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error analyzing order:', error);
-      alert(`Error analyzing order: ${error.message}`);
+      alert(`❌ Error analyzing order for ${caseRef}:\n\n${error.message}`);
     } finally {
       setProcessingOrders(prev => {
         const newSet = new Set(prev);
@@ -691,6 +738,8 @@ const Table = () => {
                 rowData={editedData}
                 columnDefs={columnDefs}
                 components={frameworkComponents}
+                rowHeight={50}
+                headerHeight={45}
                 defaultColDef={{
                   flex: 1,
                   minWidth: 100,

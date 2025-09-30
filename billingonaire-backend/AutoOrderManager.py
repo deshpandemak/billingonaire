@@ -504,6 +504,22 @@ class AutoOrderManager:
             agp_names = board_data.get('order_agp_names', [])
             key_phrases = board_data.get('order_key_phrases', [])
             
+            # Convert party names to strings (handle both string and dict formats)
+            def extract_text_from_parties(parties):
+                """Extract text from party lists, handling both strings and dicts"""
+                result = []
+                for party in parties:
+                    if isinstance(party, str):
+                        result.append(party)
+                    elif isinstance(party, dict):
+                        # Extract name field from dict if present
+                        result.append(party.get('name', ''))
+                return result
+            
+            petitioner_strings = extract_text_from_parties(petitioners)
+            respondent_strings = extract_text_from_parties(respondents)
+            agp_name_strings = [str(name) if not isinstance(name, str) else name for name in agp_names]
+            
             # Create search-optimized document
             search_doc = {
                 "case_id": case_id,
@@ -519,17 +535,17 @@ class AutoOrderManager:
                 "serial_number": board_data.get('serial_number'),
                 
                 # Parties information from order analysis
-                "petitioner_names": petitioners,
-                "respondent_names": respondents,
-                "petitioner_text": " ".join(petitioners).lower(),  # For text search
-                "respondent_text": " ".join(respondents).lower(),   # For text search
+                "petitioner_names": petitioner_strings,
+                "respondent_names": respondent_strings,
+                "petitioner_text": " ".join(petitioner_strings).lower(),  # For text search
+                "respondent_text": " ".join(respondent_strings).lower(),   # For text search
                 
                 # Order information with consistent field names
                 "order_category": board_data.get('order_category'),
                 "order_date": board_data.get('order_date'),
                 "order_category_confidence": board_data.get('order_category_confidence'),
-                "agp_names": agp_names,
-                "key_phrases": key_phrases,
+                "agp_names": agp_name_strings,
+                "key_phrases": key_phrases if isinstance(key_phrases, list) else [],
                 
                 # Date validation status
                 "date_validation_valid": board_data.get('order_date_validation', {}).get('valid', False),
