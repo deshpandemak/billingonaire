@@ -36,6 +36,8 @@ const Table = () => {
   const [selectedCaseId, setSelectedCaseId] = useState(null);
   const [showOrderDrawer, setShowOrderDrawer] = useState(false);
   const [processingOrders, setProcessingOrders] = useState(new Set());
+  const [selectedRows, setSelectedRows] = useState([]);
+  const [gridApi, setGridApi] = useState(null);
 
   useEffect(() => {
     // By default, show last 3 months data
@@ -231,16 +233,8 @@ const Table = () => {
       width: 300,
       flex: 0,
       suppressSizeToFit: true,
-      pinned: 'right'
-    },
-    { 
-      headerName: 'Actions', 
-      field: 'actions',
-      cellRenderer: 'deleteButtonRenderer',
-      width: 100,
-      flex: 0,
-      suppressSizeToFit: true,
-      pinned: 'right'
+      pinned: 'right',
+      editable: false
     }
   ];
 
@@ -315,24 +309,6 @@ const Table = () => {
           </button>
         )}
       </div>
-    );
-  };
-
-  // Custom cell renderer for delete button
-  const DeleteButtonRenderer = (props) => {
-    const handleDelete = () => {
-      const rowIndex = props.rowIndex;
-      setEditedData(prev => prev.filter((_, i) => i !== rowIndex));
-    };
-
-    return (
-      <button 
-        className="btn-professional btn-danger" 
-        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-        onClick={handleDelete}
-      >
-        Delete
-      </button>
     );
   };
 
@@ -441,8 +417,93 @@ const Table = () => {
     setShowOrderDrawer(true);
   };
 
+  // Batch operations for selected rows
+  const handleBatchDownload = async () => {
+    if (selectedRows.length === 0) {
+      alert('⚠️ Please select at least one row to download orders.');
+      return;
+    }
+
+    const confirmMsg = `📥 Download orders for ${selectedRows.length} selected case(s)?\n\nThis may take some time.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const row of selectedRows) {
+      try {
+        setProcessingOrders(prev => new Set(prev).add(row.case_id));
+        
+        const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            case_id: row.case_id,
+            case_ref: row.case_ref,
+            board_date: row.board_date
+          })
+        });
+
+        if (response.download_success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        console.error(`Error downloading order for ${row.case_ref}:`, error);
+        failCount++;
+      } finally {
+        setProcessingOrders(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(row.case_id);
+          return newSet;
+        });
+      }
+    }
+
+    alert(`✅ Batch download complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);
+    await fetchData();
+    
+    // Clear selection
+    if (gridApi) {
+      gridApi.deselectAll();
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedRows.length === 0) {
+      alert('⚠️ Please select at least one row to delete.');
+      return;
+    }
+
+    const confirmMsg = `🗑️ Delete ${selectedRows.length} selected case(s)?\n\nThis action cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const row of selectedRows) {
+      try {
+        await authenticatedFetchJSON(`/delete_case/${row.case_id}`, {
+          method: 'DELETE'
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Error deleting case ${row.case_ref}:`, error);
+        failCount++;
+      }
+    }
+
+    alert(`✅ Batch delete complete!\n\nDeleted: ${successCount}\nFailed: ${failCount}`);
+    await fetchData();
+    
+    // Clear selection
+    if (gridApi) {
+      gridApi.deselectAll();
+    }
+  };
+
   const frameworkComponents = {
-    deleteButtonRenderer: DeleteButtonRenderer,
     orderStatusRenderer: OrderStatusRenderer,
     orderActionsRenderer: OrderActionsRenderer
   };
@@ -720,6 +781,53 @@ const Table = () => {
               </button>
             </div>
           </div>
+          
+          {/* Batch Operations Toolbar */}
+          <div style={{ 
+            padding: 'var(--spacing-md)',
+            backgroundColor: 'var(--gray-50)',
+            borderBottom: '1px solid var(--gray-200)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--spacing-md)',
+            flexWrap: 'wrap'
+          }}>
+            <span style={{ 
+              fontSize: '0.875rem', 
+              color: 'var(--gray-700)',
+              fontWeight: 500
+            }}>
+              {selectedRows.length > 0 ? `${selectedRows.length} row(s) selected` : 'Select rows for batch operations'}
+            </span>
+            <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginLeft: 'auto' }}>
+              <button 
+                className="btn-professional btn-primary"
+                onClick={handleBatchDownload}
+                disabled={selectedRows.length === 0}
+                style={{ 
+                  fontSize: '0.875rem',
+                  opacity: selectedRows.length === 0 ? 0.5 : 1,
+                  cursor: selectedRows.length === 0 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                📥 Download Selected Orders
+              </button>
+              <button 
+                className="btn-professional"
+                onClick={handleBatchDelete}
+                disabled={selectedRows.length === 0}
+                style={{ 
+                  fontSize: '0.875rem',
+                  backgroundColor: 'var(--error-color)',
+                  color: 'white',
+                  opacity: selectedRows.length === 0 ? 0.5 : 1,
+                  cursor: selectedRows.length === 0 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                🗑️ Delete Selected
+              </button>
+            </div>
+          </div>
           <div className="card-body" style={{ padding: 0 }}>
             <div 
               className="ag-theme-alpine"
@@ -740,6 +848,7 @@ const Table = () => {
                 components={frameworkComponents}
                 rowHeight={50}
                 headerHeight={45}
+                rowSelection="multiple"
                 defaultColDef={{
                   flex: 1,
                   minWidth: 100,
@@ -752,8 +861,14 @@ const Table = () => {
                   animateRows: true,
                   pagination: true,
                   paginationPageSize: 50,
-                  domLayout: 'normal',
-                  rowSelection: { mode: 'multiRow' }
+                  domLayout: 'normal'
+                }}
+                onGridReady={(params) => {
+                  setGridApi(params.api);
+                }}
+                onSelectionChanged={(params) => {
+                  const selectedNodes = params.api.getSelectedRows();
+                  setSelectedRows(selectedNodes);
                 }}
                 onCellValueChanged={(params) => {
                   const rowIndex = params.rowIndex;
