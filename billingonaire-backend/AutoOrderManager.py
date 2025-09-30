@@ -14,6 +14,7 @@ from PyPDF2 import PdfReader, PdfWriter
 from order_analyzer import OrderDocumentAnalyzer
 from CourtScraper import BombayHighCourtScraper
 import asyncio
+from dataclasses import asdict
 
 class AutoOrderManager:
     """
@@ -355,6 +356,17 @@ class AutoOrderManager:
             # Validate the extracted order date against expected board date
             date_validation = self._validate_order_date(analysis_result.order_date, expected_board_date)
             
+            # Convert CaseInfo dataclasses to plain dicts for Firestore
+            cases_as_dicts = []
+            if analysis_result.cases:
+                for case_obj in analysis_result.cases:
+                    try:
+                        case_dict = asdict(case_obj) if hasattr(case_obj, '__dataclass_fields__') else case_obj
+                        cases_as_dicts.append(case_dict)
+                    except Exception as e:
+                        logging.warning(f"Could not convert case object to dict: {e}")
+                        continue
+            
             # Create order analysis data to merge with board data - ALL FIELDS PREFIXED
             order_analysis = {
                 # Order analysis results
@@ -372,8 +384,8 @@ class AutoOrderManager:
                 "order_key_phrases": analysis_result.key_phrases,
                 "order_next_hearing_date": analysis_result.next_hearing_date,
                 "order_disposal_reason": analysis_result.disposal_reason,
-                "order_text": analysis_result.order_text[:1000],  # Store first 1000 chars
-                "order_cases": analysis_result.cases,
+                "order_text": analysis_result.order_text[:1000] if analysis_result.order_text else "",  # Store first 1000 chars
+                "order_cases": cases_as_dicts,  # Use converted list of dicts
                 
                 # Date validation
                 "order_date_validation": date_validation,
@@ -540,8 +552,9 @@ class AutoOrderManager:
             logging.error(f"Error creating search index for case {case_id}: {e}")
 
     def _create_order_link(self, case_id: str, order_info: Dict) -> None:
-        """Create order link in the database"""
+        """Create order link in the database and update case document"""
         try:
+            # Create order document in case-orders collection
             order_doc = {
                 "case_id": case_id,
                 "status": "linked",
@@ -554,6 +567,18 @@ class AutoOrderManager:
             }
             
             self.db.collection(self.orders_collection).document(case_id).set(order_doc)
+            
+            # CRITICAL: Also update the daily-boards case document so UI can see the link
+            case_update = {
+                "order_downloaded": True,
+                "order_link": order_info.get('order_link'),
+                "order_filename": order_info.get('filename'),
+                "order_source": order_info.get('source', 'auto'),
+                "order_downloaded_at": datetime.now().isoformat()
+            }
+            
+            self.db.collection(self.boards_collection).document(case_id).update(case_update)
+            logging.info(f"Order link created and case document updated for {case_id}")
             
         except Exception as e:
             logging.error(f"Error creating order link for case {case_id}: {e}")

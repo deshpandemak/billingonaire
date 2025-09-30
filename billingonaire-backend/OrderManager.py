@@ -42,12 +42,15 @@ class OrderManager:
                 case_data = doc.to_dict()
                 case_id = doc.id
                 
-                # Check order status - include cases without orders or failed attempts
+                # Check if order is already downloaded and linked in case document
+                order_downloaded = case_data.get("order_downloaded", False)
+                
+                # Also check order status from case-orders collection
                 order_info = self.get_order_details(case_id)
                 order_status = order_info.get("status", "not_present")
                 
-                # Only include cases that need order linking
-                if order_status in ["not_present", "failed"]:
+                # Only include cases that need order linking (no download flag AND no linked status)
+                if not order_downloaded and order_status in ["not_present", "failed"]:
                     # Format case reference for court lookup
                     case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
                     
