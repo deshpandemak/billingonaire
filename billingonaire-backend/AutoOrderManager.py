@@ -155,6 +155,9 @@ class AutoOrderManager:
         # Check if this is a second attempt (case already has an order)
         is_second_attempt = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
         
+        # Debug logging
+        logging.info(f"Processing {case_ref}: order_downloaded={case_data.get('order_downloaded')}, order_link={case_data.get('order_link')}, is_second_attempt={is_second_attempt}")
+        
         result = {
             "case_id": case_id,
             "case_ref": case_ref,
