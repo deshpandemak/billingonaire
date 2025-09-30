@@ -84,11 +84,14 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Lower Classification Threshold**: Reduced from 70% to 50% for preferring "HEARD & ADJOURNED" over "ADJOURNED"
 - **Better Accuracy**: System now correctly identifies hearings even without explicit "heard and adjourned" text
 
-### Order Date Validation (Sept 30, 2025)
-- **Date Matching Enforcement**: Orders are now only linked to cases when order date matches board date
+### Order Date Validation & Retry Logic (Sept 30, 2025)
+- **Intelligent Retry System**: Automatically tries up to 50 sequence numbers (0-49) to find order with matching date
+- **Date Matching Enforcement**: Orders are only linked to cases when order date matches board date
 - **Pre-Link Validation**: Order date is validated BEFORE creating the order link in database
-- **Mismatch Handling**: Cases with date mismatches are logged but not linked, preventing incorrect associations
-- **Process Flow**: Download → Analyze & Validate Date → Link (only if valid) → Full Analysis
+- **Smart Date Extraction**: Enhanced date parsing handles formats like "DATE : 24 JULY 2024" and returns YYYY-MM-DD
+- **Comprehensive Logging**: Tracks each retry attempt with status (download_failed, date_mismatch, success)
+- **Clear Failure Messages**: Reports "No matching order found after 50 attempts" when no match exists
+- **Process Flow**: For each sequence (0-49): Download → Extract Date → Validate → Link if Match → Stop, else Continue
 
 ### Data Display Optimization (Sept 30, 2025)
 - **Existing Columns Enhanced**: Court Order, Petitioner, and Respondent columns now display order analysis data

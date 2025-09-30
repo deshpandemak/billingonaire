@@ -165,6 +165,9 @@ class AutoOrderManager:
         
         MAX_RETRIES = 50
         
+        download_failures = 0
+        date_mismatches = 0
+        
         try:
             # Retry loop: Try sequence numbers 0 through 49
             for sequence_num in range(MAX_RETRIES):
@@ -180,6 +183,7 @@ class AutoOrderManager:
                     
                     if not order_info.get('success'):
                         # Download failed for this sequence
+                        download_failures += 1
                         attempt_log["status"] = "download_failed"
                         attempt_log["message"] = order_info.get('error', 'Unknown error')
                         result["retry_attempts"].append(attempt_log)
@@ -187,6 +191,7 @@ class AutoOrderManager:
                     
                     # Step 2: Analyze order to extract date
                     if not order_info.get('pdf_content'):
+                        download_failures += 1
                         attempt_log["status"] = "no_pdf_content"
                         attempt_log["message"] = "No PDF content available"
                         result["retry_attempts"].append(attempt_log)
@@ -200,13 +205,14 @@ class AutoOrderManager:
                     
                     if not date_validation.get('valid'):
                         # Date mismatch - log and continue to next sequence
+                        date_mismatches += 1
                         attempt_log["status"] = "date_mismatch"
                         attempt_log["message"] = f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
                         result["retry_attempts"].append(attempt_log)
                         logging.info(f"Case {case_ref} seq {sequence_num}: {attempt_log['message']}")
                         continue
                     
-                    # SUCCESS! Date matches - process this order
+                    # SUCCESS! Date matches - mark success and stop retrying
                     attempt_log["status"] = "success"
                     attempt_log["message"] = f"Order found with matching date {date_validation.get('extracted_date')}"
                     result["retry_attempts"].append(attempt_log)
@@ -216,24 +222,37 @@ class AutoOrderManager:
                     logging.info(f"Case {case_ref}: Found matching order at sequence {sequence_num}")
                     
                     # Step 4: Create order link in database
-                    self._create_order_link(case_id, order_info)
+                    try:
+                        self._create_order_link(case_id, order_info)
+                    except Exception as link_error:
+                        logging.error(f"Failed to create order link for {case_ref}: {link_error}")
+                        result["error"] = f"Order found but link creation failed: {str(link_error)}"
+                        return result
                     
                     # Step 5: Perform full analysis and store results
-                    analysis_result = self._analyze_order_with_date_validation(
-                        case_id, case_ref, order_info['pdf_content'], 
-                        case_data.get('board_date'), order_info.get('order_link')
-                    )
-                    
-                    if analysis_result.get('success'):
-                        result["analysis_success"] = True
-                        result["analysis_data"] = analysis_result.get('data')
+                    try:
+                        analysis_result = self._analyze_order_with_date_validation(
+                            case_id, case_ref, order_info['pdf_content'], 
+                            case_data.get('board_date'), order_info.get('order_link')
+                        )
                         
-                        # Step 6: Create search index
-                        self._create_search_index_entry(case_id, case_data, analysis_result['data'])
-                    else:
-                        result["error"] = f"Analysis failed: {analysis_result.get('error')}"
+                        if analysis_result.get('success'):
+                            result["analysis_success"] = True
+                            result["analysis_data"] = analysis_result.get('data')
+                            
+                            # Step 6: Create search index
+                            try:
+                                self._create_search_index_entry(case_id, case_data, analysis_result['data'])
+                            except Exception as index_error:
+                                logging.error(f"Failed to create search index for {case_ref}: {index_error}")
+                                # Not critical - we have the order and analysis
+                        else:
+                            result["error"] = f"Order linked but analysis failed: {analysis_result.get('error')}"
+                    except Exception as analysis_error:
+                        logging.error(f"Analysis failed for {case_ref}: {analysis_error}")
+                        result["error"] = f"Order linked but analysis failed: {str(analysis_error)}"
                     
-                    # Stop retrying - we found a matching order
+                    # Stop retrying - we found a matching order (even if analysis had issues)
                     return result
                     
                 except Exception as e:
@@ -244,9 +263,14 @@ class AutoOrderManager:
                     logging.warning(f"Case {case_ref} seq {sequence_num} error: {e}")
                     continue
             
-            # If we get here, all 50 attempts failed
-            result["error"] = f"No matching order found after {MAX_RETRIES} attempts. Tried sequence numbers 0-{MAX_RETRIES-1}."
-            logging.warning(f"Case {case_ref}: Failed to find matching order after {MAX_RETRIES} attempts")
+            # If we get here, all 50 attempts failed - provide detailed error
+            error_parts = [f"No matching order found after {MAX_RETRIES} attempts."]
+            if download_failures > 0:
+                error_parts.append(f"{download_failures} downloads failed.")
+            if date_mismatches > 0:
+                error_parts.append(f"{date_mismatches} orders had date mismatches.")
+            result["error"] = " ".join(error_parts)
+            logging.warning(f"Case {case_ref}: {result['error']}")
                 
         except Exception as e:
             result["error"] = str(e)
