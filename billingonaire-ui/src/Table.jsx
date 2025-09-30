@@ -166,7 +166,7 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Get petitioners from order_cases (ML extracted)
+        // Try order_cases first (ML extracted from case table in order)
         if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
           const petitioners = params.data.order_cases[0].petitioners || [];
           if (petitioners.length > 0) {
@@ -177,6 +177,19 @@ const Table = () => {
             if (names.length > 0) return names.join(', ');
           }
         }
+        
+        // Fallback to order_petitioners (ML extracted from order text)
+        if (params.data?.order_petitioners && Array.isArray(params.data.order_petitioners)) {
+          const petitioners = params.data.order_petitioners;
+          if (petitioners.length > 0) {
+            const names = petitioners.map(p => {
+              if (typeof p === 'string') return p;
+              return p.name || p.raw_text || '';
+            }).filter(n => n);
+            if (names.length > 0) return names.join(', ');
+          }
+        }
+        
         return '';
       }
     },
@@ -188,7 +201,7 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Get respondents from order_cases (ML extracted)
+        // Try order_cases first (ML extracted from case table in order)
         if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
           const respondents = params.data.order_cases[0].respondents || [];
           if (respondents.length > 0) {
@@ -199,6 +212,19 @@ const Table = () => {
             if (names.length > 0) return names.join(', ');
           }
         }
+        
+        // Fallback to order_respondents (ML extracted from order text)
+        if (params.data?.order_respondents && Array.isArray(params.data.order_respondents)) {
+          const respondents = params.data.order_respondents;
+          if (respondents.length > 0) {
+            const names = respondents.map(r => {
+              if (typeof r === 'string') return r;
+              return r.name || r.raw_text || '';
+            }).filter(n => n);
+            if (names.length > 0) return names.join(', ');
+          }
+        }
+        
         return '';
       }
     },
