@@ -30,8 +30,7 @@ gcloud run deploy billingonaire-backend \
   --cpu=1 \
   --timeout=540s \
   --max-instances=10 \
-  --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --set-env-vars="PORT=8080"
+  --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com
 
 # Clean up
 rm /tmp/gcloud-key.json
