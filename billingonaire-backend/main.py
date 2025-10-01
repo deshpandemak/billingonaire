@@ -46,15 +46,16 @@ app = FastAPI(
 )
 
 # Startup event to initialize background processing
-@app.on_event("startup")
-async def startup_event():
-    """Initialize background order processing on app startup"""
-    logging.info("🚀 Billingonaire API starting up...")
-    try:
-        await ensure_background_processing_active()
-        logging.info("✅ Background order processing initialized")
-    except Exception as e:
-        logging.error(f"❌ Failed to initialize background processing: {e}")
+# Temporarily disabled for Cloud Run - background processing can be initialized on first use
+# @app.on_event("startup")
+# async def startup_event():
+#     """Initialize background order processing on app startup"""
+#     logging.info("🚀 Billingonaire API starting up...")
+#     try:
+#         await ensure_background_processing_active()
+#         logging.info("✅ Background order processing initialized")
+#     except Exception as e:
+#         logging.error(f"❌ Failed to initialize background processing: {e}")
 
 # Initialize Firebase Admin SDK
 # For Cloud Functions: Uses Application Default Credentials
@@ -86,10 +87,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-user_manager = UserManager()
-order_analyzer = OrderDocumentAnalyzer()
-auto_order_manager = AutoOrderManager()
-user_matter_matcher = UserMatterMatcher()
+# Lazy initialization of heavy objects to avoid blocking Cloud Run startup
+user_manager = None
+order_analyzer = None
+auto_order_manager = None
+user_matter_matcher = None
+
+def get_user_manager():
+    global user_manager
+    if user_manager is None:
+        user_manager = UserManager()
+    return user_manager
+
+def get_order_analyzer():
+    global order_analyzer
+    if order_analyzer is None:
+        order_analyzer = OrderDocumentAnalyzer()
+    return order_analyzer
+
+def get_auto_order_manager():
+    global auto_order_manager
+    if auto_order_manager is None:
+        auto_order_manager = AutoOrderManager()
+    return auto_order_manager
+
+def get_user_matter_matcher():
+    global user_matter_matcher
+    if user_matter_matcher is None:
+        user_matter_matcher = UserMatterMatcher()
+    return user_matter_matcher
 
 # In-memory queue for async order processing
 order_processing_queue = Queue()
@@ -116,7 +142,7 @@ def get_current_user(request: Request):
 def require_active_user(current_user: dict = Depends(get_current_user)):
     """Dependency to require active user account"""
     uid = current_user.get('uid')
-    profile = user_manager.get_user_profile(uid)
+    profile = get_user_manager().get_user_profile(uid)
     
     if not profile.get('is_active', True):
         raise HTTPException(status_code=403, detail="Account is disabled. Contact administrator.")
@@ -129,13 +155,13 @@ def get_user_with_profile(current_user: dict = Depends(require_active_user)):
 
 def require_admin(current_user: dict = Depends(get_current_user)):
     """Dependency to require admin role"""
-    if not user_manager.is_admin(current_user.get('uid')):
+    if not get_user_manager().is_admin(current_user.get('uid')):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 def require_admin_active(current_user: dict = Depends(require_active_user)):
     """Dependency to require active admin user"""
-    if not user_manager.is_admin(current_user.get('uid')):
+    if not get_user_manager().is_admin(current_user.get('uid')):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
@@ -198,7 +224,7 @@ async def process_order_queue():
             
             # Use AutoOrderManager to process single case
             try:
-                result = auto_order_manager._process_single_case(case_info)
+                result = get_auto_order_manager()._process_single_case(case_info)
                 
                 if result.get("analysis_success"):
                     logging.info(f"✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
@@ -258,7 +284,7 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
                 )
                 
                 # Check if this case matches the user
-                user_matches = user_matter_matcher.find_user_matters_for_case(user_id, user_role, case_id)
+                user_matches = get_user_matter_matcher().find_user_matters_for_case(user_id, user_role, case_id)
                 
                 if user_matches:
                     # Store the mapping in user-case-mappings collection
@@ -389,7 +415,7 @@ async def get_data(
         
         # SECURITY: Apply AGP filter for non-admin users - strict enforcement
         uid = current_user_with_profile.get('uid')
-        agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+        agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
         
         data = board.getData(search_criteria, agp_filter)
         return data
@@ -462,7 +488,7 @@ async def create_or_update_profile(
     # Check if this is the initial admin user
     if email == "deshpande.mak@gmail.com":
         # Create admin profile directly
-        return user_manager.create_user_profile(
+        return get_user_manager().create_user_profile(
             uid=uid,
             email=email,
             role='admin',
@@ -477,10 +503,10 @@ async def create_or_update_profile(
     
     # Check if profile exists
     try:
-        existing_profile = user_manager.get_user_profile(uid)
+        existing_profile = get_user_manager().get_user_profile(uid)
         if existing_profile.get('needs_setup'):
             # For new profiles, create user with legal category (admin will assign AGP later)
-            return user_manager.create_user_profile(
+            return get_user_manager().create_user_profile(
                 uid=uid,
                 email=email,
                 role='user',
@@ -490,10 +516,10 @@ async def create_or_update_profile(
             )
         else:
             # Update existing profile with safe fields only
-            return user_manager.update_user_profile(uid, safe_updates)
+            return get_user_manager().update_user_profile(uid, safe_updates)
     except:
         # Create new profile with user role and legal category
-        return user_manager.create_user_profile(
+        return get_user_manager().create_user_profile(
             uid=uid,
             email=email,
             role='user',
@@ -531,7 +557,7 @@ async def list_users(
     current_user = Depends(require_admin_active)
 ):
     """List all users (admin only)"""
-    return user_manager.list_users(role_filter)
+    return get_user_manager().list_users(role_filter)
 
 
 @app.post("/admin/user/{target_uid}/role", tags=["Admin"])
@@ -542,7 +568,7 @@ async def update_user_role(
 ):
     """Update user role and AGP assignment (admin only)"""
     admin_uid = current_user.get('uid')
-    return user_manager.admin_update_user_profile(target_uid, role_data, admin_uid)
+    return get_user_manager().admin_update_user_profile(target_uid, role_data, admin_uid)
 
 @app.post("/admin/user/{target_uid}/agp-names", tags=["Admin"])
 async def assign_agp_names(
@@ -559,43 +585,43 @@ async def assign_agp_names(
         agp_names = [agp_names]
     
     updates = {'agp_names': agp_names}
-    return user_manager.admin_update_user_profile(target_uid, updates, admin_uid)
+    return get_user_manager().admin_update_user_profile(target_uid, updates, admin_uid)
 
 @app.post("/admin/setup-initial-admin", tags=["Admin"])
 async def setup_initial_admin():
     """Set up deshpande.mak@gmail.com as initial administrator"""
-    return user_manager.setup_initial_admin()
+    return get_user_manager().setup_initial_admin()
 
 @app.get("/admin/agp-names", tags=["Admin"])
 async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
     """Get all AGP names in the system (admin only)"""
-    return {"agp_names": user_manager.get_agp_names_list()}
+    return {"agp_names": get_user_manager().get_agp_names_list()}
 
 @app.get("/admin/available-roles", tags=["Admin"])
 async def get_available_roles(current_user = Depends(require_admin_active)):
     """Get available user roles for admin interface"""
-    return {"roles": user_manager.get_available_roles()}
+    return {"roles": get_user_manager().get_available_roles()}
 
 @app.get("/admin/available-legal-categories", tags=["Admin"])
 async def get_available_legal_categories(current_user = Depends(require_admin_active)):
     """Get available legal categories for admin interface"""
-    return {"legal_categories": user_manager.get_available_legal_categories()}
+    return {"legal_categories": get_user_manager().get_available_legal_categories()}
 
 @app.get("/admin/firebase-users", tags=["Admin"])
 async def list_firebase_auth_users(current_user = Depends(require_admin_active)):
     """List all users from Firebase Authentication"""
-    return user_manager.list_firebase_auth_users()
+    return get_user_manager().list_firebase_auth_users()
 
 @app.get("/admin/unsynced-users", tags=["Admin"])
 async def get_unsynced_firebase_users(current_user = Depends(require_admin_active)):
     """Get Firebase Auth users that don't have Firestore profiles"""
-    return user_manager.get_firebase_auth_users_not_in_firestore()
+    return get_user_manager().get_firebase_auth_users_not_in_firestore()
 
 @app.post("/admin/sync-firebase-users", tags=["Admin"])
 async def sync_firebase_users(current_user = Depends(require_admin_active)):
     """Sync Firebase Auth users to Firestore database"""
     uid = current_user.get('uid')
-    return user_manager.sync_firebase_users_to_firestore(uid)
+    return get_user_manager().sync_firebase_users_to_firestore(uid)
 
 @app.post("/admin/create-user", tags=["Admin"])
 async def create_new_user(
@@ -623,12 +649,12 @@ async def create_new_user(
             )
             
             # Create user profile in Firestore
-            user_profile = user_manager.create_user_profile(
+            user_profile = get_user_manager().create_user_profile(
                 uid=firebase_user.uid,
                 email=email,
                 role=role,
-                legal_category=legal_category if user_manager.is_legal_professional(role) else None,
-                agp_names=agp_names if user_manager.is_legal_professional(role) else [],
+                legal_category=legal_category if get_user_manager().is_legal_professional(role) else None,
+                agp_names=agp_names if get_user_manager().is_legal_professional(role) else [],
                 full_name=full_name
             )
             
@@ -656,7 +682,7 @@ async def create_new_user(
 @app.get("/user/agp-names", tags=["User Management"])
 async def get_agp_names(current_user = Depends(get_current_user)):
     """Get list of available AGP names"""
-    return {"agp_names": user_manager.get_all_agp_names()}
+    return {"agp_names": get_user_manager().get_all_agp_names()}
 
 # Dashboard endpoints (with authentication)
 dashboard_data = DashboardData()
@@ -669,7 +695,7 @@ async def dashboard_weekly_status(
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_weekly_status(start_date, end_date, agp_filter)
     return JSONResponse(content=data)
@@ -681,7 +707,7 @@ async def dashboard_agp_stats(
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     # For AGP users, use their assigned AGP name; for admins, use query parameter
     target_agp = agp_filter or agp_name
@@ -696,7 +722,7 @@ async def dashboard_monthly_avg(
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_monthly_avg(year, agp_filter)
     return JSONResponse(content=data)
@@ -710,7 +736,7 @@ async def dashboard_matters_by_date_range(
     """Get total matters by date range with average for bar chart + line visualization"""
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_matters_by_date_range(start_date, end_date, agp_filter)
     return JSONResponse(content=data)
@@ -722,7 +748,7 @@ async def dashboard_agp_distribution_weekly(
     """Get AGP distribution for current week (Monday to current date)"""
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_agp_distribution_weekly(agp_filter)
     return JSONResponse(content=data)
@@ -734,7 +760,7 @@ async def dashboard_agp_distribution_monthly(
     """Get AGP distribution for current month to date"""
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_agp_distribution_monthly(agp_filter)
     return JSONResponse(content=data)
@@ -746,7 +772,7 @@ async def dashboard_agp_distribution_yearly(
     """Get AGP distribution for current year to date"""
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get('uid')
-    agp_filter = user_manager.get_user_agp_filter(uid)  # This will raise 403 if invalid
+    agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
     data = await dashboard_data.get_agp_distribution_yearly(agp_filter)
     return JSONResponse(content=data)
@@ -1015,7 +1041,7 @@ async def analyze_order_document(
         logging.info(f"Starting order analysis for file: {file.filename}")
         
         # Analyze the order document
-        analysis_result = order_analyzer.analyze_order_document(file.filename, file_content)
+        analysis_result = get_order_analyzer().analyze_order_document(file.filename, file_content)
         
         # DEBUG: Log the actual category being returned
         logging.info(f"🔍 CATEGORY DEBUG for {file.filename}:")
@@ -1023,7 +1049,7 @@ async def analyze_order_document(
         logging.info(f"   category_confidence: {analysis_result.category_confidence}")
         
         # Save analysis result to database
-        doc_id = order_analyzer.save_analysis_result(file.filename, analysis_result)
+        doc_id = get_order_analyzer().save_analysis_result(file.filename, analysis_result)
         
         # Prepare enhanced response with structured case information and tabular data
         response_data = {
@@ -1291,7 +1317,7 @@ async def auto_process_orders(
         filters = body.get("filters", {})
         limit = body.get("limit", 50)
         
-        result = auto_order_manager.get_orders_for_cases(filters, limit)
+        result = get_auto_order_manager().get_orders_for_cases(filters, limit)
         
         if result.get("success"):
             return JSONResponse(content=result)
@@ -1344,7 +1370,7 @@ async def process_single_case(
         case_data["board_date"] = board_date
         
         # Process the single case
-        result = auto_order_manager._process_single_case(case_data)
+        result = get_auto_order_manager()._process_single_case(case_data)
         
         return JSONResponse(content=result)
             
@@ -1401,7 +1427,7 @@ async def analyze_single_case(
             if response.status_code == 200 and response.headers.get('Content-Type') == 'application/pdf':
                 # Analyze the PDF
                 case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
-                analysis_result = auto_order_manager._analyze_order_with_date_validation(
+                analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
                     case_id, case_ref, response.content, 
                     case_data.get('board_date'), order_link
                 )
@@ -1443,7 +1469,7 @@ async def bulk_process_orders(
                 content={"error": "No case IDs provided"}
             )
         
-        result = auto_order_manager.bulk_process_orders(case_ids)
+        result = get_auto_order_manager().bulk_process_orders(case_ids)
         
         if result.get("success"):
             return JSONResponse(content=result)
@@ -1516,7 +1542,7 @@ async def get_my_matters(
     """Get matters linked to the current logged-in user"""
     try:
         user_id = current_user.get('uid')
-        matches = user_matter_matcher.find_user_matters(user_id, limit)
+        matches = get_user_matter_matcher().find_user_matters(user_id, limit)
         
         # Convert dataclass objects to dictionaries
         matters_data = []
@@ -1552,7 +1578,7 @@ async def get_my_matters_summary(
     """Get summary statistics of matters for the current user"""
     try:
         user_id = current_user.get('uid')
-        summary = user_matter_matcher.get_matters_summary(user_id)
+        summary = get_user_matter_matcher().get_matters_summary(user_id)
         
         return JSONResponse(content={
             "user_id": user_id,
@@ -1573,7 +1599,7 @@ async def get_user_role_config(
     """Get current user's role configuration"""
     try:
         user_id = current_user.get('uid')
-        user_role = user_matter_matcher.get_user_role_config(user_id)
+        user_role = get_user_matter_matcher().get_user_role_config(user_id)
         
         if not user_role:
             return JSONResponse(content={
@@ -1632,7 +1658,7 @@ async def configure_user_role(
         # Generate name variations if not provided
         name_variations = body.get('name_variations', [])
         if not name_variations:
-            name_variations = user_matter_matcher.generate_name_variations(full_name)
+            name_variations = get_user_matter_matcher().generate_name_variations(full_name)
         
         # Create user role configuration
         user_role = UserRole(
@@ -1644,7 +1670,7 @@ async def configure_user_role(
         )
         
         # Save configuration
-        success = user_matter_matcher.save_user_role_config(user_id, user_role)
+        success = get_user_matter_matcher().save_user_role_config(user_id, user_role)
         
         if success:
             return JSONResponse(content={
@@ -1688,7 +1714,7 @@ async def generate_name_variations(
                 content={"error": "full_name is required"}
             )
         
-        variations = user_matter_matcher.generate_name_variations(full_name)
+        variations = get_user_matter_matcher().generate_name_variations(full_name)
         
         return JSONResponse(content={
             "full_name": full_name,
@@ -2258,7 +2284,7 @@ async def search_orders(
         
         search_params["limit"] = limit
         
-        result = auto_order_manager.search_orders(search_params)
+        result = get_auto_order_manager().search_orders(search_params)
         
         if result.get("success"):
             return JSONResponse(content=result)
@@ -2429,20 +2455,5 @@ async def get_order_tabular_data(
             content={"error": f"Failed to get tabular data: {str(e)}"}
         )
 
-client = TestClient(app)
-
-@functions_framework.http
-def handler(request):
-    # Map the incoming request to FastAPI using TestClient
-    method = request.method
-    path = request.path
-    
-    # Preserve query string for serverless deployment
-    if request.query_string:
-        path = f"{path}?{request.query_string.decode()}"
-    
-    headers = dict(request.headers)
-    data = request.get_data()
-    # Forward the request to FastAPI app
-    response = client.request(method, path, headers=headers, data=data)
-    return (response.content, response.status_code, response.headers.items())
+# Cloud Run entry point - uvicorn will run the app directly
+# For Cloud Functions deployment, use a separate functions_entry.py file

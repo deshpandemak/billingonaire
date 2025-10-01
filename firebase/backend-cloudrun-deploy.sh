@@ -19,10 +19,13 @@ gcloud config set project billingonaire
 # Navigate to the backend directory
 cd ../billingonaire-backend
 
-# Deploy the backend to Google Cloud Run
-echo "🚀 Deploying backend to Google Cloud Run..."
+# Build and deploy using Dockerfile to avoid buildpacks permission issues
+echo "🚀 Building and deploying backend to Google Cloud Run..."
+gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
+
+echo "🚀 Deploying to Cloud Run..."
 gcloud run deploy billingonaire-backend \
-  --source=. \
+  --image=gcr.io/billingonaire/billingonaire-backend \
   --region=asia-south1 \
   --platform=managed \
   --allow-unauthenticated \
