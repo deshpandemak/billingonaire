@@ -5,8 +5,9 @@ google-cloud-sdk-460.0.0-linux-x86_64.tar.gz
 google-cloud-sdk
 billingonaire-ui/src-react/package-lock.json
 
-# CRITICAL: Firebase service account credentials
+# CRITICAL: Firebase service account credentials and tokens
 billingonaire-backend/firebase/credentials.json
 */firebase/credentials.json
 firebase/credentials.json
+firebase/firebasetoken
 *.json

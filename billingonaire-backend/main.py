@@ -56,8 +56,10 @@ async def startup_event():
     except Exception as e:
         logging.error(f"❌ Failed to initialize background processing: {e}")
 
-cred = credentials.Certificate("./firebase/credentials.json")
-firebase_admin.initialize_app(cred)
+# Use Application Default Credentials for Cloud Functions deployment
+# For local development, set GOOGLE_APPLICATION_CREDENTIALS env var
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
 
 app.add_middleware(
     CORSMiddleware,
@@ -222,6 +224,9 @@ async def process_order_queue():
 async def auto_map_case_to_users(case_id: str, case_info: Dict):
     """Automatically map case to users after order analysis completion"""
     try:
+        # Initialize Firestore client
+        db = firestore.client()
+        
         # Get all users who have configured roles
         users_ref = db.collection('user-roles')
         user_docs = users_ref.stream()
@@ -1809,6 +1814,9 @@ async def generate_bill_data(
     """Generate bill data for logged-in user based on date range"""
     try:
         user_id = current_user.get('uid')
+        
+        # Initialize Firestore client
+        db = firestore.client()
         
         # Parse dates
         from datetime import datetime
