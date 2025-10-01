@@ -56,10 +56,20 @@ async def startup_event():
     except Exception as e:
         logging.error(f"❌ Failed to initialize background processing: {e}")
 
-# Use Application Default Credentials for Cloud Functions deployment
-# For local development, set GOOGLE_APPLICATION_CREDENTIALS env var
+# Initialize Firebase Admin SDK
+# For Cloud Functions: Uses Application Default Credentials
+# For local/Replit: Uses service account key from environment
 if not firebase_admin._apps:
-    firebase_admin.initialize_app()
+    import json
+    gcloud_key = os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY')
+    if gcloud_key:
+        # Local/Replit environment with service account key
+        cred_dict = json.loads(gcloud_key)
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred)
+    else:
+        # Cloud Functions with ADC
+        firebase_admin.initialize_app()
 
 app.add_middleware(
     CORSMiddleware,

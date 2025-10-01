@@ -15,10 +15,10 @@ pdfplumber==0.10.3
 
 # Data processing
 pandas==2.1.3
-numpy==1.25.2
+numpy==1.26.4
 
 # HTTP requests and web scraping
-requests==2.31.0
+requests==2.32.3
 beautifulsoup4==4.12.2
 httpx==0.25.2
 
@@ -29,7 +29,7 @@ mangum==0.17.0
 python-multipart==0.0.6
 
 # Court data scraping (if available)
-ecourts==0.1.0
+ecourts==0.0.8
 
 # Testing client
 fastapi[test]==0.104.1
