@@ -16,11 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Set environment variables
-ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
-# Expose port
+# Expose port (Cloud Run will set PORT dynamically)
 EXPOSE 8080
 
-# Run the application with timeout increased for startup events
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --timeout-keep-alive 600
+# Run with PORT from environment, fallback to 8080
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}

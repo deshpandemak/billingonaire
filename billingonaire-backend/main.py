@@ -1,7 +1,6 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-import functions_framework
 from fastapi import FastAPI, File, UploadFile, Depends, Request, HTTPException, Form, Query
 import pandas as pd
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -20,8 +19,6 @@ import firebase_admin
 import re
 import asyncio
 import socket
-from mangum import Mangum
-from fastapi.testclient import TestClient
 from typing import List, Dict
 from datetime import datetime
 from asyncio import Queue
@@ -57,20 +54,25 @@ app = FastAPI(
 #     except Exception as e:
 #         logging.error(f"❌ Failed to initialize background processing: {e}")
 
-# Initialize Firebase Admin SDK
-# For Cloud Functions: Uses Application Default Credentials
-# For local/Replit: Uses service account key from environment
-if not firebase_admin._apps:
-    import json
-    gcloud_key = os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY')
-    if gcloud_key:
-        # Local/Replit environment with service account key
-        cred_dict = json.loads(gcloud_key)
-        cred = credentials.Certificate(cred_dict)
-        firebase_admin.initialize_app(cred)
-    else:
-        # Cloud Functions with ADC
-        firebase_admin.initialize_app()
+# Lazy Firebase initialization - deferred until first use to avoid blocking port binding
+_firebase_initialized = False
+
+def ensure_firebase():
+    """Initialize Firebase Admin SDK on first use"""
+    global _firebase_initialized
+    if not _firebase_initialized:
+        if not firebase_admin._apps:
+            import json
+            gcloud_key = os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY')
+            if gcloud_key:
+                # Local/Replit environment with service account key
+                cred_dict = json.loads(gcloud_key)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+            else:
+                # Cloud Run with ADC
+                firebase_admin.initialize_app()
+        _firebase_initialized = True
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,18 +104,21 @@ def get_user_manager():
 def get_order_analyzer():
     global order_analyzer
     if order_analyzer is None:
+        from order_analyzer import OrderDocumentAnalyzer
         order_analyzer = OrderDocumentAnalyzer()
     return order_analyzer
 
 def get_auto_order_manager():
     global auto_order_manager
     if auto_order_manager is None:
+        from AutoOrderManager import AutoOrderManager
         auto_order_manager = AutoOrderManager()
     return auto_order_manager
 
 def get_user_matter_matcher():
     global user_matter_matcher
     if user_matter_matcher is None:
+        from UserMatterMatcher import UserMatterMatcher
         user_matter_matcher = UserMatterMatcher()
     return user_matter_matcher
 
@@ -122,6 +127,7 @@ order_processing_queue = Queue()
 processing_active = False
 
 def get_current_user(request: Request):
+    ensure_firebase()  # Initialize Firebase before auth operations
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
@@ -685,7 +691,14 @@ async def get_agp_names(current_user = Depends(get_current_user)):
     return {"agp_names": get_user_manager().get_all_agp_names()}
 
 # Dashboard endpoints (with authentication)
-dashboard_data = DashboardData()
+dashboard_data = None
+
+def get_dashboard_data():
+    global dashboard_data
+    if dashboard_data is None:
+        ensure_firebase()  # Ensure Firebase is initialized before creating DashboardData
+        dashboard_data = DashboardData()
+    return dashboard_data
 
 @app.get("/dashboard/weekly-status")
 async def dashboard_weekly_status(
@@ -697,7 +710,7 @@ async def dashboard_weekly_status(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_weekly_status(start_date, end_date, agp_filter)
+    data = await get_dashboard_data().get_weekly_status(start_date, end_date, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/agp-stats")
@@ -712,7 +725,7 @@ async def dashboard_agp_stats(
     # For AGP users, use their assigned AGP name; for admins, use query parameter
     target_agp = agp_filter or agp_name
     
-    data = await dashboard_data.get_agp_stats(target_agp, agp_filter)
+    data = await get_dashboard_data().get_agp_stats(target_agp, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/monthly-avg")
@@ -724,7 +737,7 @@ async def dashboard_monthly_avg(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_monthly_avg(year, agp_filter)
+    data = await get_dashboard_data().get_monthly_avg(year, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/matters-by-date-range")
@@ -738,7 +751,7 @@ async def dashboard_matters_by_date_range(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_matters_by_date_range(start_date, end_date, agp_filter)
+    data = await get_dashboard_data().get_matters_by_date_range(start_date, end_date, agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/agp-distribution-weekly")
@@ -750,7 +763,7 @@ async def dashboard_agp_distribution_weekly(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_agp_distribution_weekly(agp_filter)
+    data = await get_dashboard_data().get_agp_distribution_weekly(agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/agp-distribution-monthly")
@@ -762,7 +775,7 @@ async def dashboard_agp_distribution_monthly(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_agp_distribution_monthly(agp_filter)
+    data = await get_dashboard_data().get_agp_distribution_monthly(agp_filter)
     return JSONResponse(content=data)
 
 @app.get("/dashboard/agp-distribution-yearly")
@@ -774,7 +787,7 @@ async def dashboard_agp_distribution_yearly(
     uid = current_user_with_profile.get('uid')
     agp_filter = get_user_manager().get_user_agp_filter(uid)  # This will raise 403 if invalid
     
-    data = await dashboard_data.get_agp_distribution_yearly(agp_filter)
+    data = await get_dashboard_data().get_agp_distribution_yearly(agp_filter)
     return JSONResponse(content=data)
 
 # ML Enhancement endpoints
@@ -829,8 +842,21 @@ async def learn_from_correction(
         raise HTTPException(status_code=500, detail="Failed to store learning data")
 
 # Court integration endpoints
-court_scraper = BombayHighCourtScraper()
-order_manager = OrderManager()
+court_scraper = None
+order_manager = None
+
+def get_court_scraper():
+    global court_scraper
+    if court_scraper is None:
+        court_scraper = BombayHighCourtScraper()
+    return court_scraper
+
+def get_order_manager():
+    global order_manager
+    if order_manager is None:
+        ensure_firebase()  # Ensure Firebase is initialized before creating OrderManager
+        order_manager = OrderManager()
+    return order_manager
 
 @app.get("/court/case-details", tags=["Case Status"])
 async def get_case_details(
@@ -843,7 +869,7 @@ async def get_case_details(
     Example: /court/case-details?case_ref=WP/294/2025&bench=mumbai
     """
     try:
-        case_details = court_scraper.get_case_details(case_ref, bench)
+        case_details = get_court_scraper().get_case_details(case_ref, bench)
         return JSONResponse(content=case_details)
     except Exception as e:
         logging.error(f"Error fetching case details for {case_ref}: {e}")
@@ -864,7 +890,7 @@ async def get_case_orders(
     Example: /court/case-orders?case_ref=WP/294/2025&date=2025-01-03
     """
     try:
-        case_orders = court_scraper.get_case_orders(case_ref, date, bench)
+        case_orders = get_court_scraper().get_case_orders(case_ref, date, bench)
         return JSONResponse(content={"case_ref": case_ref, "date": date, "orders": case_orders})
     except Exception as e:
         logging.error(f"Error fetching case orders for {case_ref}: {e}")
@@ -886,7 +912,7 @@ async def batch_case_lookup(
     try:
         results = []
         for case_ref in case_refs:
-            case_details = court_scraper.get_case_details(case_ref, bench)
+            case_details = get_court_scraper().get_case_details(case_ref, bench)
             results.append({
                 "case_ref": case_ref,
                 "details": case_details,
@@ -917,7 +943,7 @@ async def get_cases_without_orders(
     Used for order management interface
     """
     try:
-        result = order_manager.get_cases_without_orders(limit, offset)
+        result = get_order_manager().get_cases_without_orders(limit, offset)
         return JSONResponse(content=result)
     except Exception as e:
         logging.error(f"Error fetching cases without orders: {e}")
@@ -945,7 +971,7 @@ async def create_order_link(
                 content={"error": "case_id is required"}
             )
         
-        result = order_manager.create_order_link(case_id, order_data)
+        result = get_order_manager().create_order_link(case_id, order_data)
         return JSONResponse(content=result)
     except Exception as e:
         logging.error(f"Error creating order link: {e}")
@@ -963,7 +989,7 @@ async def update_order_status(
 ):
     """Update the status of an order"""
     try:
-        result = order_manager.update_order_status(case_id, status, notes)
+        result = get_order_manager().update_order_status(case_id, status, notes)
         return JSONResponse(content=result)
     except Exception as e:
         logging.error(f"Error updating order status: {e}")
@@ -980,7 +1006,7 @@ async def get_orders_by_status(
 ):
     """Get all orders with a specific status"""
     try:
-        orders = order_manager.get_orders_by_status(status, limit)
+        orders = get_order_manager().get_orders_by_status(status, limit)
         return JSONResponse(content={"orders": orders, "count": len(orders)})
     except Exception as e:
         logging.error(f"Error fetching orders by status: {e}")
@@ -996,7 +1022,7 @@ async def get_case_with_order_info(
 ):
     """Get complete case information including order status"""
     try:
-        result = order_manager.get_case_with_order_info(case_id)
+        result = get_order_manager().get_case_with_order_info(case_id)
         return JSONResponse(content=result)
     except Exception as e:
         logging.error(f"Error fetching case with order info: {e}")
