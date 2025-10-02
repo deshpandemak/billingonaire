@@ -190,11 +190,6 @@ const Table = () => {
           }
         }
         
-        // Final fallback to original board data
-        if (params.data?.petitioner_name) {
-          return params.data.petitioner_name;
-        }
-        
         return '';
       }
     },
@@ -228,11 +223,6 @@ const Table = () => {
             }).filter(n => n);
             if (names.length > 0) return names.join(', ');
           }
-        }
-        
-        // Final fallback to original board data
-        if (params.data?.respondent_name) {
-          return params.data.respondent_name;
         }
         
         return '';

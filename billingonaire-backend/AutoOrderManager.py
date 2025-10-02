@@ -250,6 +250,19 @@ class AutoOrderManager:
                             except Exception as index_error:
                                 logging.error(f"Failed to create search index for {case_ref}: {index_error}")
                                 # Not critical - we have the order and analysis
+                            
+                            # Step 7: Link order to additional cases found in the order (multi-case linking)
+                            try:
+                                linked_cases = self._link_order_to_additional_cases(
+                                    case_id, case_ref, analysis_result['data'], 
+                                    order_info, case_data.get('board_date')
+                                )
+                                if linked_cases:
+                                    result["additional_cases_linked"] = linked_cases
+                                    logging.info(f"Linked order to {len(linked_cases)} additional cases: {linked_cases}")
+                            except Exception as multi_link_error:
+                                logging.warning(f"Failed to link order to additional cases for {case_ref}: {multi_link_error}")
+                                # Not critical - primary case is already linked
                         else:
                             result["error"] = f"Order linked but analysis failed: {analysis_result.get('error')}"
                     except Exception as analysis_error:
@@ -695,6 +708,173 @@ class AutoOrderManager:
             
         except Exception as e:
             logging.error(f"Error creating order link for case {case_id}: {e}")
+
+    def _link_order_to_additional_cases(self, primary_case_id: str, primary_case_ref: str, 
+                                         analysis_data: Dict, order_info: Dict, board_date: str) -> List[str]:
+        """
+        Link the same order to additional cases found in the order document
+        Handles multi-case orders where multiple cases are clubbed together
+        
+        Returns: List of case references that were successfully linked
+        """
+        linked_cases = []
+        
+        try:
+            # Extract case numbers from analysis
+            order_cases = analysis_data.get('order_cases', [])
+            
+            if not order_cases or len(order_cases) <= 1:
+                # No additional cases to link
+                return linked_cases
+            
+            logging.info(f"Found {len(order_cases)} cases in order for {primary_case_ref}, attempting multi-case linking")
+            
+            # Process each case found in the order
+            for case_info in order_cases:
+                try:
+                    # Skip if no case number
+                    case_number = case_info.get('case_number')
+                    if not case_number:
+                        continue
+                    
+                    # Parse the case number to get type, number, year
+                    case_ref = self._normalize_case_number(case_number)
+                    if not case_ref:
+                        logging.warning(f"Could not normalize case number: {case_number}")
+                        continue
+                    
+                    # Skip if this is the primary case we already processed
+                    if case_ref == primary_case_ref:
+                        continue
+                    
+                    # Find the case_id for this case reference in daily-boards
+                    matching_case_id = self._find_case_id_by_reference(case_ref, board_date)
+                    
+                    if not matching_case_id:
+                        logging.info(f"No matching case found in database for {case_ref} on date {board_date}")
+                        continue
+                    
+                    # Check if this case already has an order linked
+                    existing_order = self._get_order_status(matching_case_id)
+                    if existing_order != 'not_present':
+                        logging.info(f"Case {case_ref} already has an order linked, skipping")
+                        continue
+                    
+                    # Create order link for this additional case
+                    self._create_order_link(matching_case_id, order_info)
+                    
+                    # Create case-specific analysis data with this case's party names
+                    case_specific_analysis = self._create_case_specific_analysis(
+                        analysis_data, case_info, order_info.get('order_link')
+                    )
+                    
+                    # Update daily-boards with analysis for this case
+                    self.db.collection(self.boards_collection).document(matching_case_id).update(case_specific_analysis)
+                    
+                    # Create search index for this case
+                    case_data_for_search = self.db.collection(self.boards_collection).document(matching_case_id).get().to_dict()
+                    self._create_search_index_entry(matching_case_id, case_data_for_search, case_specific_analysis)
+                    
+                    linked_cases.append(case_ref)
+                    logging.info(f"Successfully linked order to additional case: {case_ref}")
+                    
+                except Exception as e:
+                    logging.error(f"Error linking order to case {case_number}: {e}")
+                    continue
+            
+        except Exception as e:
+            logging.error(f"Error in multi-case linking for {primary_case_ref}: {e}")
+        
+        return linked_cases
+    
+    def _normalize_case_number(self, case_number: str) -> Optional[str]:
+        """
+        Normalize a case number to standard format (TYPE/NUM/YEAR)
+        Handles various input formats like "WP/123/2024", "WP 123 of 2024", etc.
+        """
+        try:
+            # Remove extra whitespace
+            case_number = case_number.strip()
+            
+            # Pattern 1: TYPE/NUM/YEAR or TYPE-NUM-YEAR
+            pattern1 = r'([A-Z]+)[\s\-/]+(\d+)[\s\-/]+(\d{4})'
+            match = re.match(pattern1, case_number, re.IGNORECASE)
+            if match:
+                case_type, num, year = match.groups()
+                return f"{case_type.upper()}/{num}/{year}"
+            
+            # Pattern 2: "TYPE NO. NUM OF YEAR"
+            pattern2 = r'([A-Z]+)(?:\s+NO\.?)?\s+(\d+)\s+OF\s+(\d{4})'
+            match = re.match(pattern2, case_number, re.IGNORECASE)
+            if match:
+                case_type, num, year = match.groups()
+                return f"{case_type.upper()}/{num}/{year}"
+            
+            return None
+        except:
+            return None
+    
+    def _find_case_id_by_reference(self, case_ref: str, board_date: str) -> Optional[str]:
+        """
+        Find case_id in daily-boards collection by case reference and board date
+        """
+        try:
+            # Parse case reference
+            parts = self._parse_case_reference(case_ref)
+            if not parts:
+                return None
+            
+            case_type, case_no, case_year = parts
+            
+            # Query daily-boards collection
+            query = self.db.collection(self.boards_collection) \
+                .where("case_type", "==", case_type) \
+                .where("case_no", "==", case_no) \
+                .where("case_year", "==", case_year) \
+                .where("board_date", "==", board_date) \
+                .limit(1)
+            
+            results = query.get()
+            
+            if results:
+                return results[0].id
+            
+            return None
+        except Exception as e:
+            logging.error(f"Error finding case_id for {case_ref}: {e}")
+            return None
+    
+    def _create_case_specific_analysis(self, analysis_data: Dict, case_info: Dict, order_link: str) -> Dict:
+        """
+        Create case-specific analysis data with the specific petitioners/respondents for this case
+        """
+        # Extract case-specific party names
+        petitioners = case_info.get('petitioners', [])
+        respondents = case_info.get('respondents', [])
+        agp_names = case_info.get('agp_names', [])
+        
+        # Create the analysis data structure with case-specific parties
+        case_analysis = {
+            "order_category": analysis_data.get('order_category'),
+            "order_category_confidence": analysis_data.get('order_category_confidence'),
+            "order_date": analysis_data.get('order_date'),
+            "order_petitioners": petitioners,  # Case-specific
+            "order_respondents": respondents,  # Case-specific
+            "order_agp_names": agp_names,      # Case-specific
+            "order_cases": [case_info],        # Only this case's info
+            "order_key_phrases": analysis_data.get('order_key_phrases', []),
+            "order_next_hearing_date": analysis_data.get('order_next_hearing_date'),
+            "order_disposal_reason": analysis_data.get('order_disposal_reason'),
+            "order_text": analysis_data.get('order_text', ''),
+            "order_tabular_data": analysis_data.get('order_tabular_data'),
+            "order_date_validation": analysis_data.get('order_date_validation', {}),
+            "order_link": order_link,
+            "order_analysis_timestamp": datetime.now().isoformat(),
+            "order_analysis_completed": True,
+            "order_last_updated": datetime.now().isoformat()
+        }
+        
+        return case_analysis
 
     def _get_order_status(self, case_id: str) -> str:
         """Get current order status for a case"""
