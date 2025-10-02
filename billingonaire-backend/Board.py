@@ -491,6 +491,12 @@ class Board:
                 logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
                 query = query.where("case_year", "==", case_year)
 
+            # Apply order status filter (server-side) using the order_status field
+            order_status = search_criteria.get("orderStatus") or search_criteria.get("order_status")
+            if order_status:
+                logging.info(f"FILTERING BY ORDER STATUS: {order_status} (field: order_status)")
+                query = query.where("order_status", "==", order_status)
+
             docs = query.stream()
             data = []
             sample_dates = []
@@ -511,17 +517,6 @@ class Board:
                 # If not present, they will be None/undefined in the response
                 
                 data.append(doc_data)
-            
-            # Apply order status filter if specified (client-side filtering since not all docs have order_link field)
-            order_status = search_criteria.get("orderStatus") or search_criteria.get("order_status")
-            if order_status:
-                logging.info(f"Filtering by order status: {order_status}")
-                if order_status == "has_order":
-                    # Keep only cases with order_link
-                    data = [d for d in data if d.get('order_link') or d.get('order_downloaded')]
-                elif order_status == "no_order":
-                    # Keep only cases without order_link
-                    data = [d for d in data if not d.get('order_link') and not d.get('order_downloaded')]
             
             # Log sample dates for debugging
             if sample_dates:

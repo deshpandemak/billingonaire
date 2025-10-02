@@ -90,7 +90,8 @@ const Table = () => {
           caseNumber: criteria.caseNumber,
           caseType: criteria.caseType,
           caseYear: criteria.caseYear,
-          caseStage: criteria.caseStage
+          caseStage: criteria.caseStage,
+          orderStatus: criteria.orderStatus
         })
       });
       console.log('🔍 API Response received:', result);
@@ -669,8 +670,11 @@ const Table = () => {
                     onChange={e => setSearchCriteria(sc => ({ ...sc, orderStatus: e.target.value }))}
                   >
                     <option value="">All Cases</option>
-                    <option value="has_order">Has Order</option>
-                    <option value="no_order">No Order</option>
+                    <option value="not_linked">Not Linked</option>
+                    <option value="order_linked">Order Linked (Not Analysed)</option>
+                    <option value="analysed">Linked & Analysed</option>
+                    <option value="order_failed">Order Failed</option>
+                    <option value="order_analysis_failed">Analysis Failed</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
@@ -811,7 +815,14 @@ const Table = () => {
                 )}
                 {appliedCriteria.orderStatus && (
                   <span className="badge bg-primary">
-                    Order Status: {appliedCriteria.orderStatus === 'has_order' ? 'Has Order' : 'No Order'}
+                    Order Status: {
+                      appliedCriteria.orderStatus === 'not_linked' ? 'Not Linked' :
+                      appliedCriteria.orderStatus === 'order_linked' ? 'Order Linked (Not Analysed)' :
+                      appliedCriteria.orderStatus === 'analysed' ? 'Linked & Analysed' :
+                      appliedCriteria.orderStatus === 'order_failed' ? 'Order Failed' :
+                      appliedCriteria.orderStatus === 'order_analysis_failed' ? 'Analysis Failed' :
+                      appliedCriteria.orderStatus
+                    }
                   </span>
                 )}
               </div>
