@@ -119,6 +119,17 @@ const AdminOrderManagement = () => {
                     text: `${data.message}. Processing ${data.cases_queued} cases in background.`
                 });
                 
+                // Update queue status immediately with response data
+                if (data.queue_size !== undefined) {
+                    setQueueStatus({
+                        queue_size: data.queue_size,
+                        processing_active: true,
+                        status: 'active',
+                        message: `Queue has ${data.queue_size} pending cases`
+                    });
+                }
+                
+                // Reload data after 2 seconds
                 setTimeout(() => {
                     loadOverview();
                     loadQueueStatus();
