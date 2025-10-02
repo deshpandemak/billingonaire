@@ -23,6 +23,7 @@ from typing import List, Dict
 from datetime import datetime, timedelta
 from asyncio import Queue
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI(
     title="Billingonaire API",
@@ -125,6 +126,9 @@ def get_user_matter_matcher():
 # In-memory queue for async order processing
 order_processing_queue = Queue()
 processing_active = False
+# Thread pool executor for blocking operations (configurable via env var)
+MAX_WORKERS = int(os.environ.get('ORDER_PROCESSING_WORKERS', '3'))
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 def get_current_user(request: Request):
     ensure_firebase()  # Initialize Firebase before auth operations
@@ -229,8 +233,18 @@ async def process_order_queue():
             logging.info(f"📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})")
             
             # Use AutoOrderManager to process single case
+            # Run blocking operation in thread pool to avoid blocking event loop
             try:
-                result = get_auto_order_manager()._process_single_case(case_info)
+                loop = asyncio.get_event_loop()
+                # Timeout after 5 minutes to prevent stuck requests from blocking workers
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        executor, 
+                        get_auto_order_manager()._process_single_case, 
+                        case_info
+                    ),
+                    timeout=300  # 5 minutes max per case
+                )
                 
                 if result.get("analysis_success"):
                     logging.info(f"✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
@@ -247,6 +261,18 @@ async def process_order_queue():
                 else:
                     logging.warning(f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
             
+            except asyncio.TimeoutError:
+                logging.error(f"⏱️ Timeout processing order for {case_info['case_ref']} - exceeded 5 minute limit")
+                # Update status to failed due to timeout
+                try:
+                    db = firestore.client()
+                    db.collection("daily-boards").document(case_info.get('id')).update({
+                        "order_status": "order_failed",
+                        "order_status_updated_at": datetime.now().isoformat(),
+                        "order_failure_reason": "Processing timeout exceeded 5 minutes"
+                    })
+                except Exception as update_error:
+                    logging.error(f"Failed to update timeout status: {update_error}")
             except Exception as e:
                 logging.error(f"❌ Error processing order for {case_info['case_ref']}: {e}")
                 import traceback
