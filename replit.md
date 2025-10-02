@@ -171,6 +171,33 @@ firebase deploy --only hosting --token "$FIREBASE_TOKEN"
 - ✅ Direct Docker image deployment (avoiding Cloud Functions wrapper)
 - ✅ CORS and authentication properly configured for cross-origin requests
 
+## Latest Updates (Oct 2, 2025 - Latest)
+### UI Branding Enhancement
+- **Professional Title**: Changed application title from "Vite + React" to "Billingonaire - Professional Legal Billing Management"
+- **Custom Favicon**: Added scales of justice emoji (⚖️) as favicon for brand consistency
+- **User Experience**: Improved brand recognition and professional appearance in browser tabs
+
+### Multi-Case Order Linking (Oct 2, 2025)
+- **Smart Detection**: When an order contains multiple case numbers (clubbed cases), system automatically detects them
+- **Automatic Linking**: Links the same order to all matching cases found in the daily board on the same date
+- **Case-Specific Data**: Each linked case gets its own petitioner/respondent names extracted from the order's case table
+- **Database Queries**: Searches daily-boards collection by case type, number, year, and board date to find matching cases
+- **Safe Operation**: Skips cases that already have orders linked; only links to cases without existing orders
+- **Complete Integration**: Each linked case gets order link, analysis data, and search index entry
+- **Implementation Flow**:
+  1. Primary case is processed and order downloaded
+  2. Order is analyzed and case numbers are extracted
+  3. System normalizes additional case numbers (handles formats like "WP/123/2024", "WP 123 of 2024", etc.)
+  4. Queries database to find matching cases
+  5. Creates order links and analysis for all matching cases
+  6. Logs all linked cases for audit trail
+
+### Data Architecture Clarification
+- **Board Data**: Contains only advocate/lawyer names (petitioner_lawyer, respondent_lawyer, AGP names)
+- **Party Names Source**: Actual petitioner and respondent party names ALWAYS come from order analysis
+- **Dual Extraction**: System extracts party names from both order case table and order body text
+- **No Board Fallback**: Party name display does not fall back to board data (which contains lawyers, not parties)
+
 ## Status
 ✅ Professional UI transformation completed with modern design
 ✅ Unified order management interface fully operational
