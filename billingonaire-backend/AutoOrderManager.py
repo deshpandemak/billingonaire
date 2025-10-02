@@ -334,18 +334,31 @@ class AutoOrderManager:
         order_link = case_data.get('order_link')
         
         try:
-            logging.info(f"Downloading existing order from {order_link}")
+            logging.info(f"Attempting to re-download existing order from {order_link}")
             
             # Re-download the PDF from the stored link
             response = requests.get(order_link, timeout=30)
             
+            # Validate response status
             if response.status_code != 200:
-                raise Exception(f"Failed to download order from link: HTTP {response.status_code}")
+                logging.warning(f"Order link returned HTTP {response.status_code} for {case_ref}, falling back to fresh download")
+                return self._fallback_to_fresh_download(case_data, result, 
+                    f"Stored order link expired (HTTP {response.status_code})")
+            
+            # Validate content type
+            content_type = response.headers.get('Content-Type', '')
+            if 'application/pdf' not in content_type:
+                logging.warning(f"Order link returned {content_type} instead of PDF for {case_ref}, falling back to fresh download")
+                return self._fallback_to_fresh_download(case_data, result, 
+                    f"Stored order link returned invalid content type: {content_type}")
             
             pdf_content = response.content
             
+            # Validate PDF content size
             if not pdf_content or len(pdf_content) < 100:
-                raise Exception("Downloaded PDF is empty or too small")
+                logging.warning(f"Order link returned empty/small content for {case_ref}, falling back to fresh download")
+                return self._fallback_to_fresh_download(case_data, result, 
+                    "Stored order link returned empty or invalid PDF")
             
             logging.info(f"Successfully re-downloaded order for {case_ref}, size: {len(pdf_content)} bytes")
             
@@ -413,6 +426,124 @@ class AutoOrderManager:
                 })
             except Exception as status_error:
                 logging.error(f"Failed to update order_analysis_failed status: {status_error}")
+            
+            return result
+
+    def _fallback_to_fresh_download(self, case_data: Dict, result: Dict, reason: str) -> Dict:
+        """Fallback to fresh download when stored order link is invalid"""
+        case_id = case_data['id']
+        case_ref = case_data['case_ref']
+        
+        logging.info(f"Initiating fresh download for {case_ref} due to: {reason}")
+        
+        try:
+            # Reset status to not_linked to trigger fresh download
+            self.db.collection(self.boards_collection).document(case_id).update({
+                "order_status": "not_linked",
+                "order_status_updated_at": datetime.now().isoformat(),
+                "order_link_invalidation_reason": reason
+            })
+            
+            # Remove the order_linked status from case_data to prevent infinite loop
+            case_data_fresh = case_data.copy()
+            case_data_fresh["order_status"] = "not_linked"
+            case_data_fresh.pop("order_link", None)
+            
+            # Now process with normal download flow (will try sequence numbers 1-50)
+            logging.info(f"Processing {case_ref} with fresh download (trying up to 50 sequence numbers)")
+            
+            # Use existing _process_single_case logic but with modified case_data
+            MAX_RETRIES = int(os.getenv('ORDER_MAX_SEQUENCE_RETRIES', '50'))
+            download_failures = 0
+            date_mismatches = 0
+            
+            for sequence_num in range(1, MAX_RETRIES + 1):
+                if sequence_num == 1 or sequence_num == MAX_RETRIES or sequence_num % 5 == 0:
+                    logging.info(f"Fresh download {case_ref}: trying sequence {sequence_num}/{MAX_RETRIES}")
+                
+                try:
+                    download_result = self._download_order_for_case(case_data_fresh, sequence_num)
+                    
+                    if download_result.get("success"):
+                        order_link = download_result.get("order_link")
+                        pdf_content = download_result.get("pdf_content")
+                        
+                        result["download_success"] = True
+                        result["order_link"] = order_link
+                        
+                        # Analyze the downloaded order
+                        analysis_result = self._analyze_order_with_date_validation(
+                            case_id, case_ref, pdf_content,
+                            case_data.get('board_date'), order_link
+                        )
+                        
+                        if analysis_result.get('success'):
+                            result["analysis_success"] = True
+                            result["analysis_data"] = analysis_result.get('data')
+                            
+                            # Create search index
+                            try:
+                                self._create_search_index_entry(case_id, case_data_fresh, analysis_result['data'])
+                            except Exception as index_error:
+                                logging.error(f"Failed to create search index: {index_error}")
+                            
+                            # Link to additional cases
+                            try:
+                                linked_cases = self._link_order_to_additional_cases(
+                                    case_id, case_ref, analysis_result['data'],
+                                    download_result, case_data.get('board_date')
+                                )
+                                if linked_cases:
+                                    result["additional_cases_linked"] = linked_cases
+                            except Exception as multi_link_error:
+                                logging.warning(f"Multi-case linking failed: {multi_link_error}")
+                            
+                            logging.info(f"✅ Fresh download and analysis succeeded for {case_ref}")
+                            return result
+                        else:
+                            result["error"] = analysis_result.get('error')
+                            logging.error(f"Analysis failed after fresh download: {result['error']}")
+                            return result
+                    
+                    elif download_result.get("error"):
+                        if "date mismatch" in download_result.get("error", "").lower():
+                            date_mismatches += 1
+                        else:
+                            download_failures += 1
+                        continue
+                        
+                except Exception as e:
+                    logging.warning(f"Fresh download seq {sequence_num} error: {e}")
+                    download_failures += 1
+                    continue
+            
+            # All attempts failed
+            error_msg = f"Fresh download failed after {MAX_RETRIES} attempts. {download_failures} downloads failed, {date_mismatches} date mismatches."
+            result["error"] = error_msg
+            
+            # Update status to order_failed
+            self.db.collection(self.boards_collection).document(case_id).update({
+                "order_status": "order_failed",
+                "order_status_updated_at": datetime.now().isoformat(),
+                "order_failure_reason": error_msg
+            })
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Fallback fresh download failed: {str(e)}"
+            result["error"] = error_msg
+            logging.error(f"Error in fallback fresh download for {case_ref}: {e}")
+            
+            # Update to order_analysis_failed
+            try:
+                self.db.collection(self.boards_collection).document(case_id).update({
+                    "order_status": "order_analysis_failed",
+                    "order_status_updated_at": datetime.now().isoformat(),
+                    "order_failure_reason": error_msg
+                })
+            except Exception as status_error:
+                logging.error(f"Failed to update status: {status_error}")
             
             return result
 
