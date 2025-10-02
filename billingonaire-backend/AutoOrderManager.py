@@ -151,9 +151,10 @@ class AutoOrderManager:
         """Process a single case with retry logic - try up to N sequence numbers"""
         case_id = case_data['id']
         case_ref = case_data['case_ref']
+        order_status = case_data.get('order_status', 'not_linked')
         
-        # Check if case has existing order data
-        has_existing_order = case_data.get('order_downloaded', False) or case_data.get('order_link') is not None
+        # Check if case has existing order link (order_linked status)
+        has_existing_order_link = case_data.get('order_link') is not None
         
         result = {
             "case_id": case_id,
@@ -164,8 +165,18 @@ class AutoOrderManager:
             "analysis_data": None,
             "error": None,
             "retry_attempts": [],
-            "has_existing_order": has_existing_order
+            "has_existing_order": has_existing_order_link
         }
+        
+        # If case has status "order_linked", skip download and analyze existing order
+        if order_status == 'order_linked' and has_existing_order_link:
+            logging.info(f"📋 {case_ref} - Status is 'order_linked', analyzing existing order")
+            try:
+                return self._analyze_existing_order(case_data, result)
+            except Exception as e:
+                logging.error(f"Failed to analyze existing order for {case_ref}: {e}")
+                result["error"] = f"Failed to analyze existing order: {str(e)}"
+                return result
         
         # Configurable max retries - default to 50 for comprehensive search
         MAX_RETRIES = int(os.getenv('ORDER_MAX_SEQUENCE_RETRIES', '50'))
@@ -315,6 +326,95 @@ class AutoOrderManager:
             logging.error(f"Error processing case {case_ref}: {e}")
         
         return result
+
+    def _analyze_existing_order(self, case_data: Dict, result: Dict) -> Dict:
+        """Analyze an order that's already been downloaded (order_linked status)"""
+        case_id = case_data['id']
+        case_ref = case_data['case_ref']
+        order_link = case_data.get('order_link')
+        
+        try:
+            logging.info(f"Downloading existing order from {order_link}")
+            
+            # Re-download the PDF from the stored link
+            response = requests.get(order_link, timeout=30)
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to download order from link: HTTP {response.status_code}")
+            
+            pdf_content = response.content
+            
+            if not pdf_content or len(pdf_content) < 100:
+                raise Exception("Downloaded PDF is empty or too small")
+            
+            logging.info(f"Successfully re-downloaded order for {case_ref}, size: {len(pdf_content)} bytes")
+            
+            # Mark download as successful
+            result["download_success"] = True
+            result["order_link"] = order_link
+            
+            # Analyze the order
+            analysis_result = self._analyze_order_with_date_validation(
+                case_id, case_ref, pdf_content, 
+                case_data.get('board_date'), order_link
+            )
+            
+            if analysis_result.get('success'):
+                result["analysis_success"] = True
+                result["analysis_data"] = analysis_result.get('data')
+                
+                # Create search index
+                try:
+                    self._create_search_index_entry(case_id, case_data, analysis_result['data'])
+                except Exception as index_error:
+                    logging.error(f"Failed to create search index for {case_ref}: {index_error}")
+                
+                # Link order to additional cases found in the order (multi-case linking)
+                try:
+                    linked_cases = self._link_order_to_additional_cases(
+                        case_id, case_ref, analysis_result['data'], 
+                        {"order_link": order_link, "pdf_content": pdf_content}, 
+                        case_data.get('board_date')
+                    )
+                    if linked_cases:
+                        result["additional_cases_linked"] = linked_cases
+                        logging.info(f"Linked order to {len(linked_cases)} additional cases: {linked_cases}")
+                except Exception as multi_link_error:
+                    logging.warning(f"Failed to link order to additional cases for {case_ref}: {multi_link_error}")
+                
+                logging.info(f"✅ Successfully analyzed existing order for {case_ref}")
+            else:
+                result["error"] = f"Analysis failed: {analysis_result.get('error')}"
+                logging.error(f"Analysis failed for existing order {case_ref}: {result['error']}")
+                
+                # Update status to order_analysis_failed
+                try:
+                    self.db.collection(self.boards_collection).document(case_id).update({
+                        "order_status": "order_analysis_failed",
+                        "order_status_updated_at": datetime.now().isoformat(),
+                        "order_failure_reason": result["error"]
+                    })
+                except Exception as status_error:
+                    logging.error(f"Failed to update order_analysis_failed status: {status_error}")
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Failed to analyze existing order: {str(e)}"
+            result["error"] = error_msg
+            logging.error(f"Error analyzing existing order for {case_ref}: {e}")
+            
+            # Update status to order_analysis_failed
+            try:
+                self.db.collection(self.boards_collection).document(case_id).update({
+                    "order_status": "order_analysis_failed",
+                    "order_status_updated_at": datetime.now().isoformat(),
+                    "order_failure_reason": error_msg
+                })
+            except Exception as status_error:
+                logging.error(f"Failed to update order_analysis_failed status: {status_error}")
+            
+            return result
 
     def _download_order_for_case(self, case_data: Dict, sequence_number: int = 0) -> Dict:
         """

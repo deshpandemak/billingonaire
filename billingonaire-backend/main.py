@@ -1815,7 +1815,7 @@ async def admin_bulk_order_processing(
         db = firestore.client()
         
         body = await request.json()
-        order_statuses = body.get("order_statuses", ["not_linked", "order_failed"])
+        order_statuses = body.get("order_statuses", ["not_linked", "order_linked", "order_failed"])
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
         
