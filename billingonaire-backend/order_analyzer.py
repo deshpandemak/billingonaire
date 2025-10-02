@@ -390,7 +390,8 @@ class OrderDocumentAnalyzer:
             'parties_section': '',
             'advocates_section': '',
             'order_section': '',
-            'document_type': 'UNKNOWN'
+            'document_type': 'UNKNOWN',
+            'full_text': text  # Include full text for case-specific extraction
         }
         
         lines = text.split('\n')
@@ -878,30 +879,60 @@ class OrderDocumentAnalyzer:
         return advocates, agp_names
     
     def _associate_multiple_cases(self, case_numbers: List[str], document_structure: Dict[str, Any]) -> List[CaseInfo]:
-        """Handle multiple cases clubbed together"""
+        """Handle multiple cases clubbed together with case-specific AGP assignments"""
         cases = []
         
-        # For multiple cases, we'll create individual case entries
-        # but share the advocates/AGP information across all cases
+        # Extract full text from document structure for case-specific extraction
+        full_text = document_structure.get('full_text', '')
         
-        # Extract common parties and advocates
-        petitioners, respondents = [], []
-        advocates, agp_names = [], []
+        # Extract case-specific AGP/GP mappings
+        case_agp_mapping = self._extract_case_specific_agps(full_text) if full_text else {}
+        case_parties_mapping = self._extract_case_specific_parties(full_text) if full_text else {}
+        
+        # Extract common/fallback data
+        common_petitioners, common_respondents = [], []
+        common_advocates, common_agp_names = [], []
         
         if document_structure['has_parties']:
-            petitioners, respondents = self._parse_parties_section(document_structure['parties_section'])
+            common_petitioners, common_respondents = self._parse_parties_section(document_structure['parties_section'])
         
         if document_structure['has_advocates']:
-            advocates, agp_names = self._parse_advocates_section(document_structure['advocates_section'])
+            common_advocates, common_agp_names = self._parse_advocates_section(document_structure['advocates_section'])
         
         # Create case info for each case number
         for case_number in case_numbers:
+            # Parse canonical case ID for lookup
+            case_info_parsed = self._parse_canonical_case_info(case_number)
+            canonical_id = case_info_parsed.get('canonical_id', '')
+            
+            # Try to get case-specific data first, fall back to common data
+            petitioners = common_petitioners.copy()
+            respondents = common_respondents.copy()
+            agp_names_list = []
+            
+            # Get case-specific parties if available
+            if canonical_id and canonical_id in case_parties_mapping:
+                case_parties = case_parties_mapping[canonical_id]
+                if case_parties.get('petitioners'):
+                    petitioners = case_parties['petitioners']
+                if case_parties.get('respondents'):
+                    respondents = case_parties['respondents']
+            
+            # Get case-specific AGP names if available
+            if canonical_id and canonical_id in case_agp_mapping:
+                # Use case-specific AGP names
+                for agp_info in case_agp_mapping[canonical_id]:
+                    agp_names_list.append(agp_info['name'])
+            else:
+                # Fall back to common AGP names
+                agp_names_list = [agp['name'] if isinstance(agp, dict) else agp for agp in common_agp_names]
+            
             case_info = CaseInfo(
                 case_number=case_number,
-                petitioners=petitioners.copy(),  # Shared across cases
-                respondents=respondents.copy(),  # Shared across cases
-                agp_names=agp_names.copy(),      # Shared across cases
-                advocates=advocates.copy()        # Shared across cases
+                petitioners=petitioners,
+                respondents=respondents,
+                agp_names=agp_names_list,  # Case-specific or fallback
+                advocates=common_advocates.copy()
             )
             cases.append(case_info)
         
