@@ -24,11 +24,10 @@ const AdminOrderManagement = () => {
 
     const statusLabels = {
         'not_linked': 'Not Linked',
-        'order_linked': 'Order Linked',
-        'analysed': 'Analysed',
+        'order_linked': 'Order Linked (Not Analysed)',
+        'analysed': 'Linked & Analysed',
         'order_failed': 'Order Failed',
-        'order_analysis_failed': 'Analysis Failed',
-        'unknown': 'Unknown'
+        'order_analysis_failed': 'Analysis Failed'
     };
 
     const statusVariants = {
@@ -36,8 +35,7 @@ const AdminOrderManagement = () => {
         'order_linked': 'info',
         'analysed': 'success',
         'order_failed': 'danger',
-        'order_analysis_failed': 'warning',
-        'unknown': 'light'
+        'order_analysis_failed': 'warning'
     };
 
     useEffect(() => {

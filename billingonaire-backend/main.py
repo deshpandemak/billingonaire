@@ -1743,8 +1743,7 @@ async def get_order_status_overview(
             "order_linked": 0,
             "analysed": 0,
             "order_failed": 0,
-            "order_analysis_failed": 0,
-            "unknown": 0
+            "order_analysis_failed": 0
         }
         
         for case_doc in cases:
