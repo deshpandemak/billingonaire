@@ -19,7 +19,7 @@ import firebase_admin
 import re
 import asyncio
 import socket
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from asyncio import Queue
 import json

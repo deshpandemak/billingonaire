@@ -19,8 +19,11 @@ const BillGeneration = () => {
     const [bulkFeeValue, setBulkFeeValue] = useState('');
     const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStatus, setProcessingStatus] = useState('');
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [agpList, setAgpList] = useState([]);
+    const [selectedAgp, setSelectedAgp] = useState('');
 
-    // Set default date range to current month
+    // Set default date range to current month and fetch AGP list if admin
     useEffect(() => {
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -30,7 +33,23 @@ const BillGeneration = () => {
             startDate: formatDateSafe(startOfMonth),
             endDate: formatDateSafe(endOfMonth)
         });
+
+        // Check admin status and fetch AGP list
+        checkAdminAndFetchAgps();
     }, []);
+
+    const checkAdminAndFetchAgps = async () => {
+        try {
+            // Fetch admin AGP list (will work only if user is admin)
+            const response = await authenticatedFetchJSON('/admin/agp-names');
+            setIsAdmin(true);
+            setAgpList(response.agp_names || []);
+        } catch (err) {
+            // User is not admin, that's fine
+            setIsAdmin(false);
+            setAgpList([]);
+        }
+    };
 
     const handleDateChange = (field, value) => {
         setDateRange(prev => ({
@@ -118,7 +137,13 @@ const BillGeneration = () => {
             setProcessingProgress(20);
             setProcessingStatus('Fetching case data...');
             
-            const response = await authenticatedFetchJSON(`/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`);
+            // Build query with optional agp_name parameter for admin
+            let queryUrl = `/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
+            if (isAdmin && selectedAgp) {
+                queryUrl += `&agp_name=${encodeURIComponent(selectedAgp)}`;
+            }
+            
+            const response = await authenticatedFetchJSON(queryUrl);
             
             setProcessingProgress(60);
             setProcessingStatus('Processing entries...');
@@ -417,6 +442,32 @@ const BillGeneration = () => {
                                     </div>
                                 </Col>
                             </Row>
+
+                            {/* Admin AGP Selector */}
+                            {isAdmin && agpList.length > 0 && (
+                                <Row className="mb-4">
+                                    <Col md={6}>
+                                        <Form.Group>
+                                            <Form.Label>
+                                                <span className="badge bg-success me-2">Admin</span>
+                                                Select AGP (Optional - leave empty for your own cases)
+                                            </Form.Label>
+                                            <Form.Select
+                                                value={selectedAgp}
+                                                onChange={(e) => setSelectedAgp(e.target.value)}
+                                            >
+                                                <option value="">My Cases Only</option>
+                                                {agpList.map((agp, index) => (
+                                                    <option key={index} value={agp}>{agp}</option>
+                                                ))}
+                                            </Form.Select>
+                                            <Form.Text className="text-muted">
+                                                As an admin, you can generate bills for any AGP
+                                            </Form.Text>
+                                        </Form.Group>
+                                    </Col>
+                                </Row>
+                            )}
 
                             <Row className="mb-4">
                                 <Col md={3} className="d-flex align-items-end">
