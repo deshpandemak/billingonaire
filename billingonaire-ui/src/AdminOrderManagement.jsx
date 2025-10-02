@@ -234,7 +234,9 @@ const AdminOrderManagement = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {Object.entries(overview.status_counts).map(([status, count]) => (
+                                            {Object.entries(overview.status_counts)
+                                                .filter(([status, count]) => status && status.trim() !== '' && statusLabels[status])
+                                                .map(([status, count]) => (
                                                 <tr key={status}>
                                                     <td>
                                                         <Badge bg={statusVariants[status]}>
