@@ -1,9 +1,16 @@
 import { auth } from './firebase.js';
 
-// Use production cloud function URL when deployed, local proxy for development
-const API_BASE_URL = import.meta.env.PROD 
-  ? "https://asia-south1-billingonaire.cloudfunctions.net/billingonaire-backend"
-  : "/api";
+// Use environment variable for API URL, fallback to /api for development proxy
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+
+// Helper to build API URLs
+export const getApiUrl = (path) => {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (API_BASE_URL.startsWith('http')) {
+    return `${API_BASE_URL}${cleanPath}`;
+  }
+  return `${API_BASE_URL}${cleanPath}`;
+};
 
 // Helper function to make authenticated API calls
 export const authenticatedFetch = async (url, options = {}) => {

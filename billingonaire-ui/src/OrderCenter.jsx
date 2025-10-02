@@ -3,6 +3,7 @@ import { Container, Row, Col, Card, Nav, Tab, Badge, Alert, Spinner, Button, Tab
 import { authenticatedFetchJSON } from './lib/api';
 import { auth } from './lib/firebase';
 import './styles/professional.css';
+import { getApiUrl } from './lib/api';
 
 const OrderCenter = () => {
     const [activeTab, setActiveTab] = useState('overview');
@@ -167,7 +168,7 @@ const OrderCenter = () => {
             const formData = new FormData();
             formData.append('file', selectedFile);
 
-            const response = await fetch('/api/analyze-order', {
+            const response = await fetch(getApiUrl('/analyze-order'), {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`

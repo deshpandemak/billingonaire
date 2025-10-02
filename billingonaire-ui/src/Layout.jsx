@@ -13,6 +13,7 @@ import AdminUserManagement from './AdminUserManagement';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
+import { getApiUrl } from './lib/api';
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -26,7 +27,7 @@ const Layout = ({ children }) => {
       if (user) {
         try {
           // Get user profile to check role
-          const response = await fetch('/api/user/profile', {
+          const response = await fetch(getApiUrl('/user/profile'), {
             headers: {
               'Authorization': `Bearer ${await user.getIdToken()}`
             }

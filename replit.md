@@ -51,13 +51,53 @@ Billingonaire is a professional legal billing management system that processes d
 - **Authentication**: Firebase Auth
 - **Styling**: Professional CSS design system with legal theme
 
-## Deployment
-Configured for VM deployment with both frontend and backend running simultaneously.
+## Production Deployment ✅
+**Application is live and deployed to production!**
+
+### Production URLs
+- **Frontend**: https://billingonaire.web.app (Firebase Hosting)
+- **Backend**: https://billingonaire-backend-819125105651.asia-south1.run.app (Google Cloud Run)
+
+### Deployment Architecture
+- **Frontend**: React app built with Vite and deployed to Firebase Hosting
+- **Backend**: FastAPI server containerized and deployed to Google Cloud Run
+- **Database**: Firebase Firestore (shared between dev and production)
+- **Authentication**: Firebase Auth with ID token verification
+
+### Deployment Commands
+```bash
+# Deploy Backend to Cloud Run
+cd billingonaire-backend
+gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
+gcloud run deploy billingonaire-backend \
+  --image=gcr.io/billingonaire/billingonaire-backend:latest \
+  --region=asia-south1 \
+  --allow-unauthenticated \
+  --platform=managed \
+  --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
+  --timeout=300 \
+  --cpu=1 \
+  --memory=1Gi \
+  --port=8080
+
+# Deploy Frontend to Firebase Hosting
+cd billingonaire-ui
+npm run build
+firebase deploy --only hosting --token "$FIREBASE_TOKEN"
+```
+
+### Environment Configuration
+- **Development**: Uses `/api` proxy (Vite dev server) pointing to localhost:8000
+- **Production**: Uses `VITE_API_URL` environment variable pointing to Cloud Run backend
+- **Environment Files**:
+  - `.env.development`: `VITE_API_URL=/api`
+  - `.env.production`: `VITE_API_URL=https://billingonaire-backend-819125105651.asia-south1.run.app`
 
 ## API Integration
-- Vite proxy configured to handle `/api/*` requests
-- Authentication via Firebase ID tokens
-- RESTful API endpoints for dashboard data and file processing
+- **Development**: Vite proxy configured to handle `/api/*` requests to localhost:8000
+- **Production**: Direct HTTPS calls to Cloud Run backend URL
+- **Authentication**: Firebase ID tokens passed in Authorization header
+- **RESTful API**: Endpoints for dashboard data, file processing, order management, and bill generation
 
 ## Recent Updates (Sept 30, 2025)
 ### Order Management Consolidation
@@ -122,11 +162,13 @@ Configured for VM deployment with both frontend and backend running simultaneous
 - **Fallback Logic**: If case table extraction is empty, displays names extracted from order body text
 - **Analyze Button**: For orders downloaded before auto-analysis, manual "Analyze" button appears to trigger analysis
 
-### Production Ready
-- ✅ Deployment configuration optimized for VM deployment
-- ✅ Debug logging removed for production
-- ✅ Frontend uses Vite preview for production builds
-- ✅ Backend runs without reload flag in production
+### Production Deployment (Oct 2, 2025)
+- ✅ Backend successfully deployed to Google Cloud Run
+- ✅ Frontend successfully deployed to Firebase Hosting
+- ✅ Environment variables configured for production API endpoint
+- ✅ Lazy loading pattern implemented for all heavy objects to prevent startup timeouts
+- ✅ Direct Docker image deployment (avoiding Cloud Functions wrapper)
+- ✅ CORS and authentication properly configured for cross-origin requests
 
 ## Status
 ✅ Professional UI transformation completed with modern design
@@ -134,4 +176,4 @@ Configured for VM deployment with both frontend and backend running simultaneous
 ✅ All components successfully configured and running in Replit environment
 ✅ API routing and authentication working correctly
 ✅ Responsive design optimized for legal professionals
-✅ **Ready for deployment to production**
+✅ **Successfully deployed to production and live!**
