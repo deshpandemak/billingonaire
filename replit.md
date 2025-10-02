@@ -123,6 +123,7 @@ firebase deploy --only hosting --token "$FIREBASE_TOKEN"
 - **Improved Scoring Logic**: Weighted scoring gives higher priority to hearing indicators (2.0x-2.5x weight)
 - **Lower Classification Threshold**: Reduced from 70% to 50% for preferring "HEARD & ADJOURNED" over "ADJOURNED"
 - **Better Accuracy**: System now correctly identifies hearings even without explicit "heard and adjourned" text
+- **AGP + Standover Rule (Oct 2, 2025)**: When AGP names are present AND order contains "stand over", automatically categorizes as "HEARD & ADJOURNED" instead of "ADJOURNED" (business logic enhancement)
 
 ### Order Date Validation & Retry Logic (Sept 30, 2025)
 - **Intelligent Retry System**: Automatically tries up to 50 sequence numbers (1-50) to find order with matching date

@@ -986,6 +986,17 @@ class OrderDocumentAnalyzer:
         # For all document types, use the improved classification logic
         category, confidence = self._classify_order(text)
         
+        # BUSINESS RULE: If AGP names are present AND text contains "stand over", 
+        # classify as HEARD_AND_ADJOURNED instead of ADJOURNED
+        # This indicates the matter was heard (AGP appeared) even though just adjourned
+        has_agp_names = bool(document_structure.get('advocates_section', '').strip())
+        has_standover = bool(re.search(r'\bstand\s+over\b', text, re.IGNORECASE))
+        
+        if category == 'ADJOURNED' and has_agp_names and has_standover:
+            logging.info(f"Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP present + Standover found")
+            category = 'HEARD_AND_ADJOURNED'
+            confidence = min(confidence * 1.2, 1.0)  # Boost confidence for this business rule match
+        
         # Apply document-type-specific adjustments
         if document_structure['document_type'] == 'ADJOURNMENT_ONLY':
             # For incomplete documents, check if we found hearing evidence despite missing structure
