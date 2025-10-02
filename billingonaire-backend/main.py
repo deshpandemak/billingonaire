@@ -20,7 +20,7 @@ import re
 import asyncio
 import socket
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 from asyncio import Queue
 import json
 
@@ -2225,7 +2225,7 @@ async def generate_bill_data(
         db = firestore.client()
         
         # Parse dates
-        from datetime import datetime
+        from datetime import datetime, timedelta
         start_dt = datetime.strptime(start_date, '%Y-%m-%d')
         end_dt = datetime.strptime(end_date, '%Y-%m-%d')
         
