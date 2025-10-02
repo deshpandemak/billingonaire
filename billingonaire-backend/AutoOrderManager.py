@@ -289,6 +289,16 @@ class AutoOrderManager:
             result["error"] = " ".join(error_parts)
             logging.warning(f"Case {case_ref}: {result['error']}")
             
+            # Set order_failed status after all attempts exhausted
+            try:
+                self.db.collection(self.boards_collection).document(case_id).update({
+                    "order_status": "order_failed",
+                    "order_status_updated_at": datetime.now().isoformat(),
+                    "order_failure_reason": result["error"]
+                })
+            except Exception as status_error:
+                logging.error(f"Failed to update order_failed status for {case_id}: {status_error}")
+            
             # If case has existing order data and download failed, clean it up
             if has_existing_order:
                 logging.info(f"Case {case_ref}: Download failed, cleaning up existing order data")
@@ -506,7 +516,11 @@ class AutoOrderManager:
                 # Analysis metadata
                 "order_analysis_timestamp": datetime.now().isoformat(),
                 "order_analysis_completed": True,
-                "order_last_updated": datetime.now().isoformat()
+                "order_last_updated": datetime.now().isoformat(),
+                
+                # Order status tracking
+                "order_status": "analysed",
+                "order_status_updated_at": datetime.now().isoformat()
             }
             
             # Update the daily-boards document directly with order analysis
@@ -523,6 +537,15 @@ class AutoOrderManager:
             
         except Exception as e:
             logging.error(f"Error analyzing order for case {case_id}: {e}")
+            # Set order_analysis_failed status
+            try:
+                self.db.collection(self.boards_collection).document(case_id).update({
+                    "order_status": "order_analysis_failed",
+                    "order_status_updated_at": datetime.now().isoformat(),
+                    "order_analysis_error": str(e)
+                })
+            except Exception as update_error:
+                logging.error(f"Failed to update order status for {case_id}: {update_error}")
             return {"success": False, "error": str(e)}
 
     def _validate_order_date(self, extracted_order_date: str, expected_board_date: str) -> Dict:
@@ -700,7 +723,9 @@ class AutoOrderManager:
                 "order_link": order_info.get('order_link'),
                 "order_filename": order_info.get('filename'),
                 "order_source": order_info.get('source', 'auto'),
-                "order_downloaded_at": datetime.now().isoformat()
+                "order_downloaded_at": datetime.now().isoformat(),
+                "order_status": "order_linked",
+                "order_status_updated_at": datetime.now().isoformat()
             }
             
             self.db.collection(self.boards_collection).document(case_id).update(case_update)

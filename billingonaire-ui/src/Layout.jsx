@@ -10,6 +10,7 @@ import OrderCenter from './OrderCenter';
 import BillGeneration from './BillGeneration';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
+import AdminOrderManagement from './AdminOrderManagement';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
@@ -137,13 +138,22 @@ const Layout = ({ children }) => {
                     🔍 Search & Orders
                   </Nav.Link>
                   {userProfile?.role === 'admin' && (
-                    <Nav.Link 
-                      as={Link} 
-                      to="/admin/users"
-                      className={location.pathname === '/admin/users' ? 'active' : ''}
-                    >
-                      User Management
-                    </Nav.Link>
+                    <>
+                      <Nav.Link 
+                        as={Link} 
+                        to="/admin/users"
+                        className={location.pathname === '/admin/users' ? 'active' : ''}
+                      >
+                        User Management
+                      </Nav.Link>
+                      <Nav.Link 
+                        as={Link} 
+                        to="/admin/orders"
+                        className={location.pathname === '/admin/orders' ? 'active' : ''}
+                      >
+                        🔄 Order Management
+                      </Nav.Link>
+                    </>
                   )}
                   <Nav.Link 
                     as={Link} 
@@ -218,6 +228,7 @@ const App = () => (
         <Route path="/bills" element={<BillGeneration />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />
+        <Route path="/admin/orders" element={<AdminOrderManagement />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

@@ -1724,6 +1724,134 @@ async def scheduled_retry_orders(
             content={"error": f"Scheduled retry failed: {str(e)}"}
         )
 
+@app.get("/admin/order-status-overview", tags=["Admin Order Management"])
+async def get_order_status_overview(
+    current_user=Depends(require_admin)
+):
+    """
+    Get overview of order statuses for admin dashboard
+    Shows counts for each order status
+    """
+    try:
+        # Query all cases grouped by order_status
+        cases = db.collection("daily-boards").stream()
+        
+        status_counts = {
+            "not_linked": 0,
+            "order_linked": 0,
+            "analysed": 0,
+            "order_failed": 0,
+            "order_analysis_failed": 0,
+            "unknown": 0
+        }
+        
+        for case_doc in cases:
+            case_data = case_doc.to_dict()
+            status = case_data.get("order_status", "unknown")
+            if status in status_counts:
+                status_counts[status] += 1
+            else:
+                status_counts["unknown"] += 1
+        
+        total_cases = sum(status_counts.values())
+        
+        return JSONResponse(content={
+            "success": True,
+            "total_cases": total_cases,
+            "status_counts": status_counts,
+            "pending_processing": status_counts["not_linked"] + status_counts["order_failed"]
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting order status overview: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get order status overview: {str(e)}"}
+        )
+
+@app.post("/admin/bulk-order-processing", tags=["Admin Order Management"])
+async def admin_bulk_order_processing(
+    request: Request,
+    current_user=Depends(require_admin)
+):
+    """
+    Admin endpoint to trigger bulk order processing for cases with specific order status
+    Adds cases to async processing queue and returns immediately
+    
+    Request body:
+    {
+        "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
+        "limit": 100,  // Maximum cases to process
+        "days_back": 30  // Only process cases from last N days (optional)
+    }
+    """
+    try:
+        body = await request.json()
+        order_statuses = body.get("order_statuses", ["not_linked", "order_failed"])
+        limit = body.get("limit", 100)
+        days_back = body.get("days_back")
+        
+        # Build query
+        query = db.collection("daily-boards")
+        
+        # Filter by date if specified (board_date is stored as datetime object)
+        if days_back:
+            start_date = datetime.now() - timedelta(days=days_back)
+            # Convert to datetime object to match database storage format
+            start_datetime = datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0)
+            query = query.where("board_date", ">=", start_datetime)
+        
+        # Get all cases and filter by status (since Firestore doesn't support 'in' for all types)
+        all_cases = query.limit(limit * 3).stream()
+        
+        case_list = []
+        for case_doc in all_cases:
+            case_data = case_doc.to_dict()
+            case_status = case_data.get("order_status", "not_linked")
+            
+            if case_status in order_statuses:
+                case_info = {
+                    "id": case_doc.id,
+                    "case_ref": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                    "board_date": case_data.get('board_date'),
+                    "current_status": case_status
+                }
+                case_list.append(case_info)
+                
+                if len(case_list) >= limit:
+                    break
+        
+        if not case_list:
+            return JSONResponse(content={
+                "success": True,
+                "message": f"No cases found with statuses {order_statuses}",
+                "cases_queued": 0
+            })
+        
+        # Add cases to processing queue for async processing
+        for case_info in case_list:
+            await order_processing_queue.put(case_info)
+        
+        # Ensure background processing is active
+        await ensure_background_processing_active()
+        
+        logging.info(f"Admin bulk processing: Added {len(case_list)} cases to queue")
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Added {len(case_list)} cases to background processing queue",
+            "cases_queued": len(case_list),
+            "statuses_processed": order_statuses,
+            "queue_size": order_processing_queue.qsize()
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in admin bulk order processing: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Admin bulk processing failed: {str(e)}"}
+        )
+
 # Queue Management Endpoints
 @app.get("/queue/status", tags=["Queue Management"])
 async def get_queue_status(

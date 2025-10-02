@@ -391,6 +391,10 @@ class Board:
                 row['board_date'] = datetime.strptime(row['board_date'], '%Y-%m-%d')
                 document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
                 
+                # Set initial order status
+                row['order_status'] = 'not_linked'
+                row['order_status_updated_at'] = datetime.now().isoformat()
+                
                 doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
         except Exception as e:
