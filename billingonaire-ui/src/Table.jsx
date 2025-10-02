@@ -270,7 +270,7 @@ const Table = () => {
     },
     { 
       headerName: 'Order Status', 
-      field: 'order_downloaded', 
+      field: 'order_status', 
       sortable: true, 
       filter: false,
       width: 130,
@@ -325,34 +325,40 @@ const Table = () => {
   // Custom cell renderer for order status badge
   const OrderStatusRenderer = (props) => {
     const { data } = props;
-    const hasOrder = data?.order_downloaded || data?.order_link;
-    const hasAnalysis = data?.order_analysis_completed;
+    const orderStatus = data?.order_status || 'not_linked';
     const caseId = data?.id;
     const caseRef = data?.case_ref;
     const isProcessing = processingOrders.has(caseId);
     
-    if (!hasOrder) {
-      return <span className="badge" style={{ backgroundColor: '#6c757d', color: 'white' }}>No Order</span>;
+    // Define status display properties
+    const statusConfig = {
+      'not_linked': { label: 'Not Linked', color: '#6c757d' },
+      'order_linked': { label: 'Order Linked', color: '#17a2b8' },
+      'analysed': { label: 'Analysed', color: '#28a745' },
+      'order_failed': { label: 'Order Failed', color: '#dc3545' },
+      'order_analysis_failed': { label: 'Analysis Failed', color: '#ffc107' }
+    };
+    
+    const config = statusConfig[orderStatus] || statusConfig['not_linked'];
+    
+    // For order_linked status, show analyze button
+    if (orderStatus === 'order_linked') {
+      return (
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>
+          <button 
+            className="btn btn-sm btn-warning"
+            onClick={() => handleAnalyzeOrder(caseId, caseRef)}
+            disabled={isProcessing}
+            style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+          >
+            {isProcessing ? '...' : 'Analyze'}
+          </button>
+        </div>
+      );
     }
     
-    if (hasAnalysis) {
-      return <span className="badge" style={{ backgroundColor: '#28a745', color: 'white' }}>✓ Analyzed</span>;
-    }
-    
-    // Order downloaded but not analyzed - show analyze button
-    return (
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-        <span className="badge" style={{ backgroundColor: '#17a2b8', color: 'white' }}>Downloaded</span>
-        <button 
-          className="btn btn-sm btn-warning"
-          onClick={() => handleAnalyzeOrder(caseId, caseRef)}
-          disabled={isProcessing}
-          style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-        >
-          {isProcessing ? '...' : 'Analyze'}
-        </button>
-      </div>
-    );
+    return <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>;
   };
 
   // Order management functions
