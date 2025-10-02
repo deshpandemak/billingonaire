@@ -24,6 +24,7 @@ Billingonaire features a modern web application architecture consisting of a Rea
     - **Analytics Dashboard**: Provides weekly status, AGP statistics, and monthly averages.
     - **Authentication**: Secure Firebase-based user management with ID token verification.
     - **Admin Order Management System**: A dedicated admin dashboard (`/admin/orders`) for tracking the 5-state lifecycle of orders (`not_linked`, `order_linked`, `analysed`, `order_failed`, `order_analysis_failed`). It includes real-time status overview, live queue monitoring, and bulk processing controls with customizable filters (status, date range, limits).
+    - **Async Background Processing**: Concurrent order processing with configurable worker pool (default 3 workers, configurable via ORDER_PROCESSING_WORKERS env var). Uses ThreadPoolExecutor for blocking HTTP operations to prevent event loop blocking. Multiple worker tasks process cases in parallel for improved throughput.
     - **Data Display Optimization**: AGP names are sourced from board data, and existing columns are enhanced to display order analysis data. Petitioner and respondent party names are always derived from order analysis, utilizing dual extraction from both order case tables and body text.
 - **System Design Choices**:
     - **Frontend**: React 18, Vite, React Router, React Bootstrap, Custom CSS. Runs on port 5000.
