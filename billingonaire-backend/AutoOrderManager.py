@@ -317,7 +317,7 @@ class AutoOrderManager:
                 logging.error(f"Failed to update order_failed status for {case_id}: {status_error}")
             
             # If case has existing order data and download failed, clean it up
-            if has_existing_order:
+            if has_existing_order_link:
                 logging.info(f"Case {case_ref}: Download failed, cleaning up existing order data")
                 self._cleanup_order_data(case_id, case_ref)
                 
