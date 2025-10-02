@@ -960,6 +960,7 @@ async def create_order_link(
     """
     Create or update an order link for a case
     Body should contain: case_id, status, order_link, order_text, court_bench, notes
+    When manual linking is done, automatically triggers order analysis
     """
     try:
         order_data = await request.json()
@@ -972,6 +973,43 @@ async def create_order_link(
             )
         
         result = get_order_manager().create_order_link(case_id, order_data)
+        
+        # AUTO-ANALYSIS: If order link is provided, automatically analyze the order
+        if result.get("success") and order_data.get("order_link"):
+            try:
+                # Get case data for analysis
+                case_doc = db.collection("daily-boards").document(case_id).get()
+                if case_doc.exists:
+                    case_data = case_doc.to_dict()
+                    case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                    
+                    # Download and analyze the order
+                    import requests
+                    order_link = order_data.get("order_link")
+                    response = requests.get(order_link, timeout=30)
+                    
+                    if response.status_code == 200 and response.headers.get('Content-Type') == 'application/pdf':
+                        analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
+                            case_id, case_ref, response.content, 
+                            case_data.get('board_date'), order_link
+                        )
+                        
+                        if analysis_result.get("success"):
+                            result["analysis_completed"] = True
+                            result["analysis_message"] = "Order linked and analyzed successfully"
+                            logging.info(f"Auto-analysis completed for manually linked order: {case_id}")
+                        else:
+                            result["analysis_completed"] = False
+                            result["analysis_error"] = analysis_result.get("error")
+                    else:
+                        result["analysis_completed"] = False
+                        result["analysis_error"] = "Could not download PDF from link"
+                        
+            except Exception as analysis_error:
+                logging.error(f"Auto-analysis failed for manual link {case_id}: {analysis_error}")
+                result["analysis_completed"] = False
+                result["analysis_error"] = str(analysis_error)
+        
         return JSONResponse(content=result)
     except Exception as e:
         logging.error(f"Error creating order link: {e}")
@@ -1510,6 +1548,180 @@ async def bulk_process_orders(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to bulk process orders: {str(e)}"}
+        )
+
+@app.post("/auto-orders/upload-manual-order/{case_id}", tags=["Auto Order Management"])
+async def upload_manual_order(
+    case_id: str,
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user)
+):
+    """
+    Upload a manual order PDF for a case and automatically analyze it
+    This allows users to upload order PDFs when automatic download isn't available
+    """
+    try:
+        # Verify it's a PDF
+        if file.content_type != "application/pdf":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "File must be a PDF"}
+            )
+        
+        # Get case data
+        case_doc = db.collection("daily-boards").document(case_id).get()
+        if not case_doc.exists:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Case not found"}
+            )
+        
+        case_data = case_doc.to_dict()
+        case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+        
+        # Read PDF content
+        pdf_content = await file.read()
+        
+        # Store the PDF (you might want to upload to Firebase Storage or similar)
+        # For now, we'll just analyze it directly
+        
+        # Create a temporary order link (or upload to storage)
+        order_link = f"manual_upload_{case_id}_{file.filename}"
+        
+        # Update case document with manual order link
+        update_data = {
+            "order_downloaded": True,
+            "order_link": order_link,
+            "order_filename": file.filename,
+            "order_source": "manual_upload",
+            "order_downloaded_at": datetime.now().isoformat()
+        }
+        db.collection("daily-boards").document(case_id).update(update_data)
+        
+        # Create order document
+        order_doc = {
+            "case_id": case_id,
+            "status": "linked",
+            "order_link": order_link,
+            "fetch_date": datetime.now().isoformat(),
+            "source": "manual_upload",
+            "filename": file.filename,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        db.collection("case-orders").document(case_id).set(order_doc)
+        
+        # AUTOMATICALLY ANALYZE THE UPLOADED ORDER
+        analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
+            case_id, case_ref, pdf_content, 
+            case_data.get('board_date'), order_link
+        )
+        
+        if analysis_result.get("success"):
+            # Create search index
+            try:
+                get_auto_order_manager()._create_search_index_entry(case_id, case_data, analysis_result['data'])
+            except Exception as index_error:
+                logging.warning(f"Failed to create search index: {index_error}")
+            
+            return JSONResponse(content={
+                "success": True,
+                "message": "Order uploaded and analyzed successfully",
+                "case_id": case_id,
+                "case_ref": case_ref,
+                "filename": file.filename,
+                "analysis": {
+                    "order_category": analysis_result['data'].get('order_category'),
+                    "order_date": analysis_result['data'].get('order_date'),
+                    "petitioners_count": len(analysis_result['data'].get('order_petitioners', [])),
+                    "respondents_count": len(analysis_result['data'].get('order_respondents', []))
+                }
+            })
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False,
+                    "message": "Order uploaded but analysis failed",
+                    "error": analysis_result.get("error")
+                }
+            )
+            
+    except Exception as e:
+        logging.error(f"Error uploading manual order: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to upload order: {str(e)}"}
+        )
+
+@app.post("/auto-orders/scheduled-retry", tags=["Auto Order Management"])
+async def scheduled_retry_orders(
+    days_back: int = Query(7, description="Number of days to look back"),
+    limit: int = Query(100, description="Maximum cases to process"),
+    current_user=Depends(get_current_user)
+):
+    """
+    Scheduled endpoint for automatic retry of order downloads
+    Can be called by Cloud Scheduler or cron job to automatically process cases without orders
+    
+    Use Case: After board upload, orders may not be available yet. This endpoint
+    retries downloading orders for recent cases that don't have orders yet.
+    """
+    try:
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+        
+        # Query cases without orders from recent boards
+        query = db.collection("daily-boards") \
+            .where("board_date", ">=", start_date.strftime('%Y-%m-%d')) \
+            .where("board_date", "<=", end_date.strftime('%Y-%m-%d')) \
+            .where("order_downloaded", "==", False) \
+            .limit(limit)
+        
+        cases = query.get()
+        
+        case_list = []
+        for case_doc in cases:
+            case_data = case_doc.to_dict()
+            case_info = {
+                "id": case_doc.id,
+                "case_ref": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                "board_date": case_data.get('board_date')
+            }
+            case_list.append(case_info)
+        
+        if not case_list:
+            return JSONResponse(content={
+                "success": True,
+                "message": f"No cases without orders found in the last {days_back} days",
+                "cases_found": 0
+            })
+        
+        # Add cases to processing queue for async processing
+        for case_info in case_list:
+            await order_processing_queue.put(case_info)
+        
+        # Ensure background processing is active
+        await ensure_background_processing_active()
+        
+        logging.info(f"Scheduled retry: Added {len(case_list)} cases to processing queue")
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Added {len(case_list)} cases to background processing queue",
+            "cases_queued": len(case_list),
+            "date_range": {
+                "start": start_date.strftime('%Y-%m-%d'),
+                "end": end_date.strftime('%Y-%m-%d')
+            }
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in scheduled retry: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Scheduled retry failed: {str(e)}"}
         )
 
 # Queue Management Endpoints
