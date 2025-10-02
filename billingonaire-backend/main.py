@@ -1733,6 +1733,8 @@ async def get_order_status_overview(
     Shows counts for each order status
     """
     try:
+        db = firestore.client()
+        
         # Query all cases grouped by order_status
         cases = db.collection("daily-boards").stream()
         
@@ -1786,6 +1788,8 @@ async def admin_bulk_order_processing(
     }
     """
     try:
+        db = firestore.client()
+        
         body = await request.json()
         order_statuses = body.get("order_statuses", ["not_linked", "order_failed"])
         limit = body.get("limit", 100)
