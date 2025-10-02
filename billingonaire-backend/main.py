@@ -1749,11 +1749,13 @@ async def get_order_status_overview(
         
         for case_doc in cases:
             case_data = case_doc.to_dict()
-            status = case_data.get("order_status", "unknown")
-            if status in status_counts:
-                status_counts[status] += 1
-            else:
-                status_counts["unknown"] += 1
+            status = case_data.get("order_status", "not_linked")
+            
+            # Normalize: treat "unknown", empty, or missing status as "not_linked"
+            if status == "unknown" or status is None or status == "" or status not in status_counts:
+                status = "not_linked"
+            
+            status_counts[status] += 1
         
         total_cases = sum(status_counts.values())
         
@@ -1786,6 +1788,8 @@ async def admin_bulk_order_processing(
         "limit": 100,  // Maximum cases to process
         "days_back": 30  // Only process cases from last N days (optional)
     }
+    
+    Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
     """
     try:
         db = firestore.client()
@@ -1812,6 +1816,10 @@ async def admin_bulk_order_processing(
         for case_doc in all_cases:
             case_data = case_doc.to_dict()
             case_status = case_data.get("order_status", "not_linked")
+            
+            # Normalize: treat "unknown" or missing status as "not_linked"
+            if case_status == "unknown" or case_status is None or case_status == "":
+                case_status = "not_linked"
             
             if case_status in order_statuses:
                 case_info = {
