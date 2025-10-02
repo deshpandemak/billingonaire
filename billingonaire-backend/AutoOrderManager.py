@@ -167,8 +167,8 @@ class AutoOrderManager:
             "has_existing_order": has_existing_order
         }
         
-        # Configurable max retries - default to 10 for faster processing
-        MAX_RETRIES = int(os.getenv('ORDER_MAX_SEQUENCE_RETRIES', '10'))
+        # Configurable max retries - default to 50 for comprehensive search
+        MAX_RETRIES = int(os.getenv('ORDER_MAX_SEQUENCE_RETRIES', '50'))
         logging.info(f"Processing {case_ref} - will try up to {MAX_RETRIES} sequence numbers")
         
         download_failures = 0

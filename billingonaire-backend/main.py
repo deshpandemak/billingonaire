@@ -235,12 +235,16 @@ async def process_order_queue_worker(worker_id: int):
             
             # Use AutoOrderManager to process single case
             # Run blocking operation in thread pool to avoid blocking event loop
+            # Set timeout to 5 minutes (300 seconds) to prevent hanging
             try:
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    executor, 
-                    get_auto_order_manager()._process_single_case, 
-                    case_info
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        executor, 
+                        get_auto_order_manager()._process_single_case, 
+                        case_info
+                    ),
+                    timeout=300.0  # 5 minutes timeout per case
                 )
                 
                 if result.get("analysis_success"):
@@ -258,6 +262,8 @@ async def process_order_queue_worker(worker_id: int):
                 else:
                     logging.warning(f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
             
+            except asyncio.TimeoutError:
+                logging.error(f"❌ [Worker {worker_id}] TIMEOUT after 5 minutes processing {case_info['case_ref']} - moving to next case")
             except Exception as e:
                 logging.error(f"❌ Error processing order for {case_info['case_ref']}: {e}")
                 import traceback
