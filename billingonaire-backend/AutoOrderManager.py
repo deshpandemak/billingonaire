@@ -148,7 +148,7 @@ class AutoOrderManager:
             return []
 
     def _process_single_case(self, case_data: Dict) -> Dict:
-        """Process a single case with retry logic - try up to 50 sequence numbers"""
+        """Process a single case with retry logic - try up to N sequence numbers"""
         case_id = case_data['id']
         case_ref = case_data['case_ref']
         
@@ -167,14 +167,20 @@ class AutoOrderManager:
             "has_existing_order": has_existing_order
         }
         
-        MAX_RETRIES = 50
+        # Configurable max retries - default to 10 for faster processing
+        MAX_RETRIES = int(os.getenv('ORDER_MAX_SEQUENCE_RETRIES', '10'))
+        logging.info(f"Processing {case_ref} - will try up to {MAX_RETRIES} sequence numbers")
         
         download_failures = 0
         date_mismatches = 0
         
         try:
-            # Retry loop: Try sequence numbers 1 through 50
+            # Retry loop: Try sequence numbers 1 through MAX_RETRIES
             for sequence_num in range(1, MAX_RETRIES + 1):
+                # Log progress every 5 sequences or on first/last attempt
+                if sequence_num == 1 or sequence_num == MAX_RETRIES or sequence_num % 5 == 0:
+                    logging.info(f"{case_ref} - trying sequence {sequence_num}/{MAX_RETRIES}")
+                
                 attempt_log = {
                     "sequence": sequence_num,
                     "status": "attempting",
@@ -223,7 +229,7 @@ class AutoOrderManager:
                     result["download_success"] = True
                     result["order_link"] = order_info.get('order_link')
                     
-                    logging.info(f"Case {case_ref}: Found matching order at sequence {sequence_num}")
+                    logging.info(f"✅ Case {case_ref} - SUCCESS at sequence {sequence_num}/{MAX_RETRIES}")
                     
                     # Step 4: Create order link in database
                     try:
@@ -280,14 +286,14 @@ class AutoOrderManager:
                     logging.warning(f"Case {case_ref} seq {sequence_num} error: {e}")
                     continue
             
-            # If we get here, all 50 attempts failed - provide detailed error
+            # If we get here, all attempts failed - provide detailed error
             error_parts = [f"No matching order found after {MAX_RETRIES} attempts."]
             if download_failures > 0:
                 error_parts.append(f"{download_failures} downloads failed.")
             if date_mismatches > 0:
                 error_parts.append(f"{date_mismatches} orders had date mismatches.")
             result["error"] = " ".join(error_parts)
-            logging.warning(f"Case {case_ref}: {result['error']}")
+            logging.warning(f"❌ Case {case_ref} - FAILED after {MAX_RETRIES} sequences: {result['error']}")
             
             # Set order_failed status after all attempts exhausted
             try:
