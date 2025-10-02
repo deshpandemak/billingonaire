@@ -244,7 +244,7 @@ async def process_order_queue_worker(worker_id: int):
                 )
                 
                 if result.get("analysis_success"):
-                    logging.info(f"[Worker {worker_id}] ✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
+                    logging.info(f"[Worker {worker_id}] ✅ Successfully processed order for {case_info['case_ref']} - Status should be 'analysed' in database")
                     
                     # Automatically map case to users after successful analysis
                     try:
@@ -352,7 +352,9 @@ async def ensure_background_processing_active():
         # Start multiple worker tasks (one per thread pool worker)
         for worker_id in range(MAX_WORKERS):
             asyncio.create_task(process_order_queue_worker(worker_id))
-        logging.info(f"Started {MAX_WORKERS} background order processing worker(s)")
+        logging.info(f"🚀 Started {MAX_WORKERS} background order processing worker(s)")
+    else:
+        logging.info(f"✅ Background processing already active with {MAX_WORKERS} workers")
 
 # Login/logout endpoints removed - using Firebase client-side authentication
 
@@ -1852,21 +1854,22 @@ async def admin_bulk_order_processing(
                 "cases_queued": 0
             })
         
+        # Ensure background processing is active BEFORE adding to queue
+        await ensure_background_processing_active()
+        
         # Add cases to processing queue for async processing
         for case_info in case_list:
             await order_processing_queue.put(case_info)
         
-        # Ensure background processing is active
-        await ensure_background_processing_active()
-        
-        logging.info(f"Admin bulk processing: Added {len(case_list)} cases to queue")
+        queue_size_after = order_processing_queue.qsize()
+        logging.info(f"Admin bulk processing: Added {len(case_list)} cases to queue, current queue size: {queue_size_after}")
         
         return JSONResponse(content={
             "success": True,
             "message": f"Added {len(case_list)} cases to background processing queue",
             "cases_queued": len(case_list),
             "statuses_processed": order_statuses,
-            "queue_size": order_processing_queue.qsize()
+            "queue_size": queue_size_after
         })
         
     except Exception as e:
