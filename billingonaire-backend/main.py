@@ -127,7 +127,11 @@ def get_user_matter_matcher():
 order_processing_queue = Queue()
 processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
-MAX_WORKERS = int(os.environ.get('ORDER_PROCESSING_WORKERS', '3'))
+try:
+    MAX_WORKERS = max(1, int(os.environ.get('ORDER_PROCESSING_WORKERS', '3')))
+except (ValueError, TypeError):
+    logging.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 3")
+    MAX_WORKERS = 3
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 def get_current_user(request: Request):
@@ -218,36 +222,29 @@ async def trigger_async_order_processing(df: pd.DataFrame):
     except Exception as e:
         logging.error(f"Error adding cases to processing queue: {e}")
 
-async def process_order_queue():
-    """Background worker to process order queue"""
-    global processing_active
-    processing_active = True
-    
-    logging.info("🚀 Order processing background worker started")
+async def process_order_queue_worker(worker_id: int):
+    """Background worker to process order queue - one task per worker"""
+    logging.info(f"🚀 Order processing worker {worker_id} started")
     
     while True:
         try:
             # Get case from queue (wait up to 30 seconds)
             case_info = await asyncio.wait_for(order_processing_queue.get(), timeout=30.0)
             
-            logging.info(f"📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})")
+            logging.info(f"[Worker {worker_id}] 📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})")
             
             # Use AutoOrderManager to process single case
             # Run blocking operation in thread pool to avoid blocking event loop
             try:
                 loop = asyncio.get_event_loop()
-                # Timeout after 5 minutes to prevent stuck requests from blocking workers
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        executor, 
-                        get_auto_order_manager()._process_single_case, 
-                        case_info
-                    ),
-                    timeout=300  # 5 minutes max per case
+                result = await loop.run_in_executor(
+                    executor, 
+                    get_auto_order_manager()._process_single_case, 
+                    case_info
                 )
                 
                 if result.get("analysis_success"):
-                    logging.info(f"✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
+                    logging.info(f"[Worker {worker_id}] ✅ Successfully processed order for {case_info['case_ref']} - Analysis completed and data updated in daily-boards")
                     
                     # Automatically map case to users after successful analysis
                     try:
@@ -261,18 +258,6 @@ async def process_order_queue():
                 else:
                     logging.warning(f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}")
             
-            except asyncio.TimeoutError:
-                logging.error(f"⏱️ Timeout processing order for {case_info['case_ref']} - exceeded 5 minute limit")
-                # Update status to failed due to timeout
-                try:
-                    db = firestore.client()
-                    db.collection("daily-boards").document(case_info.get('id')).update({
-                        "order_status": "order_failed",
-                        "order_status_updated_at": datetime.now().isoformat(),
-                        "order_failure_reason": "Processing timeout exceeded 5 minutes"
-                    })
-                except Exception as update_error:
-                    logging.error(f"Failed to update timeout status: {update_error}")
             except Exception as e:
                 logging.error(f"❌ Error processing order for {case_info['case_ref']}: {e}")
                 import traceback
@@ -359,13 +344,15 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
         raise
 
 async def ensure_background_processing_active():
-    """Ensure background order processing is running"""
+    """Ensure background order processing is running with multiple workers"""
     global processing_active
     
     if not processing_active:
-        # Start background task
-        asyncio.create_task(process_order_queue())
-        logging.info("Started background order processing task")
+        processing_active = True
+        # Start multiple worker tasks (one per thread pool worker)
+        for worker_id in range(MAX_WORKERS):
+            asyncio.create_task(process_order_queue_worker(worker_id))
+        logging.info(f"Started {MAX_WORKERS} background order processing worker(s)")
 
 # Login/logout endpoints removed - using Firebase client-side authentication
 
