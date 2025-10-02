@@ -2244,11 +2244,13 @@ async def get_recent_activity(
 async def generate_bill_data(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    agp_name: Optional[str] = Query(None, description="AGP name to generate bill for (admin only)"),
     current_user=Depends(get_current_user)
 ):
-    """Generate bill data for logged-in user based on date range"""
+    """Generate bill data for logged-in user or specific AGP (admin only) based on date range"""
     try:
         user_id = current_user.get('uid')
+        is_admin = get_user_manager().is_admin(user_id)
         
         # Initialize Firestore client
         db = firestore.client()
@@ -2258,24 +2260,29 @@ async def generate_bill_data(
         start_dt = datetime.strptime(start_date, '%Y-%m-%d')
         end_dt = datetime.strptime(end_date, '%Y-%m-%d')
         
-        # Get user's mapped cases within date range
-        mappings_ref = db.collection('user-case-mappings')
-        query = mappings_ref.where('user_id', '==', user_id)
-        mappings = query.stream()
-        
         bill_entries = []
         case_ids = set()
         
-        for mapping_doc in mappings:
-            mapping_data = mapping_doc.to_dict()
-            case_id = mapping_data.get('case_id')
+        # Admin can generate bill for any AGP, non-admin only for themselves
+        if agp_name and not is_admin:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Only administrators can generate bills for other AGPs"}
+            )
+        
+        # Determine which cases to include
+        if agp_name:
+            # Admin generating bill for specific AGP - query cases by AGP name
+            logging.info(f"Admin {user_id} generating bill for AGP: {agp_name}")
+            boards_ref = db.collection('daily-boards')
             
-            # Get case details from daily-boards
-            case_ref = db.collection('daily-boards').document(case_id)
-            case_doc = case_ref.get()
+            # Query cases by AGP name within date range
+            query = boards_ref.where('agp_name', '==', agp_name)
+            cases = query.stream()
             
-            if case_doc.exists:
+            for case_doc in cases:
                 case_data = case_doc.to_dict()
+                case_id = case_doc.id
                 board_date_str = case_data.get('board_date')
                 
                 if board_date_str:
@@ -2299,21 +2306,69 @@ async def generate_bill_data(
                                 'parties_name': parties,
                                 'results': fee_info['result'],
                                 'fees_rs': fee_info['fee'],
-                                'confidence_score': mapping_data.get('confidence_score', 0.0),
-                                'match_source': mapping_data.get('match_source'),
+                                'agp_name': agp_name,
                                 'editable': True
                             }
                             bill_entries.append(bill_entry)
-                            
                     except ValueError as date_error:
                         logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
                         continue
+        else:
+            # Non-admin or admin generating their own bill - use user-case-mappings
+            mappings_ref = db.collection('user-case-mappings')
+            query = mappings_ref.where('user_id', '==', user_id)
+            mappings = query.stream()
+            
+            for mapping_doc in mappings:
+                mapping_data = mapping_doc.to_dict()
+                case_id = mapping_data.get('case_id')
+                
+                # Get case details from daily-boards
+                case_ref = db.collection('daily-boards').document(case_id)
+                case_doc = case_ref.get()
+                
+                if case_doc.exists:
+                    case_data = case_doc.to_dict()
+                    board_date_str = case_data.get('board_date')
+                    
+                    if board_date_str:
+                        try:
+                            board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
+                            
+                            # Check if case falls within date range
+                            if start_dt <= board_date <= end_dt and case_id not in case_ids:
+                                case_ids.add(case_id)
+                                
+                                # Determine fee and result based on order analysis
+                                fee_info = calculate_case_fee(case_data)
+                                
+                                # Extract parties information
+                                parties = extract_parties_info(case_data)
+                                
+                                bill_entry = {
+                                    'id': case_id,
+                                    'date': board_date_str,
+                                    'case_detail': f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                                    'parties_name': parties,
+                                    'results': fee_info['result'],
+                                    'fees_rs': fee_info['fee'],
+                                    'confidence_score': mapping_data.get('confidence_score', 0.0),
+                                    'match_source': mapping_data.get('match_source'),
+                                    'agp_name': case_data.get('agp_name', 'N/A'),
+                                    'editable': True
+                                }
+                                bill_entries.append(bill_entry)
+                                
+                        except ValueError as date_error:
+                            logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
+                            continue
         
         # Sort by date
         bill_entries.sort(key=lambda x: x['date'])
         
         return JSONResponse(content={
             "user_id": user_id,
+            "agp_name": agp_name if agp_name else "self",
             "date_range": {"start": start_date, "end": end_date},
             "total_entries": len(bill_entries),
             "total_fees": sum(entry['fees_rs'] for entry in bill_entries),
@@ -2416,24 +2471,39 @@ def calculate_case_fee(case_data: Dict) -> Dict:
         if not case_data.get('order_analysis_completed'):
             return {'result': '*ADJOURNED*', 'fee': 1250}
         
-        # Get order analysis data
-        order_result = case_data.get('order_result', '').lower()
-        order_type = case_data.get('order_type', '').lower()
-        order_text = case_data.get('order_summary', '').lower()
+        # Get order analysis data - use correct field names from order_analyzer
+        order_category = case_data.get('order_category', '').upper()
+        order_text = case_data.get('order_text', '').lower()
+        order_disposal_reason = case_data.get('order_disposal_reason', '').lower()
         
-        # Fee calculation logic based on order content
-        if 'due to paucity of time' in order_text or 'adjourned' in order_result:
-            return {'result': 'ADJOURNED', 'fee': 1250}
-        elif 'dispose' in order_result or 'disposal' in order_result or 'disposed' in order_text:
+        # Fee calculation logic based on order category and content
+        # Check for disposal first (highest fee)
+        if 'DISPOSED' in order_category or 'disposed' in order_text or 'disposed' in order_disposal_reason:
             return {'result': 'WP DISPOSED OF', 'fee': 2500}
-        elif 'heard' in order_result or order_type == 'heard_adjourned':
+        
+        # Check for heard & adjourned (middle fee)
+        elif 'HEARD' in order_category and 'ADJOURNED' in order_category:
             return {'result': 'HEARD & ADJN.', 'fee': 1875}
+        
+        # Check for simple adjournment (lowest fee)
+        elif 'ADJOURNED' in order_category or 'adjourned' in order_text:
+            # Check if it's due to paucity of time
+            if 'paucity of time' in order_text or 'due to paucity' in order_text:
+                return {'result': 'ADJOURNED', 'fee': 1250}
+            else:
+                return {'result': 'ADJOURNED', 'fee': 1250}
+        
+        # Default case based on order category
         else:
-            # Default case
-            return {'result': 'HEARD & ADJN.', 'fee': 1875}
+            # If category indicates any hearing, use heard & adjourned
+            if 'HEARD' in order_category:
+                return {'result': 'HEARD & ADJN.', 'fee': 1875}
+            else:
+                # Default to adjourned if category is unclear
+                return {'result': '*ADJOURNED*', 'fee': 1250}
             
     except Exception as e:
-        logging.error(f"Error calculating case fee: {e}")
+        logging.error(f"Error calculating case fee for case: {e}")
         return {'result': '*ADJOURNED*', 'fee': 1250}
 
 def extract_parties_info(case_data: Dict) -> str:
