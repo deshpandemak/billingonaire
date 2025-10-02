@@ -1,0 +1,227 @@
+"""Unit tests for AutoOrderManager class"""
+import pytest
+from unittest.mock import Mock, MagicMock, patch, call
+from datetime import datetime
+import requests
+
+
+class TestAutoOrderManagerInit:
+    """Test AutoOrderManager initialization"""
+    
+    def test_initialization(self, mock_firestore_client):
+        """Test that AutoOrderManager initializes correctly"""
+        with patch('AutoOrderManager.firestore.client', return_value=mock_firestore_client):
+            from AutoOrderManager import AutoOrderManager
+            manager = AutoOrderManager()
+            
+            assert manager.db is not None
+            assert manager.boards_collection == "daily-boards"
+            assert manager.orders_collection == "case-orders"
+            assert 'WP' in manager.casetype_dict
+
+
+class TestAnalyzeExistingOrder:
+    """Test _analyze_existing_order method with validation and fallback"""
+    
+    @pytest.fixture
+    def auto_order_manager(self, mock_firestore_client, mock_order_analyzer):
+        """Create AutoOrderManager instance with mocked dependencies"""
+        with patch('AutoOrderManager.firestore.client', return_value=mock_firestore_client):
+            from AutoOrderManager import AutoOrderManager
+            manager = AutoOrderManager()
+            manager.order_analyzer = mock_order_analyzer
+            return manager
+    
+    def test_analyze_existing_order_success(
+        self, auto_order_manager, sample_case_with_order_link, 
+        sample_pdf_content, monkeypatch
+    ):
+        """Test successful analysis of existing order"""
+        # Mock requests.get to return valid PDF
+        class MockResponse:
+            status_code = 200
+            headers = {'Content-Type': 'application/pdf'}
+            content = sample_pdf_content
+        
+        with patch('AutoOrderManager.requests.get', return_value=MockResponse()):
+            result = {"case_id": "test_123", "case_ref": "WP/12345/2024"}
+            
+            response = auto_order_manager._analyze_existing_order(
+                sample_case_with_order_link, result
+            )
+            
+            assert response["download_success"] is True
+            assert response["analysis_success"] is True
+            assert response.get("error") is None
+    
+    def test_analyze_existing_order_invalid_http_status(
+        self, auto_order_manager, sample_case_with_order_link, monkeypatch
+    ):
+        """Test fallback when order link returns 403"""
+        # Mock requests.get to return 403
+        class MockResponse:
+            status_code = 403
+            headers = {'Content-Type': 'text/html'}
+            content = b'<html>Forbidden</html>'
+        
+        with patch('AutoOrderManager.requests.get', return_value=MockResponse()):
+            with patch.object(auto_order_manager, '_fallback_to_fresh_download') as mock_fallback:
+                mock_fallback.return_value = {"download_success": False, "error": "Fallback executed"}
+                
+                result = {"case_id": "test_123", "case_ref": "WP/12345/2024"}
+                response = auto_order_manager._analyze_existing_order(
+                    sample_case_with_order_link, result
+                )
+                
+                # Verify fallback was called
+                mock_fallback.assert_called_once()
+                args = mock_fallback.call_args[0]
+                assert "HTTP 403" in args[2]  # reason argument
+    
+    def test_analyze_existing_order_invalid_content_type(
+        self, auto_order_manager, sample_case_with_order_link, monkeypatch
+    ):
+        """Test fallback when order link returns HTML instead of PDF"""
+        # Mock requests.get to return HTML
+        class MockResponse:
+            status_code = 200
+            headers = {'Content-Type': 'text/html'}
+            content = b'<html>Error page</html>'
+        
+        with patch('AutoOrderManager.requests.get', return_value=MockResponse()):
+            with patch.object(auto_order_manager, '_fallback_to_fresh_download') as mock_fallback:
+                mock_fallback.return_value = {"download_success": False, "error": "Fallback executed"}
+                
+                result = {"case_id": "test_123", "case_ref": "WP/12345/2024"}
+                response = auto_order_manager._analyze_existing_order(
+                    sample_case_with_order_link, result
+                )
+                
+                # Verify fallback was called with correct reason
+                mock_fallback.assert_called_once()
+                args = mock_fallback.call_args[0]
+                assert "text/html" in args[2]
+    
+    def test_analyze_existing_order_empty_content(
+        self, auto_order_manager, sample_case_with_order_link, monkeypatch
+    ):
+        """Test fallback when order link returns empty PDF"""
+        # Mock requests.get to return empty content
+        class MockResponse:
+            status_code = 200
+            headers = {'Content-Type': 'application/pdf'}
+            content = b''
+        
+        with patch('AutoOrderManager.requests.get', return_value=MockResponse()):
+            with patch.object(auto_order_manager, '_fallback_to_fresh_download') as mock_fallback:
+                mock_fallback.return_value = {"download_success": False, "error": "Fallback executed"}
+                
+                result = {"case_id": "test_123", "case_ref": "WP/12345/2024"}
+                response = auto_order_manager._analyze_existing_order(
+                    sample_case_with_order_link, result
+                )
+                
+                # Verify fallback was called
+                mock_fallback.assert_called_once()
+                args = mock_fallback.call_args[0]
+                assert "empty or invalid" in args[2].lower()
+
+
+class TestProcessSingleCase:
+    """Test _process_single_case method"""
+    
+    @pytest.fixture
+    def auto_order_manager(self, mock_firestore_client, mock_order_analyzer):
+        """Create AutoOrderManager instance"""
+        with patch('AutoOrderManager.firestore.client', return_value=mock_firestore_client):
+            from AutoOrderManager import AutoOrderManager
+            manager = AutoOrderManager()
+            manager.order_analyzer = mock_order_analyzer
+            return manager
+    
+    def test_process_case_with_order_linked_status(
+        self, auto_order_manager, sample_case_with_order_link
+    ):
+        """Test that order_linked cases call _analyze_existing_order"""
+        with patch.object(auto_order_manager, '_analyze_existing_order') as mock_analyze:
+            mock_analyze.return_value = {"download_success": True, "analysis_success": True}
+            
+            result = auto_order_manager._process_single_case(sample_case_with_order_link)
+            
+            # Verify _analyze_existing_order was called
+            mock_analyze.assert_called_once()
+    
+    def test_process_case_without_order_link(
+        self, auto_order_manager, sample_case_data
+    ):
+        """Test that not_linked cases go through normal download flow"""
+        with patch.object(auto_order_manager, '_download_order_for_case') as mock_download:
+            mock_download.return_value = {"success": False, "error": "Not found"}
+            
+            result = auto_order_manager._process_single_case(sample_case_data)
+            
+            # Verify download was attempted
+            assert mock_download.call_count > 0
+
+
+class TestValidateOrderDate:
+    """Test _validate_order_date method"""
+    
+    @pytest.fixture
+    def auto_order_manager(self, mock_firestore_client):
+        """Create AutoOrderManager instance"""
+        with patch('AutoOrderManager.firestore.client', return_value=mock_firestore_client):
+            from AutoOrderManager import AutoOrderManager
+            return AutoOrderManager()
+    
+    def test_validate_matching_dates(self, auto_order_manager):
+        """Test date validation with matching dates"""
+        result = auto_order_manager._validate_order_date("01/10/2024", "2024-10-01")
+        
+        assert result["valid"] is True
+        assert result["message"] == "Order date matches board date"
+    
+    def test_validate_mismatched_dates(self, auto_order_manager):
+        """Test date validation with mismatched dates"""
+        result = auto_order_manager._validate_order_date("05/10/2024", "2024-10-01")
+        
+        assert result["valid"] is False
+        assert "mismatch" in result["message"].lower()
+    
+    def test_validate_with_none_date(self, auto_order_manager):
+        """Test date validation with None values"""
+        result = auto_order_manager._validate_order_date(None, "2024-10-01")
+        
+        assert result["valid"] is False
+        assert "not found" in result["message"].lower()
+
+
+class TestParseCaseReference:
+    """Test _parse_case_reference method"""
+    
+    @pytest.fixture
+    def auto_order_manager(self, mock_firestore_client):
+        """Create AutoOrderManager instance"""
+        with patch('AutoOrderManager.firestore.client', return_value=mock_firestore_client):
+            from AutoOrderManager import AutoOrderManager
+            return AutoOrderManager()
+    
+    def test_parse_valid_case_reference(self, auto_order_manager):
+        """Test parsing valid case reference"""
+        result = auto_order_manager._parse_case_reference("WP/12345/2024")
+        
+        assert result == ("WP", "12345", "2024")
+    
+    def test_parse_case_with_stamp(self, auto_order_manager):
+        """Test parsing case reference with ST marker"""
+        result = auto_order_manager._parse_case_reference("WP (ST)/12345/2024")
+        
+        assert result[0] == "WP (ST)"
+        assert result[1] == "12345"
+        assert result[2] == "2024"
+    
+    def test_parse_invalid_case_reference(self, auto_order_manager):
+        """Test parsing invalid case reference"""
+        result = auto_order_manager._parse_case_reference("INVALID")
+        
+        assert result is None
