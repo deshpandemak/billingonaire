@@ -1504,48 +1504,100 @@ async def analyze_single_case(
             })
         
         # Download the PDF from the link and analyze
+        # If stored link fails, fallback to fresh download from court website
         try:
             import requests
             order_link = case_data.get("order_link")
             logging.info(f"Downloading order from: {order_link}")
-            response = requests.get(order_link, timeout=30)
             
-            # More lenient Content-Type check (handles variations like 'application/pdf;charset=UTF-8')
-            content_type = response.headers.get('Content-Type', '').lower()
-            is_pdf = 'application/pdf' in content_type
-            
-            if response.status_code == 200 and is_pdf:
-                # Analyze the PDF
+            try:
+                response = requests.get(order_link, timeout=30)
+                
+                # More lenient Content-Type check (handles variations like 'application/pdf;charset=UTF-8')
+                content_type = response.headers.get('Content-Type', '').lower()
+                is_pdf = 'application/pdf' in content_type
+                
+                # Check if stored link is valid
+                if response.status_code != 200 or not is_pdf or len(response.content) < 100:
+                    # Stored link failed - fallback to fresh download
+                    reason = f"Stored link failed: status={response.status_code}, content_type={content_type}, size={len(response.content) if response.content else 0}"
+                    logging.warning(f"⚠️ {reason}. Attempting fresh download from court website...")
+                    
+                    # Prepare case_data for fresh download (same as Download Order button)
+                    case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                    case_data_with_refs = {
+                        **case_data,
+                        'id': case_id,
+                        'case_ref': case_ref
+                    }
+                    
+                    # Use the same fallback logic as Download Order button
+                    result = {
+                        "case_id": case_id,
+                        "case_ref": case_ref,
+                        "download_success": False,
+                        "analysis_success": False
+                    }
+                    fresh_result = get_auto_order_manager()._fallback_to_fresh_download(
+                        case_data_with_refs, result, reason
+                    )
+                    
+                    if fresh_result.get("analysis_success"):
+                        return JSONResponse(content={
+                            "success": True,
+                            "data": fresh_result.get("analysis_data"),
+                            "message": "Order re-downloaded and analyzed successfully"
+                        })
+                    else:
+                        return JSONResponse(
+                            status_code=500,
+                            content={"error": fresh_result.get("error", "Failed to re-download and analyze order")}
+                        )
+                
+                # Stored link is valid - proceed with analysis
                 case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
                 logging.info(f"Analyzing order for case: {case_ref}")
                 
-                try:
-                    analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
-                        case_id, case_ref, response.content, 
-                        case_data.get('board_date'), order_link
-                    )
-                    
-                    return JSONResponse(content=analysis_result)
-                except Exception as analysis_error:
-                    logging.error(f"Analysis failed for {case_ref}: {str(analysis_error)}", exc_info=True)
-                    return JSONResponse(
-                        status_code=500,
-                        content={"error": f"Order analysis failed: {str(analysis_error)}"}
-                    )
-            else:
-                error_msg = f"Invalid response: status={response.status_code}, content_type={content_type}"
-                logging.error(error_msg)
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"Failed to download order PDF from link. {error_msg}"}
+                analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
+                    case_id, case_ref, response.content, 
+                    case_data.get('board_date'), order_link
                 )
                 
-        except requests.RequestException as req_error:
-            logging.error(f"Network error downloading order: {req_error}")
-            return JSONResponse(
-                status_code=500,
-                content={"error": f"Network error downloading order: {str(req_error)}"}
-            )
+                return JSONResponse(content=analysis_result)
+                
+            except requests.RequestException as req_error:
+                # Network error accessing stored link - try fresh download
+                logging.warning(f"Network error accessing stored link: {req_error}. Attempting fresh download...")
+                
+                case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                case_data_with_refs = {
+                    **case_data,
+                    'id': case_id,
+                    'case_ref': case_ref
+                }
+                
+                result = {
+                    "case_id": case_id,
+                    "case_ref": case_ref,
+                    "download_success": False,
+                    "analysis_success": False
+                }
+                fresh_result = get_auto_order_manager()._fallback_to_fresh_download(
+                    case_data_with_refs, result, f"Network error: {str(req_error)}"
+                )
+                
+                if fresh_result.get("analysis_success"):
+                    return JSONResponse(content={
+                        "success": True,
+                        "data": fresh_result.get("analysis_data"),
+                        "message": "Order re-downloaded and analyzed successfully"
+                    })
+                else:
+                    return JSONResponse(
+                        status_code=500,
+                        content={"error": fresh_result.get("error", "Failed to re-download and analyze order")}
+                    )
+                
         except Exception as e:
             logging.error(f"Unexpected error in download/analyze: {e}", exc_info=True)
             return JSONResponse(
