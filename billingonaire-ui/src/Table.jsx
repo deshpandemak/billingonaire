@@ -327,7 +327,7 @@ const Table = () => {
     const { data } = props;
     const orderStatus = data?.order_status || 'not_linked';
     const caseId = data?.id;
-    const caseRef = data?.case_ref;
+    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
     const isProcessing = processingOrders.has(caseId);
     
     // Define status display properties

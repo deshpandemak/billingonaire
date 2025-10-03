@@ -348,11 +348,22 @@ class UserManager:
     def get_agp_names_list(self) -> List[str]:
         """Get all unique AGP names from the system"""
         try:
-            # Get all users with legal professional roles
-            all_users = self.list_users()
-            
-            # Extract all AGP names from legal professional users
+            # Get AGP names from daily-boards collection
             all_agp_names = set()
+            
+            # Query daily-boards for unique AGP names using existing firebase_admin client
+            boards_ref = self.db.collection('daily-boards')
+            # Get a sample of recent boards to extract AGP names
+            query = boards_ref.limit(1000).stream()
+            
+            for doc in query:
+                data = doc.to_dict()
+                agp_name = data.get('agp_name')
+                if agp_name:
+                    all_agp_names.add(agp_name)
+            
+            # Also get from user profiles for completeness
+            all_users = self.list_users()
             for user in all_users:
                 # Skip admin users
                 if user.get('role') == 'admin':
