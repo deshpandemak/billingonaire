@@ -16,7 +16,7 @@ echo "$GCLOUD_SERVICE_ACCOUNT_KEY" > /tmp/gcloud-key.json
 gcloud auth activate-service-account --key-file=/tmp/gcloud-key.json
 gcloud config set project billingonaire
 
-# Navigate to the backend directory
+# Navigate to the backend directory (script is run from firebase dir)
 cd ../billingonaire-backend
 
 # Build and deploy using Dockerfile to avoid buildpacks permission issues

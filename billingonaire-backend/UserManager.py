@@ -352,20 +352,37 @@ class UserManager:
             
             # Get all active users with login credentials
             all_users = self.list_users()
+            logging.info(f"📋 get_agp_names_list: Found {len(all_users)} total users in collection")
+            
             for user in all_users:
+                user_name = user.get('full_name', 'NO_NAME')
+                user_role = user.get('role', 'NO_ROLE')
+                user_active = user.get('is_active', False)
+                
                 # Skip admin users and inactive users
-                if user.get('role') == 'admin' or not user.get('is_active'):
+                if user_role == 'admin':
+                    logging.info(f"  ⏭️  Skipping admin: {user_name}")
+                    continue
+                    
+                if not user_active:
+                    logging.info(f"  ⏭️  Skipping inactive: {user_name} (role={user_role})")
                     continue
                 
                 # Get user's full name
                 full_name = user.get('full_name', '').strip()
                 if full_name:
+                    logging.info(f"  ✅ Including: {full_name} (role={user_role})")
                     active_user_names.append(full_name)
+                else:
+                    logging.info(f"  ⚠️  Skipping user with no name (role={user_role})")
             
+            logging.info(f"📤 get_agp_names_list returning {len(active_user_names)} users: {sorted(active_user_names)}")
             return sorted(active_user_names)
             
         except Exception as e:
             logging.error(f"Error getting active user names list: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
             return []
     
     def match_user_name_to_agp(self, user_name: str, agp_names_in_data: List[str]) -> tuple:

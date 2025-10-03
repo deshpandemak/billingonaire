@@ -42,9 +42,13 @@ const BillGeneration = () => {
         try {
             // Fetch admin AGP list (will work only if user is admin)
             const response = await authenticatedFetchJSON('/admin/agp-names');
+            console.log('✅ Admin AGP names response:', response);
+            console.log('📝 AGP names array:', response.agp_names);
+            console.log('📊 Total AGP names:', response.agp_names?.length || 0);
             setIsAdmin(true);
             setAgpList(response.agp_names || []);
         } catch (err) {
+            console.error('❌ Failed to fetch admin AGP names:', err);
             // User is not admin, that's fine
             setIsAdmin(false);
             setAgpList([]);
