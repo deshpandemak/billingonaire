@@ -2375,8 +2375,21 @@ async def generate_bill_data(
             logging.info(f"🤖 Enhanced Fuzzy Matching: '{agp_name}' → '{matched_agp}' (confidence: {confidence:.2%})")
             
             if matched_agp and confidence >= 0.50:  # Lowered threshold to 50% for initial-based matching
-                # Step 3: Process cases for the matched AGP name
-                matched_cases = cases_by_agp.get(matched_agp, [])
+                # Step 3: Find ALL similar AGP name variants (handle formatting inconsistencies)
+                # Normalize the matched AGP name for comparison
+                from UserManager import normalize_name
+                matched_normalized = normalize_name(matched_agp)
+                
+                # Collect cases from all variants that normalize to the same name
+                matched_cases = []
+                matched_variants = []
+                for agp_variant, variant_cases in cases_by_agp.items():
+                    if normalize_name(agp_variant) == matched_normalized:
+                        matched_cases.extend(variant_cases)
+                        matched_variants.append(agp_variant)
+                
+                logging.info(f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}...")
+                logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
                 
                 for case_id, case_data in matched_cases:
                     board_date_raw = case_data.get('board_date')
