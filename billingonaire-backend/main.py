@@ -2346,47 +2346,84 @@ async def generate_bill_data(
         
         # Determine which cases to include
         if agp_name:
-            # Admin generating bill for specific AGP - query cases by AGP name
-            logging.info(f"Admin {user_id} generating bill for AGP: {agp_name}")
+            # Admin generating bill for specific user - use AI/ML name matching
+            logging.info(f"Admin {user_id} generating bill for user: {agp_name}")
+            
+            # Step 1: Collect all unique AGP names from board data (respondent_lawyer field)
             boards_ref = db.collection('daily-boards')
+            all_cases = boards_ref.stream()
             
-            # Query cases by AGP name within date range
-            query = boards_ref.where('agp_name', '==', agp_name)
-            cases = query.stream()
+            unique_agp_names = set()
+            cases_by_agp = {}  # Map AGP names to their cases for efficient lookup
             
-            for case_doc in cases:
+            for case_doc in all_cases:
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
-                board_date_str = case_data.get('board_date')
+                respondent_lawyer = case_data.get('respondent_lawyer', '').strip()
                 
-                if board_date_str:
-                    try:
-                        board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
-                        
-                        # Check if case falls within date range
-                        if start_dt <= board_date <= end_dt and case_id not in case_ids:
-                            case_ids.add(case_id)
+                if respondent_lawyer:
+                    unique_agp_names.add(respondent_lawyer)
+                    if respondent_lawyer not in cases_by_agp:
+                        cases_by_agp[respondent_lawyer] = []
+                    cases_by_agp[respondent_lawyer].append((case_id, case_data))
+            
+            # Step 2: Use AI/ML fuzzy matching to find which AGP names match the selected user name
+            matched_agp, confidence = get_user_manager().match_user_name_to_agp(
+                agp_name, list(unique_agp_names)
+            )
+            
+            logging.info(f"🤖 AI Name Matching: '{agp_name}' → '{matched_agp}' (confidence: {confidence:.2%})")
+            
+            if matched_agp and confidence >= 0.75:  # Minimum 75% confidence threshold (strict to avoid wrong matches)
+                # Step 3: Process cases for the matched AGP name
+                matched_cases = cases_by_agp.get(matched_agp, [])
+                
+                for case_id, case_data in matched_cases:
+                    board_date_str = case_data.get('board_date')
+                    
+                    if board_date_str:
+                        try:
+                            board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
                             
-                            # Determine fee and result based on order analysis
-                            fee_info = calculate_case_fee(case_data)
-                            
-                            # Extract parties information
-                            parties = extract_parties_info(case_data)
-                            
-                            bill_entry = {
-                                'id': case_id,
-                                'date': board_date_str,
-                                'case_detail': f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
-                                'parties_name': parties,
-                                'results': fee_info['result'],
-                                'fees_rs': fee_info['fee'],
-                                'agp_name': agp_name,
-                                'editable': True
-                            }
-                            bill_entries.append(bill_entry)
-                    except ValueError as date_error:
-                        logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
-                        continue
+                            # Check if case falls within date range
+                            if start_dt <= board_date <= end_dt and case_id not in case_ids:
+                                case_ids.add(case_id)
+                                
+                                # Determine fee and result based on order analysis
+                                fee_info = calculate_case_fee(case_data)
+                                
+                                # Extract parties information
+                                parties = extract_parties_info(case_data)
+                                
+                                bill_entry = {
+                                    'id': case_id,
+                                    'date': board_date_str,
+                                    'case_detail': f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                                    'parties_name': parties,
+                                    'results': fee_info['result'],
+                                    'fees_rs': fee_info['fee'],
+                                    'agp_name': matched_agp,  # Show the actual AGP name from data
+                                    'user_name': agp_name,  # Show the selected user name
+                                    'name_match_confidence': round(confidence, 3),  # Include AI confidence score
+                                    'editable': True
+                                }
+                                bill_entries.append(bill_entry)
+                        except ValueError as date_error:
+                            logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
+                            continue
+            else:
+                error_msg = f"No matching AGP found for user '{agp_name}' with sufficient confidence (best match: '{matched_agp}' at {confidence:.1%}). Need at least 75% to avoid wrong person."
+                logging.warning(f"⚠️ {error_msg}")
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": error_msg,
+                        "user_name": agp_name,
+                        "best_match": matched_agp,
+                        "confidence": round(confidence, 3),
+                        "threshold_required": 0.75
+                    }
+                )
         else:
             # Non-admin or admin generating their own bill - use user-case-mappings
             mappings_ref = db.collection('user-case-mappings')

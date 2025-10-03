@@ -346,42 +346,110 @@ class UserManager:
             return False
     
     def get_agp_names_list(self) -> List[str]:
-        """Get all unique AGP names from the system"""
+        """Get list of active user names (for admin AGP selector in bill generation)"""
         try:
-            # Get AGP names from daily-boards collection
-            all_agp_names = set()
+            active_user_names = []
             
-            # Query daily-boards for unique AGP names using existing firebase_admin client
-            # NOTE: daily-boards uses 'respondent_lawyer' field, NOT 'agp_name'
-            boards_ref = self.db.collection('daily-boards')
-            # Get a sample of recent boards to extract AGP names
-            query = boards_ref.limit(1000).stream()
-            
-            for doc in query:
-                data = doc.to_dict()
-                respondent_lawyer = data.get('respondent_lawyer', '').strip()
-                if respondent_lawyer and len(respondent_lawyer) > 3:  # Filter out short/empty names
-                    all_agp_names.add(respondent_lawyer)
-            
-            # Also get from user profiles for completeness
+            # Get all active users with login credentials
             all_users = self.list_users()
             for user in all_users:
-                # Skip admin users
-                if user.get('role') == 'admin':
+                # Skip admin users and inactive users
+                if user.get('role') == 'admin' or not user.get('is_active'):
                     continue
-                    
-                user_agp_names = user.get('agp_names', [])
-                if isinstance(user_agp_names, list):
-                    all_agp_names.update(user_agp_names)
-                # Handle backward compatibility for single agp_name
-                elif user.get('agp_name'):
-                    all_agp_names.add(user.get('agp_name'))
+                
+                # Get user's full name
+                full_name = user.get('full_name', '').strip()
+                if full_name:
+                    active_user_names.append(full_name)
             
-            return sorted(list(all_agp_names))
+            return sorted(active_user_names)
             
         except Exception as e:
-            logging.error(f"Error getting AGP names list: {str(e)}")
+            logging.error(f"Error getting active user names list: {str(e)}")
             return []
+    
+    def match_user_name_to_agp(self, user_name: str, agp_names_in_data: List[str]) -> tuple:
+        """
+        Use fuzzy matching to map user name to AGP names in board/order data
+        Returns (best_match, confidence_score)
+        Uses strict matching to avoid false positives (e.g., "Rajesh Patil" vs "Sneha Patil")
+        """
+        from difflib import SequenceMatcher
+        import re
+        
+        if not agp_names_in_data:
+            return (None, 0.0)
+        
+        # Normalize user name for comparison
+        user_name_normalized = user_name.lower().strip()
+        user_name_words = re.findall(r'\b\w+\b', user_name_normalized)
+        
+        # Separate first and last names for better matching
+        if len(user_name_words) >= 2:
+            user_first_name = user_name_words[0]
+            user_last_name = user_name_words[-1]
+        else:
+            user_first_name = user_name_normalized
+            user_last_name = ""
+        
+        best_match = None
+        best_score = 0.0
+        
+        for agp_name in agp_names_in_data:
+            if not agp_name:
+                continue
+                
+            agp_normalized = agp_name.lower().strip()
+            agp_words = re.findall(r'\b\w+\b', agp_normalized)
+            
+            # Extract first and last name from AGP name
+            if len(agp_words) >= 2:
+                agp_first_name = agp_words[0]
+                agp_last_name = agp_words[-1]
+            else:
+                agp_first_name = agp_normalized
+                agp_last_name = ""
+            
+            # Calculate similarity score using strict matching
+            
+            # 1. Full name sequence matching (exact string similarity)
+            seq_score = SequenceMatcher(None, user_name_normalized, agp_normalized).ratio()
+            
+            # 2. STRICT first name matching (must match or be initials)
+            first_name_match = 0.0
+            if user_first_name and agp_first_name:
+                if user_first_name == agp_first_name:
+                    first_name_match = 1.0
+                elif user_first_name[0] == agp_first_name[0]:  # Initial match
+                    first_name_match = 0.6
+                else:
+                    # First name doesn't match - likely wrong person!
+                    continue  # Skip this AGP name entirely
+            
+            # 3. STRICT last name matching (must match exactly)
+            last_name_match = 0.0
+            if user_last_name and agp_last_name:
+                if user_last_name == agp_last_name:
+                    last_name_match = 1.0
+                else:
+                    # Last name doesn't match - definitely wrong person!
+                    continue  # Skip this AGP name entirely
+            
+            # 4. Full word set comparison (handles middle names, titles)
+            user_word_set = set(user_name_words)
+            agp_word_set = set(agp_words)
+            common_words = user_word_set.intersection(agp_word_set)
+            word_overlap = len(common_words) / max(len(user_word_set), len(agp_word_set)) if user_word_set or agp_word_set else 0
+            
+            # Combined score with stricter requirements
+            # First and last name matching is heavily weighted
+            combined_score = (seq_score * 0.2) + (first_name_match * 0.4) + (last_name_match * 0.3) + (word_overlap * 0.1)
+            
+            if combined_score > best_score:
+                best_score = combined_score
+                best_match = agp_name
+        
+        return (best_match, best_score)
     
     def get_available_roles(self) -> Dict[str, str]:
         """Get available user roles with their display names"""
