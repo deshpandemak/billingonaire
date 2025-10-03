@@ -2494,14 +2494,27 @@ async def generate_bill_data(
         # Sort by date
         bill_entries.sort(key=lambda x: x['date'])
         
-        return JSONResponse(content={
+        # Add debug information
+        response_data = {
             "user_id": user_id,
             "agp_name": agp_name if agp_name else "self",
             "date_range": {"start": start_date, "end": end_date},
             "total_entries": len(bill_entries),
             "total_fees": sum(entry['fees_rs'] for entry in bill_entries),
             "bill_entries": bill_entries
-        })
+        }
+        
+        # Add matching debug info for admin fuzzy matching
+        if agp_name and 'matched_agp' in locals():
+            response_data["debug_info"] = {
+                "requested_name": agp_name,
+                "matched_agp_name": matched_agp,
+                "match_confidence": round(confidence, 3),
+                "total_cases_for_agp": len(cases_by_agp.get(matched_agp, [])),
+                "cases_in_date_range": len(bill_entries)
+            }
+        
+        return JSONResponse(content=response_data)
         
     except Exception as e:
         logging.error(f"Error generating bill data: {e}")
