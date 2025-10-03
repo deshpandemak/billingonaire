@@ -387,9 +387,9 @@ class UserManager:
     
     def match_user_name_to_agp(self, user_name: str, agp_names_in_data: List[str]) -> tuple:
         """
-        Use fuzzy matching to map user name to AGP names in board/order data
+        Enhanced fuzzy matching to map user names to AGP names in board/order data
+        Handles initials and name permutations (e.g., "Pooja Makarand Joshi Deshpande" → "P.M.J.Deshpande", "P.M.Joshi")
         Returns (best_match, confidence_score)
-        Uses strict matching to avoid false positives (e.g., "Rajesh Patil" vs "Sneha Patil")
         """
         from difflib import SequenceMatcher
         import re
@@ -397,17 +397,17 @@ class UserManager:
         if not agp_names_in_data:
             return (None, 0.0)
         
-        # Normalize user name for comparison
+        # Normalize and extract words from user name
         user_name_normalized = user_name.lower().strip()
-        user_name_words = re.findall(r'\b\w+\b', user_name_normalized)
+        user_words = re.findall(r'\b\w+\b', user_name_normalized)
         
-        # Separate first and last names for better matching
-        if len(user_name_words) >= 2:
-            user_first_name = user_name_words[0]
-            user_last_name = user_name_words[-1]
-        else:
-            user_first_name = user_name_normalized
-            user_last_name = ""
+        if not user_words:
+            return (None, 0.0)
+        
+        # Generate all possible initial combinations for the user name
+        # E.g., "Pooja Makarand Joshi Deshpande" → ["p", "pm", "pmj", "pmjd", "pooja", "deshpande", etc.]
+        user_initials = [word[0] for word in user_words]
+        user_full_words = user_words.copy()
         
         best_match = None
         best_score = 0.0
@@ -417,50 +417,78 @@ class UserManager:
                 continue
                 
             agp_normalized = agp_name.lower().strip()
-            agp_words = re.findall(r'\b\w+\b', agp_normalized)
+            # Remove common titles and punctuation
+            agp_normalized = re.sub(r'\b(shri|smt|ms|mr|mrs|dr|adv|advocate|agp|addl|gp)\b', '', agp_normalized)
+            agp_normalized = re.sub(r'[.,*#\-/]', ' ', agp_normalized)
+            agp_words = [w for w in re.findall(r'\b\w+\b', agp_normalized) if w]
             
-            # Extract first and last name from AGP name
-            if len(agp_words) >= 2:
-                agp_first_name = agp_words[0]
-                agp_last_name = agp_words[-1]
-            else:
-                agp_first_name = agp_normalized
-                agp_last_name = ""
+            if not agp_words:
+                continue
             
-            # Calculate similarity score using strict matching
+            # Calculate multiple similarity metrics
+            scores = []
             
-            # 1. Full name sequence matching (exact string similarity)
+            # 1. Last name matching (with fuzzy tolerance for spelling variations and compound names)
+            if len(user_words) > 0 and len(agp_words) > 0:
+                agp_last = agp_words[-1]
+                last_name_score = 0.0
+                
+                # Check AGP last name against ALL user name words (handles compound last names like "Joshi Deshpande")
+                for user_word in user_words:
+                    if user_word == agp_last:
+                        last_name_score = 1.0
+                        break
+                    elif user_word in agp_last or agp_last in user_word:
+                        last_name_score = max(last_name_score, 0.8)
+                    else:
+                        # Check for close spelling variations (e.g., Pabale vs Pable)
+                        word_similarity = SequenceMatcher(None, user_word, agp_last).ratio()
+                        if word_similarity >= 0.75:  # 75% similar
+                            last_name_score = max(last_name_score, word_similarity * 0.9)
+                
+                # If no decent last name match found, skip this AGP
+                if last_name_score < 0.60:  # Slightly lenient for spelling variations
+                    continue
+                
+                scores.append(('last_name', last_name_score, 0.35))
+            
+            # 2. Check if AGP name contains user's initials pattern
+            # E.g., "p.m.joshi" matches "Pooja Makarand Joshi"
+            agp_initials = []
+            for word in agp_words:
+                if len(word) == 1 or (len(word) == 2 and word[1] == '.'):
+                    agp_initials.append(word[0])
+            
+            if agp_initials and user_initials:
+                # Check if user initials match AGP initials in sequence
+                initials_match = 0.0
+                if len(agp_initials) <= len(user_initials):
+                    # Check if AGP initials are a subset of user initials in order
+                    matches = sum(1 for i, agp_init in enumerate(agp_initials) if i < len(user_initials) and agp_init == user_initials[i])
+                    if matches > 0:
+                        initials_match = matches / len(user_initials)
+                scores.append(('initials', initials_match, 0.25))
+            
+            # 3. Check for full word matches (e.g., "Pooja" in full, not just "P")
+            full_word_matches = 0
+            for user_word in user_words:
+                for agp_word in agp_words:
+                    if len(user_word) > 1 and len(agp_word) > 1:  # Both are full words
+                        if user_word == agp_word:
+                            full_word_matches += 1
+                        elif user_word in agp_word or agp_word in user_word:
+                            full_word_matches += 0.5
+            
+            if len(user_words) > 0:
+                full_word_score = min(full_word_matches / len(user_words), 1.0)
+                scores.append(('full_words', full_word_score, 0.25))
+            
+            # 4. Overall sequence similarity
             seq_score = SequenceMatcher(None, user_name_normalized, agp_normalized).ratio()
+            scores.append(('sequence', seq_score, 0.15))
             
-            # 2. STRICT first name matching (must match or be initials)
-            first_name_match = 0.0
-            if user_first_name and agp_first_name:
-                if user_first_name == agp_first_name:
-                    first_name_match = 1.0
-                elif user_first_name[0] == agp_first_name[0]:  # Initial match
-                    first_name_match = 0.6
-                else:
-                    # First name doesn't match - likely wrong person!
-                    continue  # Skip this AGP name entirely
-            
-            # 3. STRICT last name matching (must match exactly)
-            last_name_match = 0.0
-            if user_last_name and agp_last_name:
-                if user_last_name == agp_last_name:
-                    last_name_match = 1.0
-                else:
-                    # Last name doesn't match - definitely wrong person!
-                    continue  # Skip this AGP name entirely
-            
-            # 4. Full word set comparison (handles middle names, titles)
-            user_word_set = set(user_name_words)
-            agp_word_set = set(agp_words)
-            common_words = user_word_set.intersection(agp_word_set)
-            word_overlap = len(common_words) / max(len(user_word_set), len(agp_word_set)) if user_word_set or agp_word_set else 0
-            
-            # Combined score with stricter requirements
-            # First and last name matching is heavily weighted
-            combined_score = (seq_score * 0.2) + (first_name_match * 0.4) + (last_name_match * 0.3) + (word_overlap * 0.1)
+            # Calculate weighted combined score
+            combined_score = sum(score * weight for _, score, weight in scores)
             
             if combined_score > best_score:
                 best_score = combined_score
