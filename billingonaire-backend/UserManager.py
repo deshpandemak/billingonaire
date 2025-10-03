@@ -352,15 +352,16 @@ class UserManager:
             all_agp_names = set()
             
             # Query daily-boards for unique AGP names using existing firebase_admin client
+            # NOTE: daily-boards uses 'respondent_lawyer' field, NOT 'agp_name'
             boards_ref = self.db.collection('daily-boards')
             # Get a sample of recent boards to extract AGP names
             query = boards_ref.limit(1000).stream()
             
             for doc in query:
                 data = doc.to_dict()
-                agp_name = data.get('agp_name')
-                if agp_name:
-                    all_agp_names.add(agp_name)
+                respondent_lawyer = data.get('respondent_lawyer', '').strip()
+                if respondent_lawyer and len(respondent_lawyer) > 3:  # Filter out short/empty names
+                    all_agp_names.add(respondent_lawyer)
             
             # Also get from user profiles for completeness
             all_users = self.list_users()

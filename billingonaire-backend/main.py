@@ -1507,25 +1507,47 @@ async def analyze_single_case(
         try:
             import requests
             order_link = case_data.get("order_link")
+            logging.info(f"Downloading order from: {order_link}")
             response = requests.get(order_link, timeout=30)
             
-            if response.status_code == 200 and response.headers.get('Content-Type') == 'application/pdf':
+            # More lenient Content-Type check (handles variations like 'application/pdf;charset=UTF-8')
+            content_type = response.headers.get('Content-Type', '').lower()
+            is_pdf = 'application/pdf' in content_type
+            
+            if response.status_code == 200 and is_pdf:
                 # Analyze the PDF
                 case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
-                analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
-                    case_id, case_ref, response.content, 
-                    case_data.get('board_date'), order_link
-                )
+                logging.info(f"Analyzing order for case: {case_ref}")
                 
-                return JSONResponse(content=analysis_result)
+                try:
+                    analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
+                        case_id, case_ref, response.content, 
+                        case_data.get('board_date'), order_link
+                    )
+                    
+                    return JSONResponse(content=analysis_result)
+                except Exception as analysis_error:
+                    logging.error(f"Analysis failed for {case_ref}: {str(analysis_error)}", exc_info=True)
+                    return JSONResponse(
+                        status_code=500,
+                        content={"error": f"Order analysis failed: {str(analysis_error)}"}
+                    )
             else:
+                error_msg = f"Invalid response: status={response.status_code}, content_type={content_type}"
+                logging.error(error_msg)
                 return JSONResponse(
                     status_code=400,
-                    content={"error": "Failed to download order PDF from link"}
+                    content={"error": f"Failed to download order PDF from link. {error_msg}"}
                 )
                 
+        except requests.RequestException as req_error:
+            logging.error(f"Network error downloading order: {req_error}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Network error downloading order: {str(req_error)}"}
+            )
         except Exception as e:
-            logging.error(f"Error downloading/analyzing order: {e}")
+            logging.error(f"Unexpected error in download/analyze: {e}", exc_info=True)
             return JSONResponse(
                 status_code=500,
                 content={"error": f"Failed to analyze order: {str(e)}"}
