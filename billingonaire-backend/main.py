@@ -2379,11 +2379,18 @@ async def generate_bill_data(
                 matched_cases = cases_by_agp.get(matched_agp, [])
                 
                 for case_id, case_data in matched_cases:
-                    board_date_str = case_data.get('board_date')
+                    board_date_raw = case_data.get('board_date')
                     
-                    if board_date_str:
+                    if board_date_raw:
                         try:
-                            board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
+                            # Handle both Firestore Timestamp and string formats
+                            if isinstance(board_date_raw, str):
+                                board_date = datetime.strptime(board_date_raw, '%Y-%m-%d')
+                                board_date_str = board_date_raw
+                            else:
+                                # Firestore DatetimeWithNanoseconds object
+                                board_date = board_date_raw
+                                board_date_str = board_date.strftime('%Y-%m-%d')
                             
                             # Check if case falls within date range
                             if start_dt <= board_date <= end_dt and case_id not in case_ids:
@@ -2443,11 +2450,18 @@ async def generate_bill_data(
                 
                 if case_doc.exists:
                     case_data = case_doc.to_dict()
-                    board_date_str = case_data.get('board_date')
+                    board_date_raw = case_data.get('board_date')
                     
-                    if board_date_str:
+                    if board_date_raw:
                         try:
-                            board_date = datetime.strptime(board_date_str, '%Y-%m-%d')
+                            # Handle both Firestore Timestamp and string formats
+                            if isinstance(board_date_raw, str):
+                                board_date = datetime.strptime(board_date_raw, '%Y-%m-%d')
+                                board_date_str = board_date_raw
+                            else:
+                                # Firestore DatetimeWithNanoseconds object
+                                board_date = board_date_raw
+                                board_date_str = board_date.strftime('%Y-%m-%d')
                             
                             # Check if case falls within date range
                             if start_dt <= board_date <= end_dt and case_id not in case_ids:
