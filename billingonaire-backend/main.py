@@ -2388,8 +2388,8 @@ async def generate_bill_data(
                                 board_date = datetime.strptime(board_date_raw, '%Y-%m-%d')
                                 board_date_str = board_date_raw
                             else:
-                                # Firestore DatetimeWithNanoseconds object
-                                board_date = board_date_raw
+                                # Firestore DatetimeWithNanoseconds object - convert to naive datetime
+                                board_date = board_date_raw.replace(tzinfo=None)
                                 board_date_str = board_date.strftime('%Y-%m-%d')
                             
                             # Check if case falls within date range
@@ -2459,8 +2459,8 @@ async def generate_bill_data(
                                 board_date = datetime.strptime(board_date_raw, '%Y-%m-%d')
                                 board_date_str = board_date_raw
                             else:
-                                # Firestore DatetimeWithNanoseconds object
-                                board_date = board_date_raw
+                                # Firestore DatetimeWithNanoseconds object - convert to naive datetime
+                                board_date = board_date_raw.replace(tzinfo=None)
                                 board_date_str = board_date.strftime('%Y-%m-%d')
                             
                             # Check if case falls within date range
