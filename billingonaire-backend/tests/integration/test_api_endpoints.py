@@ -4,7 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
@@ -12,7 +12,9 @@ async def test_client():
     """Create test client for FastAPI app"""
     from main import app
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         yield client
 
 
@@ -69,7 +71,9 @@ class TestAutoOrderProcessingEndpoints:
     @pytest.mark.asyncio
     async def test_start_bulk_processing_unauthorized(self, test_client):
         """Test bulk processing without auth"""
-        response = await test_client.post("/auto-orders/bulk-process", json={"case_ids": ["test"]})
+        response = await test_client.post(
+            "/auto-orders/bulk-process", json={"case_ids": ["test"]}
+        )
 
         assert response.status_code in [401, 403]
 

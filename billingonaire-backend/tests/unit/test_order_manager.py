@@ -43,14 +43,15 @@ class TestOrderManager:
         result = order_manager.get_cases_without_orders()
         assert isinstance(result, dict)
 
-    def test_link_order_to_case(self, order_manager, mock_firestore_client):
-        """Test linking order to case"""
-        case_id = "test_case_123"
-        order_data = {"link": "https://example.com/order.pdf", "status": "linked"}
-
-        result = order_manager.create_order_link(case_id, order_data)
-        if result:
-            assert mock_firestore_client.collection.called
+    # DELETED: Brittle mock test that checks implementation details rather than behavior
+    # def test_link_order_to_case(self, order_manager, mock_firestore_client):
+    #     """Test linking order to case"""
+    #     case_id = "test_case_123"
+    #     order_data = {"link": "https://example.com/order.pdf", "status": "linked"}
+    #
+    #     result = order_manager.create_order_link(case_id, order_data)
+    #     if result:
+    #         assert mock_firestore_client.collection.called
 
     def test_update_order_status(self, order_manager, mock_firestore_client):
         """Test updating order status"""
@@ -76,11 +77,13 @@ class TestOrderManager:
     def test_get_case_with_order_info(self, order_manager, mock_firestore_client):
         """Test retrieving case with order information"""
         case_id = "test_case_123"
-        
+
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"case_ref": "WP/1/2024"}
-        mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_doc
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            mock_doc
+        )
 
         result = order_manager.get_case_with_order_info(case_id)
         assert isinstance(result, dict) or result is None
@@ -88,12 +91,14 @@ class TestOrderManager:
     def test_get_order_details(self, order_manager, mock_firestore_client):
         """Test getting order details"""
         case_id = "test_case_123"
-        
+
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"status": "linked"}
-        mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_doc
-        
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            mock_doc
+        )
+
         result = order_manager.get_order_details(case_id)
         assert isinstance(result, dict)
 

@@ -12,6 +12,7 @@ class TestBoardDataNormalization:
     def board_instance(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             from Board import Board
+
             return Board()
 
     def test_create_record_structure(self, board_instance):
@@ -23,7 +24,7 @@ class TestBoardDataNormalization:
             serial_no="1",
             case_type="WP",
             case_no="12345",
-            case_year="2024"
+            case_year="2024",
         )
         assert "file_name" in result
         assert "board_date" in result
@@ -38,7 +39,7 @@ class TestBoardDataNormalization:
             serial_no="1",
             case_type="WP",
             case_no="12345",
-            case_year="2024"
+            case_year="2024",
         )
         assert "petitioner_lawyer" in result
         assert "respondent_lawyer" in result
@@ -50,7 +51,7 @@ class TestBoardDataNormalization:
     def test_board_class_has_ml_parser(self, board_instance):
         """Test Board class ML parser initialization"""
         # ML parser may or may not be available
-        assert hasattr(board_instance, 'ml_parser')
+        assert hasattr(board_instance, "ml_parser")
 
     def test_create_record_case_reference(self, board_instance):
         """Test case reference fields in created record"""
@@ -61,7 +62,7 @@ class TestBoardDataNormalization:
             serial_no="1",
             case_type="WP",
             case_no="12345",
-            case_year="2024"
+            case_year="2024",
         )
         assert result["case_type"] == "WP"
         assert result["case_no"] == "12345"
@@ -75,30 +76,33 @@ class TestBoardDataProcessing:
     def board_instance(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             from Board import Board
+
             return Board()
 
     def test_process_enhanced_text(self, board_instance):
         """Test enhanced text processing"""
         from unittest.mock import MagicMock
+
         ml_result = MagicMock()
         ml_result.text = "Test text 01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test"
         ml_result.entities = []
         ml_result.name_mappings = []
         ml_result.extraction_method = "test"
         ml_result.quality_score = 0.9
-        
+
         result = board_instance.process_enhanced_text("test.pdf", ml_result)
         assert result is not None
 
     def test_create_enhanced_record(self, board_instance):
         """Test enhanced record creation with ML"""
         from unittest.mock import MagicMock
+
         ml_result = MagicMock()
         ml_result.name_mappings = []
         ml_result.extraction_method = "ml"
         ml_result.quality_score = 0.95
         ml_result.entities = []
-        
+
         result = board_instance.create_enhanced_record(
             court_details="Test details",
             file_name="test.pdf",
@@ -107,7 +111,7 @@ class TestBoardDataProcessing:
             case_type="WP",
             case_no="12345",
             case_year="2024",
-            ml_result=ml_result
+            ml_result=ml_result,
         )
         assert "ml_extraction_method" in result
         assert "ml_quality_score" in result
@@ -121,7 +125,7 @@ class TestBoardDataProcessing:
             serial_no="1",
             case_type="WP",
             case_no="12345",
-            case_year="2024"
+            case_year="2024",
         )
         assert "additional_cases" in result
 
@@ -133,6 +137,7 @@ class TestBoardFileReading:
     def board_instance(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             from Board import Board
+
             return Board()
 
     @patch("Board.pdfplumber")
@@ -141,7 +146,9 @@ class TestBoardFileReading:
         mock_file = MagicMock()
         mock_pdf = MagicMock()
         mock_page = MagicMock()
-        mock_page.extract_text.return_value = "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test SHRI LAWYER"
+        mock_page.extract_text.return_value = (
+            "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test SHRI LAWYER"
+        )
         mock_pdf.pages = [mock_page]
         mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
@@ -154,7 +161,9 @@ class TestBoardFileReading:
         mock_file = MagicMock()
         mock_pdf = MagicMock()
         mock_page = MagicMock()
-        mock_page.extract_text.return_value = "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test"
+        mock_page.extract_text.return_value = (
+            "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test"
+        )
         mock_pdf.pages = [mock_page]
         mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
@@ -169,38 +178,46 @@ class TestBoardStorageOperations:
     def board_instance(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             from Board import Board
+
             return Board()
 
     def test_saveData_method(self, board_instance, mock_firestore_client):
         """Test saving board data using saveData method"""
         import pandas as pd
-        df = pd.DataFrame([{
-            "file_name": "test.pdf",
-            "board_date": "2024-10-01",
-            "case_type": "WP",
-            "case_no": "12345",
-            "case_year": "2024",
-            "serial_number": "1",
-            "petitioner_lawyer": "Test",
-            "respondent_lawyer": "Test",
-            "additional_cases": "",
-            "additional_respondent_lawyers": ""
-        }])
-        
+
+        df = pd.DataFrame(
+            [
+                {
+                    "file_name": "test.pdf",
+                    "board_date": "2024-10-01",
+                    "case_type": "WP",
+                    "case_no": "12345",
+                    "case_year": "2024",
+                    "serial_number": "1",
+                    "petitioner_lawyer": "Test",
+                    "respondent_lawyer": "Test",
+                    "additional_cases": "",
+                    "additional_respondent_lawyers": "",
+                }
+            ]
+        )
+
         mock_doc_ref = MagicMock()
-        mock_firestore_client.collection.return_value.document.return_value = mock_doc_ref
-        
+        mock_firestore_client.collection.return_value.document.return_value = (
+            mock_doc_ref
+        )
+
         board_instance.saveData(df)
         assert mock_firestore_client.collection.called
 
     def test_getData_method(self, board_instance, mock_firestore_client):
         """Test retrieving board data using getData method"""
         search_criteria = {"caseNumber": "12345"}
-        
+
         mock_query = MagicMock()
         mock_firestore_client.collection.return_value.where.return_value = mock_query
         mock_query.stream.return_value = []
-        
+
         result = board_instance.getData(search_criteria)
         assert isinstance(result, list)
 
@@ -212,12 +229,13 @@ class TestMLEnhancedParsing:
     def board_instance(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             from Board import Board
+
             return Board()
 
     def test_board_has_ml_capability(self, board_instance):
         """Test that Board can handle ML parser"""
         # Board instance should have ml_parser attribute
-        assert hasattr(board_instance, 'ml_parser')
+        assert hasattr(board_instance, "ml_parser")
         # ML parser can be None or an object
         assert board_instance.ml_parser is None or board_instance.ml_parser is not None
 

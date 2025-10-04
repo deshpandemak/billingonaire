@@ -80,7 +80,9 @@ def test_get_case_with_order_info(mock_firestore):
     mock_doc = MagicMock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {"case_ref": "WP/1/2024"}
-    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = (
+        mock_doc
+    )
 
     om = OrderManager()
     result = om.get_case_with_order_info("case_123")
@@ -95,7 +97,9 @@ def test_get_order_details(mock_firestore):
     mock_doc = MagicMock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {"status": "linked"}
-    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = (
+        mock_doc
+    )
 
     om = OrderManager()
     result = om.get_order_details("case_123")

@@ -69,7 +69,9 @@ class TestDashboardData:
         mock_collection.stream.return_value = mock_docs
         mock_firestore_client.collection.return_value = mock_collection
 
-        result = await dashboard_module.DashboardData(mock_firestore_client).get_agp_stats()
+        result = await dashboard_module.DashboardData(
+            mock_firestore_client
+        ).get_agp_stats()
         assert isinstance(result, list)
 
     def test_group_similar_agp_names(self, dashboard_module, mock_firestore_client):
@@ -96,7 +98,9 @@ class TestDashboardData:
         similarity = SequenceMatcher(None, name1.upper(), name2.upper()).ratio()
         assert 0 <= similarity <= 1
 
-    def test_normalize_agp_name_for_matching(self, dashboard_module, mock_firestore_client):
+    def test_normalize_agp_name_for_matching(
+        self, dashboard_module, mock_firestore_client
+    ):
         """Test AGP name normalization for matching"""
         name = "SHRI P.M.JOSHI, AGP"
         dashboard = dashboard_module.DashboardData(mock_firestore_client)
@@ -111,9 +115,9 @@ class TestDashboardData:
         """Test monthly average calculation"""
         year = 2024
 
-        result = await dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(
-            year
-        )
+        result = await dashboard_module.DashboardData(
+            mock_firestore_client
+        ).get_monthly_avg(year)
         assert isinstance(result, list)
 
     @pytest.mark.asyncio

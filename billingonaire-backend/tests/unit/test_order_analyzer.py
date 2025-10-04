@@ -32,15 +32,14 @@ class TestOrderDocumentAnalyzer:
             assert isinstance(score, (int, float))
 
     def test_extract_order_date(self, analyzer):
-        """Test order date extraction (private method returns tuple)"""
+        """Test order date extraction (private method)"""
         order_text = "Order dated 01/10/2024"
+        document_structure = {"order_section": order_text}
 
-        result = analyzer._extract_order_date(order_text)
+        result = analyzer._extract_order_date(order_text, document_structure)
         if result:
-            # _extract_order_date returns (date, confidence) tuple
-            date_str, confidence = result
-            assert "2024" in date_str or "01/10" in date_str or "/" in date_str
-            assert isinstance(confidence, (int, float))
+            # _extract_order_date returns formatted date string
+            assert "2024" in result or "01" in result or "/" in result
 
     def test_extract_petitioners(self, analyzer):
         """Test petitioner extraction (private method)"""

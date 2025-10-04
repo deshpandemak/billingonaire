@@ -25,7 +25,9 @@ def test_readfile_with_valid_pdf(mock_pdfplumber, mock_firestore):
 
     mock_pdf = MagicMock()
     mock_page = MagicMock()
-    mock_page.extract_text.return_value = "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test SHRI LAWYER"
+    mock_page.extract_text.return_value = (
+        "01/10/2024 HON'BLE COURT  1 WP/12345/2024 Test SHRI LAWYER"
+    )
     mock_pdf.pages = [mock_page]
     mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
@@ -33,7 +35,7 @@ def test_readfile_with_valid_pdf(mock_pdfplumber, mock_firestore):
     mock_file = MagicMock()
     mock_file.read.return_value = b"%PDF-test"
     mock_file.seek = MagicMock()
-    
+
     result = board.readFile("board_2024_10_01.pdf", mock_file)
     assert result is not None
 
@@ -65,7 +67,9 @@ def test_get_all_boards(mock_firestore):
         MagicMock(to_dict=lambda: {"board_date": "2024-10-01", "case_type": "WP"}),
         MagicMock(to_dict=lambda: {"board_date": "2024-10-02", "case_type": "WP"}),
     ]
-    mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = mock_docs
+    mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = (
+        mock_docs
+    )
 
     board = Board()
     result = board.getData({})
@@ -85,7 +89,7 @@ def test_parse_case_ref(mock_firestore):
         serial_no="1",
         case_type="WP",
         case_no="12345",
-        case_year="2024"
+        case_year="2024",
     )
     assert result is not None
     assert result.get("case_type") == "WP"
@@ -107,7 +111,7 @@ def test_normalize_case_ref(mock_firestore):
         serial_no="1",
         case_type="WP",
         case_no="12345",
-        case_year="2024"
+        case_year="2024",
     )
     # Verify case reference fields are present
     assert "case_type" in result
@@ -128,7 +132,7 @@ def test_process_enhanced_text(mock_pdfplumber, mock_firestore):
     ml_result.name_mappings = []
     ml_result.extraction_method = "ml"
     ml_result.quality_score = 0.9
-    
+
     result = board.process_enhanced_text("test.pdf", ml_result)
     assert result is not None
 
@@ -148,7 +152,7 @@ def test_extract_date_from_filename(mock_firestore):
         serial_no="1",
         case_type="WP",
         case_no="12345",
-        case_year="2024"
+        case_year="2024",
     )
     assert "2024" in str(result["board_date"])
 
@@ -167,7 +171,7 @@ def test_clean_agp_name(mock_firestore):
         serial_no="1",
         case_type="WP",
         case_no="12345",
-        case_year="2024"
+        case_year="2024",
     )
     # Verify respondent lawyer extraction (AGP name)
     assert "respondent_lawyer" in result
@@ -184,7 +188,7 @@ def test_get_cases_by_date_range(mock_firestore):
                 "board_date": "2024-10-01",
                 "case_type": "WP",
                 "case_no": "1",
-                "case_year": "2024"
+                "case_year": "2024",
             }
         )
     ]
@@ -229,7 +233,7 @@ def test_validate_case_format(mock_firestore):
         serial_no="1",
         case_type="WP",
         case_no="12345",
-        case_year="2024"
+        case_year="2024",
     )
     assert result["case_type"] == "WP"
     assert result["case_no"] == "12345"

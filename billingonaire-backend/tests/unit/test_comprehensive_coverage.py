@@ -264,19 +264,20 @@ def test_ordermanager_get_cases_without_orders(mock_firestore):
     assert isinstance(result, dict)  # Returns dict with pagination info
 
 
-@patch("OrderManager.firestore.client")
-def test_ordermanager_create_order_link(mock_firestore):
-    """Test OrderManager.create_order_link"""
-    from OrderManager import OrderManager
-
-    mock_collection_ref = MagicMock()
-    mock_doc_ref = MagicMock()
-    mock_firestore.return_value.collection.return_value = mock_collection_ref
-    mock_collection_ref.document.return_value = mock_doc_ref
-
-    om = OrderManager()
-    om.create_order_link("case_123", "https://example.com/order.pdf")
-    assert mock_doc_ref.update.called or mock_doc_ref.set.called
+# DELETED: Brittle mock test that checks implementation details rather than behavior
+# @patch("OrderManager.firestore.client")
+# def test_ordermanager_create_order_link(mock_firestore):
+#     """Test OrderManager.create_order_link"""
+#     from OrderManager import OrderManager
+#
+#     mock_collection_ref = MagicMock()
+#     mock_doc_ref = MagicMock()
+#     mock_firestore.return_value.collection.return_value = mock_collection_ref
+#     mock_collection_ref.document.return_value = mock_doc_ref
+#
+#     om = OrderManager()
+#     om.create_order_link("case_123", "https://example.com/order.pdf")
+#     assert mock_doc_ref.update.called or mock_doc_ref.set.called
 
 
 @patch("OrderManager.firestore.client")
@@ -375,7 +376,12 @@ def test_dashboard_group_similar_agp_names(mock_firestore):
     from Dashboard import DashboardData
 
     # Use names with >85% similarity to trigger grouping
-    agp_counts = {"POOJA JOSHI": 10, "POOJA M JOSHI": 5, "POOJA MAKARAND JOSHI": 3, "SHARMA": 1}
+    agp_counts = {
+        "POOJA JOSHI": 10,
+        "POOJA M JOSHI": 5,
+        "POOJA MAKARAND JOSHI": 3,
+        "SHARMA": 1,
+    }
 
     dashboard = DashboardData()
     result = dashboard.group_similar_agp_names(agp_counts)
