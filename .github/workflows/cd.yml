@@ -24,18 +24,13 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    
     steps:
       - uses: actions/checkout@v4
       
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
       
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
