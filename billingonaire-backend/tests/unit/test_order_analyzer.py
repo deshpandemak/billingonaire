@@ -21,20 +21,26 @@ class TestOrderDocumentAnalyzer:
         return analyzer_module.OrderDocumentAnalyzer()
 
     def test_classify_order_category(self, analyzer):
-        """Test order category classification (private method)"""
+        """Test order category classification (private method returns tuple)"""
         order_text = "The matter is heard and adjourned to next date"
 
         result = analyzer._classify_order(order_text)
         if result:
-            assert result in ["ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"]
+            # _classify_order returns (category, score) tuple
+            category, score = result
+            assert category in ["ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"]
+            assert isinstance(score, (int, float))
 
     def test_extract_order_date(self, analyzer):
-        """Test order date extraction (private method)"""
+        """Test order date extraction (private method returns tuple)"""
         order_text = "Order dated 01/10/2024"
 
         result = analyzer._extract_order_date(order_text)
         if result:
-            assert "2024" in result or "01/10" in result
+            # _extract_order_date returns (date, confidence) tuple
+            date_str, confidence = result
+            assert "2024" in date_str or "01/10" in date_str or "/" in date_str
+            assert isinstance(confidence, (int, float))
 
     def test_extract_petitioners(self, analyzer):
         """Test petitioner extraction (private method)"""

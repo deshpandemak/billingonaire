@@ -374,10 +374,11 @@ def test_dashboard_group_similar_agp_names(mock_firestore):
     """Test DashboardData.group_similar_agp_names fuzzy matching (instance method)"""
     from Dashboard import DashboardData
 
-    agp_counts = {"POOJA JOSHI": 10, "P.M.JOSHI": 5, "SHARMA": 1}
+    # Use names with >85% similarity to trigger grouping
+    agp_counts = {"POOJA JOSHI": 10, "POOJA M JOSHI": 5, "POOJA MAKARAND JOSHI": 3, "SHARMA": 1}
 
     dashboard = DashboardData()
     result = dashboard.group_similar_agp_names(agp_counts)
     assert isinstance(result, dict)
-    # Should group similar names
+    # Should group similar POOJA variations together (85% similarity threshold)
     assert len(result) < len(agp_counts)

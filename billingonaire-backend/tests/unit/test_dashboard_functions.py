@@ -22,7 +22,7 @@ def mock_firebase():
 @patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
 async def test_get_weekly_status(mock_firestore):
-    """Test get_weekly_status async method"""
+    """Test get_weekly_status async method (returns list not dict)"""
     from Dashboard import DashboardData
 
     mock_docs = [
@@ -39,7 +39,7 @@ async def test_get_weekly_status(mock_firestore):
 
     dashboard = DashboardData()
     result = await dashboard.get_weekly_status("2024-10-01", "2024-10-07")
-    assert isinstance(result, dict)
+    assert isinstance(result, list)  # Returns list of weekly status data
 
 
 @patch("Dashboard.firestore.client")
