@@ -4,6 +4,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
+    "@vitest/coverage-v8": "^3.2.4",
     "@vitest/ui": "^3.2.4",
     "ag-grid-community": "^34.2.0",
     "ag-grid-enterprise": "^34.2.0",
