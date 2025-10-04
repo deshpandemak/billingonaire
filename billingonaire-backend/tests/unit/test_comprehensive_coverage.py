@@ -246,7 +246,7 @@ def test_usermanager_match_user_name_to_agp(mock_auth, mock_firestore):
 
 @patch("OrderManager.firestore.client")
 def test_ordermanager_get_cases_without_orders(mock_firestore):
-    """Test OrderManager.get_cases_without_orders"""
+    """Test OrderManager.get_cases_without_orders (returns dict not list)"""
     from OrderManager import OrderManager
 
     mock_docs = [
@@ -261,7 +261,7 @@ def test_ordermanager_get_cases_without_orders(mock_firestore):
 
     om = OrderManager()
     result = om.get_cases_without_orders()
-    assert isinstance(result, list)
+    assert isinstance(result, dict)  # Returns dict with pagination info
 
 
 @patch("OrderManager.firestore.client")
@@ -269,9 +269,14 @@ def test_ordermanager_create_order_link(mock_firestore):
     """Test OrderManager.create_order_link"""
     from OrderManager import OrderManager
 
+    mock_collection_ref = MagicMock()
+    mock_doc_ref = MagicMock()
+    mock_firestore.return_value.collection.return_value = mock_collection_ref
+    mock_collection_ref.document.return_value = mock_doc_ref
+
     om = OrderManager()
     om.create_order_link("case_123", "https://example.com/order.pdf")
-    assert mock_firestore.return_value.collection.called
+    assert mock_doc_ref.update.called or mock_doc_ref.set.called
 
 
 @patch("OrderManager.firestore.client")
@@ -291,17 +296,18 @@ def test_ordermanager_update_order_status(mock_firestore):
 
 @patch("UserMatterMatcher.firestore.client")
 def test_usermattermatcher_match_user_to_matters(mock_firestore):
-    """Test UserMatterMatcher.match_user_to_matters"""
+    """Test UserMatterMatcher.fuzzy_match_score (replaces match_user_to_matters)"""
     from UserMatterMatcher import UserMatterMatcher
 
     matcher = UserMatterMatcher()
-    result = matcher.match_user_to_matters("Pooja Joshi", "P.M.JOSHI")
+    result = matcher.fuzzy_match_score("Pooja Joshi", "P.M.JOSHI")
     assert result is not None
+    assert 0 <= result <= 1
 
 
 @patch("UserMatterMatcher.firestore.client")
 def test_usermattermatcher_get_matching_matters(mock_firestore):
-    """Test UserMatterMatcher.get_matching_matters_for_user"""
+    """Test UserMatterMatcher.find_user_matters (replaces get_matching_matters_for_user)"""
     from UserMatterMatcher import UserMatterMatcher
 
     mock_docs = [
@@ -310,8 +316,8 @@ def test_usermattermatcher_get_matching_matters(mock_firestore):
     mock_firestore.return_value.collection.return_value.stream.return_value = mock_docs
 
     matcher = UserMatterMatcher()
-    result = matcher.get_matching_matters_for_user("Pooja Joshi")
-    assert result is not None
+    result = matcher.find_user_matters("user_123")
+    assert isinstance(result, list)
 
 
 # ============================================================================
@@ -322,7 +328,7 @@ def test_usermattermatcher_get_matching_matters(mock_firestore):
 @patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
 async def test_dashboard_get_weekly_status(mock_firestore):
-    """Test DashboardData.get_weekly_status"""
+    """Test DashboardData.get_weekly_status (returns list not dict)"""
     from Dashboard import DashboardData
 
     mock_docs = [
@@ -339,7 +345,7 @@ async def test_dashboard_get_weekly_status(mock_firestore):
 
     dashboard = DashboardData()
     result = await dashboard.get_weekly_status("2024-10-01", "2024-10-07")
-    assert isinstance(result, dict)
+    assert isinstance(result, list)  # Returns list of status data
 
 
 @patch("Dashboard.firestore.client")
@@ -363,13 +369,15 @@ async def test_dashboard_get_agp_stats(mock_firestore):
     assert isinstance(result, list)
 
 
-def test_dashboard_group_similar_agp_names():
-    """Test DashboardData.group_similar_agp_names fuzzy matching"""
+@patch("Dashboard.firestore.client")
+def test_dashboard_group_similar_agp_names(mock_firestore):
+    """Test DashboardData.group_similar_agp_names fuzzy matching (instance method)"""
     from Dashboard import DashboardData
 
     agp_counts = {"POOJA JOSHI": 10, "P.M.JOSHI": 5, "SHARMA": 1}
 
-    result = DashboardData.group_similar_agp_names(agp_counts)
+    dashboard = DashboardData()
+    result = dashboard.group_similar_agp_names(agp_counts)
     assert isinstance(result, dict)
     # Should group similar names
     assert len(result) < len(agp_counts)
