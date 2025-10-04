@@ -33,7 +33,7 @@ def test_get_cases_without_orders(mock_firestore):
 
     om = OrderManager()
     result = om.get_cases_without_orders()
-    assert isinstance(result, list)
+    assert isinstance(result, dict)
 
 
 @patch("OrderManager.firestore.client")
@@ -42,7 +42,7 @@ def test_link_order(mock_firestore):
     from OrderManager import OrderManager
 
     om = OrderManager()
-    result = om.link_order("case_123", "https://example.com/order.pdf")
+    result = om.create_order_link("case_123", {"link": "https://example.com/order.pdf"})
     assert mock_firestore.return_value.collection.called
 
 
@@ -58,7 +58,7 @@ def test_update_order_status(mock_firestore):
 
 @patch("OrderManager.firestore.client")
 def test_get_cases_by_status(mock_firestore):
-    """Test retrieving cases by status"""
+    """Test retrieving orders by status"""
     from OrderManager import OrderManager
 
     mock_collection = MagicMock()
@@ -68,45 +68,35 @@ def test_get_cases_by_status(mock_firestore):
     )
 
     om = OrderManager()
-    result = om.get_cases_by_status("order_linked")
+    result = om.get_orders_by_status("linked")
     assert isinstance(result, list)
 
 
 @patch("OrderManager.firestore.client")
-def test_get_cases_by_date_range(mock_firestore):
-    """Test retrieving cases by date range"""
+def test_get_case_with_order_info(mock_firestore):
+    """Test retrieving case with order info"""
     from OrderManager import OrderManager
 
-    mock_collection = MagicMock()
-    mock_collection.stream.return_value = []
-    mock_firestore.return_value.collection.return_value.where.return_value.where.return_value = (
-        mock_collection
-    )
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"case_ref": "WP/1/2024"}
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
 
     om = OrderManager()
-    result = om.get_cases_by_date_range("2024-10-01", "2024-10-07")
-    assert isinstance(result, list)
+    result = om.get_case_with_order_info("case_123")
+    assert isinstance(result, dict) or result is None
 
 
 @patch("OrderManager.firestore.client")
-def test_get_all_cases(mock_firestore):
-    """Test get_all_cases"""
+def test_get_order_details(mock_firestore):
+    """Test get_order_details"""
     from OrderManager import OrderManager
 
-    mock_collection = MagicMock()
-    mock_collection.stream.return_value = []
-    mock_firestore.return_value.collection.return_value = mock_collection
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"status": "linked"}
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
 
     om = OrderManager()
-    result = om.get_all_cases()
-    assert isinstance(result, list)
-
-
-@patch("OrderManager.firestore.client")
-def test_update_case(mock_firestore):
-    """Test update_case"""
-    from OrderManager import OrderManager
-
-    om = OrderManager()
-    om.update_case("case_123", {"order_status": "analysed"})
-    assert mock_firestore.return_value.collection.called
+    result = om.get_order_details("case_123")
+    assert isinstance(result, dict)
