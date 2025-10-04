@@ -38,19 +38,54 @@ jobs:
       - name: Build and Submit to Cloud Build
         run: |
           cd billingonaire-backend
-          gcloud builds submit \
+          echo "Starting Cloud Build..."
+          
+          # Submit build and capture the build ID
+          BUILD_OUTPUT=$(gcloud builds submit \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
-            --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest || {
-            echo "Build failed, checking for log streaming issue..."
+            --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
+            --format="value(id)" 2>&1 || echo "BUILD_FAILED")
+          
+          # Check if build submission failed
+          if [[ "$BUILD_OUTPUT" == *"BUILD_FAILED"* ]] || [[ -z "$BUILD_OUTPUT" ]]; then
+            echo "ERROR: Failed to submit build to Cloud Build"
+            echo "Output: $BUILD_OUTPUT"
             exit 1
-          }
-      
-      - name: Verify Image Exists
-        run: |
-          gcloud container images describe gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} || {
-            echo "ERROR: Image was not created by Cloud Build"
+          fi
+          
+          # Extract build ID (last line of output)
+          BUILD_ID=$(echo "$BUILD_OUTPUT" | tail -1)
+          echo "Build ID: $BUILD_ID"
+          
+          # Wait for build to complete and check status
+          echo "Waiting for build to complete..."
+          gcloud builds describe $BUILD_ID --format="value(status)" > /tmp/build_status.txt
+          BUILD_STATUS=$(cat /tmp/build_status.txt)
+          
+          # Wait loop (max 10 minutes)
+          TIMEOUT=600
+          ELAPSED=0
+          while [[ "$BUILD_STATUS" == "WORKING" || "$BUILD_STATUS" == "QUEUED" ]]; do
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "ERROR: Build timeout after 10 minutes"
+              exit 1
+            fi
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+            gcloud builds describe $BUILD_ID --format="value(status)" > /tmp/build_status.txt
+            BUILD_STATUS=$(cat /tmp/build_status.txt)
+            echo "Build status: $BUILD_STATUS (${ELAPSED}s elapsed)"
+          done
+          
+          # Check final status
+          if [ "$BUILD_STATUS" != "SUCCESS" ]; then
+            echo "ERROR: Build failed with status: $BUILD_STATUS"
+            echo "Fetching build logs..."
+            gcloud builds log $BUILD_ID --limit=50
             exit 1
-          }
+          fi
+          
+          echo "Build completed successfully!"
       
       - name: Deploy to Cloud Run
         run: |
