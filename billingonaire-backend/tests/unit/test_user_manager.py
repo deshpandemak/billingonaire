@@ -20,7 +20,7 @@ class TestUserManager:
     @pytest.fixture
     def user_manager(self, user_manager_module, mock_firestore_client):
         """Create UserManager instance"""
-        return user_manager_module.UserManager(mock_firestore_client)
+        return user_manager_module.UserManager()
 
     def test_create_user_profile(self, user_manager, mock_firestore_client):
         """Test user profile creation"""

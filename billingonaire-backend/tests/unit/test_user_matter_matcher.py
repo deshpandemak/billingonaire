@@ -21,7 +21,7 @@ class TestUserMatterMatcher:
     @pytest.fixture
     def matcher(self, matcher_module, mock_firestore_client):
         """Create UserMatterMatcher instance"""
-        return matcher_module.UserMatterMatcher(mock_firestore_client)
+        return matcher_module.UserMatterMatcher()
 
     def test_match_user_to_matters(self, matcher):
         """Test matching user to board matters"""

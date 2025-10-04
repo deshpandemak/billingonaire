@@ -20,7 +20,7 @@ class TestOrderManager:
     @pytest.fixture
     def order_manager(self, order_manager_module, mock_firestore_client):
         """Create OrderManager instance"""
-        return order_manager_module.OrderManager(mock_firestore_client)
+        return order_manager_module.OrderManager()
 
     def test_get_cases_without_orders(self, order_manager, mock_firestore_client):
         """Test retrieving cases without linked orders"""

@@ -3,7 +3,7 @@
 import os
 import sys
 from typing import Any, Dict
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -164,6 +164,21 @@ def mock_order_analyzer():
 
 @pytest.fixture(autouse=True)
 def setup_test_env(monkeypatch):
-    """Setup test environment variables"""
+    """Setup test environment variables and mock Firebase"""
     monkeypatch.setenv("TESTING", "true")
     monkeypatch.setenv("ORDER_MAX_SEQUENCE_RETRIES", "5")  # Reduce for faster tests
+
+    # Mock Firebase firestore.client() globally
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_document = MagicMock()
+
+    mock_client.collection.return_value = mock_collection
+    mock_collection.document.return_value = mock_document
+    mock_collection.where.return_value = mock_collection
+    mock_collection.limit.return_value = mock_collection
+    mock_collection.stream.return_value = []
+    mock_document.get.return_value = MagicMock(exists=True, to_dict=lambda: {})
+
+    with patch("firebase_admin.firestore.client", return_value=mock_client):
+        yield
