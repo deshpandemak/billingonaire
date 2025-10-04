@@ -39,6 +39,7 @@ jobs:
         run: |
           cd billingonaire-backend
           gcloud builds submit \
+            --include-logs-with-status \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
             --suppress-logs
