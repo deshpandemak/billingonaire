@@ -471,9 +471,16 @@ class Board:
 
             advocate_name = search_criteria.get("advocateName") or search_criteria.get("advocate_name")
             if advocate_name:
-                # Search in AGP name field, case-insensitive
-                query = query.where("respondent_lawyer", ">=", advocate_name)
-                query = query.where("respondent_lawyer", "<=", advocate_name + '\uf8ff')
+                # Note: Using range query for advocate name conflicts with date range in Firestore
+                # If date filters are present, we skip the advocate filter and apply it client-side
+                has_date_filter = start_date or end_date
+                if not has_date_filter:
+                    # Safe to use range query when no date filter
+                    query = query.where("respondent_lawyer", ">=", advocate_name)
+                    query = query.where("respondent_lawyer", "<=", advocate_name + '\uf8ff')
+                else:
+                    # Will filter client-side after query
+                    logging.info(f"ADVOCATE FILTER: Will apply client-side due to Firestore limitations (field: respondent_lawyer)")
 
             case_type = search_criteria.get("caseType") or search_criteria.get("case_type")
             if case_type:
@@ -496,12 +503,29 @@ class Board:
             if order_status:
                 logging.info(f"FILTERING BY ORDER STATUS: {order_status} (field: order_status)")
                 query = query.where("order_status", "==", order_status)
+            
+            # Apply order category filter (from ML analysis)
+            order_category = search_criteria.get("orderCategory") or search_criteria.get("order_category")
+            if order_category:
+                logging.info(f"FILTERING BY ORDER CATEGORY: {order_category} (field: order_category)")
+                query = query.where("order_category", "==", order_category)
 
             docs = query.stream()
             data = []
             sample_dates = []
+            
+            # Check if we need to apply advocate name filter client-side
+            apply_advocate_filter_client_side = advocate_name and (start_date or end_date)
+            
             for doc in docs:
                 doc_data = doc.to_dict()
+                
+                # Apply client-side advocate name filter if needed
+                if apply_advocate_filter_client_side:
+                    respondent_lawyer = doc_data.get('respondent_lawyer', '').lower()
+                    if advocate_name.lower() not in respondent_lawyer:
+                        continue  # Skip this document
+                
                 # Add document ID for reference
                 doc_data['id'] = doc.id
                 

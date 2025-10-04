@@ -20,7 +20,8 @@ const Table = () => {
     caseType: '',
     caseYear: '',
     caseStage: '',
-    orderStatus: ''
+    orderStatus: '',
+    orderCategory: ''
   });
   const [appliedCriteria, setAppliedCriteria] = useState({
     startDate: '',
@@ -30,7 +31,8 @@ const Table = () => {
     caseType: '',
     caseYear: '',
     caseStage: '',
-    orderStatus: ''
+    orderStatus: '',
+    orderCategory: ''
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -58,7 +60,8 @@ const Table = () => {
       caseType: '', 
       caseYear: '', 
       caseStage: '',
-      orderStatus: ''
+      orderStatus: '',
+      orderCategory: ''
     };
     
     setSearchCriteria(initialCriteria);
@@ -68,7 +71,7 @@ const Table = () => {
   }, []);
 
   const fetchData = async (criteria = searchCriteria) => {
-    if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage && !criteria.orderStatus) {
+    if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage && !criteria.orderStatus && !criteria.orderCategory) {
       setSearchError('Please fill at least one search criteria');
       return;
     }
@@ -91,7 +94,8 @@ const Table = () => {
           caseType: criteria.caseType,
           caseYear: criteria.caseYear,
           caseStage: criteria.caseStage,
-          orderStatus: criteria.orderStatus
+          orderStatus: criteria.orderStatus,
+          orderCategory: criteria.orderCategory
         })
       });
       console.log('🔍 API Response received:', result);
@@ -681,6 +685,19 @@ const Table = () => {
                     <option value="analysed">Linked & Analysed</option>
                     <option value="order_failed">Order Failed</option>
                     <option value="order_analysis_failed">Analysis Failed</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Order Category</label>
+                  <select
+                    className="form-control"
+                    value={searchCriteria.orderCategory}
+                    onChange={e => setSearchCriteria(sc => ({ ...sc, orderCategory: e.target.value }))}
+                  >
+                    <option value="">All Categories</option>
+                    <option value="ADJOURNED">Adjourned</option>
+                    <option value="HEARD_AND_ADJOURNED">Heard & Adjourned</option>
+                    <option value="DISPOSED_OFF">Disposed Off</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
