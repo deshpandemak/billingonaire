@@ -1,12 +1,15 @@
 """Pytest fixtures and configuration for all tests"""
-import pytest
+
 import os
 import sys
-from unittest.mock import Mock, MagicMock
-from typing import Dict, Any
+from typing import Any, Dict
+from unittest.mock import MagicMock, Mock
+
+import pytest
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 @pytest.fixture
 def mock_firestore_client():
@@ -15,20 +18,21 @@ def mock_firestore_client():
     mock_collection = MagicMock()
     mock_document = MagicMock()
     mock_doc_ref = MagicMock()
-    
+
     # Setup mock chain
     mock_client.collection.return_value = mock_collection
     mock_collection.document.return_value = mock_document
     mock_collection.where.return_value = mock_collection
     mock_collection.limit.return_value = mock_collection
     mock_collection.stream.return_value = []
-    
+
     # Document operations
     mock_document.get.return_value = mock_doc_ref
     mock_doc_ref.exists = True
     mock_doc_ref.to_dict.return_value = {}
-    
+
     return mock_client
+
 
 @pytest.fixture
 def sample_case_data() -> Dict[str, Any]:
@@ -41,8 +45,9 @@ def sample_case_data() -> Dict[str, Any]:
         "case_year": "2024",
         "board_date": "2024-10-01",
         "agp_name": "Pooja Joshi Deshpande",
-        "order_status": "not_linked"
+        "order_status": "not_linked",
     }
+
 
 @pytest.fixture
 def sample_case_with_order_link(sample_case_data) -> Dict[str, Any]:
@@ -50,8 +55,9 @@ def sample_case_with_order_link(sample_case_data) -> Dict[str, Any]:
     return {
         **sample_case_data,
         "order_status": "order_linked",
-        "order_link": "https://example.com/order.pdf"
+        "order_link": "https://example.com/order.pdf",
     }
+
 
 @pytest.fixture
 def sample_pdf_content() -> bytes:
@@ -95,29 +101,33 @@ startxref
 %%EOF"""
     return pdf_content
 
+
 @pytest.fixture
 def mock_requests_get(monkeypatch):
     """Mock requests.get for testing external API calls"""
+
     class MockResponse:
         def __init__(self, content, status_code=200, headers=None):
             self.content = content
             self.status_code = status_code
-            self.headers = headers or {'Content-Type': 'application/pdf'}
-    
+            self.headers = headers or {"Content-Type": "application/pdf"}
+
     def mock_get(url, **kwargs):
         # Default to successful PDF response
-        return MockResponse(b'%PDF-test-content', 200)
-    
+        return MockResponse(b"%PDF-test-content", 200)
+
     import requests
-    monkeypatch.setattr(requests, 'get', mock_get)
+
+    monkeypatch.setattr(requests, "get", mock_get)
     return mock_get
+
 
 @pytest.fixture
 def mock_order_analyzer():
     """Mock OrderDocumentAnalyzer for testing"""
     from dataclasses import dataclass
     from typing import List
-    
+
     @dataclass
     class MockAnalysisResult:
         order_category: str = "HEARD & ADJOURNED"
@@ -132,7 +142,7 @@ def mock_order_analyzer():
         disposal_reason: str = None
         order_text: str = "Test order text"
         cases: List = None
-        
+
         def __post_init__(self):
             if self.petitioners is None:
                 self.petitioners = ["Test Petitioner"]
@@ -146,10 +156,11 @@ def mock_order_analyzer():
                 self.key_phrases = ["Test phrase"]
             if self.cases is None:
                 self.cases = []
-    
+
     mock_analyzer = MagicMock()
     mock_analyzer.analyze_order_document.return_value = MockAnalysisResult()
     return mock_analyzer
+
 
 @pytest.fixture(autouse=True)
 def setup_test_env(monkeypatch):
