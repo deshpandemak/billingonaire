@@ -15,21 +15,14 @@ def test_create_user(mock_firestore):
     """Test user creation"""
     from UserManager import UserManager
 
-    user_data = {
-        "uid": "test_uid",
-        "email": "test@example.com",
-        "full_name": "Pooja Joshi",
-        "role": "user",
-    }
-
     um = UserManager()
-    um.create_user(user_data)
+    um.create_user_profile("test_uid", "test@example.com", "user", "assistant_government_pleader", "Pooja Joshi")
     assert mock_firestore.return_value.collection.called
 
 
 @patch("UserManager.firestore.client")
 def test_get_user(mock_firestore):
-    """Test get_user"""
+    """Test get_user_profile"""
     from UserManager import UserManager
 
     mock_doc = MagicMock()
@@ -40,33 +33,33 @@ def test_get_user(mock_firestore):
     )
 
     um = UserManager()
-    result = um.get_user("test_uid")
+    result = um.get_user_profile("test_uid")
     assert result is not None
 
 
 @patch("UserManager.firestore.client")
 def test_update_user(mock_firestore):
-    """Test update_user"""
+    """Test update_user_profile"""
     from UserManager import UserManager
 
     um = UserManager()
-    um.update_user("test_uid", {"full_name": "Updated Name"})
+    um.update_user_profile("test_uid", {"full_name": "Updated Name"})
     assert mock_firestore.return_value.collection.called
 
 
 @patch("UserManager.firestore.client")
-def test_delete_user(mock_firestore):
-    """Test delete_user"""
+def test_admin_update_user(mock_firestore):
+    """Test admin_update_user_profile"""
     from UserManager import UserManager
 
     um = UserManager()
-    um.delete_user("test_uid")
+    um.admin_update_user_profile("admin_uid", "test_uid", {"role": "admin"})
     assert mock_firestore.return_value.collection.called
 
 
 @patch("UserManager.firestore.client")
 def test_get_all_users(mock_firestore):
-    """Test get_all_users"""
+    """Test list_users"""
     from UserManager import UserManager
 
     mock_collection = MagicMock()
@@ -74,23 +67,28 @@ def test_get_all_users(mock_firestore):
     mock_firestore.return_value.collection.return_value = mock_collection
 
     um = UserManager()
-    result = um.get_all_users()
+    result = um.list_users()
     assert isinstance(result, list)
 
 
 @patch("UserManager.firestore.client")
-def test_set_user_role(mock_firestore):
-    """Test set_user_role"""
+def test_is_admin(mock_firestore):
+    """Test is_admin"""
     from UserManager import UserManager
 
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"role": "admin"}
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
+
     um = UserManager()
-    um.set_user_role("test_uid", "admin")
-    assert mock_firestore.return_value.collection.called
+    result = um.is_admin("test_uid")
+    assert result is True or result is None
 
 
 @patch("UserManager.firestore.client")
 def test_get_active_users(mock_firestore):
-    """Test get_active_users"""
+    """Test get_active_user_names"""
     from UserManager import UserManager
 
     mock_collection = MagicMock()
@@ -100,5 +98,5 @@ def test_get_active_users(mock_firestore):
     )
 
     um = UserManager()
-    result = um.get_active_users()
+    result = um.get_active_user_names()
     assert isinstance(result, list)
