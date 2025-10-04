@@ -37,8 +37,8 @@ const Table = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
-  const [selectedCaseId, setSelectedCaseId] = useState(null);
-  const [showOrderDrawer, setShowOrderDrawer] = useState(false);
+  const [_selectedCaseId, setSelectedCaseId] = useState(null);
+  const [_showOrderDrawer, setShowOrderDrawer] = useState(false);
   const [processingOrders, setProcessingOrders] = useState(new Set());
   const [selectedRows, setSelectedRows] = useState([]);
   const [gridApi, setGridApi] = useState(null);
@@ -135,7 +135,7 @@ const Table = () => {
     setEditedData((prev) => [...prev, {}]);
   };
 
-  const deleteRow = (index) => {
+  const _deleteRow = (index) => {
     setEditedData((prev) => prev.filter((_, i) => i !== index));
   };
 
@@ -366,7 +366,7 @@ const Table = () => {
   };
 
   // Order management functions
-  const handleDownloadOrder = async (caseId, caseRef, caseData) => {
+  const _handleDownloadOrder = async (caseId, caseRef, caseData) => {
     setProcessingOrders(prev => new Set(prev).add(caseId));
     try {
       const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
@@ -465,7 +465,7 @@ const Table = () => {
     }
   };
 
-  const viewOrderDetails = (caseId) => {
+  const _viewOrderDetails = (caseId) => {
     setSelectedCaseId(caseId);
     setShowOrderDrawer(true);
   };

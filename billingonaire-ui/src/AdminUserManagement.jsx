@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { authenticatedFetchJSON } from './lib/api';
@@ -57,7 +57,7 @@ const AdminUserManagement = () => {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [loadUsers]);
 
   const loadUserProfile = async () => {
     try {
@@ -80,7 +80,7 @@ const AdminUserManagement = () => {
     }
   };
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       setError('');
       const queryParams = roleFilter ? `?role_filter=${roleFilter}` : '';
@@ -105,7 +105,7 @@ const AdminUserManagement = () => {
       setError(`Failed to load users: ${error.message}`);
       setUsers([]); // Clear users on error
     }
-  };
+  }, [roleFilter]);
 
   const loadAvailableRoles = async () => {
     try {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
 import './styles/professional.css';
 
@@ -20,9 +20,9 @@ const OrderManagement = () => {
 
   useEffect(() => {
     loadCasesWithoutOrders();
-  }, []);
+  }, [loadCasesWithoutOrders]);
 
-  const loadCasesWithoutOrders = async (offset = 0) => {
+  const loadCasesWithoutOrders = useCallback(async (offset = 0) => {
     setLoading(true);
     setError(null);
 
@@ -55,7 +55,7 @@ const OrderManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [pagination.limit]);
 
   const loadMoreCases = () => {
     if (!loading && pagination.hasMore) {
@@ -280,7 +280,7 @@ const OrderManagement = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredCases.map((caseItem, index) => (
+                        {filteredCases.map((caseItem, _index) => (
                           <tr 
                             key={caseItem.id} 
                             className={selectedCase?.id === caseItem.id ? 'table-active' : ''}

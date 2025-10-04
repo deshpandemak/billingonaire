@@ -5,7 +5,7 @@ import Table from '../Table';
 
 // Mock AG Grid
 vi.mock('ag-grid-react', () => ({
-  AgGridReact: ({ columnDefs, rowData }) => (
+  AgGridReact: ({ columnDefs: _columnDefs, rowData }) => (
     <div data-testid="ag-grid">
       {rowData && rowData.length > 0 && (
         <div>Rows: {rowData.length}</div>
@@ -22,7 +22,7 @@ vi.mock('../useAuth', () => ({
   }),
 }));
 
-const mockData = [
+const _mockData = [
   {
     id: '1',
     case_ref: 'WP/12345/2024',

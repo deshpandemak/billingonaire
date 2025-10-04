@@ -2,11 +2,10 @@ import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { authenticatedFetch } from './lib/api';
 import './styles/professional.css';
 
 const Upload = () => {
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
   const fileInput = useRef();
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);

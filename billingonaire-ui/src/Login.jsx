@@ -19,7 +19,7 @@ const Login = () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       navigate('/dashboard');
-    } catch (err) {
+    } catch {
       setError('Invalid email or password. Please check your credentials and try again.');
     } finally {
       setLoading(false);

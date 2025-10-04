@@ -111,7 +111,7 @@ const AutoOrderProcessor = () => {
     }
   };
 
-  const handleBulkProcess = async (caseIds) => {
+  const _handleBulkProcess = async (caseIds) => {
     setProcessing(true);
     setError(null);
 

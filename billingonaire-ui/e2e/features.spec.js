@@ -16,10 +16,10 @@ test.describe('Billingonaire Feature Tests', () => {
       await page.goto('/bill-generation');
       
       // Check for admin badge (only visible if user is admin)
-      const adminBadge = page.locator('.badge.bg-success:has-text("Admin")');
+      const _adminBadge = page.locator('.badge.bg-success:has-text("Admin")');
       
       // Check for AGP selector (conditional rendering based on isAdmin && agpList.length > 0)
-      const agpSelector = page.locator('select').filter({ hasText: 'My Cases Only' });
+      const _agpSelector = page.locator('select').filter({ hasText: 'My Cases Only' });
       
       // These elements should be visible for admin users
       // If not visible, check:
@@ -42,7 +42,7 @@ test.describe('Billingonaire Feature Tests', () => {
       await page.goto('/dashboard');
       
       // Look for analyze button (only appears for order_linked status)
-      const analyzeButton = page.locator('button:has-text("Analyze")').first();
+      const _analyzeButton = page.locator('button:has-text("Analyze")').first();
       
       // Common issues causing 500 errors:
       // 1. caseRef not constructed properly (should be case_type/case_no/case_year)
@@ -63,7 +63,7 @@ test.describe('Billingonaire Feature Tests', () => {
       await page.goto('/dashboard');
       
       // Look for order link
-      const orderLink = page.locator('a:has-text("📄 View Order")').first();
+      const _orderLink = page.locator('a:has-text("📄 View Order")').first();
       
       // User reports: "when I click on link the order does get opened"
       // This suggests order_link field is valid and accessible
@@ -74,7 +74,7 @@ test.describe('Billingonaire Feature Tests', () => {
 
 // Integration test helpers (for future authenticated testing)
 test.describe.skip('Authenticated Feature Tests', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page: _page }) => {
     // TODO: Set up Firebase authentication for testing
     // This would require:
     // 1. Firebase emulator setup

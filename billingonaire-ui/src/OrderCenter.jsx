@@ -18,10 +18,10 @@ const OrderCenter = () => {
     
     // Manual Management Data
     const [casesWithoutOrders, setCasesWithoutOrders] = useState([]);
-    const [selectedCase, setSelectedCase] = useState(null);
-    const [orderStatus, setOrderStatus] = useState('not_present');
-    const [orderLink, setOrderLink] = useState('');
-    const [orderText, setOrderText] = useState('');
+    const [_selectedCase, setSelectedCase] = useState(null);
+    const [_orderStatus, _setOrderStatus] = useState('not_present');
+    const [_orderLink, _setOrderLink] = useState('');
+    const [_orderText, _setOrderText] = useState('');
     
     // Auto Processing Data
     const [autoProcessing, setAutoProcessing] = useState(false);

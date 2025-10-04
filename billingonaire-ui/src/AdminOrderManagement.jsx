@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table } from 'react-bootstrap';
 import { auth } from './lib/firebase';
 
@@ -38,20 +38,8 @@ const AdminOrderManagement = () => {
         'order_analysis_failed': 'warning'
     };
 
-    useEffect(() => {
+    const loadOverview = useCallback(async () => {
         if (!currentUser) return;
-        
-        loadOverview();
-        loadQueueStatus();
-        
-        const interval = setInterval(() => {
-            loadQueueStatus();
-        }, 5000);
-        
-        return () => clearInterval(interval);
-    }, [currentUser]);
-
-    const loadOverview = async () => {
         try {
             setLoading(true);
             const idToken = await currentUser.getIdToken();
@@ -72,9 +60,10 @@ const AdminOrderManagement = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [currentUser]);
 
-    const loadQueueStatus = async () => {
+    const loadQueueStatus = useCallback(async () => {
+        if (!currentUser) return;
         try {
             const idToken = await currentUser.getIdToken();
             
@@ -89,7 +78,20 @@ const AdminOrderManagement = () => {
         } catch (error) {
             console.error('Error loading queue status:', error);
         }
-    };
+    }, [currentUser]);
+
+    useEffect(() => {
+        if (!currentUser) return;
+        
+        loadOverview();
+        loadQueueStatus();
+        
+        const interval = setInterval(() => {
+            loadQueueStatus();
+        }, 5000);
+        
+        return () => clearInterval(interval);
+    }, [currentUser, loadOverview, loadQueueStatus]);
 
     const startBulkProcessing = async () => {
         try {
@@ -235,7 +237,7 @@ const AdminOrderManagement = () => {
                                         </thead>
                                         <tbody>
                                             {Object.entries(overview.status_counts)
-                                                .filter(([status, count]) => status && status.trim() !== '' && statusLabels[status])
+                                                .filter(([status, _count]) => status && status.trim() !== '' && statusLabels[status])
                                                 .map(([status, count]) => (
                                                 <tr key={status}>
                                                     <td>

@@ -299,7 +299,7 @@ const BillGeneration = () => {
             if (response.download_url) {
                 window.open(response.download_url, '_blank');
             }
-        } catch (err) {
+        } catch {
             console.log('Excel export not available, CSV exported instead');
         }
     };

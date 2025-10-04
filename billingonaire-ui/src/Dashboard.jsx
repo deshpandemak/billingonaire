@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
 import { Container } from 'react-bootstrap';
 import {
@@ -44,19 +44,19 @@ ChartJS.register(
 );
 
 const Dashboard = () => {
-  const [weeklyStatus, setWeeklyStatus] = useState([]);
+  const [_weeklyStatus, setWeeklyStatus] = useState([]);
   const [agpStats, setAgpStats] = useState([]);
   const [monthlyAvg, setMonthlyAvg] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear().toString());
   const [agpName, setAgpName] = useState('');
-  const [weeklyRange, setWeeklyRange] = useState({
+  const [weeklyRange, _setWeeklyRange] = useState({
     start: '',
     end: ''
   });
-  const [weeklyLoading, setWeeklyLoading] = useState(true);
+  const [_weeklyLoading, setWeeklyLoading] = useState(true);
   const [agpLoading, setAgpLoading] = useState(true);
   const [monthlyLoading, setMonthlyLoading] = useState(true);
-  const [weeklyError, setWeeklyError] = useState('');
+  const [_weeklyError, setWeeklyError] = useState('');
   const [agpError, setAgpError] = useState('');
   const [monthlyError, setMonthlyError] = useState('');
   const [agpCurrentPage, setAgpCurrentPage] = useState(0);
@@ -65,7 +65,7 @@ const Dashboard = () => {
 
   // New analytics state
   const [mattersByDateRange, setMattersByDateRange] = useState({ data: [], summary: {} });
-  const [agpDistribution, setAgpDistribution] = useState({
+  const [_agpDistribution, setAgpDistribution] = useState({
     weekly: { distribution: [], total_matters: 0, period_type: 'weekly' },
     monthly: { distribution: [], total_matters: 0, period_type: 'monthly' },
     yearly: { distribution: [], total_matters: 0, period_type: 'yearly' }
@@ -90,27 +90,27 @@ const Dashboard = () => {
   // Independent loading for each widget
   useEffect(() => {
     fetchWeeklyStatus();
-  }, [weeklyRange.start, weeklyRange.end]);
+  }, [fetchWeeklyStatus, weeklyRange.start, weeklyRange.end]);
 
   useEffect(() => {
     fetchAgpStats();
-  }, [agpName]);
+  }, [fetchAgpStats, agpName]);
 
   useEffect(() => {
     fetchMonthlyAvg();
-  }, [year]);
+  }, [fetchMonthlyAvg, year]);
 
   // Fetch new analytics data on component mount and when date range changes
   useEffect(() => {
     fetchMattersByDateRange();
-  }, [dateRange.start, dateRange.end]);
+  }, [fetchMattersByDateRange, dateRange.start, dateRange.end]);
 
   useEffect(() => {
     fetchAgpDistribution();
   }, []);
 
   // Fetch weekly board status with independent loading
-  const fetchWeeklyStatus = async () => {
+  const fetchWeeklyStatus = useCallback(async () => {
     setWeeklyLoading(true);
     setWeeklyError('');
     let url = `/dashboard/weekly-status`;
@@ -128,10 +128,10 @@ const Dashboard = () => {
     } finally {
       setWeeklyLoading(false);
     }
-  };
+  }, [weeklyRange.start, weeklyRange.end]);
 
   // Fetch AGP wise data with independent loading
-  const fetchAgpStats = async () => {
+  const fetchAgpStats = useCallback(async () => {
     setAgpLoading(true);
     setAgpError('');
     setAgpCurrentPage(0); // Reset pagination on new data
@@ -147,10 +147,10 @@ const Dashboard = () => {
     } finally {
       setAgpLoading(false);
     }
-  };
+  }, [agpName]);
 
   // Fetch monthly average matters per AGP with independent loading
-  const fetchMonthlyAvg = async () => {
+  const fetchMonthlyAvg = useCallback(async () => {
     setMonthlyLoading(true);
     setMonthlyError('');
     setMonthlyCurrentPage(0); // Reset pagination on new data
@@ -166,10 +166,10 @@ const Dashboard = () => {
     } finally {
       setMonthlyLoading(false);
     }
-  };
+  }, [year]);
 
   // New analytics fetch functions
-  const fetchMattersByDateRange = async () => {
+  const fetchMattersByDateRange = useCallback(async () => {
     setAnalyticsLoading(prev => ({ ...prev, matters: true }));
     setAnalyticsError(prev => ({ ...prev, matters: '' }));
     let url = `/dashboard/matters-by-date-range`;
@@ -187,7 +187,7 @@ const Dashboard = () => {
     } finally {
       setAnalyticsLoading(prev => ({ ...prev, matters: false }));
     }
-  };
+  }, [dateRange.start, dateRange.end]);
 
   const fetchAgpDistribution = async () => {
     // Fetch all three distribution types in parallel
@@ -332,7 +332,7 @@ const Dashboard = () => {
   ];
 
   // AGP Distribution chart components
-  const renderAgpDistributionChart = (distributionData, title, periodType) => {
+  const _renderAgpDistributionChart = (distributionData, title, periodType) => {
     if (!distributionData || !distributionData.distribution || distributionData.distribution.length === 0) {
       return (
         <div className="text-center p-4">

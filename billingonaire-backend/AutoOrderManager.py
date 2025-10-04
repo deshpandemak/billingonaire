@@ -1,19 +1,13 @@
-import asyncio
 import base64
 import logging
 import os
 import re
-import tempfile
 from dataclasses import asdict
-from datetime import datetime, timedelta
-from io import BytesIO
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
 
-import pandas as pd
 import requests
 from firebase_admin import firestore
-from PyPDF2 import PdfReader, PdfWriter
 
 from CourtScraper import BombayHighCourtScraper
 from order_analyzer import OrderDocumentAnalyzer
