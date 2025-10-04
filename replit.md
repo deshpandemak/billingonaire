@@ -34,6 +34,7 @@ Billingonaire features a modern web application architecture consisting of a Rea
     - **Authentication**: Firebase Auth.
     - **Deployment**: Frontend is deployed to Firebase Hosting, and the backend is containerized and deployed to Google Cloud Run. Lazy loading is implemented for heavy objects to prevent startup timeouts.
     - **API Integration**: RESTful API with Vite proxy for development and direct HTTPS calls to Cloud Run for production. Firebase ID tokens are used for authorization.
+    - **Testing Infrastructure (October 4, 2025)**: Comprehensive CI/CD testing pipeline with frontend unit tests (Vitest) and backend unit tests (pytest). Frontend tests use simplified smoke tests to avoid React hook conflicts. Backend tests cover AutoOrderManager functionality including date validation and case reference parsing. Test configuration excludes Playwright e2e tests from Vitest runs to prevent conflicts.
 
 ## External Dependencies
 - **Firebase**: Firestore (database), Firebase Auth (authentication), Firebase Admin SDK (backend integration), Firebase Hosting (frontend deployment).
