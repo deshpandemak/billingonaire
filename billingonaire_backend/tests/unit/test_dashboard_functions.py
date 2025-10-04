@@ -19,8 +19,8 @@ def mock_firebase():
             yield mock_client
 
 
-@patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
 async def test_get_weekly_status(mock_firestore):
     """Test get_weekly_status async method (returns list not dict)"""
     from Dashboard import DashboardData
@@ -42,8 +42,8 @@ async def test_get_weekly_status(mock_firestore):
     assert isinstance(result, list)  # Returns list of weekly status data
 
 
-@patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
 async def test_get_agp_stats(mock_firestore):
     """Test get_agp_stats with fuzzy matching"""
     from Dashboard import DashboardData
@@ -93,8 +93,8 @@ def test_normalize_agp_name(mock_firestore):
     assert "GP" not in result
 
 
-@patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
 async def test_get_monthly_avg(mock_firestore):
     """Test get_monthly_avg calculation"""
     from Dashboard import DashboardData
@@ -119,8 +119,8 @@ async def test_get_monthly_avg(mock_firestore):
     assert isinstance(result, list)
 
 
-@patch("Dashboard.firestore.client")
 @pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
 async def test_get_matters_by_date_range(mock_firestore):
     """Test matter distribution by date range"""
     from Dashboard import DashboardData
