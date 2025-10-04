@@ -40,8 +40,17 @@ jobs:
           cd billingonaire-backend
           gcloud builds submit \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
-            --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
-            --suppress-logs
+            --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest || {
+            echo "Build failed, checking for log streaming issue..."
+            exit 1
+          }
+      
+      - name: Verify Image Exists
+        run: |
+          gcloud container images describe gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} || {
+            echo "ERROR: Image was not created by Cloud Build"
+            exit 1
+          }
       
       - name: Deploy to Cloud Run
         run: |
