@@ -13,6 +13,7 @@ class TestUserManager:
     def user_manager_module(self, mock_firestore_client):
         with patch("UserManager.firestore.client", return_value=mock_firestore_client):
             import UserManager
+
             return UserManager
 
     @pytest.fixture
@@ -26,7 +27,7 @@ class TestUserManager:
             "uid": "test_uid_123",
             "email": "test@example.com",
             "full_name": "Pooja Joshi Deshpande",
-            "role": "user"
+            "role": "user",
         }
 
         result = user_manager.create_user(user_data)
@@ -40,7 +41,9 @@ class TestUserManager:
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"uid": uid, "email": "test@example.com"}
-        mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_doc
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            mock_doc
+        )
 
         result = user_manager.get_user(uid)
         assert result is not None or isinstance(result, dict)
@@ -67,10 +70,12 @@ class TestUserManager:
         mock_collection = MagicMock()
         mock_docs = [
             MagicMock(to_dict=lambda: {"uid": "uid1", "is_active": True}),
-            MagicMock(to_dict=lambda: {"uid": "uid2", "is_active": True})
+            MagicMock(to_dict=lambda: {"uid": "uid2", "is_active": True}),
         ]
         mock_collection.stream.return_value = mock_docs
-        mock_firestore_client.collection.return_value.where.return_value = mock_collection
+        mock_firestore_client.collection.return_value.where.return_value = (
+            mock_collection
+        )
 
         result = user_manager.get_active_users()
         assert isinstance(result, list)
@@ -92,6 +97,7 @@ class TestUserNameMatching:
     def user_manager_module(self, mock_firestore_client):
         with patch("UserManager.firestore.client", return_value=mock_firestore_client):
             import UserManager
+
             return UserManager
 
     def test_extract_name_components(self, user_manager_module):
@@ -140,6 +146,7 @@ class TestRoleBasedAccess:
     def user_manager_module(self, mock_firestore_client):
         with patch("UserManager.firestore.client", return_value=mock_firestore_client):
             import UserManager
+
             return UserManager
 
     def test_check_admin_role(self, user_manager_module, mock_firestore_client):
@@ -149,7 +156,9 @@ class TestRoleBasedAccess:
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"role": "admin"}
-        mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_doc
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            mock_doc
+        )
 
         result = um.is_admin("test_uid")
         assert result is True or result is None
@@ -161,7 +170,9 @@ class TestRoleBasedAccess:
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"role": "user"}
-        mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_doc
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            mock_doc
+        )
 
         result = um.is_admin("test_uid")
         assert result is False or result is None
@@ -185,6 +196,7 @@ class TestUserMatterAssignment:
     def user_manager_module(self, mock_firestore_client):
         with patch("UserManager.firestore.client", return_value=mock_firestore_client):
             import UserManager
+
             return UserManager
 
     def test_get_user_assigned_cases(self, user_manager_module, mock_firestore_client):

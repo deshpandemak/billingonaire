@@ -18,7 +18,7 @@ def test_create_user(mock_firestore):
         "uid": "test_uid",
         "email": "test@example.com",
         "full_name": "Pooja Joshi",
-        "role": "user"
+        "role": "user",
     }
 
     um = UserManager()
@@ -34,7 +34,9 @@ def test_get_user(mock_firestore):
     mock_doc = MagicMock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {"uid": "test", "email": "test@example.com"}
-    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = (
+        mock_doc
+    )
 
     um = UserManager()
     result = um.get_user("test_uid")
@@ -92,7 +94,9 @@ def test_get_active_users(mock_firestore):
 
     mock_collection = MagicMock()
     mock_collection.stream.return_value = []
-    mock_firestore.return_value.collection.return_value.where.return_value = mock_collection
+    mock_firestore.return_value.collection.return_value.where.return_value = (
+        mock_collection
+    )
 
     um = UserManager()
     result = um.get_active_users()

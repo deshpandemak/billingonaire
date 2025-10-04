@@ -24,10 +24,12 @@ def test_readfile_with_valid_pdf(mock_pdfplumber, mock_firestore):
 
     mock_pdf = MagicMock()
     mock_page = MagicMock()
-    mock_page.extract_tables.return_value = [[
-        ["Sr.No.", "Case Reference", "Party Names", "AGP Name"],
-        ["1", "WP/12345/2024", "Test vs State", "POOJA JOSHI"]
-    ]]
+    mock_page.extract_tables.return_value = [
+        [
+            ["Sr.No.", "Case Reference", "Party Names", "AGP Name"],
+            ["1", "WP/12345/2024", "Test vs State", "POOJA JOSHI"],
+        ]
+    ]
     mock_page.extract_text.return_value = "Sample text"
     mock_pdf.pages = [mock_page]
     mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
@@ -48,9 +50,11 @@ def test_read_board_function(mock_firestore):
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {
         "board_date": "2024-10-01",
-        "cases": [{"case_ref": "WP/1/2024"}]
+        "cases": [{"case_ref": "WP/1/2024"}],
     }
-    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = mock_doc
+    mock_firestore.return_value.collection.return_value.document.return_value.get.return_value = (
+        mock_doc
+    )
 
     result = Board.read_board("2024-10-01")
     assert result is not None
@@ -63,7 +67,7 @@ def test_get_all_boards(mock_firestore):
 
     mock_docs = [
         MagicMock(to_dict=lambda: {"board_date": "2024-10-01"}),
-        MagicMock(to_dict=lambda: {"board_date": "2024-10-02"})
+        MagicMock(to_dict=lambda: {"board_date": "2024-10-02"}),
     ]
     mock_firestore.return_value.collection.return_value.stream.return_value = mock_docs
 
@@ -129,12 +133,16 @@ def test_get_cases_by_date_range(mock_firestore):
     import Board
 
     mock_docs = [
-        MagicMock(to_dict=lambda: {
-            "board_date": "2024-10-01",
-            "cases": [{"case_ref": "WP/1/2024"}]
-        })
+        MagicMock(
+            to_dict=lambda: {
+                "board_date": "2024-10-01",
+                "cases": [{"case_ref": "WP/1/2024"}],
+            }
+        )
     ]
-    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = mock_docs
+    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = (
+        mock_docs
+    )
 
     result = Board.get_cases_by_date_range("2024-10-01", "2024-10-07")
     assert isinstance(result, list)
@@ -148,14 +156,13 @@ def test_extract_tables_from_pdf(mock_pdfplumber, mock_firestore):
 
     mock_pdf = MagicMock()
     mock_page = MagicMock()
-    mock_page.extract_tables.return_value = [[
-        ["Header1", "Header2"],
-        ["Data1", "Data2"]
-    ]]
+    mock_page.extract_tables.return_value = [
+        [["Header1", "Header2"], ["Data1", "Data2"]]
+    ]
     mock_pdf.pages = [mock_page]
     mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
-    if hasattr(Board, 'extract_table'):
+    if hasattr(Board, "extract_table"):
         result = Board.extract_table(b"test")
         assert result is not None
 
@@ -164,6 +171,6 @@ def test_validate_case_format():
     """Test case format validation"""
     import Board
 
-    if hasattr(Board, 'validate_case_format'):
+    if hasattr(Board, "validate_case_format"):
         assert Board.validate_case_format("WP/12345/2024")
         assert not Board.validate_case_format("INVALID")

@@ -11,6 +11,7 @@ class TestOrderDocumentAnalyzer:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     @pytest.fixture
@@ -74,6 +75,7 @@ class TestCategoryClassification:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     def test_detect_adjourned(self, analyzer_module):
@@ -119,6 +121,7 @@ class TestEntityExtraction:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     def test_extract_case_numbers(self, analyzer_module):
@@ -126,6 +129,7 @@ class TestEntityExtraction:
         text = "In the matter of WP/12345/2024 and WP/12346/2024"
 
         import re
+
         pattern = r"[A-Z]+\s?\(?[A-Z]*\)?\/\d+\/\d{4}"
         cases = re.findall(pattern, text)
         assert len(cases) == 2
@@ -143,6 +147,7 @@ class TestEntityExtraction:
         text = "Order dated 01/10/2024 and next hearing on 15/10/2024"
 
         import re
+
         pattern = r"\d{1,2}/\d{1,2}/\d{4}"
         dates = re.findall(pattern, text)
         assert len(dates) == 2
@@ -164,6 +169,7 @@ class TestTableExtraction:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     @patch("order_analyzer.pdfplumber")
@@ -171,10 +177,12 @@ class TestTableExtraction:
         """Test case table extraction"""
         mock_pdf = MagicMock()
         mock_page = MagicMock()
-        mock_page.extract_tables.return_value = [[
-            ["Case No.", "Petitioner", "Respondent"],
-            ["WP/12345/2024", "John Doe", "State"]
-        ]]
+        mock_page.extract_tables.return_value = [
+            [
+                ["Case No.", "Petitioner", "Respondent"],
+                ["WP/12345/2024", "John Doe", "State"],
+            ]
+        ]
         mock_pdf.pages = [mock_page]
         mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
@@ -199,6 +207,7 @@ class TestMLEnhancedDetection:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     def test_enhanced_heard_and_adjourned_detection(self, analyzer_module):
@@ -206,13 +215,10 @@ class TestMLEnhancedDetection:
         text = "Arguments heard. Matter stands adjourned"
 
         # Pattern variations
-        patterns = [
-            "heard.*adjourned",
-            "arguments.*heard",
-            "submissions.*heard"
-        ]
+        patterns = ["heard.*adjourned", "arguments.*heard", "submissions.*heard"]
 
         import re
+
         detected = any(re.search(p, text.lower()) for p in patterns)
         assert detected
 
@@ -242,6 +248,7 @@ class TestAnalysisResult:
     def analyzer_module(self):
         with patch("order_analyzer.pdfplumber"):
             import order_analyzer
+
             return order_analyzer
 
     def test_create_analysis_result(self, analyzer_module):
@@ -253,10 +260,14 @@ class TestAnalysisResult:
             "petitioners": ["John Doe"],
             "respondents": ["State"],
             "agp_names": ["Pooja Joshi"],
-            "order_text": "Sample order"
+            "order_text": "Sample order",
         }
 
-        assert result["order_category"] in ["ADJOURNED", "HEARD & ADJOURNED", "DISPOSED"]
+        assert result["order_category"] in [
+            "ADJOURNED",
+            "HEARD & ADJOURNED",
+            "DISPOSED",
+        ]
         assert 0 <= result["category_confidence"] <= 1.0
 
     def test_validate_analysis_result(self, analyzer_module):
@@ -264,7 +275,7 @@ class TestAnalysisResult:
         result = {
             "order_category": "HEARD & ADJOURNED",
             "petitioners": ["John Doe"],
-            "respondents": ["State"]
+            "respondents": ["State"],
         }
 
         # Validate required fields

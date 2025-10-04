@@ -10,8 +10,11 @@ class TestUserMatterMatcher:
 
     @pytest.fixture
     def matcher_module(self, mock_firestore_client):
-        with patch("UserMatterMatcher.firestore.client", return_value=mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
             import UserMatterMatcher
+
             return UserMatterMatcher
 
     @pytest.fixture
@@ -24,7 +27,7 @@ class TestUserMatterMatcher:
         _user_name = "Pooja Makarand Joshi Deshpande"
         board_matters = [
             {"_agp_name": "SMT.P.M.JOSHI,AGP", "case_ref": "WP/1/2024"},
-            {"_agp_name": "SHARMA", "case_ref": "WP/2/2024"}
+            {"_agp_name": "SHARMA", "case_ref": "WP/2/2024"},
         ]
 
         result = matcher.match_user(_user_name, board_matters)
@@ -83,8 +86,11 @@ class TestNameVariationGeneration:
 
     @pytest.fixture
     def matcher_module(self, mock_firestore_client):
-        with patch("UserMatterMatcher.firestore.client", return_value=mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
             import UserMatterMatcher
+
             return UserMatterMatcher
 
     def test_generate_initial_permutations(self, matcher_module):
@@ -127,8 +133,11 @@ class TestFuzzyMatching:
 
     @pytest.fixture
     def matcher_module(self, mock_firestore_client):
-        with patch("UserMatterMatcher.firestore.client", return_value=mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
             import UserMatterMatcher
+
             return UserMatterMatcher
 
     def test_spelling_variation_matching(self, matcher_module):
@@ -157,10 +166,10 @@ class TestFuzzyMatching:
         sequence_match = 0.8
 
         weighted_score = (
-            last_name_match * 0.35 +
-            initials_match * 0.25 +
-            full_word_match * 0.25 +
-            sequence_match * 0.15
+            last_name_match * 0.35
+            + initials_match * 0.25
+            + full_word_match * 0.25
+            + sequence_match * 0.15
         )
 
         assert 0 <= weighted_score <= 1.0
@@ -172,8 +181,11 @@ class TestMatchingEdgeCases:
 
     @pytest.fixture
     def matcher_module(self, mock_firestore_client):
-        with patch("UserMatterMatcher.firestore.client", return_value=mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
             import UserMatterMatcher
+
             return UserMatterMatcher
 
     def test_single_name_user(self, matcher_module):
@@ -218,8 +230,11 @@ class TestBoardMatterMatching:
 
     @pytest.fixture
     def matcher_module(self, mock_firestore_client):
-        with patch("UserMatterMatcher.firestore.client", return_value=mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
             import UserMatterMatcher
+
             return UserMatterMatcher
 
     def test_filter_matched_matters(self, matcher_module):
@@ -228,7 +243,7 @@ class TestBoardMatterMatching:
         matters = [
             {"_agp_name": "P.M.JOSHI", "case_ref": "WP/1/2024"},
             {"_agp_name": "SHARMA", "case_ref": "WP/2/2024"},
-            {"_agp_name": "P JOSHI", "case_ref": "WP/3/2024"}
+            {"_agp_name": "P JOSHI", "case_ref": "WP/3/2024"},
         ]
 
         # Simple filter by last name
@@ -240,7 +255,7 @@ class TestBoardMatterMatching:
         candidates = [
             {"_agp_name": "P.M.JOSHI", "score": 0.85},
             {"_agp_name": "POOJA JOSHI", "score": 0.95},
-            {"_agp_name": "P JOSHI", "score": 0.75}
+            {"_agp_name": "P JOSHI", "score": 0.75},
         ]
 
         best_match = max(candidates, key=lambda x: x["score"])

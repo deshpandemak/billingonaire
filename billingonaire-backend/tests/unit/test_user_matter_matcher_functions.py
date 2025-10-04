@@ -77,7 +77,7 @@ def test_get_best_match(mock_firestore):
 
     candidates = [
         {"name": "P.M.JOSHI", "score": 0.85},
-        {"name": "POOJA JOSHI", "score": 0.95}
+        {"name": "POOJA JOSHI", "score": 0.95},
     ]
 
     matcher = UserMatterMatcher()

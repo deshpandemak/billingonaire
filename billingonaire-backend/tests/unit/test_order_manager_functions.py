@@ -15,12 +15,20 @@ def test_get_cases_without_orders(mock_firestore):
     from OrderManager import OrderManager
 
     mock_docs = [
-        MagicMock(id="case1", to_dict=lambda: {"case_ref": "WP/1/2024", "order_status": "not_linked"}),
-        MagicMock(id="case2", to_dict=lambda: {"case_ref": "WP/2/2024", "order_status": "not_linked"})
+        MagicMock(
+            id="case1",
+            to_dict=lambda: {"case_ref": "WP/1/2024", "order_status": "not_linked"},
+        ),
+        MagicMock(
+            id="case2",
+            to_dict=lambda: {"case_ref": "WP/2/2024", "order_status": "not_linked"},
+        ),
     ]
     mock_collection = MagicMock()
     mock_collection.stream.return_value = mock_docs
-    mock_firestore.return_value.collection.return_value.where.return_value = mock_collection
+    mock_firestore.return_value.collection.return_value.where.return_value = (
+        mock_collection
+    )
 
     om = OrderManager()
     result = om.get_cases_without_orders()
@@ -54,7 +62,9 @@ def test_get_cases_by_status(mock_firestore):
 
     mock_collection = MagicMock()
     mock_collection.stream.return_value = []
-    mock_firestore.return_value.collection.return_value.where.return_value = mock_collection
+    mock_firestore.return_value.collection.return_value.where.return_value = (
+        mock_collection
+    )
 
     om = OrderManager()
     result = om.get_cases_by_status("order_linked")
@@ -68,7 +78,9 @@ def test_get_cases_by_date_range(mock_firestore):
 
     mock_collection = MagicMock()
     mock_collection.stream.return_value = []
-    mock_firestore.return_value.collection.return_value.where.return_value.where.return_value = mock_collection
+    mock_firestore.return_value.collection.return_value.where.return_value.where.return_value = (
+        mock_collection
+    )
 
     om = OrderManager()
     result = om.get_cases_by_date_range("2024-10-01", "2024-10-07")

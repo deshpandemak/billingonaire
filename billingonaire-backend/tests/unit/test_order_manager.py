@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
+
 # from datetime import datetime
 
 
@@ -12,6 +13,7 @@ class TestOrderManager:
     def order_manager_module(self, mock_firestore_client):
         with patch("OrderManager.firestore.client", return_value=mock_firestore_client):
             import OrderManager
+
             return OrderManager
 
     @pytest.fixture
@@ -23,11 +25,19 @@ class TestOrderManager:
         """Test retrieving cases without linked orders"""
         mock_collection = MagicMock()
         mock_docs = [
-            MagicMock(id="case1", to_dict=lambda: {"case_ref": "WP/1/2024", "order_status": "not_linked"}),
-            MagicMock(id="case2", to_dict=lambda: {"case_ref": "WP/2/2024", "order_status": "not_linked"})
+            MagicMock(
+                id="case1",
+                to_dict=lambda: {"case_ref": "WP/1/2024", "order_status": "not_linked"},
+            ),
+            MagicMock(
+                id="case2",
+                to_dict=lambda: {"case_ref": "WP/2/2024", "order_status": "not_linked"},
+            ),
         ]
         mock_collection.stream.return_value = mock_docs
-        mock_firestore_client.collection.return_value.where.return_value = mock_collection
+        mock_firestore_client.collection.return_value.where.return_value = (
+            mock_collection
+        )
 
         result = order_manager.get_cases_without_orders()
         assert isinstance(result, list) or result == []
@@ -55,7 +65,9 @@ class TestOrderManager:
 
         mock_collection = MagicMock()
         mock_collection.stream.return_value = []
-        mock_firestore_client.collection.return_value.where.return_value = mock_collection
+        mock_firestore_client.collection.return_value.where.return_value = (
+            mock_collection
+        )
 
         result = order_manager.get_cases_by_status(status)
         assert isinstance(result, list)
@@ -74,7 +86,7 @@ class TestOrderManager:
         analysis_data = {
             "order_category": "HEARD & ADJOURNED",
             "petitioners": ["Test Petitioner"],
-            "respondents": ["Test Respondent"]
+            "respondents": ["Test Respondent"],
         }
 
         result = order_manager.update_analysis(case_id, analysis_data)
@@ -93,6 +105,7 @@ class TestOrderFiltering:
     def order_manager_module(self, mock_firestore_client):
         with patch("OrderManager.firestore.client", return_value=mock_firestore_client):
             import OrderManager
+
             return OrderManager
 
     def test_filter_by_agp_name(self, order_manager_module, mock_firestore_client):
@@ -103,7 +116,9 @@ class TestOrderFiltering:
         result = om.filter_by_agp(agp_name)
         assert isinstance(result, list) or result is None
 
-    def test_filter_by_order_category(self, order_manager_module, mock_firestore_client):
+    def test_filter_by_order_category(
+        self, order_manager_module, mock_firestore_client
+    ):
         """Test filtering orders by category"""
         om = order_manager_module.OrderManager(mock_firestore_client)
         category = "HEARD & ADJOURNED"
@@ -114,9 +129,21 @@ class TestOrderFiltering:
     def test_filter_hybrid_client_side(self, order_manager_module):
         """Test hybrid filtering with client-side fallback"""
         cases = [
-            {"agp_name": "JOSHI", "order_category": "HEARD & ADJOURNED", "board_date": "2024-10-01"},
-            {"agp_name": "SHARMA", "order_category": "DISPOSED", "board_date": "2024-10-02"},
-            {"agp_name": "JOSHI", "order_category": "ADJOURNED", "board_date": "2024-10-03"}
+            {
+                "agp_name": "JOSHI",
+                "order_category": "HEARD & ADJOURNED",
+                "board_date": "2024-10-01",
+            },
+            {
+                "agp_name": "SHARMA",
+                "order_category": "DISPOSED",
+                "board_date": "2024-10-02",
+            },
+            {
+                "agp_name": "JOSHI",
+                "order_category": "ADJOURNED",
+                "board_date": "2024-10-03",
+            },
         ]
 
         # Client-side filter
@@ -131,6 +158,7 @@ class TestOrderValidation:
     def order_manager_module(self, mock_firestore_client):
         with patch("OrderManager.firestore.client", return_value=mock_firestore_client):
             import OrderManager
+
             return OrderManager
 
     def test_validate_order_link(self, order_manager_module):
@@ -146,7 +174,7 @@ class TestOrderValidation:
         valid_transitions = {
             "not_linked": ["order_linked", "order_failed"],
             "order_linked": ["analysed", "order_analysis_failed"],
-            "analysed": []
+            "analysed": [],
         }
 
         current = "not_linked"
@@ -160,6 +188,7 @@ class TestOrderValidation:
 
         # Simple regex check
         import re
+
         pattern = r"^[A-Z]+\s?\(?[A-Z]*\)?\/\d+\/\d{4}$"
         assert re.match(pattern, valid_ref)
         assert not re.match(pattern, invalid_ref)

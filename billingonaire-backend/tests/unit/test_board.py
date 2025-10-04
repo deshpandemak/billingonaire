@@ -11,6 +11,7 @@ class TestBoardDataNormalization:
     def board_module(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             import Board
+
             return Board
 
     def test_normalize_agp_name(self, board_module):
@@ -54,6 +55,7 @@ class TestBoardDataProcessing:
     def board_module(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             import Board
+
             return Board
 
     def test_process_table_row(self, board_module):
@@ -62,7 +64,7 @@ class TestBoardDataProcessing:
             "Sr. No.": "1",
             "Case Reference": "WP/12345/2024",
             "AGP Name": "SHRI P.M.JOSHI,AGP",
-            "Party Names": "Test Petitioner Vs Test Respondent"
+            "Party Names": "Test Petitioner Vs Test Respondent",
         }
         result = board_module.process_board_row(row_data, "2024-10-01")
         if result:
@@ -81,7 +83,7 @@ class TestBoardDataProcessing:
         raw_case = {
             "case_ref": "  WP/12345/2024  ",
             "agp_name": "SHRI P.M.JOSHI,AGP",
-            "board_date": "2024-10-01"
+            "board_date": "2024-10-01",
         }
         result = board_module.clean_case_data(raw_case)
         if result:
@@ -95,6 +97,7 @@ class TestBoardFileReading:
     def board_module(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             import Board
+
             return Board
 
     @patch("Board.pdfplumber")
@@ -115,10 +118,9 @@ class TestBoardFileReading:
         """Test table extraction from PDF"""
         mock_pdf = MagicMock()
         mock_page = MagicMock()
-        mock_page.extract_tables.return_value = [[
-            ["Sr. No.", "Case Reference", "AGP Name"],
-            ["1", "WP/12345/2024", "JOSHI"]
-        ]]
+        mock_page.extract_tables.return_value = [
+            [["Sr. No.", "Case Reference", "AGP Name"], ["1", "WP/12345/2024", "JOSHI"]]
+        ]
         mock_pdf.pages = [mock_page]
         mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
@@ -133,17 +135,20 @@ class TestBoardStorageOperations:
     def board_module(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             import Board
+
             return Board
 
     def test_save_board_to_firestore(self, board_module, mock_firestore_client):
         """Test saving board data to Firestore"""
         board_data = {
             "board_date": "2024-10-01",
-            "cases": [{"case_ref": "WP/12345/2024"}]
+            "cases": [{"case_ref": "WP/12345/2024"}],
         }
         result = board_module.save_board_data(board_data, mock_firestore_client)
         if result:
-            assert result.get("success") is True or mock_firestore_client.collection.called
+            assert (
+                result.get("success") is True or mock_firestore_client.collection.called
+            )
 
     def test_get_board_by_date(self, board_module, mock_firestore_client):
         """Test retrieving board by date"""
@@ -158,6 +163,7 @@ class TestMLEnhancedParsing:
     def board_module(self, mock_firestore_client):
         with patch("Board.firestore.client", return_value=mock_firestore_client):
             import Board
+
             return Board
 
     @patch("Board.MLEnhancedParser")

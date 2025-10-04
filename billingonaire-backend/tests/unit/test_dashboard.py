@@ -13,6 +13,7 @@ class TestDashboardData:
     def dashboard_module(self, mock_firestore_client):
         with patch("Dashboard.firestore.client", return_value=mock_firestore_client):
             import Dashboard
+
             return Dashboard
 
     @pytest.fixture
@@ -22,16 +23,28 @@ class TestDashboardData:
             {
                 "board_date": "2024-10-01",
                 "cases": [
-                    {"case_ref": "WP/1/2024", "agp_name": "POOJA JOSHI", "order_status": "analysed"},
-                    {"case_ref": "WP/2/2024", "agp_name": "P.M.JOSHI", "order_status": "analysed"},
-                ]
+                    {
+                        "case_ref": "WP/1/2024",
+                        "agp_name": "POOJA JOSHI",
+                        "order_status": "analysed",
+                    },
+                    {
+                        "case_ref": "WP/2/2024",
+                        "agp_name": "P.M.JOSHI",
+                        "order_status": "analysed",
+                    },
+                ],
             },
             {
                 "board_date": "2024-10-02",
                 "cases": [
-                    {"case_ref": "WP/3/2024", "agp_name": "POOJA M JOSHI", "order_status": "not_linked"},
-                ]
-            }
+                    {
+                        "case_ref": "WP/3/2024",
+                        "agp_name": "POOJA M JOSHI",
+                        "order_status": "not_linked",
+                    },
+                ],
+            },
         ]
 
     def test_get_weekly_status(self, dashboard_module, mock_firestore_client):
@@ -39,11 +52,15 @@ class TestDashboardData:
         start_date = "2024-10-01"
         end_date = "2024-10-07"
 
-        result = dashboard_module.DashboardData(mock_firestore_client).get_weekly_status(start_date, end_date)
+        result = dashboard_module.DashboardData(
+            mock_firestore_client
+        ).get_weekly_status(start_date, end_date)
         assert isinstance(result, dict)
         assert "total_cases" in result or result == {}
 
-    def test_get_agp_stats(self, dashboard_module, mock_firestore_client, sample_board_docs):
+    def test_get_agp_stats(
+        self, dashboard_module, mock_firestore_client, sample_board_docs
+    ):
         """Test AGP statistics calculation"""
         mock_collection = MagicMock()
         mock_docs = [MagicMock(to_dict=lambda: doc) for doc in sample_board_docs]
@@ -59,7 +76,7 @@ class TestDashboardData:
             "POOJA JOSHI": 5,
             "P.M.JOSHI": 3,
             "POOJA M JOSHI": 2,
-            "DIFFERENT NAME": 1
+            "DIFFERENT NAME": 1,
         }
 
         result = dashboard_module.DashboardData.group_similar_agp_names(agp_counts)
@@ -89,15 +106,21 @@ class TestDashboardData:
         """Test monthly average calculation"""
         year = 2024
 
-        result = dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(year)
+        result = dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(
+            year
+        )
         assert isinstance(result, list)
 
-    def test_calculate_matter_distribution(self, dashboard_module, mock_firestore_client):
+    def test_calculate_matter_distribution(
+        self, dashboard_module, mock_firestore_client
+    ):
         """Test matter distribution calculation"""
         start_date = "2024-10-01"
         end_date = "2024-10-31"
 
-        result = dashboard_module.DashboardData(mock_firestore_client).get_matters_by_date_range(start_date, end_date)
+        result = dashboard_module.DashboardData(
+            mock_firestore_client
+        ).get_matters_by_date_range(start_date, end_date)
         assert isinstance(result, dict)
 
 
@@ -108,6 +131,7 @@ class TestFuzzyNameMatching:
     def dashboard_module(self, mock_firestore_client):
         with patch("Dashboard.firestore.client", return_value=mock_firestore_client):
             import Dashboard
+
             return Dashboard
 
     def test_match_similar_names_high_similarity(self, dashboard_module):
@@ -116,7 +140,7 @@ class TestFuzzyNameMatching:
 
         # Test pairwise similarity
         for i, name1 in enumerate(names):
-            for name2 in names[i+1:]:
+            for name2 in names[i + 1 :]:
                 sim = SequenceMatcher(None, name1, name2).ratio()
                 if sim >= 0.85:
                     assert True  # Names should be grouped
@@ -131,11 +155,7 @@ class TestFuzzyNameMatching:
 
     def test_select_canonical_name(self, dashboard_module):
         """Test selection of most frequent name as canonical"""
-        agp_counts = {
-            "POOJA JOSHI": 10,
-            "P.M.JOSHI": 3,
-            "POOJA M JOSHI": 2
-        }
+        agp_counts = {"POOJA JOSHI": 10, "P.M.JOSHI": 3, "POOJA M JOSHI": 2}
 
         # Most frequent should be selected
         canonical = max(agp_counts, key=agp_counts.get)
@@ -149,6 +169,7 @@ class TestAggregationFunctions:
     def dashboard_module(self, mock_firestore_client):
         with patch("Dashboard.firestore.client", return_value=mock_firestore_client):
             import Dashboard
+
             return Dashboard
 
     def test_aggregate_by_order_status(self, dashboard_module):

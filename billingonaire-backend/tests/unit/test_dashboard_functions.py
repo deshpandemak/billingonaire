@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import sys
 import os
+
 # Unused: from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -24,15 +25,16 @@ async def test_get_weekly_status(mock_firestore):
     from Dashboard import DashboardData
 
     mock_docs = [
-        MagicMock(to_dict=lambda: {
-            "board_date": "2024-10-01",
-            "cases": [
-                {"order_status": "analysed"},
-                {"order_status": "not_linked"}
-            ]
-        })
+        MagicMock(
+            to_dict=lambda: {
+                "board_date": "2024-10-01",
+                "cases": [{"order_status": "analysed"}, {"order_status": "not_linked"}],
+            }
+        )
     ]
-    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = mock_docs
+    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = (
+        mock_docs
+    )
 
     dashboard = DashboardData()
     result = await dashboard.get_weekly_status("2024-10-01", "2024-10-07")
@@ -46,14 +48,16 @@ async def test_get_agp_stats(mock_firestore):
     from Dashboard import DashboardData
 
     mock_docs = [
-        MagicMock(to_dict=lambda: {
-            "board_date": "2024-10-01",
-            "cases": [
-                {"agp_name": "POOJA JOSHI", "order_status": "analysed"},
-                {"agp_name": "P.M.JOSHI", "order_status": "analysed"},
-                {"agp_name": "POOJA M JOSHI", "order_status": "not_linked"}
-            ]
-        })
+        MagicMock(
+            to_dict=lambda: {
+                "board_date": "2024-10-01",
+                "cases": [
+                    {"agp_name": "POOJA JOSHI", "order_status": "analysed"},
+                    {"agp_name": "P.M.JOSHI", "order_status": "analysed"},
+                    {"agp_name": "POOJA M JOSHI", "order_status": "not_linked"},
+                ],
+            }
+        )
     ]
     mock_firestore.return_value.collection.return_value.stream.return_value = mock_docs
 
@@ -66,12 +70,7 @@ def test_group_similar_agp_names():
     """Test fuzzy AGP name grouping"""
     from Dashboard import DashboardData
 
-    agp_counts = {
-        "POOJA JOSHI": 10,
-        "P.M.JOSHI": 5,
-        "POOJA M JOSHI": 3,
-        "SHARMA": 2
-    }
+    agp_counts = {"POOJA JOSHI": 10, "P.M.JOSHI": 5, "POOJA M JOSHI": 3, "SHARMA": 2}
 
     result = DashboardData.group_similar_agp_names(agp_counts)
     assert isinstance(result, dict)
@@ -97,12 +96,18 @@ async def test_get_monthly_avg(mock_firestore):
 
     mock_docs = []
     for month in range(1, 13):
-        mock_docs.append(MagicMock(to_dict=lambda m=month: {
-            "board_date": f"2024-{m:02d}-01",
-            "cases": [{"order_status": "analysed"}] * 10
-        }))
+        mock_docs.append(
+            MagicMock(
+                to_dict=lambda m=month: {
+                    "board_date": f"2024-{m:02d}-01",
+                    "cases": [{"order_status": "analysed"}] * 10,
+                }
+            )
+        )
 
-    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = mock_docs
+    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = (
+        mock_docs
+    )
 
     dashboard = DashboardData()
     result = await dashboard.get_monthly_avg(2024)
@@ -116,15 +121,19 @@ async def test_get_matters_by_date_range(mock_firestore):
     from Dashboard import DashboardData
 
     mock_docs = [
-        MagicMock(to_dict=lambda: {
-            "board_date": "2024-10-01",
-            "cases": [
-                {"agp_name": "JOSHI", "case_type": "WP"},
-                {"agp_name": "SHARMA", "case_type": "PIL"}
-            ]
-        })
+        MagicMock(
+            to_dict=lambda: {
+                "board_date": "2024-10-01",
+                "cases": [
+                    {"agp_name": "JOSHI", "case_type": "WP"},
+                    {"agp_name": "SHARMA", "case_type": "PIL"},
+                ],
+            }
+        )
     ]
-    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = mock_docs
+    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = (
+        mock_docs
+    )
 
     dashboard = DashboardData()
     result = await dashboard.get_matters_by_date_range("2024-10-01", "2024-10-31")
@@ -144,11 +153,7 @@ def test_calculate_similarity():
 
 def test_select_canonical_name():
     """Test canonical name selection (most frequent)"""
-    agp_counts = {
-        "POOJA JOSHI": 15,
-        "P.M.JOSHI": 5,
-        "POOJA M JOSHI": 3
-    }
+    agp_counts = {"POOJA JOSHI": 15, "P.M.JOSHI": 5, "POOJA M JOSHI": 3}
 
     canonical = max(agp_counts, key=agp_counts.get)
     assert canonical == "POOJA JOSHI"
