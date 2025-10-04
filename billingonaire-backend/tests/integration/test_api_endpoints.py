@@ -4,7 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture
@@ -12,7 +12,7 @@ async def test_client():
     """Create test client for FastAPI app"""
     from main import app
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
 
 
@@ -69,7 +69,7 @@ class TestAutoOrderProcessingEndpoints:
     @pytest.mark.asyncio
     async def test_start_bulk_processing_unauthorized(self, test_client):
         """Test bulk processing without auth"""
-        response = await test_client.post("/auto-orders/start-bulk-processing")
+        response = await test_client.post("/auto-orders/bulk-process", json={"case_ids": ["test"]})
 
         assert response.status_code in [401, 403]
 
@@ -80,17 +80,15 @@ class TestOrderManagementEndpoints:
     @pytest.mark.asyncio
     async def test_get_order_statuses_unauthorized(self, test_client):
         """Test getting order statuses without auth"""
-        response = await test_client.post(
-            "/auto-orders/filtered-matters", json={"filters": {}, "limit": 10}
-        )
+        response = await test_client.get("/user-matters/my-matters")
 
         assert response.status_code in [401, 403]
 
     @pytest.mark.asyncio
     async def test_search_cases_unauthorized(self, test_client):
         """Test search endpoint without auth"""
-        response = await test_client.post(
-            "/search-cases", json={"query": "test", "filters": {}}
+        response = await test_client.get(
+            "/auto-orders/search", params={"petitioner_search": "test"}
         )
 
         assert response.status_code in [401, 403]
@@ -102,13 +100,13 @@ class TestAnalyticsEndpoints:
     @pytest.mark.asyncio
     async def test_get_board_summary_unauthorized(self, test_client):
         """Test board summary without auth"""
-        response = await test_client.get("/board-summary")
+        response = await test_client.get("/dashboard/weekly-status")
 
         assert response.status_code in [401, 403]
 
     @pytest.mark.asyncio
     async def test_get_analytics_unauthorized(self, test_client):
         """Test analytics endpoint without auth"""
-        response = await test_client.get("/analytics")
+        response = await test_client.get("/dashboard/agp-stats")
 
         assert response.status_code in [401, 403]
