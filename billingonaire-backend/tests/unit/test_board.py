@@ -1,7 +1,8 @@
 """Unit tests for Board.py module - PDF parsing and board data processing"""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestBoardDataNormalization:

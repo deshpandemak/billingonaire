@@ -1,8 +1,9 @@
 """Unit tests for UserMatterMatcher.py module - Pattern matching for user-matter assignment"""
 
-import pytest
-from unittest.mock import patch
 from difflib import SequenceMatcher
+from unittest.mock import patch
+
+import pytest
 
 
 class TestUserMatterMatcher:

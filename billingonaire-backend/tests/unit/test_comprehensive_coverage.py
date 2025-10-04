@@ -1,12 +1,12 @@
 """Comprehensive coverage tests for all major modules"""
 
-import pytest
-from unittest.mock import MagicMock, patch, Mock
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, Mock, patch
 
 # datetime import removed - not used
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

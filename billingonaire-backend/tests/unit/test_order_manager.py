@@ -1,7 +1,8 @@
 """Unit tests for OrderManager.py module - Order lifecycle management"""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # from datetime import datetime
 

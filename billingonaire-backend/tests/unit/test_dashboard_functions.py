@@ -1,9 +1,10 @@
 """Functional tests for Dashboard.py - Actual DashboardData class methods"""
 
-import pytest
-from unittest.mock import MagicMock, patch
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Unused: from datetime import datetime
 

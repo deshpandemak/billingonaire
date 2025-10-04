@@ -1,9 +1,10 @@
 # flake8: noqa: F401
 """Unit tests for UserManager.py module - User management and authentication"""
 
-import pytest
-from unittest.mock import MagicMock, patch
 from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestUserManager:

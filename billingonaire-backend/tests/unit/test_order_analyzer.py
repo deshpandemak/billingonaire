@@ -1,7 +1,8 @@
 """Unit tests for order_analyzer.py module - ML-powered document analysis"""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestOrderDocumentAnalyzer:
