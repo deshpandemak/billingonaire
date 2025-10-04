@@ -1,3 +1,4 @@
+# flake8: noqa: F401
 """Unit tests for UserManager.py module - User management and authentication"""
 
 import pytest
@@ -27,7 +28,7 @@ class TestUserManager:
             "full_name": "Pooja Joshi Deshpande",
             "role": "user"
         }
-        
+
         result = user_manager.create_user(user_data)
         if result:
             assert mock_firestore_client.collection.called
@@ -35,7 +36,7 @@ class TestUserManager:
     def test_get_user_by_uid(self, user_manager, mock_firestore_client):
         """Test retrieving user by UID"""
         uid = "test_uid_123"
-        
+
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"uid": uid, "email": "test@example.com"}
@@ -48,7 +49,7 @@ class TestUserManager:
         """Test setting user role"""
         uid = "test_uid_123"
         role = "admin"
-        
+
         result = user_manager.set_role(uid, role)
         if result:
             assert mock_firestore_client.collection.called
@@ -56,7 +57,7 @@ class TestUserManager:
     def test_deactivate_user(self, user_manager, mock_firestore_client):
         """Test user deactivation"""
         uid = "test_uid_123"
-        
+
         result = user_manager.deactivate_user(uid)
         if result:
             assert mock_firestore_client.collection.called
@@ -78,7 +79,7 @@ class TestUserManager:
         """Test updating user profile"""
         uid = "test_uid_123"
         updates = {"full_name": "Updated Name"}
-        
+
         result = user_manager.update_profile(uid, updates)
         if result:
             assert mock_firestore_client.collection.called
@@ -96,7 +97,7 @@ class TestUserNameMatching:
     def test_extract_name_components(self, user_manager_module):
         """Test name component extraction"""
         full_name = "Pooja Makarand Joshi Deshpande"
-        
+
         # Extract components
         parts = full_name.split()
         assert len(parts) == 4
@@ -106,7 +107,7 @@ class TestUserNameMatching:
     def test_generate_initials(self, user_manager_module):
         """Test initials generation"""
         full_name = "Pooja Makarand Joshi"
-        
+
         parts = full_name.split()
         initials = "".join([p[0] for p in parts])
         assert initials == "PMJ"
@@ -115,7 +116,7 @@ class TestUserNameMatching:
         """Test compound last name matching"""
         user_name = "Pooja Joshi Deshpande"
         agp_name = "P.M.JOSHI"
-        
+
         # Check if any word from user name is in AGP name
         user_words = user_name.upper().split()
         match = any(word in agp_name for word in user_words)
@@ -124,10 +125,10 @@ class TestUserNameMatching:
     def test_fuzzy_name_similarity(self, user_manager_module):
         """Test fuzzy name matching similarity"""
         from difflib import SequenceMatcher
-        
+
         name1 = "PABALE"
         name2 = "PABLE"
-        
+
         similarity = SequenceMatcher(None, name1, name2).ratio()
         assert similarity > 0.8  # 83% similarity
 
@@ -144,7 +145,7 @@ class TestRoleBasedAccess:
     def test_check_admin_role(self, user_manager_module, mock_firestore_client):
         """Test admin role check"""
         um = user_manager_module.UserManager(mock_firestore_client)
-        
+
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"role": "admin"}
@@ -156,7 +157,7 @@ class TestRoleBasedAccess:
     def test_check_user_role(self, user_manager_module, mock_firestore_client):
         """Test user role check"""
         um = user_manager_module.UserManager(mock_firestore_client)
-        
+
         mock_doc = MagicMock()
         mock_doc.exists = True
         mock_doc.to_dict.return_value = {"role": "user"}
@@ -169,10 +170,10 @@ class TestRoleBasedAccess:
         """Test user permissions validation"""
         user_role = "user"
         admin_role = "admin"
-        
+
         # Users can only access their own data
         assert user_role != admin_role
-        
+
         # Admins can access all data
         assert admin_role == "admin"
 
@@ -190,7 +191,7 @@ class TestUserMatterAssignment:
         """Test getting user assigned cases"""
         um = user_manager_module.UserManager(mock_firestore_client)
         uid = "test_uid_123"
-        
+
         result = um.get_assigned_cases(uid)
         assert isinstance(result, list) or result is None
 
@@ -198,11 +199,11 @@ class TestUserMatterAssignment:
         """Test matching user to board matters"""
         user_name = "Pooja Joshi"
         board_agp_name = "SMT.P.M.JOSHI,AGP"
-        
+
         # Normalize both names
         user_normalized = user_name.upper().replace(".", "").replace(",", "")
         agp_normalized = board_agp_name.upper().replace(".", "").replace(",", "")
-        
+
         # Check for match
         match = "JOSHI" in agp_normalized and "JOSHI" in user_normalized
         assert match

@@ -1,8 +1,8 @@
 """Unit tests for OrderManager.py module - Order lifecycle management"""
 
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from datetime import datetime
+from unittest.mock import MagicMock, patch
+# from datetime import datetime
 
 
 class TestOrderManager:
@@ -36,7 +36,7 @@ class TestOrderManager:
         """Test linking order to case"""
         case_id = "test_case_123"
         order_link = "https://example.com/order.pdf"
-        
+
         result = order_manager.link_order(case_id, order_link)
         if result:
             assert mock_firestore_client.collection.called
@@ -45,14 +45,14 @@ class TestOrderManager:
         """Test updating order status"""
         case_id = "test_case_123"
         new_status = "order_linked"
-        
+
         result = order_manager.update_status(case_id, new_status)
         assert result is not None or mock_firestore_client.collection.called
 
     def test_get_cases_by_status(self, order_manager, mock_firestore_client):
         """Test retrieving cases by status"""
         status = "order_linked"
-        
+
         mock_collection = MagicMock()
         mock_collection.stream.return_value = []
         mock_firestore_client.collection.return_value.where.return_value = mock_collection
@@ -64,7 +64,7 @@ class TestOrderManager:
         """Test retrieving cases by date range"""
         start_date = "2024-10-01"
         end_date = "2024-10-07"
-        
+
         result = order_manager.get_cases_by_date_range(start_date, end_date)
         assert isinstance(result, list) or result is None
 
@@ -76,7 +76,7 @@ class TestOrderManager:
             "petitioners": ["Test Petitioner"],
             "respondents": ["Test Respondent"]
         }
-        
+
         result = order_manager.update_analysis(case_id, analysis_data)
         assert result is not None or mock_firestore_client.collection.called
 
@@ -99,7 +99,7 @@ class TestOrderFiltering:
         """Test filtering orders by AGP name"""
         om = order_manager_module.OrderManager(mock_firestore_client)
         agp_name = "POOJA JOSHI"
-        
+
         result = om.filter_by_agp(agp_name)
         assert isinstance(result, list) or result is None
 
@@ -107,7 +107,7 @@ class TestOrderFiltering:
         """Test filtering orders by category"""
         om = order_manager_module.OrderManager(mock_firestore_client)
         category = "HEARD & ADJOURNED"
-        
+
         result = om.filter_by_category(category)
         assert isinstance(result, list) or result is None
 
@@ -118,7 +118,7 @@ class TestOrderFiltering:
             {"agp_name": "SHARMA", "order_category": "DISPOSED", "board_date": "2024-10-02"},
             {"agp_name": "JOSHI", "order_category": "ADJOURNED", "board_date": "2024-10-03"}
         ]
-        
+
         # Client-side filter
         filtered = [c for c in cases if c["agp_name"] == "JOSHI"]
         assert len(filtered) == 2
@@ -137,7 +137,7 @@ class TestOrderValidation:
         """Test order link validation"""
         valid_link = "https://bombayhighcourt.nic.in/order.pdf"
         invalid_link = "not_a_url"
-        
+
         assert "http" in valid_link
         assert "http" not in invalid_link
 
@@ -148,7 +148,7 @@ class TestOrderValidation:
             "order_linked": ["analysed", "order_analysis_failed"],
             "analysed": []
         }
-        
+
         current = "not_linked"
         next_status = "order_linked"
         assert next_status in valid_transitions.get(current, [])
@@ -157,7 +157,7 @@ class TestOrderValidation:
         """Test case reference format validation"""
         valid_ref = "WP/12345/2024"
         invalid_ref = "INVALID"
-        
+
         # Simple regex check
         import re
         pattern = r"^[A-Z]+\s?\(?[A-Z]*\)?\/\d+\/\d{4}$"

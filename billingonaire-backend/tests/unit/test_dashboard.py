@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timedelta
+from datetime import datetime
 from difflib import SequenceMatcher
 
 
@@ -38,7 +38,7 @@ class TestDashboardData:
         """Test weekly status calculation"""
         start_date = "2024-10-01"
         end_date = "2024-10-07"
-        
+
         result = dashboard_module.DashboardData(mock_firestore_client).get_weekly_status(start_date, end_date)
         assert isinstance(result, dict)
         assert "total_cases" in result or result == {}
@@ -61,7 +61,7 @@ class TestDashboardData:
             "POOJA M JOSHI": 2,
             "DIFFERENT NAME": 1
         }
-        
+
         result = dashboard_module.DashboardData.group_similar_agp_names(agp_counts)
         assert isinstance(result, dict)
         # Similar names should be grouped
@@ -72,7 +72,7 @@ class TestDashboardData:
         """Test name similarity calculation"""
         name1 = "POOJA JOSHI"
         name2 = "P.M.JOSHI"
-        
+
         similarity = SequenceMatcher(None, name1.upper(), name2.upper()).ratio()
         assert 0 <= similarity <= 1
 
@@ -80,7 +80,7 @@ class TestDashboardData:
         """Test AGP name normalization for matching"""
         name = "SHRI P.M.JOSHI, AGP"
         normalized = dashboard_module.DashboardData.normalize_agp_name(name)
-        
+
         assert "SHRI" not in normalized
         assert "AGP" not in normalized
         assert "GP" not in normalized
@@ -88,7 +88,7 @@ class TestDashboardData:
     def test_get_monthly_avg(self, dashboard_module, mock_firestore_client):
         """Test monthly average calculation"""
         year = 2024
-        
+
         result = dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(year)
         assert isinstance(result, list)
 
@@ -96,7 +96,7 @@ class TestDashboardData:
         """Test matter distribution calculation"""
         start_date = "2024-10-01"
         end_date = "2024-10-31"
-        
+
         result = dashboard_module.DashboardData(mock_firestore_client).get_matters_by_date_range(start_date, end_date)
         assert isinstance(result, dict)
 
@@ -113,7 +113,7 @@ class TestFuzzyNameMatching:
     def test_match_similar_names_high_similarity(self, dashboard_module):
         """Test matching names with high similarity (>85%)"""
         names = ["POOJA JOSHI", "POOJA M JOSHI", "P M JOSHI"]
-        
+
         # Test pairwise similarity
         for i, name1 in enumerate(names):
             for name2 in names[i+1:]:
@@ -125,7 +125,7 @@ class TestFuzzyNameMatching:
         """Test that dissimilar names are not grouped"""
         name1 = "POOJA JOSHI"
         name2 = "RAJESH SHARMA"
-        
+
         sim = SequenceMatcher(None, name1, name2).ratio()
         assert sim < 0.85  # Should not be grouped
 
@@ -136,7 +136,7 @@ class TestFuzzyNameMatching:
             "P.M.JOSHI": 3,
             "POOJA M JOSHI": 2
         }
-        
+
         # Most frequent should be selected
         canonical = max(agp_counts, key=agp_counts.get)
         assert canonical == "POOJA JOSHI"
@@ -158,12 +158,12 @@ class TestAggregationFunctions:
             {"order_status": "analysed"},
             {"order_status": "not_linked"},
         ]
-        
+
         result = {}
         for case in cases:
             status = case.get("order_status", "unknown")
             result[status] = result.get(status, 0) + 1
-        
+
         assert result["analysed"] == 2
         assert result["not_linked"] == 1
 
@@ -174,12 +174,12 @@ class TestAggregationFunctions:
             {"agp_name": "JOSHI"},
             {"agp_name": "SHARMA"},
         ]
-        
+
         result = {}
         for case in cases:
             agp = case.get("agp_name", "unknown")
             result[agp] = result.get(agp, 0) + 1
-        
+
         assert result["JOSHI"] == 2
         assert result["SHARMA"] == 1
 
@@ -188,5 +188,5 @@ class TestAggregationFunctions:
         start = datetime(2024, 10, 1)
         end = datetime(2024, 10, 7)
         days = (end - start).days + 1
-        
+
         assert days == 7
