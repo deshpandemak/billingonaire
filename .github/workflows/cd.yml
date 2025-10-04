@@ -56,12 +56,15 @@ jobs:
       
       - name: Build with Cloud Build (Synchronous)
         run: |
-          cd billingonaire-backend
           echo "Building container image..."
-          gcloud builds submit \
+          gcloud builds submit billingonaire-backend \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
             --timeout=20m
+
+      - name: List images in Container Registry
+        run: |
+          gcloud container images list --repository=gcr.io/${{ env.GCP_PROJECT_ID }}
       
       - name: Deploy to Cloud Run
         run: |
