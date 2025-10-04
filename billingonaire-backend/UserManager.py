@@ -61,7 +61,6 @@ class UserManager:
                 user_ref = self.db.collection(self.users_collection).document(user_doc.id)
                 user_ref.update({
                     "role": "admin",
-                    "agp_names": [],  # Admins don't need AGP names
                     "updated_at": datetime.now()
                 })
                 logging.info(f"Updated existing user {admin_email} to admin role")
@@ -74,15 +73,15 @@ class UserManager:
             logging.error(f"Error setting up initial admin: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error setting up admin: {str(e)}")
     
-    def create_user_profile(self, uid: str, email: str, role: str = "user", legal_category: str = "assistant_government_pleader", agp_names: List[str] = None, full_name: str = None) -> Dict:
+    def create_user_profile(self, uid: str, email: str, role: str = "user", legal_category: str = "assistant_government_pleader", full_name: str = None) -> Dict:
         """
         Create or update user profile in Firestore
         
         Args:
             uid: Firebase UID
             email: User email
-            role: One of the valid legal professional categories or 'admin'
-            agp_names: List of AGP names for non-admin users (can be multiple)
+            role: One of the valid roles ('admin' or 'user')
+            legal_category: Legal professional category
             full_name: User's full name
         """
         try:
@@ -94,18 +93,12 @@ class UserManager:
             if email == "deshpande.mak@gmail.com":
                 role = "admin"
                 legal_category = None  # Admins don't need legal categories
-                agp_names = []  # Admins don't need AGP names
-            elif role != "admin" and not agp_names:
-                # For legal professional users, they can be created without AGP names initially
-                # Admin will assign AGP names later
-                agp_names = []
             
             user_data = {
                 "uid": uid,
                 "email": email,
                 "role": role,
                 "legal_category": legal_category if role != "admin" else None,
-                "agp_names": agp_names or [],  # Support multiple AGP names
                 "full_name": full_name or email.split("@")[0],
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
@@ -138,7 +131,6 @@ class UserManager:
                         "uid": uid,
                         "email": firebase_user.email,
                         "role": "admin",
-                        "agp_names": [],
                         "full_name": firebase_user.email.split("@")[0] if firebase_user.email else "Unknown",
                         "is_active": True,
                         "needs_setup": True  # Flag to show setup is needed
@@ -149,7 +141,6 @@ class UserManager:
                         "email": firebase_user.email,
                         "role": "user",  # Default to user role
                         "legal_category": "assistant_government_pleader",  # Default legal category
-                        "agp_names": [],  # Start with empty AGP names
                         "full_name": firebase_user.email.split("@")[0] if firebase_user.email else "Unknown",
                         "is_active": True,
                         "needs_setup": True  # Flag to show setup is needed
@@ -186,40 +177,6 @@ class UserManager:
             logging.error(f"Error updating user profile: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error updating user profile: {str(e)}")
     
-    def get_all_agp_names(self) -> List[str]:
-        """Get list of all AGP names from user profiles and board data"""
-        try:
-            agp_names = set()
-            
-            # Get AGP names from all legal professional users (not admin)
-            all_users = self.list_users()
-            for user_data in all_users:
-                # Skip admin users
-                if user_data.get('role') == 'admin':
-                    continue
-                
-                # Handle both old single agp_name and new multiple agp_names
-                if user_data.get('agp_names'):
-                    for agp_name in user_data['agp_names']:
-                        if agp_name:
-                            agp_names.add(agp_name)
-                elif user_data.get('agp_name'):  # Backward compatibility
-                    agp_names.add(user_data['agp_name'])
-            
-            # Get AGP names from board data (respondent_lawyer field)
-            boards_query = self.db.collection("daily-boards").limit(100).stream()
-            for board_doc in boards_query:
-                board_data = board_doc.to_dict()
-                respondent_lawyer = board_data.get('respondent_lawyer', '').strip()
-                if respondent_lawyer and len(respondent_lawyer) > 3:  # Filter out short/empty names
-                    agp_names.add(respondent_lawyer)
-            
-            return sorted(list(agp_names))
-            
-        except Exception as e:
-            logging.error(f"Error getting AGP names: {str(e)}")
-            return []
-    
     def admin_update_user_profile(self, target_uid: str, updates: Dict, admin_uid: str) -> Dict:
         """Admin-only update of user profile including role and AGP assignments"""
         try:
@@ -232,24 +189,11 @@ class UserManager:
                 role = updates['role']
                 if role not in self.valid_roles:
                     raise HTTPException(status_code=400, detail=f"Invalid role: {role}. Must be one of: {', '.join(self.valid_roles)}")
-                
-                # Clear agp_names when setting role to admin (admins don't have AGP assignments)
-                # But keep legal_category as it applies to both admins and users
-                if role == 'admin':
-                    updates['agp_names'] = []
             
-            # Allow admin to update role, legal_category, and AGP assignments
-            allowed_updates = ['role', 'legal_category', 'agp_names', 'full_name', 'is_active']
+            # Allow admin to update role, legal_category, and other user info
+            allowed_updates = ['role', 'legal_category', 'full_name', 'is_active']
             filtered_updates = {k: v for k, v in updates.items() if k in allowed_updates}
             filtered_updates['updated_at'] = datetime.now()
-            
-            # Handle AGP names - ensure it's a list
-            if 'agp_names' in filtered_updates:
-                agp_names = filtered_updates['agp_names']
-                if isinstance(agp_names, str):
-                    filtered_updates['agp_names'] = [agp_names] if agp_names else []
-                elif not isinstance(agp_names, list):
-                    filtered_updates['agp_names'] = []
             
             user_ref = self.db.collection(self.users_collection).document(target_uid)
             user_ref.update(filtered_updates)
@@ -292,8 +236,8 @@ class UserManager:
         except:
             return False
     
-    def get_user_agp_filter(self, uid: str) -> Optional[List[str]]:
-        """Get the AGP filter for data access - returns None for admins, list of AGP names for AGP users"""
+    def get_user_agp_filter(self, uid: str) -> Optional[str]:
+        """Get the user's full name for data filtering - returns None for admins, full_name for regular users"""
         try:
             profile = self.get_user_profile(uid)
             
@@ -304,26 +248,21 @@ class UserManager:
             
             if role == 'admin':
                 return None  # Admins can see all data
-            elif role in ['government_pleader', 'additional_government_pleader', 'assistant_government_pleader', 'b_panel_advocate', 'advocate_general']:
-                # Support both new agp_names and old agp_name for backward compatibility
-                agp_names = profile.get('agp_names', [])
-                if not agp_names and profile.get('agp_name'):
-                    agp_names = [profile.get('agp_name')]
-                
-                if not agp_names:
-                    raise HTTPException(status_code=403, detail="AGP assignment required. Please contact an administrator.")
-                return agp_names
             else:
-                raise HTTPException(status_code=403, detail="Invalid user role. Contact administrator.")
+                # Return user's full name for fuzzy matching against AGP data
+                full_name = profile.get('full_name', '').strip()
+                if not full_name:
+                    raise HTTPException(status_code=403, detail="Full name required. Please update your profile.")
+                return full_name
                 
         except HTTPException:
             raise
         except Exception as e:
-            logging.error(f"Error getting AGP filter: {str(e)}")
+            logging.error(f"Error getting user filter: {str(e)}")
             raise HTTPException(status_code=500, detail="Error checking user permissions")
     
     def can_access_agp_data(self, uid: str, agp_name: str) -> bool:
-        """Check if user can access data for specific AGP"""
+        """Check if user can access data for specific AGP using fuzzy name matching"""
         try:
             user_profile = self.get_user_profile(uid)
             
@@ -331,28 +270,26 @@ class UserManager:
             if user_profile.get('role') == 'admin':
                 return True
             
-            # Legal professional users can access data for any of their assigned AGP names
-            if user_profile.get('role') in ['government_pleader', 'additional_government_pleader', 'assistant_government_pleader', 'b_panel_advocate', 'advocate_general']:
-                # Support both new agp_names and old agp_name for backward compatibility
-                agp_names = user_profile.get('agp_names', [])
-                if not agp_names and user_profile.get('agp_name'):
-                    agp_names = [user_profile.get('agp_name')]
-                
-                return agp_name in agp_names
+            # Regular users can access data if their full_name matches the AGP name (using fuzzy matching)
+            full_name = user_profile.get('full_name', '').strip()
+            if not full_name:
+                return False
             
-            return False
+            # Use fuzzy matching to check if user's name matches the AGP name
+            matched_name, confidence = self.match_user_name_to_agp(full_name, [agp_name])
+            return confidence >= 0.50  # 50% confidence threshold
             
         except:
             return False
     
-    def get_agp_names_list(self) -> List[str]:
-        """Get list of active user names (for admin AGP selector in bill generation)"""
+    def get_active_user_names(self) -> List[str]:
+        """Get list of active user names (for admin user selector in bill generation)"""
         try:
             active_user_names = []
             
             # Get all active users with login credentials
             all_users = self.list_users()
-            logging.info(f"📋 get_agp_names_list: Found {len(all_users)} total users in collection")
+            logging.info(f"📋 get_active_user_names: Found {len(all_users)} total users in collection")
             
             for user in all_users:
                 user_name = user.get('full_name', 'NO_NAME')
@@ -376,7 +313,7 @@ class UserManager:
                 else:
                     logging.info(f"  ⚠️  Skipping user with no name (role={user_role})")
             
-            logging.info(f"📤 get_agp_names_list returning {len(active_user_names)} users: {sorted(active_user_names)}")
+            logging.info(f"📤 get_active_user_names returning {len(active_user_names)} users: {sorted(active_user_names)}")
             return sorted(active_user_names)
             
         except Exception as e:
@@ -573,15 +510,16 @@ class UserManager:
                     continue
                 
                 try:
-                    # Determine role - make deshpande.mak@gmail.com admin, others default to Assistant Government Pleader
-                    role = 'admin' if email == 'deshpande.mak@gmail.com' else 'assistant_government_pleader'
+                    # Determine role - make deshpande.mak@gmail.com admin, others default to user
+                    role = 'admin' if email == 'deshpande.mak@gmail.com' else 'user'
+                    legal_category = 'assistant_government_pleader' if role != 'admin' else None
                     
                     # Create Firestore profile
                     self.create_user_profile(
                         uid=uid,
                         email=email,
                         role=role,
-                        agp_names=[],  # Will need manual assignment for legal professionals
+                        legal_category=legal_category,
                         full_name=firebase_user.get('display_name') or email.split('@')[0]
                     )
                     

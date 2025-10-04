@@ -10,12 +10,10 @@ const UserProfile = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [agpNames, setAgpNames] = useState([]);
   
   // Form states
   const [profileForm, setProfileForm] = useState({
-    role: 'agp',
-    agp_name: '',
+    role: 'user',
     full_name: ''
   });
   
@@ -31,7 +29,6 @@ const UserProfile = () => {
       setUser(user);
       if (user) {
         await loadUserProfile();
-        await loadAgpNames();
       }
       setLoading(false);
     });
@@ -43,31 +40,13 @@ const UserProfile = () => {
       const profileData = await authenticatedFetchJSON('/user/profile');
       setProfile(profileData);
       
-      if (profileData.needs_setup) {
-        setProfileForm({
-          role: 'agp',
-          agp_name: '',
-          full_name: profileData.full_name || ''
-        });
-      } else {
-        setProfileForm({
-          role: profileData.role || 'agp',
-          agp_name: profileData.agp_name || '',
-          full_name: profileData.full_name || ''
-        });
-      }
+      setProfileForm({
+        role: profileData.role || 'user',
+        full_name: profileData.full_name || ''
+      });
     } catch (error) {
       console.error('Error loading profile:', error);
       setError('Failed to load user profile');
-    }
-  };
-
-  const loadAgpNames = async () => {
-    try {
-      const response = await authenticatedFetchJSON('/user/agp-names');
-      setAgpNames(response.agp_names || []);
-    } catch (error) {
-      console.error('Error loading AGP names:', error);
     }
   };
 
@@ -75,11 +54,6 @@ const UserProfile = () => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
-
-    if (profileForm.role === 'agp' && !profileForm.agp_name) {
-      setError('AGP name is required for AGP users');
-      return;
-    }
 
     try {
       const updatedProfile = await authenticatedFetchJSON('/user/profile', {
@@ -209,7 +183,7 @@ const UserProfile = () => {
                   onChange={(e) => setProfileForm({...profileForm, role: e.target.value})}
                   disabled={profile && !profile.needs_setup && profile.role !== 'admin'}
                 >
-                  <option value="agp">AGP (Assistant Government Pleader)</option>
+                  <option value="user">User</option>
                   <option value="admin">Administrator</option>
                 </select>
                 {profile && !profile.needs_setup && profile.role !== 'admin' && (
@@ -218,27 +192,6 @@ const UserProfile = () => {
                   </small>
                 )}
               </div>
-
-              {profileForm.role === 'agp' && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="agp_name">AGP Name</label>
-                  <select
-                    id="agp_name"
-                    className="form-control"
-                    value={profileForm.agp_name}
-                    onChange={(e) => setProfileForm({...profileForm, agp_name: e.target.value})}
-                    required
-                  >
-                    <option value="">Select your AGP name</option>
-                    {agpNames.map(name => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
-                  <small style={{ color: 'var(--gray-500)', fontSize: '0.875rem' }}>
-                    Select the AGP name that matches your assignments in the board data
-                  </small>
-                </div>
-              )}
 
               <button type="submit" className="btn-professional btn-primary">
                 {profile?.needs_setup ? 'Set Up Profile' : 'Update Profile'}

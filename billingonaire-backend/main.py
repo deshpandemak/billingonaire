@@ -519,11 +519,10 @@ async def create_or_update_profile(
             uid=uid,
             email=email,
             role='admin',
-            agp_names=[],
             full_name=profile_data.get('full_name')
         )
     
-    # SECURITY: Remove role and agp_names from self-service updates to prevent privilege escalation
+    # SECURITY: Remove role from self-service updates to prevent privilege escalation
     safe_updates = {
         'full_name': profile_data.get('full_name')
     }
@@ -532,13 +531,12 @@ async def create_or_update_profile(
     try:
         existing_profile = get_user_manager().get_user_profile(uid)
         if existing_profile.get('needs_setup'):
-            # For new profiles, create user with legal category (admin will assign AGP later)
+            # For new profiles, create user with legal category
             return get_user_manager().create_user_profile(
                 uid=uid,
                 email=email,
                 role='user',
                 legal_category='assistant_government_pleader',
-                agp_names=[],  # Start with empty AGP names - admin will assign
                 full_name=profile_data.get('full_name')
             )
         else:
@@ -551,7 +549,6 @@ async def create_or_update_profile(
             email=email,
             role='user',
             legal_category='assistant_government_pleader',
-            agp_names=[],
             full_name=profile_data.get('full_name')
         )
 
@@ -593,36 +590,19 @@ async def update_user_role(
     role_data: dict,
     current_user = Depends(require_admin_active)
 ):
-    """Update user role and AGP assignment (admin only)"""
+    """Update user role and profile information (admin only)"""
     admin_uid = current_user.get('uid')
     return get_user_manager().admin_update_user_profile(target_uid, role_data, admin_uid)
-
-@app.post("/admin/user/{target_uid}/agp-names", tags=["Admin"])
-async def assign_agp_names(
-    target_uid: str,
-    agp_data: dict,
-    current_user = Depends(require_admin_active)
-):
-    """Assign multiple AGP names to a user (admin only)"""
-    admin_uid = current_user.get('uid')
-    agp_names = agp_data.get('agp_names', [])
-    
-    # Ensure agp_names is a list
-    if isinstance(agp_names, str):
-        agp_names = [agp_names]
-    
-    updates = {'agp_names': agp_names}
-    return get_user_manager().admin_update_user_profile(target_uid, updates, admin_uid)
 
 @app.post("/admin/setup-initial-admin", tags=["Admin"])
 async def setup_initial_admin():
     """Set up deshpande.mak@gmail.com as initial administrator"""
     return get_user_manager().setup_initial_admin()
 
-@app.get("/admin/agp-names", tags=["Admin"])
-async def get_all_agp_names_admin(current_user = Depends(require_admin_active)):
-    """Get all AGP names in the system (admin only)"""
-    return {"agp_names": get_user_manager().get_agp_names_list()}
+@app.get("/admin/active-users", tags=["Admin"])
+async def get_active_users_for_bills(current_user = Depends(require_admin_active)):
+    """Get list of active user names for bill generation (admin only)"""
+    return {"user_names": get_user_manager().get_active_user_names()}
 
 @app.get("/admin/available-roles", tags=["Admin"])
 async def get_available_roles(current_user = Depends(require_admin_active)):
@@ -662,7 +642,6 @@ async def create_new_user(
         role = user_data.get('role', 'user')
         legal_category = user_data.get('legal_category', 'assistant_government_pleader')
         full_name = user_data.get('full_name', '')
-        agp_names = user_data.get('agp_names', [])
         
         if not email:
             raise HTTPException(status_code=400, detail="Email is required")
@@ -681,7 +660,6 @@ async def create_new_user(
                 email=email,
                 role=role,
                 legal_category=legal_category if get_user_manager().is_legal_professional(role) else None,
-                agp_names=agp_names if get_user_manager().is_legal_professional(role) else [],
                 full_name=full_name
             )
             
@@ -705,11 +683,6 @@ async def create_new_user(
     except Exception as e:
         logging.error(f"Error in create_new_user: {str(e)}")
         raise HTTPException(status_code=500, detail="Error creating user")
-
-@app.get("/user/agp-names", tags=["User Management"])
-async def get_agp_names(current_user = Depends(get_current_user)):
-    """Get list of available AGP names"""
-    return {"agp_names": get_user_manager().get_all_agp_names()}
 
 # Dashboard endpoints (with authentication)
 dashboard_data = None
@@ -2318,10 +2291,10 @@ async def get_recent_activity(
 async def generate_bill_data(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
-    agp_name: Optional[str] = Query(None, description="AGP name to generate bill for (admin only)"),
+    user_name: Optional[str] = Query(None, description="User's full name to generate bill for (admin only)"),
     current_user=Depends(get_current_user)
 ):
-    """Generate bill data for logged-in user or specific AGP (admin only) based on date range"""
+    """Generate bill data for logged-in user or specific user (admin only) based on date range"""
     try:
         user_id = current_user.get('uid')
         is_admin = get_user_manager().is_admin(user_id)
@@ -2337,17 +2310,17 @@ async def generate_bill_data(
         bill_entries = []
         case_ids = set()
         
-        # Admin can generate bill for any AGP, non-admin only for themselves
-        if agp_name and not is_admin:
+        # Admin can generate bill for any user, non-admin only for themselves
+        if user_name and not is_admin:
             return JSONResponse(
                 status_code=403,
-                content={"error": "Only administrators can generate bills for other AGPs"}
+                content={"error": "Only administrators can generate bills for other users"}
             )
         
         # Determine which cases to include
-        if agp_name:
+        if user_name:
             # Admin generating bill for specific user - use ENHANCED fuzzy matching
-            logging.info(f"Admin {user_id} generating bill for user: {agp_name}")
+            logging.info(f"Admin {user_id} generating bill for user: {user_name}")
             
             # Step 1: Collect all unique AGP names from board data (respondent_lawyer field)
             boards_ref = db.collection('daily-boards')
@@ -2369,10 +2342,10 @@ async def generate_bill_data(
             
             # Step 2: Use ENHANCED fuzzy matching with initials support
             matched_agp, confidence = get_user_manager().match_user_name_to_agp(
-                agp_name, list(unique_agp_names)
+                user_name, list(unique_agp_names)
             )
             
-            logging.info(f"🤖 Enhanced Fuzzy Matching: '{agp_name}' → '{matched_agp}' (confidence: {confidence:.2%})")
+            logging.info(f"🤖 Enhanced Fuzzy Matching: '{user_name}' → '{matched_agp}' (confidence: {confidence:.2%})")
             
             if matched_agp and confidence >= 0.50:  # Lowered threshold to 50% for initial-based matching
                 # Step 3: Find ALL similar AGP name variants (handle formatting inconsistencies)
@@ -2423,7 +2396,7 @@ async def generate_bill_data(
                                     'results': fee_info['result'],
                                     'fees_rs': fee_info['fee'],
                                     'agp_name': matched_agp,  # Show the actual AGP name from data
-                                    'user_name': agp_name,  # Show the selected user name
+                                    'user_name': user_name,  # Show the selected user name
                                     'name_match_confidence': round(confidence, 3),  # Include confidence score
                                     'editable': True
                                 }
@@ -2432,15 +2405,15 @@ async def generate_bill_data(
                             logging.warning(f"Invalid date format for case {case_id}: {board_date_str}")
                             continue
                 
-                logging.info(f"✅ Found {len(bill_entries)} bill entries for user '{agp_name}'")
+                logging.info(f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'")
             else:
-                error_msg = f"No matching AGP found for user '{agp_name}' with sufficient confidence (best match: '{matched_agp}' at {confidence:.1%}). Need at least 50%."
+                error_msg = f"No matching AGP found for user '{user_name}' with sufficient confidence (best match: '{matched_agp}' at {confidence:.1%}). Need at least 50%."
                 logging.warning(f"⚠️ {error_msg}")
                 return JSONResponse(
                     status_code=400,
                     content={
                         "error": error_msg,
-                        "user_name": agp_name,
+                        "user_name": user_name,
                         "best_match": matched_agp,
                         "confidence": round(confidence, 3),
                         "threshold_required": 0.50,
@@ -2510,7 +2483,7 @@ async def generate_bill_data(
         # Add debug information
         response_data = {
             "user_id": user_id,
-            "agp_name": agp_name if agp_name else "self",
+            "user_name": user_name if user_name else "self",
             "date_range": {"start": start_date, "end": end_date},
             "total_entries": len(bill_entries),
             "total_fees": sum(entry['fees_rs'] for entry in bill_entries),
@@ -2518,9 +2491,9 @@ async def generate_bill_data(
         }
         
         # Add matching debug info for admin fuzzy matching
-        if agp_name and 'matched_agp' in locals():
+        if user_name and 'matched_agp' in locals():
             response_data["debug_info"] = {
-                "requested_name": agp_name,
+                "requested_name": user_name,
                 "matched_agp_name": matched_agp,
                 "match_confidence": round(confidence, 3),
                 "total_cases_for_agp": len(cases_by_agp.get(matched_agp, [])),

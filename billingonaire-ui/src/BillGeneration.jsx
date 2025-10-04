@@ -20,10 +20,10 @@ const BillGeneration = () => {
     const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStatus, setProcessingStatus] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
-    const [agpList, setAgpList] = useState([]);
-    const [selectedAgp, setSelectedAgp] = useState('');
+    const [userList, setUserList] = useState([]);
+    const [selectedUser, setSelectedUser] = useState('');
 
-    // Set default date range to current month and fetch AGP list if admin
+    // Set default date range to current month and fetch user list if admin
     useEffect(() => {
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -34,24 +34,24 @@ const BillGeneration = () => {
             endDate: formatDateSafe(endOfMonth)
         });
 
-        // Check admin status and fetch AGP list
-        checkAdminAndFetchAgps();
+        // Check admin status and fetch user list
+        checkAdminAndFetchUsers();
     }, []);
 
-    const checkAdminAndFetchAgps = async () => {
+    const checkAdminAndFetchUsers = async () => {
         try {
-            // Fetch admin AGP list (will work only if user is admin)
-            const response = await authenticatedFetchJSON('/admin/agp-names');
-            console.log('✅ Admin AGP names response:', response);
-            console.log('📝 AGP names array:', response.agp_names);
-            console.log('📊 Total AGP names:', response.agp_names?.length || 0);
+            // Fetch active user names list (will work only if user is admin)
+            const response = await authenticatedFetchJSON('/admin/active-users');
+            console.log('✅ Admin active users response:', response);
+            console.log('📝 User names array:', response.user_names);
+            console.log('📊 Total users:', response.user_names?.length || 0);
             setIsAdmin(true);
-            setAgpList(response.agp_names || []);
+            setUserList(response.user_names || []);
         } catch (err) {
-            console.error('❌ Failed to fetch admin AGP names:', err);
+            console.error('❌ Failed to fetch active users:', err);
             // User is not admin, that's fine
             setIsAdmin(false);
-            setAgpList([]);
+            setUserList([]);
         }
     };
 
@@ -141,10 +141,10 @@ const BillGeneration = () => {
             setProcessingProgress(20);
             setProcessingStatus('Fetching case data...');
             
-            // Build query with optional agp_name parameter for admin
+            // Build query with optional user_name parameter for admin
             let queryUrl = `/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
-            if (isAdmin && selectedAgp) {
-                queryUrl += `&agp_name=${encodeURIComponent(selectedAgp)}`;
+            if (isAdmin && selectedUser) {
+                queryUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
             
             const response = await authenticatedFetchJSON(queryUrl);
@@ -447,26 +447,26 @@ const BillGeneration = () => {
                                 </Col>
                             </Row>
 
-                            {/* Admin AGP Selector */}
-                            {isAdmin && agpList.length > 0 && (
+                            {/* Admin User Selector */}
+                            {isAdmin && userList.length > 0 && (
                                 <Row className="mb-4">
                                     <Col md={6}>
                                         <Form.Group>
                                             <Form.Label>
                                                 <span className="badge bg-success me-2">Admin</span>
-                                                Select AGP (Optional - leave empty for your own cases)
+                                                Select User (Optional - leave empty for your own cases)
                                             </Form.Label>
                                             <Form.Select
-                                                value={selectedAgp}
-                                                onChange={(e) => setSelectedAgp(e.target.value)}
+                                                value={selectedUser}
+                                                onChange={(e) => setSelectedUser(e.target.value)}
                                             >
                                                 <option value="">My Cases Only</option>
-                                                {agpList.map((agp, index) => (
-                                                    <option key={index} value={agp}>{agp}</option>
+                                                {userList.map((userName, index) => (
+                                                    <option key={index} value={userName}>{userName}</option>
                                                 ))}
                                             </Form.Select>
                                             <Form.Text className="text-muted">
-                                                As an admin, you can generate bills for any AGP
+                                                As an admin, you can generate bills for any user
                                             </Form.Text>
                                         </Form.Group>
                                     </Col>

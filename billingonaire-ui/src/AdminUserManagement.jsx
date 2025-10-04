@@ -8,7 +8,6 @@ const AdminUserManagement = () => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [users, setUsers] = useState([]);
-  const [allAgpNames, setAllAgpNames] = useState([]);
   const [availableRoles, setAvailableRoles] = useState({});
   const [availableLegalCategories, setAvailableLegalCategories] = useState({});
   const [unsyncedUsers, setUnsyncedUsers] = useState([]);
@@ -26,7 +25,6 @@ const AdminUserManagement = () => {
   const [editForm, setEditForm] = useState({
     role: 'user',
     legal_category: 'assistant_government_pleader',
-    agp_names: [],
     full_name: '',
     is_active: true
   });
@@ -36,7 +34,6 @@ const AdminUserManagement = () => {
     email: '',
     role: 'user',
     legal_category: 'assistant_government_pleader',
-    agp_names: [],
     full_name: ''
   });
 
@@ -50,7 +47,6 @@ const AdminUserManagement = () => {
         // Wait a bit for profile to load before loading users
         setTimeout(async () => {
           await loadUsers();
-          await loadAllAgpNames();
           await loadAvailableRoles();
           await loadAvailableLegalCategories();
           await loadUnsyncedUsers();
@@ -108,15 +104,6 @@ const AdminUserManagement = () => {
       console.error('Error loading users:', error);
       setError(`Failed to load users: ${error.message}`);
       setUsers([]); // Clear users on error
-    }
-  };
-
-  const loadAllAgpNames = async () => {
-    try {
-      const response = await authenticatedFetchJSON('/admin/agp-names');
-      setAllAgpNames(response.agp_names || []);
-    } catch (error) {
-      console.error('Error loading AGP names:', error);
     }
   };
 
@@ -188,7 +175,6 @@ const AdminUserManagement = () => {
     setEditForm({
       role: user.role || 'user',
       legal_category: user.legal_category || 'assistant_government_pleader',
-      agp_names: user.agp_names || (user.agp_name ? [user.agp_name] : []),
       full_name: user.full_name || '',
       is_active: user.is_active !== false
     });
@@ -213,38 +199,12 @@ const AdminUserManagement = () => {
         })
       });
 
-      // Update AGP names if legal professional user (not admin)
-      if (editForm.role !== 'admin') {
-        await authenticatedFetchJSON(`/admin/user/${selectedUser.uid}/agp-names`, {
-          method: 'POST',
-          body: JSON.stringify({
-            agp_names: editForm.agp_names
-          })
-        });
-      }
-
       setSuccessMessage('User updated successfully');
       setShowEditModal(false);
       await loadUsers(); // Refresh the user list
     } catch (error) {
       console.error('Error updating user:', error);
       setError(`Failed to update user: ${error.message}`);
-    }
-  };
-
-  const handleAgpNameToggle = (agpName, isCreateForm = false) => {
-    if (isCreateForm) {
-      const updatedAgpNames = createForm.agp_names.includes(agpName)
-        ? createForm.agp_names.filter(name => name !== agpName)
-        : [...createForm.agp_names, agpName];
-      
-      setCreateForm({ ...createForm, agp_names: updatedAgpNames });
-    } else {
-      const updatedAgpNames = editForm.agp_names.includes(agpName)
-        ? editForm.agp_names.filter(name => name !== agpName)
-        : [...editForm.agp_names, agpName];
-      
-      setEditForm({ ...editForm, agp_names: updatedAgpNames });
     }
   };
 
@@ -262,8 +222,7 @@ const AdminUserManagement = () => {
         email: createForm.email.trim(),
         role: createForm.role,
         legal_category: createForm.legal_category || undefined,
-        full_name: createForm.full_name.trim(),
-        agp_names: createForm.role !== 'admin' ? createForm.agp_names : []
+        full_name: createForm.full_name.trim()
       };
 
       const result = await authenticatedFetchJSON('/admin/create-user', {
@@ -275,8 +234,8 @@ const AdminUserManagement = () => {
       setShowCreateModal(false);
       setCreateForm({
         email: '',
-        role: 'assistant_government_pleader',
-        agp_names: [],
+        role: 'user',
+        legal_category: 'assistant_government_pleader',
         full_name: ''
       });
       await loadUsers(); // Refresh the user list
@@ -451,7 +410,6 @@ const AdminUserManagement = () => {
                         <th>Full Name</th>
                         <th>Role</th>
                         <th>Legal Category</th>
-                        <th>AGP Names</th>
                         <th>Status</th>
                         <th>Actions</th>
                       </tr>
@@ -468,7 +426,7 @@ const AdminUserManagement = () => {
                           <td>{user.full_name || '-'}</td>
                           <td>
                             <span className={`role-badge ${user.role}`}>
-                              {user.role === 'admin' ? 'Administrator' : 'AGP User'}
+                              {user.role === 'admin' ? 'Administrator' : 'User'}
                             </span>
                           </td>
                           <td>
@@ -478,23 +436,6 @@ const AdminUserManagement = () => {
                               </span>
                             ) : (
                               <span className="text-muted">Not set</span>
-                            )}
-                          </td>
-                          <td>
-                            {user.role === 'admin' ? (
-                              <span className="text-muted">All AGPs</span>
-                            ) : (
-                              <div>
-                                {(user.agp_names || (user.agp_name ? [user.agp_name] : [])).length > 0 ? (
-                                  (user.agp_names || [user.agp_name]).map((agp, index) => (
-                                    <span key={index} className="badge bg-secondary me-1 mb-1">
-                                      {agp}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span className="text-danger">No assignment</span>
-                                )}
-                              </div>
                             )}
                           </td>
                           <td>
@@ -567,7 +508,7 @@ const AdminUserManagement = () => {
                     <select
                       className="form-control"
                       value={createForm.role}
-                      onChange={(e) => setCreateForm({...createForm, role: e.target.value, agp_names: []})}
+                      onChange={(e) => setCreateForm({...createForm, role: e.target.value})}
                     >
                       {Object.entries(availableRoles).map(([roleKey, displayName]) => (
                         <option key={roleKey} value={roleKey}>
@@ -600,35 +541,6 @@ const AdminUserManagement = () => {
                       Legal category for professional classification (applies to both administrators and users)
                     </small>
                   </div>
-
-                  {createForm.role !== 'admin' && (
-                    <div className="mb-3">
-                      <label className="form-label">AGP Name Assignments</label>
-                      <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>
-                        {allAgpNames.length === 0 ? (
-                          <p className="text-muted">No AGP names available</p>
-                        ) : (
-                          allAgpNames.map((agpName) => (
-                            <div key={agpName} className="form-check">
-                              <input
-                                className="form-check-input"
-                                type="checkbox"
-                                id={`create-agp-${agpName}`}
-                                checked={createForm.agp_names.includes(agpName)}
-                                onChange={() => handleAgpNameToggle(agpName, true)}
-                              />
-                              <label className="form-check-label" htmlFor={`create-agp-${agpName}`}>
-                                {agpName}
-                              </label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <small className="form-text text-muted">
-                        Select all AGP names this user should have access to
-                      </small>
-                    </div>
-                  )}
 
                   <div className="alert alert-info">
                     <strong>📝 Default Login Credentials:</strong><br/>
@@ -723,35 +635,6 @@ const AdminUserManagement = () => {
                       Legal category for professional classification (applies to both administrators and users)
                     </small>
                   </div>
-
-                  {editForm.role !== 'admin' && (
-                    <div className="mb-3">
-                      <label className="form-label">AGP Name Assignments</label>
-                      <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>
-                        {allAgpNames.length === 0 ? (
-                          <p className="text-muted">No AGP names available</p>
-                        ) : (
-                          allAgpNames.map((agpName) => (
-                            <div key={agpName} className="form-check">
-                              <input
-                                className="form-check-input"
-                                type="checkbox"
-                                id={`agp-${agpName}`}
-                                checked={editForm.agp_names.includes(agpName)}
-                                onChange={() => handleAgpNameToggle(agpName)}
-                              />
-                              <label className="form-check-label" htmlFor={`agp-${agpName}`}>
-                                {agpName}
-                              </label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <small className="form-text text-muted">
-                        Select all AGP names this user should have access to
-                      </small>
-                    </div>
-                  )}
 
                   <div className="mb-3">
                     <div className="form-check">
