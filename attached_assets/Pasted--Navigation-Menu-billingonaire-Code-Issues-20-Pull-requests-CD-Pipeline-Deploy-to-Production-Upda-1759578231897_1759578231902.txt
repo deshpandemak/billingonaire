@@ -1,0 +1,87 @@
+
+Navigation Menu
+billingonaire
+
+Code
+Issues
+20
+Pull requests
+CD Pipeline - Deploy to Production
+Update testing dependencies to ensure consistency #15
+Annotations
+1 error
+Run All Tests 
+/
+ Backend Tests
+failed 1 minute ago in 53s
+1s
+1s
+0s
+1s
+41s
+7s
+FAILED tests/unit/test_dashboard.py::TestDashboardData::test_calculate_matter_distribution - assert False
+ +  where False = isinstance(<coroutine object DashboardData.get_matters_by_date_range at 0x7f3d4679ac20>, dict)
+FAILED tests/unit/test_dashboard_functions.py::test_get_weekly_status - assert False
+ +  where False = isinstance([], dict)
+FAILED tests/unit/test_dashboard_functions.py::test_group_similar_agp_names - TypeError: DashboardData.group_similar_agp_names() missing 1 required positional argument: 'agp_counts'
+FAILED tests/unit/test_dashboard_functions.py::test_normalize_agp_name - TypeError: DashboardData.normalize_agp_name() missing 1 required positional argument: 'name'
+FAILED tests/unit/test_dashboard_functions.py::test_dashboard_initialization - AttributeError: 'DashboardData' object has no attribute 'boards_collection'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_classify_order_category - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'classify_order'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extract_order_date - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_date'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extract_petitioners - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_petitioners'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extract_respondents - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_respondents'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extract_agp_names - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_agp_names'
+FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extract_next_hearing_date - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_next_date'
+FAILED tests/unit/test_order_analyzer.py::TestTableExtraction::test_extract_case_table - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_tables'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_get_cases_without_orders - AssertionError: assert (False or {'cases': [], 'total_returned': 0, 'total_processed': 0, 'has_more': False, 'offset': 0} == []
+ +  where False = isinstance({'cases': [], 'total_returned': 0, 'total_processed': 0, 'has_more': False, 'offset': 0}, list)
+  
+  Full diff:
+  - []
+  + {
+  +     'cases': [],
+  +     'has_more': False,
+  +     'offset': 0,
+  +     'total_processed': 0,
+  +     'total_returned': 0,
+  + })
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_link_order_to_case - AttributeError: 'OrderManager' object has no attribute 'link_order'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_update_order_status - AttributeError: 'OrderManager' object has no attribute 'update_status'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_get_cases_by_status - AttributeError: 'OrderManager' object has no attribute 'get_cases_by_status'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_get_cases_by_date_range - AttributeError: 'OrderManager' object has no attribute 'get_cases_by_date_range'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_update_order_analysis - AttributeError: 'OrderManager' object has no attribute 'update_analysis'
+FAILED tests/unit/test_order_manager.py::TestOrderManager::test_get_order_statistics - AttributeError: 'OrderManager' object has no attribute 'get_statistics'
+FAILED tests/unit/test_order_manager.py::TestOrderFiltering::test_filter_by_agp_name - TypeError: OrderManager.__init__() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_order_manager.py::TestOrderFiltering::test_filter_by_order_category - TypeError: OrderManager.__init__() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_order_manager_functions.py::test_get_cases_without_orders - AssertionError: assert False
+ +  where False = isinstance({'cases': [], 'total_returned': 0, 'total_processed': 0, 'has_more': False, 'offset': 0}, list)
+FAILED tests/unit/test_order_manager_functions.py::test_link_order - AttributeError: 'OrderManager' object has no attribute 'link_order'
+FAILED tests/unit/test_order_manager_functions.py::test_get_cases_by_status - AttributeError: 'OrderManager' object has no attribute 'get_cases_by_status'
+FAILED tests/unit/test_order_manager_functions.py::test_get_cases_by_date_range - AttributeError: 'OrderManager' object has no attribute 'get_cases_by_date_range'
+FAILED tests/unit/test_order_manager_functions.py::test_get_all_cases - AttributeError: 'OrderManager' object has no attribute 'get_all_cases'
+FAILED tests/unit/test_order_manager_functions.py::test_update_case - AttributeError: 'OrderManager' object has no attribute 'update_case'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_create_user_profile - AttributeError: 'UserManager' object has no attribute 'create_user'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_get_user_by_uid - AttributeError: 'UserManager' object has no attribute 'get_user'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_set_user_role - AttributeError: 'UserManager' object has no attribute 'set_role'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_deactivate_user - AttributeError: 'UserManager' object has no attribute 'deactivate_user'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_get_active_users - AttributeError: 'UserManager' object has no attribute 'get_active_users'
+FAILED tests/unit/test_user_manager.py::TestUserManager::test_update_user_profile - AttributeError: 'UserManager' object has no attribute 'update_profile'
+FAILED tests/unit/test_user_manager.py::TestRoleBasedAccess::test_check_admin_role - TypeError: UserManager.__init__() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_user_manager.py::TestRoleBasedAccess::test_check_user_role - TypeError: UserManager.__init__() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_user_manager.py::TestUserMatterAssignment::test_get_user_assigned_cases - TypeError: UserManager.__init__() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_user_manager_functions.py::test_create_user - AttributeError: 'UserManager' object has no attribute 'create_user'
+FAILED tests/unit/test_user_manager_functions.py::test_get_user - AttributeError: 'UserManager' object has no attribute 'get_user'
+FAILED tests/unit/test_user_manager_functions.py::test_update_user - AttributeError: 'UserManager' object has no attribute 'update_user'
+FAILED tests/unit/test_user_manager_functions.py::test_delete_user - AttributeError: 'UserManager' object has no attribute 'delete_user'
+FAILED tests/unit/test_user_manager_functions.py::test_get_all_users - AttributeError: 'UserManager' object has no attribute 'get_all_users'
+FAILED tests/unit/test_user_manager_functions.py::test_set_user_role - AttributeError: 'UserManager' object has no attribute 'set_user_role'
+FAILED tests/unit/test_user_manager_functions.py::test_get_active_users - AttributeError: 'UserManager' object has no attribute 'get_active_users'
+FAILED tests/unit/test_user_matter_matcher.py::TestUserMatterMatcher::test_match_user_to_matters - AttributeError: 'UserMatterMatcher' object has no attribute 'match_user'
+FAILED tests/unit/test_user_matter_matcher.py::TestUserMatterMatcher::test_generate_name_variations - AttributeError: 'UserMatterMatcher' object has no attribute 'generate_variations'
+FAILED tests/unit/test_user_matter_matcher.py::TestUserMatterMatcher::test_calculate_matching_score - AttributeError: 'UserMatterMatcher' object has no attribute 'calculate_score'
+FAILED tests/unit/test_user_matter_matcher.py::TestUserMatterMatcher::test_extract_initials - AttributeError: 'UserMatterMatcher' object has no attribute 'extract_initials'
+FAILED tests/unit/test_user_matter_matcher.py::TestUserMatterMatcher::test_match_with_confidence_threshold - AttributeError: 'UserMatterMatcher' object has no attribute 'match_with_threshold'
+FAILED tests/unit/test_user_matter_matcher.py::TestMatchingEdgeCases::test_single_name_user - NameError: name '_agp_name' is not defined
+================== 83 failed, 73 passed, 2 warnings in 6.23s ===================
+Error: Process completed with exit code 1
