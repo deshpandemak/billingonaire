@@ -498,24 +498,40 @@ class Board:
                 logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
                 query = query.where("case_year", "==", case_year)
 
-            # Apply order status filter (server-side) using the order_status field
+            # Apply order status filter
+            # Note: Firestore requires composite indexes for order_status + board_date
+            # To avoid index requirements, apply client-side when date filters present
             order_status = search_criteria.get("orderStatus") or search_criteria.get("order_status")
+            has_date_filter = start_date or end_date
             if order_status:
-                logging.info(f"FILTERING BY ORDER STATUS: {order_status} (field: order_status)")
-                query = query.where("order_status", "==", order_status)
+                if not has_date_filter:
+                    # Safe to use server-side filter when no date filter
+                    logging.info(f"FILTERING BY ORDER STATUS (server-side): {order_status} (field: order_status)")
+                    query = query.where("order_status", "==", order_status)
+                else:
+                    # Will filter client-side to avoid index requirement
+                    logging.info(f"ORDER STATUS FILTER: Will apply client-side due to Firestore index limitations (field: order_status)")
             
             # Apply order category filter (from ML analysis)
+            # Same index limitation applies for order_category + board_date
             order_category = search_criteria.get("orderCategory") or search_criteria.get("order_category")
             if order_category:
-                logging.info(f"FILTERING BY ORDER CATEGORY: {order_category} (field: order_category)")
-                query = query.where("order_category", "==", order_category)
+                if not has_date_filter:
+                    # Safe to use server-side filter when no date filter
+                    logging.info(f"FILTERING BY ORDER CATEGORY (server-side): {order_category} (field: order_category)")
+                    query = query.where("order_category", "==", order_category)
+                else:
+                    # Will filter client-side to avoid index requirement
+                    logging.info(f"ORDER CATEGORY FILTER: Will apply client-side due to Firestore index limitations (field: order_category)")
 
             docs = query.stream()
             data = []
             sample_dates = []
             
-            # Check if we need to apply advocate name filter client-side
-            apply_advocate_filter_client_side = advocate_name and (start_date or end_date)
+            # Check which filters need to be applied client-side (when date filters present)
+            apply_advocate_filter_client_side = advocate_name and has_date_filter
+            apply_order_status_filter_client_side = order_status and has_date_filter
+            apply_order_category_filter_client_side = order_category and has_date_filter
             
             for doc in docs:
                 doc_data = doc.to_dict()
@@ -524,6 +540,18 @@ class Board:
                 if apply_advocate_filter_client_side:
                     respondent_lawyer = doc_data.get('respondent_lawyer', '').lower()
                     if advocate_name.lower() not in respondent_lawyer:
+                        continue  # Skip this document
+                
+                # Apply client-side order status filter if needed
+                if apply_order_status_filter_client_side:
+                    doc_order_status = doc_data.get('order_status', '')
+                    if doc_order_status != order_status:
+                        continue  # Skip this document
+                
+                # Apply client-side order category filter if needed
+                if apply_order_category_filter_client_side:
+                    doc_order_category = doc_data.get('order_category', '')
+                    if doc_order_category != order_category:
                         continue  # Skip this document
                 
                 # Add document ID for reference
