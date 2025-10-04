@@ -26,26 +26,38 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create and activate Python virtual environment
+        run: |
+          cd billingonaire-backend
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
           credentials_json: '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}'
-      
+
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
-      
+
       - name: Build and Submit to Cloud Build
         run: |
           cd billingonaire-backend
+          source venv/bin/activate
           echo "Starting Cloud Build..."
-          
           # Submit build and capture the build ID
           BUILD_OUTPUT=$(gcloud builds submit \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
             --format="value(id)" 2>&1 || echo "BUILD_FAILED")
-          
           # Check if build submission failed
           if [[ "$BUILD_OUTPUT" == *"BUILD_FAILED"* ]] || [[ -z "$BUILD_OUTPUT" ]]; then
             echo "ERROR: Failed to submit build to Cloud Build"
