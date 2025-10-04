@@ -48,18 +48,19 @@ class TestDashboardData:
             },
         ]
 
-    def test_get_weekly_status(self, dashboard_module, mock_firestore_client):
+    @pytest.mark.asyncio
+    async def test_get_weekly_status(self, dashboard_module, mock_firestore_client):
         """Test weekly status calculation"""
         start_date = "2024-10-01"
         end_date = "2024-10-07"
 
-        result = dashboard_module.DashboardData(
+        result = await dashboard_module.DashboardData(
             mock_firestore_client
         ).get_weekly_status(start_date, end_date)
-        assert isinstance(result, dict)
-        assert "total_cases" in result or result == {}
+        assert isinstance(result, list)
 
-    def test_get_agp_stats(
+    @pytest.mark.asyncio
+    async def test_get_agp_stats(
         self, dashboard_module, mock_firestore_client, sample_board_docs
     ):
         """Test AGP statistics calculation"""
@@ -68,10 +69,10 @@ class TestDashboardData:
         mock_collection.stream.return_value = mock_docs
         mock_firestore_client.collection.return_value = mock_collection
 
-        result = dashboard_module.DashboardData(mock_firestore_client).get_agp_stats()
+        result = await dashboard_module.DashboardData(mock_firestore_client).get_agp_stats()
         assert isinstance(result, list)
 
-    def test_group_similar_agp_names(self, dashboard_module):
+    def test_group_similar_agp_names(self, dashboard_module, mock_firestore_client):
         """Test fuzzy AGP name grouping with 85% threshold"""
         agp_counts = {
             "POOJA JOSHI": 5,
@@ -80,7 +81,8 @@ class TestDashboardData:
             "DIFFERENT NAME": 1,
         }
 
-        result = dashboard_module.DashboardData.group_similar_agp_names(agp_counts)
+        dashboard = dashboard_module.DashboardData(mock_firestore_client)
+        result = dashboard.group_similar_agp_names(agp_counts)
         assert isinstance(result, dict)
         # Similar names should be grouped
         grouped_keys = list(result.keys())
@@ -94,32 +96,35 @@ class TestDashboardData:
         similarity = SequenceMatcher(None, name1.upper(), name2.upper()).ratio()
         assert 0 <= similarity <= 1
 
-    def test_normalize_agp_name_for_matching(self, dashboard_module):
+    def test_normalize_agp_name_for_matching(self, dashboard_module, mock_firestore_client):
         """Test AGP name normalization for matching"""
         name = "SHRI P.M.JOSHI, AGP"
-        normalized = dashboard_module.DashboardData.normalize_agp_name(name)
+        dashboard = dashboard_module.DashboardData(mock_firestore_client)
+        normalized = dashboard.normalize_agp_name(name)
 
         assert "SHRI" not in normalized
         assert "AGP" not in normalized
         assert "GP" not in normalized
 
-    def test_get_monthly_avg(self, dashboard_module, mock_firestore_client):
+    @pytest.mark.asyncio
+    async def test_get_monthly_avg(self, dashboard_module, mock_firestore_client):
         """Test monthly average calculation"""
         year = 2024
 
-        result = dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(
+        result = await dashboard_module.DashboardData(mock_firestore_client).get_monthly_avg(
             year
         )
         assert isinstance(result, list)
 
-    def test_calculate_matter_distribution(
+    @pytest.mark.asyncio
+    async def test_calculate_matter_distribution(
         self, dashboard_module, mock_firestore_client
     ):
         """Test matter distribution calculation"""
         start_date = "2024-10-01"
         end_date = "2024-10-31"
 
-        result = dashboard_module.DashboardData(
+        result = await dashboard_module.DashboardData(
             mock_firestore_client
         ).get_matters_by_date_range(start_date, end_date)
         assert isinstance(result, dict)

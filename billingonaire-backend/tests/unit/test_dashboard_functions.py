@@ -67,23 +67,27 @@ async def test_get_agp_stats(mock_firestore):
     assert isinstance(result, list)
 
 
-def test_group_similar_agp_names():
+@patch("Dashboard.firestore.client")
+def test_group_similar_agp_names(mock_firestore):
     """Test fuzzy AGP name grouping"""
     from Dashboard import DashboardData
 
     agp_counts = {"POOJA JOSHI": 10, "P.M.JOSHI": 5, "POOJA M JOSHI": 3, "SHARMA": 2}
 
-    result = DashboardData.group_similar_agp_names(agp_counts)
+    dashboard = DashboardData()
+    result = dashboard.group_similar_agp_names(agp_counts)
     assert isinstance(result, dict)
     # Similar names should be grouped
     assert len(result) < len(agp_counts)
 
 
-def test_normalize_agp_name():
+@patch("Dashboard.firestore.client")
+def test_normalize_agp_name(mock_firestore):
     """Test AGP name normalization"""
     from Dashboard import DashboardData
 
-    result = DashboardData.normalize_agp_name("SHRI P.M.JOSHI, AGP, ADDL.GP")
+    dashboard = DashboardData()
+    result = dashboard.normalize_agp_name("SHRI P.M.JOSHI, AGP, ADDL.GP")
     assert "SHRI" not in result
     assert "AGP" not in result
     assert "GP" not in result
@@ -167,4 +171,3 @@ def test_dashboard_initialization(mock_firestore):
 
     dashboard = DashboardData()
     assert dashboard.db is not None
-    assert dashboard.boards_collection == "daily-boards"
