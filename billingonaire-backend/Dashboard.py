@@ -5,10 +5,59 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from collections import defaultdict
 import statistics
+from difflib import SequenceMatcher
+import re
 
 class DashboardData:
     def __init__(self, db=None):
         self.db = db or firestore.client()
+    
+    def normalize_agp_name(self, name: str) -> str:
+        """Normalize AGP name for fuzzy matching"""
+        if not name:
+            return ""
+        # Remove common titles and prefixes
+        name = re.sub(r'\b(SHRI|SMT|MS|MR|DR|ADDL|AGP|GP|BPNL)\b\.?', '', name.upper())
+        # Remove extra spaces and punctuation
+        name = re.sub(r'[,.\-_]', ' ', name)
+        name = re.sub(r'\s+', ' ', name).strip()
+        return name
+    
+    def fuzzy_match_agp_names(self, name1: str, name2: str) -> float:
+        """Calculate similarity score between two AGP names"""
+        norm1 = self.normalize_agp_name(name1)
+        norm2 = self.normalize_agp_name(name2)
+        
+        if not norm1 or not norm2:
+            return 0.0
+        
+        # Use SequenceMatcher for similarity
+        return SequenceMatcher(None, norm1, norm2).ratio()
+    
+    def group_similar_agp_names(self, agp_counts: dict, threshold: float = 0.85) -> dict:
+        """Group similar AGP names together using fuzzy matching"""
+        grouped = {}
+        processed = set()
+        
+        for agp_name in sorted(agp_counts.keys()):
+            if agp_name in processed:
+                continue
+            
+            # Find all similar names
+            similar_group = [agp_name]
+            for other_name in agp_counts.keys():
+                if other_name != agp_name and other_name not in processed:
+                    similarity = self.fuzzy_match_agp_names(agp_name, other_name)
+                    if similarity >= threshold:
+                        similar_group.append(other_name)
+                        processed.add(other_name)
+            
+            # Use the most common variant as the canonical name
+            canonical_name = max(similar_group, key=lambda n: agp_counts[n])
+            grouped[canonical_name] = sum(agp_counts[name] for name in similar_group)
+            processed.add(agp_name)
+        
+        return grouped
 
     async def get_weekly_status(self, start_date=None, end_date=None, agp_filter=None):
         # Use provided dates or default to last 7 days
@@ -43,7 +92,7 @@ class DashboardData:
                 date_counts[d] = date_counts.get(d, 0) + 1
         return [ {"date": k, "total_matters": v} for k, v in sorted(date_counts.items()) ]
 
-    async def get_agp_stats(self, agp_name: str = None, agp_filter=None):
+    async def get_agp_stats(self, agp_name: str = None, agp_filter=None, use_fuzzy_matching: bool = True):
         query = self.db.collection("daily-boards")
         # Use agp_filter if provided (for role-based access), otherwise use agp_name parameter
         target_agp = agp_filter or agp_name
@@ -55,9 +104,14 @@ class DashboardData:
             agp = doc.to_dict().get("respondent_lawyer")
             if agp:
                 agp_counts[agp] = agp_counts.get(agp, 0) + 1
+        
+        # Apply fuzzy matching to group similar names
+        if use_fuzzy_matching and len(agp_counts) > 0:
+            agp_counts = self.group_similar_agp_names(agp_counts, threshold=0.85)
+        
         return [ {"agp_name": k, "matters": v} for k, v in sorted(agp_counts.items(), key=lambda x: -x[1]) ]
 
-    async def get_monthly_avg(self, year: str = None, agp_filter=None):
+    async def get_monthly_avg(self, year: str = None, agp_filter=None, use_fuzzy_matching: bool = True):
         query = self.db.collection("daily-boards")
         
         # Apply AGP filter if specified
@@ -88,6 +142,43 @@ class DashboardData:
                 month = date[:7]  # YYYY-MM
                 agp_month_counts.setdefault(agp, {}).setdefault(month, 0)
                 agp_month_counts[agp][month] += 1
+        
+        # Apply fuzzy matching to group similar AGP names
+        if use_fuzzy_matching and len(agp_month_counts) > 0:
+            # First, create a mapping of canonical names
+            all_agp_names = list(agp_month_counts.keys())
+            name_mapping = {}
+            processed = set()
+            
+            for agp_name in sorted(all_agp_names):
+                if agp_name in processed:
+                    continue
+                
+                similar_group = [agp_name]
+                for other_name in all_agp_names:
+                    if other_name != agp_name and other_name not in processed:
+                        similarity = self.fuzzy_match_agp_names(agp_name, other_name)
+                        if similarity >= 0.85:
+                            similar_group.append(other_name)
+                            processed.add(other_name)
+                
+                # Use the most common variant as canonical
+                canonical_name = max(similar_group, key=lambda n: sum(agp_month_counts[n].values()))
+                for name in similar_group:
+                    name_mapping[name] = canonical_name
+                processed.add(agp_name)
+            
+            # Merge data using canonical names
+            merged_counts = {}
+            for agp, months in agp_month_counts.items():
+                canonical = name_mapping.get(agp, agp)
+                if canonical not in merged_counts:
+                    merged_counts[canonical] = {}
+                for month, count in months.items():
+                    merged_counts[canonical][month] = merged_counts[canonical].get(month, 0) + count
+            
+            agp_month_counts = merged_counts
+        
         result = []
         for agp, months in agp_month_counts.items():
             avg = sum(months.values()) / len(months)
@@ -200,7 +291,7 @@ class DashboardData:
             "yearly"
         )
 
-    async def _get_agp_distribution_for_period(self, start_dt, end_dt, agp_filter, period_type):
+    async def _get_agp_distribution_for_period(self, start_dt, end_dt, agp_filter, period_type, use_fuzzy_matching: bool = True):
         """Helper method to get AGP distribution for a specific period"""
         query = self.db.collection("daily-boards").where(
             filter=FieldFilter("board_date", ">=", start_dt)
@@ -225,6 +316,10 @@ class DashboardData:
             if agp:
                 agp_counts[agp] += 1
                 total_matters += 1
+        
+        # Apply fuzzy matching to group similar names
+        if use_fuzzy_matching and len(agp_counts) > 0:
+            agp_counts = self.group_similar_agp_names(agp_counts, threshold=0.85)
         
         # Calculate percentages and format response
         distribution = []

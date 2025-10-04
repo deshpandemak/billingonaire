@@ -228,8 +228,8 @@ async def process_order_queue_worker(worker_id: int):
     
     while True:
         try:
-            # Get case from queue (wait up to 30 seconds)
-            case_info = await asyncio.wait_for(order_processing_queue.get(), timeout=30.0)
+            # Get case from queue (wait indefinitely for new items)
+            case_info = await order_processing_queue.get()
             
             logging.info(f"[Worker {worker_id}] 📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})")
             
@@ -272,10 +272,6 @@ async def process_order_queue_worker(worker_id: int):
             # Mark task as done
             order_processing_queue.task_done()
             
-        except asyncio.TimeoutError:
-            # No more items in queue, continue waiting
-            logging.debug("Queue timeout - waiting for more cases...")
-            continue
         except Exception as e:
             logging.error(f"Background order processing error: {e}")
             await asyncio.sleep(5)  # Wait before retrying

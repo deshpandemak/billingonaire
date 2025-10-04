@@ -108,6 +108,10 @@ externalPort = 4200
 localPort = 45371
 externalPort = 8080
 
+[[ports]]
+localPort = 45651
+externalPort = 9000
+
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "cd billingonaire-backend && uvicorn main:app --host 0.0.0.0 --port 8000 & cd ../billingonaire-ui && npx vite preview --host 0.0.0.0 --port 5000"]
