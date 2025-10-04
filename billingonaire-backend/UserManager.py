@@ -233,10 +233,10 @@ class UserManager:
                 if role not in self.valid_roles:
                     raise HTTPException(status_code=400, detail=f"Invalid role: {role}. Must be one of: {', '.join(self.valid_roles)}")
                 
-                # Clear agp_names and legal_category when setting role to admin
+                # Clear agp_names when setting role to admin (admins don't have AGP assignments)
+                # But keep legal_category as it applies to both admins and users
                 if role == 'admin':
                     updates['agp_names'] = []
-                    updates['legal_category'] = None
             
             # Allow admin to update role, legal_category, and AGP assignments
             allowed_updates = ['role', 'legal_category', 'agp_names', 'full_name', 'is_active']
