@@ -64,22 +64,24 @@ jobs:
             echo "Output: $BUILD_OUTPUT"
             exit 1
           fi
-          
+
           # Extract build ID (last line of output)
           BUILD_ID=$(echo "$BUILD_OUTPUT" | tail -1)
           echo "Build ID: $BUILD_ID"
-          
+
           # Wait for build to complete and check status
           echo "Waiting for build to complete..."
           gcloud builds describe $BUILD_ID --format="value(status)" > /tmp/build_status.txt
           BUILD_STATUS=$(cat /tmp/build_status.txt)
-          
+
           # Wait loop (max 10 minutes)
           TIMEOUT=600
           ELAPSED=0
           while [[ "$BUILD_STATUS" == "WORKING" || "$BUILD_STATUS" == "QUEUED" ]]; do
             if [ $ELAPSED -ge $TIMEOUT ]; then
               echo "ERROR: Build timeout after 10 minutes"
+              echo "Fetching build logs..."
+              gcloud builds log $BUILD_ID --limit=100
               exit 1
             fi
             sleep 10
@@ -88,15 +90,15 @@ jobs:
             BUILD_STATUS=$(cat /tmp/build_status.txt)
             echo "Build status: $BUILD_STATUS (${ELAPSED}s elapsed)"
           done
-          
+
           # Check final status
           if [ "$BUILD_STATUS" != "SUCCESS" ]; then
             echo "ERROR: Build failed with status: $BUILD_STATUS"
             echo "Fetching build logs..."
-            gcloud builds log $BUILD_ID --limit=50
+            gcloud builds log $BUILD_ID --limit=100
             exit 1
           fi
-          
+
           echo "Build completed successfully!"
       
       - name: Deploy to Cloud Run
