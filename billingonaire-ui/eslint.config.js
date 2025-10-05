@@ -35,3 +35,12 @@ export default [
     },
   },
 ]
+// eslint.config.js
+ module.exports = {
+  ignores: [
+    'coverage/**',
+    'dist/**'
+    // add other patterns here
+  ],
+  // ...other config
+ };
