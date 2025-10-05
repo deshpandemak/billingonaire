@@ -35,7 +35,7 @@ jobs:
 
       - name: Create and activate Python virtual environment
         run: |
-          cd billingonaire-backend
+          cd billingonaire_backend
           python -m venv venv
           source venv/bin/activate
           pip install --upgrade pip
@@ -57,7 +57,7 @@ jobs:
       - name: Build with Cloud Build (Synchronous)
         run: |
           echo "Building container image..."
-          gcloud builds submit billingonaire-backend \
+          gcloud builds submit billingonaire_backend \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:latest \
             --timeout=20m
