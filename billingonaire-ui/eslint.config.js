@@ -1,4 +1,4 @@
-import globals from 'globals'
+uimport globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
@@ -37,10 +37,9 @@ export default [
 ]
 // eslint.config.js
  module.exports = {
-  ignores: [
+  ignorePatterns: [
     'coverage/**',
     'dist/**'
     // add other patterns here
-  ],
-  // ...other config
+  ]
  };
