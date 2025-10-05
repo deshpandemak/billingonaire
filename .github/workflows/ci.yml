@@ -30,17 +30,17 @@ jobs:
       
       - name: Run Black
         run: |
-          cd billingonaire-backend
+          cd billingonaire_backend
           black --check .
       
       - name: Run isort
         run: |
-          cd billingonaire-backend
+          cd billingonaire_backend
           isort --check-only .
       
       - name: Run flake8
         run: |
-          cd billingonaire-backend
+          cd billingonaire_backend
           flake8 . --exclude=tests --count --select=E9,F63,F7,F82 --show-source --statistics
 
   backend-test:
