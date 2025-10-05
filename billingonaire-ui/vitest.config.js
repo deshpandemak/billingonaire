@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/setupTests.js',
+  include: ['src/__tests__/**/*.{js,jsx,ts,tsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**', '**/*.spec.js'],
     coverage: {
       provider: 'v8',
@@ -15,8 +16,6 @@ export default defineConfig({
       exclude: [
         'node_modules/',
         'src/setupTests.js',
-        '**/*.test.{js,jsx}',
-        '**/__tests__/**',
         'dist/',
         '.eslintrc.cjs',
         'vite.config.js'
