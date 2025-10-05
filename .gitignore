@@ -1,7 +1,6 @@
 node_modules
 billingonairevenv
 google-cloud-sdk-460.0.0-linux-x86_64.tar.gz
-.gitignore
 google-cloud-sdk
 billingonaire-ui/src-react/package-lock.json
 billingonaire-ui/src-react/node_modules
@@ -9,7 +8,7 @@ billingonaire-ui/src-react/.env
 venv
 
 # CRITICAL: Firebase service account credentials and tokens
-billingonaire-backend/firebase/credentials.json
+billingonaire_backend/firebase/credentials.json
 */firebase/credentials.json
 firebase/credentials.json
 firebase/firebasetoken
