@@ -6,6 +6,10 @@ export default [
   {
     files: ['**/*.{js,jsx}'],
     ignores: ['dist/**', 'coverage/**'],
+    ignorePatterns: [
+      'coverage/',
+      'coverage/lcov-report/',
+    ],
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
