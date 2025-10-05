@@ -5,10 +5,10 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 export default [
   {
     files: ['**/*.{js,jsx}'],
-    ignores: ['dist/**', 'coverage/**'],
-    ignorePatterns: [
-      'coverage/',
-      'coverage/lcov-report/',
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'coverage/lcov-report/**',
     ],
     languageOptions: {
       ecmaVersion: 2020,
