@@ -144,7 +144,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/ambient.d.ts
 FN:1,(empty-report)
 FNF:1
 FNH:1
@@ -156,7 +155,6 @@ BRF:1
 BRH:1
 end_of_record
 TN:
-SF:.svelte-kit/non-ambient.d.ts
 FN:1,(empty-report)
 FNF:1
 FNH:1
@@ -168,7 +166,6 @@ BRF:1
 BRH:1
 end_of_record
 TN:
-SF:.svelte-kit/generated/root.svelte
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -241,7 +238,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/app.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -285,7 +281,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/matchers.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -298,7 +293,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/0.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -311,7 +305,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/1.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -324,7 +317,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/2.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -337,7 +329,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/3.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -351,7 +342,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/4.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -364,7 +354,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/5.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -377,7 +366,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/6.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -391,7 +379,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/7.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -404,7 +391,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/client/nodes/8.js
 FN:1,(empty-report)
 FNF:1
 FNH:0
@@ -417,7 +403,6 @@ BRF:1
 BRH:0
 end_of_record
 TN:
-SF:.svelte-kit/generated/server/internal.js
 FN:1,(empty-report)
 FNF:1
 FNH:1
