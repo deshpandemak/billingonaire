@@ -2954,19 +2954,39 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 @app.get("/bills/my-bills", tags=["Bill Generation"])
 async def get_my_bills(
     limit: int = Query(20, description="Maximum number of bills to return"),
+    user_id_filter: Optional[str] = Query(None, description="Filter by user ID (admin only)"),
     current_user=Depends(get_current_user),
 ):
-    """Get saved bills for logged-in user"""
+    """Get saved bills - logged-in user's bills or all bills (admin only)"""
     try:
         db = firestore.client()
         user_id = current_user.get("uid")
+        is_admin = get_user_manager().is_admin(user_id)
 
         bills_ref = db.collection("user-bills")
-        query = (
-            bills_ref.where("user_id", "==", user_id)
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
-            .limit(limit)
-        )
+        
+        # Admin can view all bills or filter by specific user
+        if is_admin and user_id_filter:
+            # Admin viewing specific user's bills
+            query = (
+                bills_ref.where("user_id", "==", user_id_filter)
+                .order_by("created_at", direction=firestore.Query.DESCENDING)
+                .limit(limit)
+            )
+            target_user_id = user_id_filter
+        elif is_admin and not user_id_filter:
+            # Admin viewing all bills
+            query = bills_ref.order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
+            target_user_id = "all"
+        else:
+            # Regular user - only their own bills
+            query = (
+                bills_ref.where("user_id", "==", user_id)
+                .order_by("created_at", direction=firestore.Query.DESCENDING)
+                .limit(limit)
+            )
+            target_user_id = user_id
+
         bills = query.stream()
 
         bills_list = []
@@ -2984,7 +3004,8 @@ async def get_my_bills(
 
         return JSONResponse(
             content={
-                "user_id": user_id,
+                "user_id": target_user_id,
+                "is_admin": is_admin,
                 "bills": bills_list,
                 "total_bills": len(bills_list),
             }
@@ -3311,10 +3332,11 @@ async def export_bill_excel(
 
 @app.get("/bills/{bill_id}", tags=["Bill Generation"])
 async def get_bill_details(bill_id: str, current_user=Depends(get_current_user)):
-    """Get details of a specific saved bill"""
+    """Get details of a specific saved bill - admin can view any bill"""
     try:
         db = firestore.client()
         user_id = current_user.get("uid")
+        is_admin = get_user_manager().is_admin(user_id)
 
         bill_ref = db.collection("user-bills").document(bill_id)
         bill_doc = bill_ref.get()
@@ -3324,8 +3346,8 @@ async def get_bill_details(bill_id: str, current_user=Depends(get_current_user))
 
         bill_data = bill_doc.to_dict()
 
-        # Check ownership
-        if bill_data.get("user_id") != user_id:
+        # Check ownership - admin can view any bill, regular user only their own
+        if not is_admin and bill_data.get("user_id") != user_id:
             return JSONResponse(status_code=403, content={"error": "Access denied"})
 
         bill_data["id"] = bill_doc.id
@@ -3347,10 +3369,11 @@ async def get_bill_details(bill_id: str, current_user=Depends(get_current_user))
 
 @app.delete("/bills/{bill_id}", tags=["Bill Generation"])
 async def delete_bill(bill_id: str, current_user=Depends(get_current_user)):
-    """Delete a saved bill"""
+    """Delete a saved bill - admin can delete any bill"""
     try:
         db = firestore.client()
         user_id = current_user.get("uid")
+        is_admin = get_user_manager().is_admin(user_id)
 
         bill_ref = db.collection("user-bills").document(bill_id)
         bill_doc = bill_ref.get()
@@ -3360,8 +3383,8 @@ async def delete_bill(bill_id: str, current_user=Depends(get_current_user)):
 
         bill_data = bill_doc.to_dict()
 
-        # Check ownership
-        if bill_data.get("user_id") != user_id:
+        # Check ownership - admin can delete any bill, regular user only their own
+        if not is_admin and bill_data.get("user_id") != user_id:
             return JSONResponse(status_code=403, content={"error": "Access denied"})
 
         # Delete the bill
