@@ -2592,7 +2592,7 @@ async def generate_bill_data(
             # Admin generating bill for specific user - use ENHANCED fuzzy matching
             logging.info(f"Admin {user_id} generating bill for user: {user_name}")
 
-            # Step 1: Collect all unique AGP names from board data (respondent_lawyer field)
+            # Step 1: Collect all unique AGP names from MULTIPLE sources in board data
             boards_ref = db.collection("daily-boards")
             all_cases = boards_ref.stream()
 
@@ -2602,13 +2602,55 @@ async def generate_bill_data(
             for case_doc in all_cases:
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
+                
+                # Source 1: respondent_lawyer (primary field)
                 respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
-
                 if respondent_lawyer:
                     unique_agp_names.add(respondent_lawyer)
                     if respondent_lawyer not in cases_by_agp:
                         cases_by_agp[respondent_lawyer] = []
                     cases_by_agp[respondent_lawyer].append((case_id, case_data))
+                
+                # Source 2: additional_respondent_lawyers (comma-separated from daily board)
+                # Parse properly to keep name+designation pairs intact (e.g., "SHRI A.B.SHARMA,AGP")
+                additional_lawyers = case_data.get("additional_respondent_lawyers", "").strip()
+                if additional_lawyers:
+                    # Split on patterns that indicate separate advocates
+                    # Look for patterns like "AGP," or "GP," followed by space and new name
+                    import re
+                    # Split on AGP/GP followed by comma and space, but keep AGP/GP with the name
+                    lawyer_names = re.split(r'(?:,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.?\s+))', additional_lawyers)
+                    for lawyer_name in lawyer_names:
+                        lawyer_name = lawyer_name.strip().rstrip(',')
+                        if lawyer_name:
+                            unique_agp_names.add(lawyer_name)
+                            if lawyer_name not in cases_by_agp:
+                                cases_by_agp[lawyer_name] = []
+                            cases_by_agp[lawyer_name].append((case_id, case_data))
+                
+                # Source 3: order_agp_names (can be list OR single string from order analysis)
+                order_agp_names = case_data.get("order_agp_names")
+                if order_agp_names:
+                    # Handle both string and list formats
+                    if isinstance(order_agp_names, str):
+                        # Single string - treat as one name
+                        agp_name = order_agp_names.strip()
+                        if agp_name:
+                            unique_agp_names.add(agp_name)
+                            if agp_name not in cases_by_agp:
+                                cases_by_agp[agp_name] = []
+                            cases_by_agp[agp_name].append((case_id, case_data))
+                    elif isinstance(order_agp_names, list):
+                        # List of names
+                        for agp_name in order_agp_names:
+                            agp_name = str(agp_name).strip() if agp_name else ""
+                            if agp_name:
+                                unique_agp_names.add(agp_name)
+                                if agp_name not in cases_by_agp:
+                                    cases_by_agp[agp_name] = []
+                                cases_by_agp[agp_name].append((case_id, case_data))
+            
+            logging.info(f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)")
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
             matched_agp, confidence = get_user_manager().match_user_name_to_agp(
