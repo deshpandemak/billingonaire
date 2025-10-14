@@ -350,7 +350,16 @@ const BillGeneration = () => {
                 body: JSON.stringify(payload)
             });
 
-            alert(`Bill saved successfully! Bill ID: ${response.bill_id}`);
+            const successMessage = `
+✅ Bill saved successfully!
+
+📋 Bill Number: ${response.bill_number}
+📅 Period: ${response.month_description}
+💰 Total Fees: ₹${response.total_fees.toLocaleString()}
+📊 Total Entries: ${response.total_entries}
+            `.trim();
+            
+            alert(successMessage);
             setShowSaveModal(false);
         } catch (err) {
             alert('Failed to save bill: ' + err.message);

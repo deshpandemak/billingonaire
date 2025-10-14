@@ -2809,9 +2809,77 @@ async def generate_bill_data(
         )
 
 
+def generate_bill_number_safe(db, user_id: str, year: int) -> tuple:
+    """Generate unique bill number with year and sequence for a user (transaction-safe)"""
+    try:
+        # Use a counter document per user per year to ensure atomic increments
+        counter_id = f"{user_id}_{year}"
+        counter_ref = db.collection("bill-counters").document(counter_id)
+        
+        # Use Firestore transaction to atomically increment counter
+        @firestore.transactional
+        def increment_counter(transaction):
+            counter_doc = counter_ref.get(transaction=transaction)
+            
+            if counter_doc.exists:
+                current_seq = counter_doc.to_dict().get("sequence", 0)
+                next_sequence = current_seq + 1
+            else:
+                # First bill for this user in this year
+                next_sequence = 1
+            
+            # Update counter atomically
+            transaction.set(counter_ref, {
+                "user_id": user_id,
+                "year": year,
+                "sequence": next_sequence,
+                "last_updated": firestore.SERVER_TIMESTAMP
+            })
+            
+            return next_sequence
+        
+        # Execute transaction
+        transaction = db.transaction()
+        next_sequence = increment_counter(transaction)
+        
+        # Format: BILL/YEAR/SEQUENCE (e.g., BILL/2025/001)
+        bill_number = f"BILL/{year}/{next_sequence:03d}"
+        
+        logging.info(f"✨ Generated bill number: {bill_number} for user {user_id}")
+        return bill_number, next_sequence
+        
+    except Exception as e:
+        logging.error(f"Error generating bill number: {e}")
+        # Fallback to timestamp-based number (should rarely happen)
+        import time
+        timestamp_seq = int(time.time()) % 10000
+        return f"BILL/{year}/{timestamp_seq:04d}", timestamp_seq
+
+
+def generate_month_description(start_date: str, end_date: str) -> str:
+    """Generate month description from date range (e.g., 'January 2025 - March 2025')"""
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Same month
+        if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
+            return start_dt.strftime("%B %Y")
+        
+        # Different months, same year
+        if start_dt.year == end_dt.year:
+            return f"{start_dt.strftime('%B')} - {end_dt.strftime('%B %Y')}"
+        
+        # Different years
+        return f"{start_dt.strftime('%B %Y')} - {end_dt.strftime('%B %Y')}"
+    except Exception as e:
+        logging.error(f"Error generating month description: {e}")
+        return f"{start_date} to {end_date}"
+
+
 @app.post("/bills/save", tags=["Bill Generation"])
 async def save_bill_entries(request: Request, current_user=Depends(get_current_user)):
-    """Save/update bill entries for logged-in user"""
+    """Save bill entries with unique bill number and year for logged-in user"""
     try:
         db = firestore.client()
         user_id = current_user.get("uid")
@@ -2819,10 +2887,34 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 
         bill_entries = body.get("bill_entries", [])
         bill_metadata = body.get("metadata", {})
+        
+        # Get date range from metadata (frontend sends startDate/endDate)
+        date_range = bill_metadata.get("date_range", {})
+        start_date = date_range.get("startDate", date_range.get("start", ""))
+        end_date = date_range.get("endDate", date_range.get("end", ""))
+        
+        # Determine bill year from date range (use end date year)
+        current_year = datetime.now().year
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                current_year = end_dt.year
+            except:
+                pass
+        
+        # Generate unique bill number (transaction-safe to prevent duplicates)
+        bill_number, bill_sequence = generate_bill_number_safe(db, user_id, current_year)
+        
+        # Generate month description
+        month_description = generate_month_description(start_date, end_date) if start_date and end_date else ""
 
-        # Create a bill document
+        # Create a bill document with bill number and year
         bill_data = {
             "user_id": user_id,
+            "bill_number": bill_number,
+            "bill_year": current_year,
+            "bill_sequence": bill_sequence,
+            "month_description": month_description,
             "created_at": firestore.SERVER_TIMESTAMP,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "metadata": bill_metadata,
@@ -2836,10 +2928,15 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
         bill_ref.set(bill_data)
         bill_id = bill_ref.id
 
+        logging.info(f"✅ Bill saved: {bill_number} for user {user_id}, {month_description}")
+
         return JSONResponse(
             content={
                 "success": True,
                 "bill_id": bill_id,
+                "bill_number": bill_number,
+                "bill_year": current_year,
+                "month_description": month_description,
                 "total_entries": len(bill_entries),
                 "total_fees": bill_data["total_fees"],
             }
@@ -2847,6 +2944,8 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 
     except Exception as e:
         logging.error(f"Error saving bill entries: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500, content={"error": f"Failed to save bill entries: {str(e)}"}
         )
