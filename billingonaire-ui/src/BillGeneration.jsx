@@ -290,17 +290,45 @@ const BillGeneration = () => {
     const exportMultipleFormats = async () => {
         if (!billData?.bill_entries?.length) return;
         
-        // Export CSV
+        // Export CSV (local client-side export)
         exportToExcel();
         
-        // Also trigger backend Excel export if available
+        // Also trigger backend Excel export (proper AGP format)
         try {
-            const response = await authenticatedFetchJSON(`/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`);
-            if (response.download_url) {
-                window.open(response.download_url, '_blank');
+            // Build URL with parameters
+            let excelUrl = `/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
+            
+            // Add user_name parameter if admin selected a user
+            if (selectedUser) {
+                excelUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
-        } catch {
-            console.log('Excel export not available, CSV exported instead');
+            
+            // Get auth token
+            const token = localStorage.getItem('token');
+            
+            // Download Excel file using fetch with auth
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}${excelUrl}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `AGP_Bill_${dateRange.startDate}_to_${dateRange.endDate}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                console.log('✅ Excel bill exported successfully in AGP format');
+            } else {
+                console.error('Failed to export Excel:', response.statusText);
+            }
+        } catch (err) {
+            console.error('Excel export error:', err);
         }
     };
 

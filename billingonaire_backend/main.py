@@ -2980,14 +2980,25 @@ async def export_bill_excel(
     bill_id: str = Query(None, description="Bill ID to export"),
     start_date: str = Query(None, description="Start date for generating fresh export"),
     end_date: str = Query(None, description="End date for generating fresh export"),
+    user_name: Optional[str] = Query(None, description="User name for bill header (admin only)"),
     current_user=Depends(get_current_user),
 ):
-    """Export bill data as Excel format"""
+    """Export bill data as Excel format matching AGP bill specification"""
     try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from datetime import datetime
+        import io
+        from fastapi.responses import StreamingResponse
+        
         db = firestore.client()
         user_id = current_user.get("uid")
+        is_admin = get_user_manager().is_admin(user_id)
 
         # Get bill data - either from saved bill or generate fresh
+        agp_name = "ASSISTANT GOVERNMENT PLEADER"
+        bill_number = f"BILL/{datetime.now().strftime('%m')}/{datetime.now().year}"
+        
         if bill_id:
             # Export saved bill
             bill_ref = db.collection("user-bills").document(bill_id)
@@ -2999,23 +3010,31 @@ async def export_bill_excel(
                 )
 
             bill_data = bill_doc.to_dict()
-            if bill_data.get("user_id") != user_id:
+            if bill_data.get("user_id") != user_id and not is_admin:
                 return JSONResponse(status_code=403, content={"error": "Access denied"})
 
             entries = bill_data.get("entries", [])
             metadata = bill_data.get("metadata", {})
-            filename = f"bill_{bill_id}.csv"
+            agp_name = entries[0].get("agp_name", agp_name) if entries else agp_name
+            filename = f"bill_{bill_id}.xlsx"
 
         elif start_date and end_date:
             # Generate fresh export
-            response = await generate_bill_data(start_date, end_date, current_user)
+            response = await generate_bill_data(start_date, end_date, user_name, current_user)
             if response.status_code != 200:
                 return response
 
             response_data = json.loads(response.body.decode())
             entries = response_data.get("bill_entries", [])
             metadata = {"date_range": {"start": start_date, "end": end_date}}
-            filename = f"bill_{start_date}_to_{end_date}.csv"
+            
+            # Get AGP name from entries or debug info
+            if entries and entries[0].get("agp_name"):
+                agp_name = entries[0].get("agp_name")
+            elif "debug_info" in response_data and response_data["debug_info"].get("matched_agp_name"):
+                agp_name = response_data["debug_info"]["matched_agp_name"]
+            
+            filename = f"AGP_Bill_{start_date}_to_{end_date}.xlsx"
 
         else:
             return JSONResponse(
@@ -3030,51 +3049,162 @@ async def export_bill_excel(
                 status_code=404, content={"error": "No bill entries found"}
             )
 
-        # Create CSV content
-        import io
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Bill"
 
-        output = io.StringIO()
+        # Define styles
+        title_font = Font(bold=True, size=12)
+        header_font = Font(bold=True, size=11)
+        border_thin = Border(
+            left=Side(style='thin'), 
+            right=Side(style='thin'), 
+            top=Side(style='thin'), 
+            bottom=Side(style='thin')
+        )
+        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
 
-        # Write headers
-        headers = ["DATE", "CASE DETAIL", "PARTIES NAME", "RESULTS", "FEES (RS.)"]
-        output.write(",".join(headers) + "\n")
+        # Parse dates for header
+        date_range = metadata.get("date_range", {})
+        start_dt = datetime.strptime(date_range.get("start", start_date), "%Y-%m-%d")
+        end_dt = datetime.strptime(date_range.get("end", end_date), "%Y-%m-%d")
+        period_str = f"{start_dt.strftime('%B %Y').upper()} - {end_dt.strftime('%B %Y').upper()}"
 
-        # Write data rows
+        # Row counter
+        current_row = 1
+
+        # Header Section
+        # Title
+        ws.merge_cells(f'A{current_row}:H{current_row}')
+        ws[f'A{current_row}'] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        ws[f'A{current_row}'].font = title_font
+        ws[f'A{current_row}'].alignment = center_align
+        current_row += 1
+
+        # Subtitle
+        ws.merge_cells(f'A{current_row}:H{current_row}')
+        ws[f'A{current_row}'] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        ws[f'A{current_row}'].alignment = center_align
+        current_row += 1
+
+        # Government Resolution
+        ws.merge_cells(f'A{current_row}:H{current_row}')
+        ws[f'A{current_row}'] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        ws[f'A{current_row}'].alignment = center_align
+        current_row += 1
+
+        # Period and Bill Number
+        ws.merge_cells(f'A{current_row}:D{current_row}')
+        ws[f'A{current_row}'] = f"MONTHS :- {period_str}"
+        ws.merge_cells(f'E{current_row}:H{current_row}')
+        ws[f'E{current_row}'] = f"BILL NO:- {bill_number}"
+        ws[f'E{current_row}'].alignment = Alignment(horizontal='right', vertical='center')
+        current_row += 1
+
+        # Declaration
+        ws.merge_cells(f'A{current_row}:H{current_row}')
+        declaration_text = (
+            f"DECLARATION : I hereby certify that the below mentioned matters were allotted to me by the Government Pleader, "
+            f"I personally appeared in the below mentioned matters. The below mentioned entries/information given in above columns "
+            f"are true and correct to the best of my knowledge and belief. I further certify that nothing is suppressed by me. "
+            f"Also, the fees which is claimed in bill no. {bill_number} has not been claimed by me earlier."
+        )
+        ws[f'A{current_row}'] = declaration_text
+        ws[f'A{current_row}'].alignment = left_align
+        ws.row_dimensions[current_row].height = 60
+        current_row += 1
+
+        # Column Headers
+        headers = ["SR. NO.", "DATE", "CASE TYPE", "CASE NO", "CASE YEAR", "RESULTS", "PARTIES NAME", "FEES (RS.)"]
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=current_row, column=col_num, value=header)
+            cell.font = header_font
+            cell.alignment = center_align
+            cell.border = border_thin
+        current_row += 1
+
+        # Data rows
         total_fees = 0
-        for entry in entries:
-            row = [
-                entry.get("date", ""),
-                f'"{entry.get("case_detail", "")}"',
-                f'"{entry.get("parties_name", "")}"',
-                f'"{entry.get("results", "")}"',
-                str(entry.get("fees_rs", 0)),
+        for idx, entry in enumerate(entries, 1):
+            # Parse case_detail to extract case type, number, year
+            case_detail = entry.get("case_detail", "")
+            case_parts = case_detail.split("/")
+            case_type = case_parts[0] if len(case_parts) > 0 else ""
+            case_no = case_parts[1] if len(case_parts) > 1 else ""
+            case_year = case_parts[2] if len(case_parts) > 2 else ""
+
+            # Format date
+            date_str = entry.get("date", "")
+            try:
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                formatted_date = date_obj.strftime("%d-%m-%Y")
+            except:
+                formatted_date = date_str
+
+            row_data = [
+                idx,  # SR. NO.
+                formatted_date,  # DATE
+                case_type,  # CASE TYPE
+                case_no,  # CASE NO
+                case_year,  # CASE YEAR
+                entry.get("results", ""),  # RESULTS
+                entry.get("parties_name", ""),  # PARTIES NAME
+                entry.get("fees_rs", 0),  # FEES (RS.)
             ]
-            output.write(",".join(row) + "\n")
+
+            for col_num, value in enumerate(row_data, 1):
+                cell = ws.cell(row=current_row, column=col_num, value=value)
+                cell.border = border_thin
+                if col_num == 1 or col_num == 8:  # SR. NO. and FEES
+                    cell.alignment = center_align
+                elif col_num == 7:  # PARTIES NAME
+                    cell.alignment = left_align
+                else:
+                    cell.alignment = center_align
+
             total_fees += entry.get("fees_rs", 0)
+            current_row += 1
 
-        # Add summary row
-        output.write("\n")
-        output.write(f',,,"TOTAL:",{total_fees}\n')
+        # Total row
+        ws.merge_cells(f'A{current_row}:G{current_row}')
+        ws[f'A{current_row}'] = "TOTAL:"
+        ws[f'A{current_row}'].font = header_font
+        ws[f'A{current_row}'].alignment = Alignment(horizontal='right', vertical='center')
+        ws[f'A{current_row}'].border = border_thin
+        
+        cell = ws.cell(row=current_row, column=8, value=total_fees)
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = border_thin
 
-        csv_content = output.getvalue()
-        output.close()
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 10  # SR. NO.
+        ws.column_dimensions['B'].width = 15  # DATE
+        ws.column_dimensions['C'].width = 12  # CASE TYPE
+        ws.column_dimensions['D'].width = 12  # CASE NO
+        ws.column_dimensions['E'].width = 12  # CASE YEAR
+        ws.column_dimensions['F'].width = 18  # RESULTS
+        ws.column_dimensions['G'].width = 50  # PARTIES NAME
+        ws.column_dimensions['H'].width = 15  # FEES (RS.)
+
+        # Save to BytesIO
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
 
         # Return as downloadable file
-        import io
-
-        from fastapi.responses import StreamingResponse
-
-        def generate():
-            yield csv_content.encode("utf-8")
-
         return StreamingResponse(
-            io.BytesIO(csv_content.encode("utf-8")),
-            media_type="text/csv",
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     except Exception as e:
         logging.error(f"Error exporting bill to Excel: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500, content={"error": f"Failed to export bill: {str(e)}"}
         )
