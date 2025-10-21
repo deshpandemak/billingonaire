@@ -39,13 +39,15 @@ const Layout = ({ children }) => {
             setUserProfile(profile);
           } else {
             console.error('❌ Failed to load user profile, response not ok:', response.status);
-            // Set basic profile structure for fallback
-            setUserProfile({ email: user.email, role: 'user' });
+            const errorText = await response.text();
+            console.error('Error details:', errorText);
+            // Keep profile as null to show loading state instead of assuming role
+            setUserProfile(null);
           }
         } catch (error) {
           console.error('❌ Error loading user profile:', error);
-          // Set basic profile structure for fallback
-          setUserProfile({ email: user.email, role: 'user' });
+          // Keep profile as null to show loading state instead of assuming role
+          setUserProfile(null);
         }
       } else {
         setUserProfile(null);
