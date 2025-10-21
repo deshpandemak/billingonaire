@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table, Alert, Modal, Spinner } from 'react-bootstrap';
 import { authenticatedFetchJSON } from './lib/api.js';
+import { auth } from './lib/firebase.js';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const BillGeneration = () => {
     const [dateRange, setDateRange] = useState({
@@ -22,8 +24,9 @@ const BillGeneration = () => {
     const [isAdmin, setIsAdmin] = useState(false);
     const [userList, setUserList] = useState([]);
     const [selectedUser, setSelectedUser] = useState('');
+    const [authReady, setAuthReady] = useState(false);
 
-    // Set default date range to current month and fetch user list if admin
+    // Set default date range to current month
     useEffect(() => {
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -33,9 +36,23 @@ const BillGeneration = () => {
             startDate: formatDateSafe(startOfMonth),
             endDate: formatDateSafe(endOfMonth)
         });
+    }, []);
 
-        // Check admin status and fetch user list
-        checkAdminAndFetchUsers();
+    // Wait for Firebase authentication before fetching user list
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                console.log('🔐 User authenticated, checking admin status...');
+                await checkAdminAndFetchUsers();
+            } else {
+                console.log('❌ No user authenticated');
+                setIsAdmin(false);
+                setUserList([]);
+            }
+            setAuthReady(true);
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const checkAdminAndFetchUsers = async () => {
