@@ -11,7 +11,7 @@ echo "========================================"
 # Deploy Backend
 echo ""
 echo "📦 Building backend Docker image..."
-cd billingonaire-backend
+cd billingonaire_backend
 gcloud auth activate-service-account --key-file=<(echo "$GCLOUD_SERVICE_ACCOUNT_KEY")
 gcloud config set project billingonaire
 gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
@@ -24,10 +24,13 @@ gcloud run deploy billingonaire-backend \
   --allow-unauthenticated \
   --platform=managed \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --timeout=300 \
-  --cpu=1 \
-  --memory=1Gi \
-  --port=8080
+  --timeout=540 \
+  --cpu=2 \
+  --memory=2Gi \
+  --max-instances=10 \
+  --min-instances=1 \
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50" \
+  --update-secrets="GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
 
 cd ..
 
