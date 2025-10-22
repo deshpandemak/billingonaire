@@ -57,6 +57,21 @@ const BillGeneration = () => {
 
     const checkAdminAndFetchUsers = async () => {
         try {
+            console.log('🔍 Attempting to fetch active users from /admin/active-users...');
+            
+            // Ensure Firebase auth token is ready
+            const currentUser = auth.currentUser;
+            if (!currentUser) {
+                console.warn('⚠️ No current user in Firebase auth');
+                setIsAdmin(false);
+                setUserList([]);
+                return;
+            }
+            
+            // Verify we can get an ID token
+            const token = await currentUser.getIdToken();
+            console.log('✅ Firebase ID token obtained, length:', token?.length || 0);
+            
             // Fetch active user names list (will work only if user is admin)
             const response = await authenticatedFetchJSON('/admin/active-users');
             console.log('✅ Admin active users response:', response);
@@ -66,6 +81,11 @@ const BillGeneration = () => {
             setUserList(response.user_names || []);
         } catch (err) {
             console.error('❌ Failed to fetch active users:', err);
+            console.error('❌ Error details:', {
+                message: err.message,
+                stack: err.stack,
+                type: err.constructor.name
+            });
             // User is not admin, that's fine
             setIsAdmin(false);
             setUserList([]);
