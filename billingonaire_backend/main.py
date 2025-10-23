@@ -2666,15 +2666,16 @@ async def generate_bill_data(
             ):  # Lowered threshold to 50% for initial-based matching
                 # Step 3: Find ALL similar AGP name variants (handle formatting inconsistencies)
                 # Normalize the matched AGP name for comparison
-                from UserManager import normalize_name
+                from UserMatterMatcher import UserMatterMatcher
 
-                matched_normalized = normalize_name(matched_agp)
+                matcher = UserMatterMatcher()
+                matched_normalized = matcher.normalize_name(matched_agp)
 
                 # Collect cases from all variants that normalize to the same name
                 matched_cases = []
                 matched_variants = []
                 for agp_variant, variant_cases in cases_by_agp.items():
-                    if normalize_name(agp_variant) == matched_normalized:
+                    if matcher.normalize_name(agp_variant) == matched_normalized:
                         matched_cases.extend(variant_cases)
                         matched_variants.append(agp_variant)
 
