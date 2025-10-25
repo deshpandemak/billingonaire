@@ -10,8 +10,10 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:unit": "vitest run",
+    "test:unit:fast": "vitest run --reporter=basic --no-coverage",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:fast": "playwright test --project=chromium --workers=2",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {

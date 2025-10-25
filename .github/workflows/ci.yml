@@ -98,10 +98,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: billingonaire-ui/package-lock.json
       
-      - name: Install dependencies
+      - name: Install dependencies (dev only for linting)
         run: |
           cd billingonaire-ui
-          npm ci
+          npm ci --prefer-offline --only=dev
       
       - name: Run ESLint (only src/)
         run: |
@@ -111,7 +111,9 @@ jobs:
   frontend-test:
     name: Frontend Tests
     runs-on: ubuntu-latest
-    needs: frontend-lint
+    strategy:
+      matrix:
+        test-type: [unit, e2e]
     steps:
       - uses: actions/checkout@v4
       
@@ -125,21 +127,39 @@ jobs:
       - name: Install dependencies
         run: |
           cd billingonaire-ui
-          npm ci
+          npm ci --prefer-offline
       
-      - name: Run Vitest unit tests
+      - name: Cache Playwright browsers
+        if: matrix.test-type == 'e2e'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('billingonaire-ui/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+      
+      - name: Run Vitest unit tests (fast)
+        if: matrix.test-type == 'unit'
         run: |
           cd billingonaire-ui
-          npm run test:unit
+          npm run test:unit:fast
       
-      - name: Run Playwright e2e tests
-        continue-on-error: true  # Skip e2e tests - require Firebase emulator setup
+      - name: Setup Playwright (only for e2e)
+        if: matrix.test-type == 'e2e'
         run: |
           cd billingonaire-ui
-          npx playwright install --with-deps
-          npm run test:e2e
+          # Install only Chromium for faster CI
+          npx playwright install chromium
       
-      - name: Upload test coverage
+      - name: Run Playwright e2e tests (Chrome only)
+        if: matrix.test-type == 'e2e'
+        continue-on-error: true  # Skip e2e tests if they fail - require Firebase emulator setup
+        run: |
+          cd billingonaire-ui
+          npm run test:e2e:fast
+      
+      - name: Upload test coverage (unit tests only)
+        if: matrix.test-type == 'unit'
         uses: codecov/codecov-action@v4
         with:
           file: ./billingonaire-ui/coverage/coverage-final.json

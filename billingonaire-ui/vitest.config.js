@@ -8,11 +8,27 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/setupTests.js',
-  include: ['src/__tests__/**/*.{js,jsx,ts,tsx}'],
+    include: ['src/__tests__/**/*.{js,jsx,ts,tsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**', '**/*.spec.js'],
+    // CI optimizations
+    pool: process.env.CI ? 'threads' : 'forks',
+    poolOptions: {
+      threads: {
+        minThreads: 1,
+        maxThreads: process.env.CI ? 2 : undefined,
+      }
+    },
+    // Reduce startup time in CI
+    deps: {
+      optimizer: {
+        web: {
+          include: ['vitest > @vitest/utils > pretty-format'],
+        },
+      },
+    },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html', 'lcov'],
+      reporter: process.env.CI ? ['text', 'json'] : ['text', 'json', 'html', 'lcov'],
       exclude: [
         'node_modules/',
         'src/setupTests.js',

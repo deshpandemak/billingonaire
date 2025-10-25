@@ -31,7 +31,11 @@
 
 ### 6. **Frontend Deployment Configuration**
 **Problem**: Firebase Hosting deployment wasn't specifying the correct entry point.
-**Fix**: Added explicit `entryPoint` configuration for Firebase Hosting action.
+**Fix**: Removed the incorrect `entryPoint: './billingonaire-ui'` configuration. The Firebase Hosting action should use the root directory where `firebase.json` is located.
+
+### 7. **Firebase Configuration Mismatch**
+**Problem**: The GitHub Action was trying to find `firebase.json` in the `billingonaire-ui` directory due to the `entryPoint` setting, but `firebase.json` is in the root directory.
+**Fix**: Removed the `entryPoint` parameter so the action uses the root directory by default, where `firebase.json` correctly configures the public directory as `billingonaire-ui/dist`.
 
 ## Key Changes Made
 
@@ -88,7 +92,13 @@ Both GitHub Actions and Firebase scripts now use the same environment variables:
 
 ### If Deployment Still Fails:
 
-1. **Check Secrets Configuration**:
+1. **"firebase.json file not found" Error**:
+   - This means the `entryPoint` is incorrectly set in the Firebase Hosting action
+   - The `firebase.json` file should be in the root directory
+   - Remove any `entryPoint` parameter to use the root directory by default
+   - Ensure `firebase.json` has the correct `public` directory setting
+
+2. **Check Secrets Configuration**:
    - Ensure `GCLOUD_SERVICE_ACCOUNT_KEY` is properly set in GitHub Secrets
    - Ensure `FIREBASE_SERVICE_ACCOUNT` is properly set in GitHub Secrets
 
