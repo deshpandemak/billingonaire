@@ -80,7 +80,7 @@ const Upload = () => {
             
             // Configure request
             const API_BASE_URL = import.meta.env.PROD 
-              ? "https://asia-south1-billingonaire.cloudfunctions.net/billingonaire-backend"
+              ? "https://billingonaire-backend-819125105651.asia-south1.run.app"
               : "/api";
             xhr.open('POST', `${API_BASE_URL}/upload-pdf`, true);
             xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
