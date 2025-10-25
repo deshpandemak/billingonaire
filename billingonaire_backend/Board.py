@@ -1,14 +1,12 @@
 import logging
 import re
 from collections import Counter
-from datetime import datetime, timedelta
-from operator import itemgetter
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import pdfplumber
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException
 from firebase_admin import firestore
 
 # Import ML Enhanced Parser
@@ -37,8 +35,6 @@ class Board:
         self.ml_parser = None
         if ML_PARSER_AVAILABLE:
             try:
-                from ml_enhanced_parser import MLEnhancedParser
-
                 self.ml_parser = MLEnhancedParser(fallback_parser=self)
                 logging.info("ML Enhanced Parser initialized successfully")
             except Exception as e:
@@ -105,8 +101,10 @@ class Board:
         # Use existing parsing logic but with enhanced text
         matter_list = []
         date_pattern = r"(\d+/\d+/\d+)"
-        court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
-        case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
+        court_pattern = (
+            r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|"
+            r"(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
+        )
         # Updated: removed [\d ]+ to \d+ to prevent greedy matching with spaces
         case_pattern = r"\s+(\d+)\s+([A-Za-z()]+/\s*\d+/\d+)"
 
@@ -160,7 +158,9 @@ class Board:
                 if (
                     i + 2 < len(result)
                     and re.match(r"^\s*\d+\s*$", data.strip())
-                    and re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip())
+                    and re.match(
+                        r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip()
+                    )
                 ):
 
                     # Extract case details (normalize spaces for consistency)
@@ -171,7 +171,9 @@ class Board:
                     case_year = case_data[2].strip()
 
                     # Get court/lawyer details from the next part
-                    court_details = result[i + 2].strip() if i + 2 < len(result) else ""
+                    court_details = (
+                        result[i + 2].strip() if i + 2 < len(result) else ""
+                    )
 
                     # Create record for this case
                     if serial_no and case_type and case_no and case_year:
@@ -201,7 +203,25 @@ class Board:
 
         # Create DataFrame and remove duplicates for consistency with standard parsing
         matter_df = pd.DataFrame(matter_list)
-        matter_df = matter_df.drop_duplicates()
+
+        # Drop duplicates excluding list columns which are unhashable
+        if not matter_df.empty:
+            # Get all columns except those containing lists
+            hashable_columns = []
+            for col in matter_df.columns:
+                # Check if the column contains lists by looking at the first non-null value
+                first_value = (
+                    matter_df[col].dropna().iloc[0]
+                    if not matter_df[col].dropna().empty
+                    else None
+                )
+                if not isinstance(first_value, list):
+                    hashable_columns.append(col)
+
+            # Drop duplicates based only on hashable columns
+            if hashable_columns:
+                matter_df = matter_df.drop_duplicates(subset=hashable_columns)
+
         return matter_df
 
     def create_enhanced_record(
@@ -272,7 +292,6 @@ class Board:
             r"(.*?)(SHRI.*?|SMT.*?|MS.*?)(WITH|IN THE COURT|IN \w+/|Page:|C\.R\. No:|\*|$)",
             court_data,
         )
-        remaining_data = ""
         # Updated pattern: removed spaces from year part ([\d ]+) -> (\d+)
         # This prevents greedy matching like "IA/1808/2025 11" instead of "IA/1808/2025"
         additional_cases = re.findall(r"([A-Za-z()]+/\s*\d+/\d+)", court_data)
@@ -337,7 +356,8 @@ class Board:
             # 1. Two or more spaces before lawyer titles (handles "GP      SMT" pattern)
             # 2. Comma before lawyer titles (handles "AGP, SHRI" pattern)
             lawyers_list = re.split(
-                r"(?:\s{2,}(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.)|,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.))",
+                r"(?:\s{2,}(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.)|"
+                r",\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.))",
                 court_data,
             )
             additional_respondent_lawyers = [
@@ -362,8 +382,10 @@ class Board:
         try:
             matter_list = list()
             date_pattern = r"(\d+/\d+/\d+)"
-            court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
-            case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
+            court_pattern = (
+                r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|"
+                r"(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
+            )
             # Updated pattern to handle both "54 WP/123/2024" and "54. WP/123/2024" formats
             # Also updated: removed [\d ]+ to \d+ to prevent greedy matching with spaces
             case_pattern = r"(?:\s+|^)(\d+)\.?\s+([A-Za-z()]+/\s*\d+/\d+)"
@@ -383,7 +405,10 @@ class Board:
                     logging.error("No text could be extracted from the PDF file.")
                     raise HTTPException(
                         status_code=400,
-                        detail="No text could be extracted from the PDF file. Please check if the file is valid and not scanned as an image.",
+                        detail=(
+                            "No text could be extracted from the PDF file. "
+                            "Please check if the file is valid and not scanned as an image."
+                        ),
                     )
 
                 date = re.findall(date_pattern, text)
@@ -630,7 +655,8 @@ class Board:
                 else:
                     # Will filter client-side after query
                     logging.info(
-                        f"ADVOCATE FILTER: Will apply client-side due to Firestore limitations (field: respondent_lawyer)"
+                        "ADVOCATE FILTER: Will apply client-side due to Firestore "
+                        "limitations (field: respondent_lawyer)"
                     )
 
             case_type = search_criteria.get("caseType") or search_criteria.get(
@@ -672,7 +698,8 @@ class Board:
                 else:
                     # Will filter client-side to avoid index requirement
                     logging.info(
-                        f"ORDER STATUS FILTER: Will apply client-side due to Firestore index limitations (field: order_status)"
+                        "ORDER STATUS FILTER: Will apply client-side due to "
+                        "Firestore index limitations (field: order_status)"
                     )
 
             # Apply order category filter (from ML analysis)
@@ -690,7 +717,8 @@ class Board:
                 else:
                     # Will filter client-side to avoid index requirement
                     logging.info(
-                        f"ORDER CATEGORY FILTER: Will apply client-side due to Firestore index limitations (field: order_category)"
+                        "ORDER CATEGORY FILTER: Will apply client-side due to "
+                        "Firestore index limitations (field: order_category)"
                     )
 
             docs = query.stream()
