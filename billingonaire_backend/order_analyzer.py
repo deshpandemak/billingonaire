@@ -1316,7 +1316,9 @@ class OrderDocumentAnalyzer:
     ) -> Tuple[str, str]:
         """Extract petitioner and respondent for a specific case"""
         # Try to find the case block
-        case_pattern = rf"({re.escape(case_canonical)}|{case_canonical.replace('/', '\\s+OF\\s+')})(.*?)(?=(?:WRIT PETITION|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
+        # Move the replace outside f-string to avoid backslash in f-string expression
+        case_with_of = case_canonical.replace("/", r"\s+OF\s+")
+        case_pattern = rf"({re.escape(case_canonical)}|{case_with_of})(.*?)(?=(?:WRIT PETITION|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
         match = re.search(case_pattern, text, re.DOTALL | re.IGNORECASE)
 
         petitioner = ""
