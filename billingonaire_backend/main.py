@@ -104,31 +104,39 @@ def ensure_firebase():
                     cred_dict = json.loads(gcloud_key)
                     cred = credentials.Certificate(cred_dict)
                     firebase_admin.initialize_app(cred)
-                    logging.info("✅ Firebase Admin SDK initialized with service account key")
+                    logging.info(
+                        "✅ Firebase Admin SDK initialized with service account key"
+                    )
                 except Exception as e:
                     _firebase_init_error = f"Failed to initialize Firebase with service account key: {str(e)}"
                     logging.error(f"❌ {_firebase_init_error}")
                     raise HTTPException(
                         status_code=500,
-                        detail="Server configuration error: Firebase credentials invalid. Contact administrator."
+                        detail="Server configuration error: Firebase credentials invalid. Contact administrator.",
                     )
             else:
                 # Check if we're in a Cloud environment
                 try:
                     # Cloud Run with ADC
                     firebase_admin.initialize_app()
-                    logging.info("✅ Firebase Admin SDK initialized with Application Default Credentials")
+                    logging.info(
+                        "✅ Firebase Admin SDK initialized with Application Default Credentials"
+                    )
                 except Exception as e:
                     _firebase_init_error = (
                         "Firebase Admin SDK not initialized. Missing GCLOUD_SERVICE_ACCOUNT_KEY environment variable. "
                         f"Error: {str(e)}"
                     )
                     logging.error(f"❌ {_firebase_init_error}")
-                    logging.error("💡 To fix: Set GCLOUD_SERVICE_ACCOUNT_KEY environment variable with Firebase service account JSON")
-                    logging.error("💡 Or set FIREBASE_SERVICE_ACCOUNT_PATH to point to service account key file")
+                    logging.error(
+                        "💡 To fix: Set GCLOUD_SERVICE_ACCOUNT_KEY environment variable with Firebase service account JSON"
+                    )
+                    logging.error(
+                        "💡 Or set FIREBASE_SERVICE_ACCOUNT_PATH to point to service account key file"
+                    )
                     raise HTTPException(
                         status_code=500,
-                        detail="Server configuration error: Firebase credentials not configured. Contact administrator."
+                        detail="Server configuration error: Firebase credentials not configured. Contact administrator.",
                     )
         _firebase_initialized = True
 
@@ -3133,10 +3141,10 @@ def extract_parties_info(case_data: Dict) -> str:
                         return parties
                     else:
                         return str(parties)
-                
+
                 petitioner_str = extract_text_from_parties(petitioners)
                 respondent_str = extract_text_from_parties(respondents)
-                
+
                 if petitioner_str and respondent_str:
                     return f"{petitioner_str} vs {respondent_str}"
 
@@ -3332,7 +3340,7 @@ async def export_bill_excel(
             case_type = entry.get("case_type", "")
             case_no = entry.get("case_no", "")
             case_year = entry.get("case_year", "")
-            
+
             # Fallback: parse case_detail if separate fields not present
             if not case_type and not case_no and not case_year:
                 case_detail = entry.get("case_detail", "")
@@ -3356,10 +3364,18 @@ async def export_bill_excel(
                 formatted_date = str(date_str) if date_str else ""
 
             # Get other fields and ensure they're not None
-            results = str(entry.get("results", "")) if entry.get("results") is not None else ""
-            parties_name = str(entry.get("parties_name", "")) if entry.get("parties_name") is not None else ""
+            results = (
+                str(entry.get("results", ""))
+                if entry.get("results") is not None
+                else ""
+            )
+            parties_name = (
+                str(entry.get("parties_name", ""))
+                if entry.get("parties_name") is not None
+                else ""
+            )
             fees_rs = entry.get("fees_rs", 0)
-            
+
             # Ensure fees is a number
             try:
                 fees_rs = float(fees_rs) if fees_rs is not None else 0.0

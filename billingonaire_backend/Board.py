@@ -307,27 +307,29 @@ class Board:
         # Use the raw respondent_lawyer for removal to ensure exact match
         court_data = court_data.replace(petitioner_lawyer, "")
         court_data = court_data.replace(respondent_lawyer_raw, "")
-        court_data = court_data.replace("WITH", " ")  # Replace WITH with space for splitting
+        court_data = court_data.replace(
+            "WITH", " "
+        )  # Replace WITH with space for splitting
         court_data = court_data.replace("with", " ")
         court_data = court_data.replace("IN", "")
         court_data = court_data.replace("in", "")
         court_data = court_data.replace("*", "")
         # Updated: removed [\d ]+ to \d+ to prevent greedy matching
         court_data = re.sub(r"([A-Za-z()]+/\s*\d+/\d+)", "", court_data)
-        
+
         # Remove page header content before splitting lawyers
         # Stop at any of these markers: IN THE COURT, Page:, C.R. No:, Bench ID:, HEADER NOTE, etc.
         header_match = re.search(
             r"(THE COURT|Page:|C\.R\. No:|Bench ID:|HEADER NOTE|APPELLATE SIDE|BEFORE THE)",
             court_data,
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         if header_match:
             # Keep only text before the header marker
-            court_data = court_data[:header_match.start()]
-        
+            court_data = court_data[: header_match.start()]
+
         court_data = court_data.strip()
-        
+
         # Parse additional respondent lawyers into array
         additional_respondent_lawyers = []
         if court_data:
@@ -336,10 +338,12 @@ class Board:
             # 2. Comma before lawyer titles (handles "AGP, SHRI" pattern)
             lawyers_list = re.split(
                 r"(?:\s{2,}(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.)|,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.))",
-                court_data
+                court_data,
             )
-            additional_respondent_lawyers = [lawyer.strip() for lawyer in lawyers_list if lawyer.strip()]
-        
+            additional_respondent_lawyers = [
+                lawyer.strip() for lawyer in lawyers_list if lawyer.strip()
+            ]
+
         return {
             "file_name": file_name,
             "board_date": board_date,
@@ -488,7 +492,13 @@ class Board:
             # Drop duplicates based on case identifiers only (not array columns)
             # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
             matter_df = matter_df.drop_duplicates(
-                subset=['file_name', 'case_type', 'case_no', 'case_year', 'serial_number']
+                subset=[
+                    "file_name",
+                    "case_type",
+                    "case_no",
+                    "case_year",
+                    "serial_number",
+                ]
             )
 
             return matter_df
