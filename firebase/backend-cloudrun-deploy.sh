@@ -35,8 +35,7 @@ gcloud run deploy billingonaire-backend \
   --max-instances=10 \
   --min-instances=1 \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50" \
-  --update-secrets="GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
 
 # Clean up
 rm /tmp/gcloud-key.json
