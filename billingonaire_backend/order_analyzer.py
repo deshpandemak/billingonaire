@@ -735,7 +735,7 @@ class OrderDocumentAnalyzer:
                             case_agp_mapping[canonical_case].append(
                                 {
                                     "name": advocate_name.strip(),
-                                    "role": f"GP (State)",
+                                    "role": "GP (State)",
                                     "case_number": canonical_case,
                                 }
                             )
@@ -1109,7 +1109,7 @@ class OrderDocumentAnalyzer:
 
         if category == "ADJOURNED" and has_agp_names and has_standover:
             logging.info(
-                f"Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP present + Standover found"
+                "Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP present + Standover found"
             )
             category = "HEARD_AND_ADJOURNED"
             confidence = min(

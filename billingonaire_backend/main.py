@@ -249,7 +249,7 @@ def get_current_user(request: Request):
 
     try:
         # Verify the Firebase ID token with more detailed error logging
-        logging.info(f"Attempting to verify ID token for authentication")
+        logging.info("Attempting to verify ID token for authentication")
         decoded_token = auth.verify_id_token(id_token)
         logging.info(
             f"Token verified successfully for user: {decoded_token.get('uid')}"
@@ -2512,7 +2512,7 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
 
 
 @app.get("/orders/queue-status", tags=["Order Management"])
-async def get_queue_status(current_user=Depends(get_current_user)):
+async def get_orders_queue_status(current_user=Depends(get_current_user)):
     """Get current processing queue status"""
     try:
         # Get approximate queue size (this is in-memory, so basic check)
@@ -2590,7 +2590,7 @@ async def generate_bill_data(
         db = firestore.client()
 
         # Parse dates
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
