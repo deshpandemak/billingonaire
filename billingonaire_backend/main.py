@@ -3348,10 +3348,16 @@ async def export_bill_excel(
             # Fallback: parse case_detail if separate fields not present
             if not case_type and not case_no and not case_year:
                 case_detail = entry.get("case_detail", "")
-                case_parts = case_detail.split("/")
-                case_type = case_parts[0] if len(case_parts) > 0 else ""
-                case_no = case_parts[1] if len(case_parts) > 1 else ""
-                case_year = case_parts[2] if len(case_parts) > 2 else ""
+                if case_detail:
+                    case_parts = case_detail.split("/")
+                    case_type = case_parts[0].strip() if len(case_parts) > 0 else ""
+                    case_no = case_parts[1].strip() if len(case_parts) > 1 else ""
+                    case_year = case_parts[2].strip() if len(case_parts) > 2 else ""
+
+            # Ensure all values are strings (not None) to avoid Excel corruption
+            case_type = str(case_type) if case_type else ""
+            case_no = str(case_no) if case_no else ""
+            case_year = str(case_year) if case_year else ""
 
             # Format date
             date_str = entry.get("date", "")
@@ -3359,7 +3365,18 @@ async def export_bill_excel(
                 date_obj = datetime.strptime(date_str, "%Y-%m-%d")
                 formatted_date = date_obj.strftime("%d-%m-%Y")
             except:
-                formatted_date = date_str
+                formatted_date = str(date_str) if date_str else ""
+
+            # Get other fields and ensure they're not None
+            results = str(entry.get("results", "")) if entry.get("results") is not None else ""
+            parties_name = str(entry.get("parties_name", "")) if entry.get("parties_name") is not None else ""
+            fees_rs = entry.get("fees_rs", 0)
+            
+            # Ensure fees is a number
+            try:
+                fees_rs = float(fees_rs) if fees_rs is not None else 0.0
+            except (ValueError, TypeError):
+                fees_rs = 0.0
 
             row_data = [
                 idx,  # SR. NO.
@@ -3367,9 +3384,9 @@ async def export_bill_excel(
                 case_type,  # CASE TYPE
                 case_no,  # CASE NO
                 case_year,  # CASE YEAR
-                entry.get("results", ""),  # RESULTS
-                entry.get("parties_name", ""),  # PARTIES NAME
-                entry.get("fees_rs", 0),  # FEES (RS.)
+                results,  # RESULTS
+                parties_name,  # PARTIES NAME
+                fees_rs,  # FEES (RS.)
             ]
 
             for col_num, value in enumerate(row_data, 1):
