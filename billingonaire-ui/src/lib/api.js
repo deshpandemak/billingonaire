@@ -16,12 +16,17 @@ export const getApiUrl = (path) => {
 export const authenticatedFetch = async (url, options = {}) => {
   try {
     const user = auth.currentUser;
+    console.log('🔐 authenticatedFetch: Current user:', user ? user.email : 'NOT LOGGED IN');
+    
     if (!user) {
+      console.error('❌ authenticatedFetch: No authenticated user found');
       throw new Error('User not authenticated');
     }
 
     // Get the Firebase ID token
+    console.log('🎫 authenticatedFetch: Getting Firebase ID token...');
     const idToken = await user.getIdToken();
+    console.log('✅ authenticatedFetch: Token obtained (length:', idToken?.length, ')');
     
     // Set up headers with authentication
     const headers = {
@@ -35,18 +40,27 @@ export const authenticatedFetch = async (url, options = {}) => {
     }
 
     // Make the API call - use API_BASE_URL prefix with Vite proxy
-    const response = await fetch(`${API_BASE_URL}${url}`, {
+    const fullUrl = `${API_BASE_URL}${url}`;
+    console.log('📡 authenticatedFetch: Making request to:', fullUrl);
+    console.log('📡 authenticatedFetch: Method:', options.method || 'GET');
+    
+    const response = await fetch(fullUrl, {
       ...options,
       headers
     });
 
+    console.log('📥 authenticatedFetch: Response status:', response.status, response.statusText);
+    
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ authenticatedFetch: API error response:', errorText);
       throw new Error(`API call failed: ${response.status} ${response.statusText}`);
     }
 
+    console.log('✅ authenticatedFetch: Request successful');
     return response;
   } catch (error) {
-    console.error('API call failed:', error);
+    console.error('❌ authenticatedFetch: Exception caught:', error);
     throw error;
   }
 };

@@ -37,16 +37,39 @@ const UserProfile = () => {
 
   const loadUserProfile = async () => {
     try {
+      // Double-check authentication state before making API call
+      if (!auth.currentUser) {
+        console.log('⚠️ UserProfile: User not authenticated, skipping profile load');
+        setError('Please log in to view your profile');
+        return;
+      }
+      
+      console.log('📡 UserProfile: Loading profile for user:', auth.currentUser.email);
       const profileData = await authenticatedFetchJSON('/user/profile');
+      console.log('✅ UserProfile: Profile loaded successfully:', profileData);
+      
       setProfile(profileData);
+      setError(''); // Clear any previous errors
       
       setProfileForm({
         role: profileData.role || 'user',
         full_name: profileData.full_name || ''
       });
     } catch (error) {
-      console.error('Error loading profile:', error);
-      setError('Failed to load user profile');
+      console.error('❌ UserProfile: Error loading profile:', error);
+      
+      // Provide more specific error messages
+      if (error.message.includes('User not authenticated')) {
+        setError('Please log in to view your profile');
+      } else if (error.message.includes('401')) {
+        setError('Session expired. Please log in again.');
+      } else if (error.message.includes('403')) {
+        setError('Your account has been disabled. Contact support.');
+      } else if (error.message.includes('Network') || error.message.includes('fetch')) {
+        setError('Network error. Please check your connection and try again.');
+      } else {
+        setError(`Failed to load user profile: ${error.message}`);
+      }
     }
   };
 
