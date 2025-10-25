@@ -17,6 +17,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+# Basic libraries
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
 # Advanced ML libraries (optional)
 try:
     RAPIDFUZZ_AVAILABLE = False
