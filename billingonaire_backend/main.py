@@ -3306,12 +3306,18 @@ async def export_bill_excel(
         # Data rows
         total_fees = 0
         for idx, entry in enumerate(entries, 1):
-            # Parse case_detail to extract case type, number, year
-            case_detail = entry.get("case_detail", "")
-            case_parts = case_detail.split("/")
-            case_type = case_parts[0] if len(case_parts) > 0 else ""
-            case_no = case_parts[1] if len(case_parts) > 1 else ""
-            case_year = case_parts[2] if len(case_parts) > 2 else ""
+            # Get case details from separate fields (or parse case_detail if not available)
+            case_type = entry.get("case_type", "")
+            case_no = entry.get("case_no", "")
+            case_year = entry.get("case_year", "")
+            
+            # Fallback: parse case_detail if separate fields not present
+            if not case_type and not case_no and not case_year:
+                case_detail = entry.get("case_detail", "")
+                case_parts = case_detail.split("/")
+                case_type = case_parts[0] if len(case_parts) > 0 else ""
+                case_no = case_parts[1] if len(case_parts) > 1 else ""
+                case_year = case_parts[2] if len(case_parts) > 2 else ""
 
             # Format date
             date_str = entry.get("date", "")
