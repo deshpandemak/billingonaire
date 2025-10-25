@@ -264,6 +264,9 @@ const BillGeneration = () => {
             id: `new_${Date.now()}`,
             date: formatDateSafe(new Date()),
             case_detail: '',
+            case_type: '',
+            case_no: '',
+            case_year: '',
             parties_name: '',
             results: getResultFromFee(feeAmount),
             fees_rs: feeAmount,
@@ -327,10 +330,7 @@ const BillGeneration = () => {
     const exportMultipleFormats = async () => {
         if (!billData?.bill_entries?.length) return;
         
-        // Export CSV (local client-side export)
-        exportToExcel();
-        
-        // Also trigger backend Excel export (proper AGP format)
+        // Trigger backend Excel export (proper AGP format)
         try {
             // Build URL with parameters
             let excelUrl = `/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
@@ -340,11 +340,17 @@ const BillGeneration = () => {
                 excelUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
             
-            // Get auth token
-            const token = localStorage.getItem('token');
+            // Get auth token from Firebase
+            const currentUser = auth.currentUser;
+            if (!currentUser) {
+                alert('Please log in to export bills');
+                return;
+            }
+            
+            const token = await currentUser.getIdToken();
             
             // Download Excel file using fetch with auth
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}${excelUrl}`, {
+            const response = await fetch(`/api${excelUrl}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -361,11 +367,15 @@ const BillGeneration = () => {
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
                 console.log('✅ Excel bill exported successfully in AGP format');
+                alert('✅ Bill exported successfully as Excel file!');
             } else {
-                console.error('Failed to export Excel:', response.statusText);
+                const errorText = await response.text();
+                console.error('Failed to export Excel:', response.statusText, errorText);
+                alert(`Failed to export Excel: ${response.statusText}`);
             }
         } catch (err) {
             console.error('Excel export error:', err);
+            alert(`Error exporting Excel: ${err.message}`);
         }
     };
 
@@ -418,21 +428,27 @@ const BillGeneration = () => {
     const exportToExcel = () => {
         if (!billData?.bill_entries?.length) return;
 
-        // Create CSV content with proper escaping
-        const headers = ['DATE', 'CASE DETAIL', 'PARTIES NAME', 'RESULTS', 'FEES (RS.)'];
+        // Create CSV content with proper escaping (matching Excel format)
+        const headers = ['SR. NO.', 'DATE', 'CASE TYPE', 'CASE NO', 'CASE YEAR', 'RESULTS', 'PARTIES NAME', 'FEES (RS.)'];
         const totalFees = billData.bill_entries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0);
         
         const csvContent = [
             headers.map(escapeCSVField).join(','),
-            ...billData.bill_entries.map(entry => [
+            ...billData.bill_entries.map((entry, index) => [
+                escapeCSVField(index + 1),
                 escapeCSVField(entry.date),
-                escapeCSVField(entry.case_detail),
-                escapeCSVField(entry.parties_name),
+                escapeCSVField(entry.case_type || ''),
+                escapeCSVField(entry.case_no || ''),
+                escapeCSVField(entry.case_year || ''),
                 escapeCSVField(entry.results),
+                escapeCSVField(entry.parties_name),
                 escapeCSVField(entry.fees_rs)
             ].join(',')),
             '', // Empty line before total
             [
+                escapeCSVField(''),
+                escapeCSVField(''),
+                escapeCSVField(''),
                 escapeCSVField(''),
                 escapeCSVField(''),
                 escapeCSVField(''),
@@ -623,11 +639,8 @@ const BillGeneration = () => {
                                             <Button variant="outline-warning" size="sm" onClick={() => setBulkEditMode(!bulkEditMode)} className="me-2">
                                                 {bulkEditMode ? 'Cancel Bulk Edit' : '✏️ Bulk Edit'}
                                             </Button>
-                                            <Button variant="info" size="sm" onClick={exportToExcel} className="me-2">
-                                                📊 Export CSV
-                                            </Button>
-                                            <Button variant="outline-info" size="sm" onClick={exportMultipleFormats} className="me-2">
-                                                📄 Export All Formats
+                                            <Button variant="success" size="sm" onClick={exportMultipleFormats} className="me-2">
+                                                📄 Export Excel (XLSX)
                                             </Button>
                                             <Button variant="primary" size="sm" onClick={() => setShowSaveModal(true)}>
                                                 💾 Save Bill
@@ -691,7 +704,9 @@ const BillGeneration = () => {
                                                 <tr>
                                                     {bulkEditMode && <th width="50px">☑️</th>}
                                                     <th>Date</th>
-                                                    <th>Case Detail</th>
+                                                    <th>Case Type</th>
+                                                    <th>Case No</th>
+                                                    <th>Case Year</th>
                                                     <th>Parties Name</th>
                                                     <th>Results</th>
                                                     <th>Fees (₹)</th>
@@ -726,11 +741,36 @@ const BillGeneration = () => {
                                                             {editingRow === index ? (
                                                                 <Form.Control
                                                                     type="text"
-                                                                    value={tempEditData.case_detail || ''}
-                                                                    onChange={(e) => setTempEditData({...tempEditData, case_detail: e.target.value})}
+                                                                    value={tempEditData.case_type || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_type: e.target.value})}
+                                                                    size="sm"
                                                                 />
                                                             ) : (
-                                                                entry.case_detail
+                                                                entry.case_type
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            {editingRow === index ? (
+                                                                <Form.Control
+                                                                    type="text"
+                                                                    value={tempEditData.case_no || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_no: e.target.value})}
+                                                                    size="sm"
+                                                                />
+                                                            ) : (
+                                                                entry.case_no
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            {editingRow === index ? (
+                                                                <Form.Control
+                                                                    type="text"
+                                                                    value={tempEditData.case_year || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_year: e.target.value})}
+                                                                    size="sm"
+                                                                />
+                                                            ) : (
+                                                                entry.case_year
                                                             )}
                                                         </td>
                                                         <td>
