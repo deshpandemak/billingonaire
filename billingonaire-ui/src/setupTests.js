@@ -14,10 +14,31 @@ vi.mock('firebase/app', () => ({
 }));
 
 vi.mock('firebase/auth', () => ({
-  getAuth: vi.fn(),
-  signInWithEmailAndPassword: vi.fn(),
-  signOut: vi.fn(),
-  onAuthStateChanged: vi.fn(),
+  getAuth: vi.fn(() => ({
+    currentUser: {
+      uid: 'test-uid-123',
+      email: 'test@example.com',
+      getIdToken: vi.fn(() => Promise.resolve('mock-token-12345')),
+    },
+  })),
+  signInWithEmailAndPassword: vi.fn(() => Promise.resolve({
+    user: {
+      uid: 'test-uid-123',
+      email: 'test@example.com',
+      getIdToken: vi.fn(() => Promise.resolve('mock-token-12345')),
+    },
+  })),
+  signOut: vi.fn(() => Promise.resolve()),
+  onAuthStateChanged: vi.fn((auth, callback) => {
+    // Immediately call callback with mock user
+    callback({
+      uid: 'test-uid-123',
+      email: 'test@example.com',
+      getIdToken: vi.fn(() => Promise.resolve('mock-token-12345')),
+    });
+    // Return unsubscribe function
+    return vi.fn();
+  }),
 }));
 
 vi.mock('firebase/firestore', () => ({

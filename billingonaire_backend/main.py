@@ -1316,7 +1316,7 @@ async def analyze_order_document(
             file.filename, analysis_result
         )
 
-        # Prepare enhanced response with structured case information and tabular data
+        # Prepare simplified response with clean case-by-case extraction
         response_data = {
             "analysis_id": doc_id,
             "filename": file.filename,
@@ -1325,47 +1325,17 @@ async def analyze_order_document(
             "order_date": analysis_result.order_date,
             "cases": [
                 {
+                    "case_type": case.case_type,
                     "case_number": case.case_number,
-                    "petitioners": case.petitioners,
-                    "respondents": case.respondents,
-                    "agp_names": case.agp_names,
-                    "advocates": case.advocates,
+                    "case_year": case.case_year,
+                    "petitioner": case.petitioner,
+                    "respondent": case.respondent,
+                    "government_pleader": case.government_pleader,
                 }
                 for case in analysis_result.cases
             ],
-            "document_structure": {
-                "type": analysis_result.document_structure.get(
-                    "document_type", "UNKNOWN"
-                ),
-                "has_case_numbers": analysis_result.document_structure.get(
-                    "has_case_numbers", False
-                ),
-                "has_parties": analysis_result.document_structure.get(
-                    "has_parties", False
-                ),
-                "has_advocates": analysis_result.document_structure.get(
-                    "has_advocates", False
-                ),
-                "has_order_date": analysis_result.document_structure.get(
-                    "has_order_date", False
-                ),
-            },
-            # New tabular format data
-            "tabular_data": analysis_result.tabular_data or [],
-            # Legacy format for compatibility
-            "petitioners": analysis_result.petitioners,
-            "respondents": analysis_result.respondents,
-            "agp_names": analysis_result.agp_names,
-            "dates": analysis_result.dates,
-            "key_phrases": analysis_result.key_phrases,
-            "next_hearing_date": analysis_result.next_hearing_date,
-            "disposal_reason": analysis_result.disposal_reason,
             "summary": {
                 "total_cases": len(analysis_result.cases),
-                "total_petitioners": len(analysis_result.petitioners),
-                "total_respondents": len(analysis_result.respondents),
-                "total_agp_names": len(analysis_result.agp_names),
-                "total_dates": len(analysis_result.dates),
             },
         }
 
@@ -1404,7 +1374,7 @@ async def get_analysis_history(
         for doc in docs:
             board_data = doc.to_dict()
 
-            # Extract order analysis data from the board document
+            # Extract order analysis data from the board document - NEW SIMPLIFIED STRUCTURE
             analysis_data = {
                 "id": doc.id,
                 "case_id": doc.id,
@@ -1415,20 +1385,14 @@ async def get_analysis_history(
                 "board_date": board_data.get("board_date"),
                 "petitioner_lawyer": board_data.get("petitioner_lawyer"),
                 "respondent_lawyer": board_data.get("respondent_lawyer"),
-                # Order analysis results
+                # Order analysis results - simplified structure
                 "order_category": board_data.get("order_category"),
                 "category_confidence": board_data.get("order_category_confidence"),
                 "order_date": board_data.get("order_date"),
-                "order_petitioners": board_data.get("order_petitioners", []),
-                "order_respondents": board_data.get("order_respondents", []),
-                "order_agp_names": board_data.get("order_agp_names", []),
-                "order_key_phrases": board_data.get("order_key_phrases", []),
-                "next_hearing_date": board_data.get("order_next_hearing_date"),
-                "disposal_reason": board_data.get("order_disposal_reason"),
+                "order_cases": board_data.get("order_cases", []),  # Simplified cases array
                 "date_validation": board_data.get("order_date_validation"),
                 "order_link": board_data.get("order_link"),
                 "analysis_timestamp": board_data.get("order_analysis_timestamp"),
-                "order_tabular_data": board_data.get("order_tabular_data", []),
             }
 
             analyses.append(analysis_data)
@@ -1473,7 +1437,7 @@ async def get_analysis_details(
                 content={"error": "Order analysis not completed for this case"},
             )
 
-        # Combine board data with analysis data
+        # Combine board data with analysis data - SIMPLIFIED STRUCTURE
         analysis_data = {
             "id": doc.id,
             "case_id": doc.id,
@@ -1487,19 +1451,11 @@ async def get_analysis_details(
             "respondent_lawyer": board_data.get("respondent_lawyer"),
             "serial_number": board_data.get("serial_number"),
             "additional_cases": board_data.get("additional_cases"),
-            # Complete order analysis results
+            # Complete order analysis results - simplified structure
             "order_category": board_data.get("order_category"),
             "category_confidence": board_data.get("order_category_confidence"),
             "order_date": board_data.get("order_date"),
-            "order_petitioners": board_data.get("order_petitioners", []),
-            "order_respondents": board_data.get("order_respondents", []),
-            "order_agp_names": board_data.get("order_agp_names", []),
-            "order_tabular_data": board_data.get("order_tabular_data", []),
-            "order_key_phrases": board_data.get("order_key_phrases", []),
-            "next_hearing_date": board_data.get("order_next_hearing_date"),
-            "disposal_reason": board_data.get("order_disposal_reason"),
-            "order_text": board_data.get("order_text"),
-            "order_cases": board_data.get("order_cases", []),
+            "order_cases": board_data.get("order_cases", []),  # Simplified cases array
             "date_validation": board_data.get("order_date_validation"),
             "order_link": board_data.get("order_link"),
             "analysis_timestamp": board_data.get("order_analysis_timestamp"),

@@ -6,6 +6,7 @@ billingonaire-ui/src-react/package-lock.json
 billingonaire-ui/src-react/node_modules
 billingonaire-ui/src-react/.env
 venv
+.venv
 
 # CRITICAL: Firebase service account credentials and tokens
 billingonaire_backend/firebase/credentials.json
@@ -13,3 +14,4 @@ billingonaire_backend/firebase/credentials.json
 firebase/credentials.json
 firebase/firebasetoken
 *.json
+billingonaire_backend/.coverage

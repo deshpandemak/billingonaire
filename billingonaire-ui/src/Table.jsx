@@ -171,27 +171,12 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (ML extracted from case table in order)
+        // Try order_cases first (simplified structure with petitioner field per case)
         if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          const petitioners = params.data.order_cases[0].petitioners || [];
-          if (petitioners.length > 0) {
-            const names = petitioners.map(p => {
-              if (typeof p === 'string') return p;
-              return p.name || p.raw_text || '';
-            }).filter(n => n);
-            if (names.length > 0) return names.join(', ');
-          }
-        }
-        
-        // Fallback to order_petitioners (ML extracted from order text)
-        if (params.data?.order_petitioners && Array.isArray(params.data.order_petitioners)) {
-          const petitioners = params.data.order_petitioners;
-          if (petitioners.length > 0) {
-            const names = petitioners.map(p => {
-              if (typeof p === 'string') return p;
-              return p.name || p.raw_text || '';
-            }).filter(n => n);
-            if (names.length > 0) return names.join(', ');
+          // Get the petitioner from the first case (if there are multiple cases, show first one)
+          const firstCase = params.data.order_cases[0];
+          if (firstCase.petitioner) {
+            return firstCase.petitioner;
           }
         }
         
@@ -206,27 +191,12 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (ML extracted from case table in order)
+        // Try order_cases first (simplified structure with respondent field per case)
         if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          const respondents = params.data.order_cases[0].respondents || [];
-          if (respondents.length > 0) {
-            const names = respondents.map(r => {
-              if (typeof r === 'string') return r;
-              return r.name || r.raw_text || '';
-            }).filter(n => n);
-            if (names.length > 0) return names.join(', ');
-          }
-        }
-        
-        // Fallback to order_respondents (ML extracted from order text)
-        if (params.data?.order_respondents && Array.isArray(params.data.order_respondents)) {
-          const respondents = params.data.order_respondents;
-          if (respondents.length > 0) {
-            const names = respondents.map(r => {
-              if (typeof r === 'string') return r;
-              return r.name || r.raw_text || '';
-            }).filter(n => n);
-            if (names.length > 0) return names.join(', ');
+          // Get the respondent from the first case (if there are multiple cases, show first one)
+          const firstCase = params.data.order_cases[0];
+          if (firstCase.respondent) {
+            return firstCase.respondent;
           }
         }
         
@@ -241,17 +211,25 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Show all AGP names from board data
+        // Show all AGP names from board data and order data
         const agpNames = [];
         
-        // Primary AGP
+        // Primary AGP from board
         if (params.data?.respondent_lawyer) {
           agpNames.push(params.data.respondent_lawyer);
         }
         
-        // Additional AGPs
+        // Additional AGPs from board
         if (params.data?.additional_respondent_lawyers) {
           agpNames.push(params.data.additional_respondent_lawyers);
+        }
+        
+        // Government pleaders from order analysis (simplified structure)
+        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
+          const firstCase = params.data.order_cases[0];
+          if (firstCase.government_pleader && Array.isArray(firstCase.government_pleader)) {
+            agpNames.push(...firstCase.government_pleader);
+          }
         }
         
         return agpNames.filter(n => n).join(', ');
@@ -428,8 +406,7 @@ const Table = () => {
       if (response.success) {
         const category = response.data?.order_category;
         const date = response.data?.order_date;
-        const petitioners = response.data?.order_petitioners;
-        const respondents = response.data?.order_respondents;
+        const cases = response.data?.order_cases;
         
         let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;
         
@@ -439,11 +416,16 @@ const Table = () => {
         if (date) {
           message += `📅 Order Date: ${date}\n`;
         }
-        if (petitioners && petitioners.length > 0) {
-          message += `\n👤 Petitioners: ${petitioners.length} found\n`;
-        }
-        if (respondents && respondents.length > 0) {
-          message += `👥 Respondents: ${respondents.length} found\n`;
+        if (cases && cases.length > 0) {
+          message += `\n� Cases Found: ${cases.length}\n`;
+          cases.forEach((c, idx) => {
+            if (c.petitioner) {
+              message += `  Case ${idx + 1} - Petitioner: ${c.petitioner}\n`;
+            }
+            if (c.respondent) {
+              message += `  Case ${idx + 1} - Respondent: ${c.respondent}\n`;
+            }
+          });
         }
         
         alert(message);

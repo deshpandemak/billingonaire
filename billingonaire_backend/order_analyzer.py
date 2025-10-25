@@ -48,33 +48,25 @@ from ml_enhanced_parser import ExtractionResult, MLEnhancedParser
 
 @dataclass
 class CaseInfo:
-    """Information about a single case within an order"""
+    """Information about a single case within an order - simplified structure"""
 
-    case_number: Optional[str]
-    petitioners: List[str]
-    respondents: List[str]
-    agp_names: List[str]
-    advocates: List[str]
+    case_type: str
+    case_number: int
+    case_year: int
+    petitioner: str
+    respondent: str
+    government_pleader: List[str]
 
 
 @dataclass
 class OrderAnalysisResult:
-    """Result from order document analysis"""
+    """Result from order document analysis - simplified structure"""
 
     order_category: str  # ADJOURNED, HEARD_AND_ADJOURNED, DISPOSED_OFF
     category_confidence: float
     order_date: Optional[str]  # Specific date of the order
     cases: List[CaseInfo]  # Multiple cases can be clubbed together
-    petitioners: List[Dict[str, Any]]  # Legacy format for compatibility
-    respondents: List[Dict[str, Any]]  # Legacy format for compatibility
-    agp_names: List[Dict[str, Any]]  # Legacy format for compatibility
-    dates: List[Dict[str, Any]]
     order_text: str
-    key_phrases: List[str]
-    next_hearing_date: Optional[str]
-    disposal_reason: Optional[str]
-    document_structure: Dict[str, Any]  # Analysis of document parts
-    tabular_data: Optional[List[Dict[str, str]]] = None  # Tabular format data
 
 
 class OrderDocumentAnalyzer:
@@ -246,7 +238,7 @@ class OrderDocumentAnalyzer:
             file_content: Raw PDF file content
 
         Returns:
-            OrderAnalysisResult with comprehensive analysis including case structure
+            OrderAnalysisResult with clean case-by-case extraction
         """
         logging.info(f"Starting enhanced order document analysis for {filename}")
 
@@ -265,35 +257,17 @@ class OrderDocumentAnalyzer:
         # 1. Parse document structure (4 parts: case numbers, parties, advocates, date+order)
         document_structure = self._parse_document_structure(text)
 
-        # 2. Extract structured case information
-        cases = self._extract_structured_cases(document_structure)
-
-        # 3. Extract order date specifically
+        # 2. Extract order date specifically
         order_date = self._extract_order_date(text, document_structure)
 
-        # 4. Classify order category with enhanced logic based on structure
+        # 3. Classify order category with enhanced logic based on structure
         order_category, category_confidence = self._classify_order_enhanced(
             text, document_structure
         )
 
-        # 5. Legacy format extraction for compatibility
-        petitioners = self._extract_petitioners(text)
-        respondents = self._extract_respondents(text)
-        agp_names = self._extract_agp_names(text, extraction_result.entities)
-        dates = self._extract_dates(text)
-
-        # 6. Extract key phrases and specific information
-        key_phrases = self._extract_key_phrases(text, order_category)
-        next_hearing_date = self._extract_next_hearing_date(text)
-        disposal_reason = (
-            self._extract_disposal_reason(text)
-            if order_category == "DISPOSED_OFF"
-            else None
-        )
-
-        # Extract tabular data
-        tabular_data = self._extract_tabular_data(
-            text, order_category, order_date or ""
+        # 4. Extract structured case information (simplified)
+        cases = self._extract_structured_cases_simplified(
+            document_structure, text, order_date
         )
 
         result = OrderAnalysisResult(
@@ -301,19 +275,8 @@ class OrderDocumentAnalyzer:
             category_confidence=category_confidence,
             order_date=order_date,
             cases=cases,
-            petitioners=petitioners,
-            respondents=respondents,
-            agp_names=agp_names,
-            dates=dates,
             order_text=text,
-            key_phrases=key_phrases,
-            next_hearing_date=next_hearing_date,
-            disposal_reason=disposal_reason,
-            document_structure=document_structure,
         )
-
-        # Add tabular data to result
-        result.tabular_data = tabular_data
 
         logging.info(
             f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}"
@@ -1174,6 +1137,223 @@ class OrderDocumentAnalyzer:
 
         return category, confidence
 
+    def _extract_structured_cases_simplified(
+        self, document_structure: Dict[str, Any], full_text: str, order_date: str
+    ) -> List[CaseInfo]:
+        """
+        Extract case information in simplified format
+        Each case has: case_type, case_number, case_year, petitioner, respondent, government_pleader[]
+        """
+        cases = []
+
+        # Extract all case numbers from document
+        case_numbers_text = document_structure.get("case_numbers_section", "")
+        if not case_numbers_text:
+            # Fallback to full text if no specific section
+            case_numbers_text = full_text
+
+        # Extract case-specific information mappings
+        case_info_mapping = self._extract_multi_case_details(full_text)
+
+        # If we found specific case mappings, use them
+        if case_info_mapping:
+            for case_key, case_data in case_info_mapping.items():
+                case_info = CaseInfo(
+                    case_type=case_data.get("case_type", ""),
+                    case_number=case_data.get("case_number", 0),
+                    case_year=case_data.get("case_year", 0),
+                    petitioner=case_data.get("petitioner", ""),
+                    respondent=case_data.get("respondent", ""),
+                    government_pleader=case_data.get("government_pleader", []),
+                )
+                cases.append(case_info)
+        else:
+            # Fallback: Extract case numbers and try to match with parties/advocates
+            extracted_cases = self._extract_case_numbers(case_numbers_text)
+
+            for case_str in extracted_cases:
+                parsed = self._parse_canonical_case_info(case_str)
+
+                case_info = CaseInfo(
+                    case_type=parsed.get("case_type", ""),
+                    case_number=int(parsed.get("case_number", "0"))
+                    if parsed.get("case_number", "").isdigit()
+                    else 0,
+                    case_year=int(parsed.get("year", "0"))
+                    if parsed.get("year", "").isdigit()
+                    else 0,
+                    petitioner="",
+                    respondent="",
+                    government_pleader=[],
+                )
+
+                # Try to extract parties from full text
+                petitioner, respondent = self._extract_parties_for_case(
+                    full_text, parsed.get("canonical_id", "")
+                )
+                case_info.petitioner = petitioner
+                case_info.respondent = respondent
+
+                # Try to extract government pleader
+                govt_pleaders = self._extract_govt_pleader_for_case(
+                    full_text, parsed.get("canonical_id", "")
+                )
+                case_info.government_pleader = govt_pleaders
+
+                cases.append(case_info)
+
+        return cases
+
+    def _extract_multi_case_details(
+        self, text: str
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract details for multiple cases from order text
+        Returns: {case_key: {case_type, case_number, case_year, petitioner, respondent, government_pleader}}
+        """
+        case_details = {}
+
+        # Pattern to match case blocks with all details
+        # Looking for: "WRIT PETITION NO.11347 OF 2024" followed by petitioner, versus, respondent
+        case_block_pattern = r"(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
+
+        matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
+
+        for case_number, year, block_text in matches:
+            case_key = f"WP/{case_number}/{year}"
+
+            # Extract petitioner
+            petitioner = ""
+            petitioner_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?)\s+[A-Za-z\s\.]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioner"
+            pet_match = re.search(petitioner_pattern, block_text, re.IGNORECASE)
+            if pet_match:
+                petitioner = pet_match.group(1).strip()
+                # Add "And Ors." if present
+                if re.search(r"And\s+Ors\.", block_text[pet_match.start():pet_match.end()], re.IGNORECASE):
+                    petitioner += " And Ors."
+            
+            # Fallback: try without title prefixes
+            if not petitioner:
+                petitioner_pattern2 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+And\s+Ors\.)?)\s*\.{2,}\s*Petitioner"
+                pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
+                if pet_match2:
+                    petitioner = pet_match2.group(1).strip()
+
+            # Extract respondent
+            respondent = ""
+            respondent_pattern = r"versus\s+(.*?)(?:\s*\.{2,}\s*Respondent)"
+            resp_match = re.search(
+                respondent_pattern, block_text, re.DOTALL | re.IGNORECASE
+            )
+            if resp_match:
+                respondent = resp_match.group(1).strip()
+                # Clean up whitespace
+                respondent = re.sub(r"\s+", " ", respondent)
+
+            # Extract government pleader from the advocates section
+            govt_pleaders = self._extract_govt_pleader_from_text(
+                text, case_key
+            )
+
+            case_details[case_key] = {
+                "case_type": "WP",
+                "case_number": int(case_number),
+                "case_year": int(year),
+                "petitioner": petitioner,
+                "respondent": respondent,
+                "government_pleader": govt_pleaders,
+            }
+
+        return case_details
+
+    def _extract_govt_pleader_from_text(
+        self, text: str, case_key: str
+    ) -> List[str]:
+        """Extract government pleader names for a specific case"""
+        pleaders = []
+
+        # Pattern 1: Direct case association
+        # "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
+        pattern1 = rf"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+)([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+{re.escape(case_key)}"
+        match1 = re.search(pattern1, text, re.IGNORECASE)
+
+        if match1:
+            name1 = match1.group(1).strip()
+            role1 = match1.group(2).strip()
+            pleaders.append(f"Adv. {name1}, {role1}")
+
+            # Check for second advocate (a/w pattern)
+            if match1.group(3):
+                name2 = match1.group(3).strip()
+                role2 = match1.group(4).strip() if match1.group(4) else "AGP"
+                pleaders.append(f"{name2}, {role2}")
+
+        # Pattern 2: General State advocates (if no specific case match)
+        if not pleaders:
+            # Look for AGP/GP mentions in the advocates section
+            agp_pattern = r"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?),?\s+((?:Addl\.\s+)?(?:AGP|GP|A\.?\s*G\.?P\.?))\s+(?:for\s+)?(?:the\s+)?(?:Respondent\s+)?State"
+            agp_matches = re.findall(agp_pattern, text, re.IGNORECASE)
+
+            for name, role in agp_matches:
+                name = name.strip()
+                role = role.strip().replace(".", "").replace(" ", "")
+                # Normalize role
+                if "AGP" in role.upper():
+                    role = "AGP"
+                elif "ADDLGP" in role.upper() or "ADDL" in role.upper():
+                    role = "Addl. GP"
+                else:
+                    role = "GP"
+
+                pleaders.append(f"Adv. {name}, {role}")
+
+        return pleaders
+
+    def _extract_parties_for_case(
+        self, text: str, case_canonical: str
+    ) -> Tuple[str, str]:
+        """Extract petitioner and respondent for a specific case"""
+        # Try to find the case block
+        case_pattern = rf"({re.escape(case_canonical)}|{case_canonical.replace('/', '\\s+OF\\s+')})(.*?)(?=(?:WRIT PETITION|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
+        match = re.search(case_pattern, text, re.DOTALL | re.IGNORECASE)
+
+        petitioner = ""
+        respondent = ""
+
+        if match:
+            block = match.group(2)
+
+            # Extract petitioner
+            pet_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?)\s+[A-Za-z\s\.]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioner"
+            pet_match = re.search(pet_pattern, block, re.IGNORECASE)
+            if pet_match:
+                petitioner = pet_match.group(1).strip()
+                if "And Ors." in block[pet_match.start():pet_match.end()]:
+                    petitioner += " And Ors."
+            else:
+                # Fallback: try without title prefixes
+                pet_pattern2 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+And\s+Ors\.)?)\s*\.{2,}\s*Petitioner"
+                pet_match2 = re.search(pet_pattern2, block, re.IGNORECASE)
+                if pet_match2:
+                    petitioner = pet_match2.group(1).strip()
+
+            # Extract respondent
+            resp_pattern = r"versus\s+(.*?)(?:\s*\.{2,}\s*Respondent)"
+            resp_match = re.search(resp_pattern, block, re.DOTALL | re.IGNORECASE)
+            if resp_match:
+                respondent = resp_match.group(1).strip()
+                respondent = re.sub(r"\s+", " ", respondent)
+
+        return petitioner, respondent
+
+    def _extract_govt_pleader_for_case(
+        self, text: str, case_canonical: str
+    ) -> List[str]:
+        """Extract government pleader for a specific case by canonical ID"""
+        # Use the case key format (e.g., "WP/11347/2024")
+        case_key = case_canonical.replace("/", "/")
+        return self._extract_govt_pleader_from_text(text, case_key)
+
     def _extract_petitioners(self, text: str) -> List[Dict[str, Any]]:
         """Extract petitioner names and information"""
         petitioners = []
@@ -1477,18 +1657,23 @@ class OrderDocumentAnalyzer:
     ) -> str:
         """Save analysis result to Firestore"""
         try:
-            # Prepare data for storage
+            # Prepare data for storage with simplified structure
             result_data = {
                 "filename": filename,
                 "order_category": analysis_result.order_category,
                 "category_confidence": analysis_result.category_confidence,
-                "petitioners": analysis_result.petitioners,
-                "respondents": analysis_result.respondents,
-                "agp_names": analysis_result.agp_names,
-                "dates": analysis_result.dates,
-                "key_phrases": analysis_result.key_phrases,
-                "next_hearing_date": analysis_result.next_hearing_date,
-                "disposal_reason": analysis_result.disposal_reason,
+                "order_date": analysis_result.order_date,
+                "cases": [
+                    {
+                        "case_type": case.case_type,
+                        "case_number": case.case_number,
+                        "case_year": case.case_year,
+                        "petitioner": case.petitioner,
+                        "respondent": case.respondent,
+                        "government_pleader": case.government_pleader,
+                    }
+                    for case in analysis_result.cases
+                ],
                 "analysis_timestamp": datetime.now().isoformat(),
                 "text_length": len(analysis_result.order_text),
             }

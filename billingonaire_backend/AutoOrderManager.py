@@ -888,27 +888,14 @@ class AutoOrderManager:
                         logging.warning(f"Could not convert case object to dict: {e}")
                         continue
 
-            # Create order analysis data to merge with board data - ALL FIELDS PREFIXED
+            # Create order analysis data to merge with board data - SIMPLIFIED STRUCTURE
             order_analysis = {
-                # Order analysis results
+                # Order analysis results - simplified structure
                 "order_category": analysis_result.order_category,
                 "order_category_confidence": analysis_result.category_confidence,
                 "order_date": analysis_result.order_date,
-                "order_petitioners": analysis_result.petitioners,
-                "order_respondents": analysis_result.respondents,
-                "order_agp_names": analysis_result.agp_names,
-                # Complete tabular data structure
-                "order_tabular_data": analysis_result.tabular_data,
-                # Additional analysis details
-                "order_key_phrases": analysis_result.key_phrases,
-                "order_next_hearing_date": analysis_result.next_hearing_date,
-                "order_disposal_reason": analysis_result.disposal_reason,
-                "order_text": (
-                    analysis_result.order_text[:1000]
-                    if analysis_result.order_text
-                    else ""
-                ),  # Store first 1000 chars
-                "order_cases": cases_as_dicts,  # Use converted list of dicts
+                # Simplified cases structure with all details per case
+                "order_cases": cases_as_dicts,
                 # Date validation
                 "order_date_validation": date_validation,
                 # Order link - use passed link or fallback to querying case-orders
@@ -1197,18 +1184,18 @@ class AutoOrderManager:
             # Process each case found in the order
             for case_info in order_cases:
                 try:
-                    # Skip if no case number
+                    # Extract case details from simplified structure
+                    case_type = case_info.get("case_type")
                     case_number = case_info.get("case_number")
-                    if not case_number:
+                    case_year = case_info.get("case_year")
+                    
+                    # Skip if missing required fields
+                    if not case_type or not case_number or not case_year:
+                        logging.warning(f"Missing required case fields in {case_info}")
                         continue
 
-                    # Parse the case number to get type, number, year
-                    case_ref = self._normalize_case_number(case_number)
-                    if not case_ref:
-                        logging.warning(
-                            f"Could not normalize case number: {case_number}"
-                        )
-                        continue
+                    # Build case reference in standard format
+                    case_ref = f"{case_type}/{case_number}/{case_year}"
 
                     # Skip if this is the primary case we already processed
                     if case_ref == primary_case_ref:
@@ -1336,29 +1323,22 @@ class AutoOrderManager:
         self, analysis_data: Dict, case_info: Dict, order_link: str
     ) -> Dict:
         """
-        Create case-specific analysis data with the specific petitioners/respondents for this case
+        Create case-specific analysis data with the specific details for this case
+        Uses simplified structure with case_type, case_number, case_year, petitioner, respondent, government_pleader
         """
-        # Extract case-specific party names
-        petitioners = case_info.get("petitioners", [])
-        respondents = case_info.get("respondents", [])
-        agp_names = case_info.get("agp_names", [])
-
-        # Create the analysis data structure with case-specific parties
+        # Create the analysis data structure with case-specific data from simplified structure
         case_analysis = {
+            # Core order information
             "order_category": analysis_data.get("order_category"),
             "order_category_confidence": analysis_data.get("order_category_confidence"),
             "order_date": analysis_data.get("order_date"),
-            "order_petitioners": petitioners,  # Case-specific
-            "order_respondents": respondents,  # Case-specific
-            "order_agp_names": agp_names,  # Case-specific
-            "order_cases": [case_info],  # Only this case's info
-            "order_key_phrases": analysis_data.get("order_key_phrases", []),
-            "order_next_hearing_date": analysis_data.get("order_next_hearing_date"),
-            "order_disposal_reason": analysis_data.get("order_disposal_reason"),
-            "order_text": analysis_data.get("order_text", ""),
-            "order_tabular_data": analysis_data.get("order_tabular_data"),
+            # Simplified case structure - only this specific case
+            "order_cases": [case_info],
+            # Date validation
             "order_date_validation": analysis_data.get("order_date_validation", {}),
+            # Order link
             "order_link": order_link,
+            # Analysis metadata
             "order_analysis_timestamp": datetime.now().isoformat(),
             "order_analysis_completed": True,
             "order_last_updated": datetime.now().isoformat(),
@@ -1438,13 +1418,16 @@ class AutoOrderManager:
         except Exception as e:
             logging.error(f"Error cleaning up order data for {case_ref}: {e}")
 
-    def _parse_case_reference(self, case_ref: str) -> Optional[Tuple[str, str, str]]:
-        """Parse case reference like 'WP/294/2025' into components"""
+    def _parse_case_reference(self, case_ref: str) -> Optional[Tuple[str, int, int]]:
+        """Parse case reference like 'WP/294/2025' into components (type, number, year)"""
         try:
             pattern = r"([A-Z]+)/(\d+)/(\d+)"
             match = re.match(pattern, case_ref)
             if match:
-                return (match.group(1), match.group(2), match.group(3))
+                case_type = match.group(1)
+                case_no = int(match.group(2))
+                case_year = int(match.group(3))
+                return (case_type, case_no, case_year)
             return None
         except:
             return None

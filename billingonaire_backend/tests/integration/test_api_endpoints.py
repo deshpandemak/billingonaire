@@ -4,10 +4,11 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_client():
     """Create test client for FastAPI app"""
     from main import app

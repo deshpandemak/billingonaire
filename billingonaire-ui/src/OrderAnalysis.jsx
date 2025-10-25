@@ -265,16 +265,6 @@ const OrderAnalysis = () => {
                           <td>{analysisResult.order_date}</td>
                         </tr>
                       )}
-                      <tr>
-                        <td><strong>Next Hearing Date</strong></td>
-                        <td>{analysisResult.next_hearing_date || 'Not specified'}</td>
-                      </tr>
-                      {analysisResult.disposal_reason && (
-                        <tr>
-                          <td><strong>Disposal Reason</strong></td>
-                          <td>{analysisResult.disposal_reason}</td>
-                        </tr>
-                      )}
                     </tbody>
                   </Table>
                 </div>
@@ -282,34 +272,13 @@ const OrderAnalysis = () => {
               <Col md={6}>
                 <div className="mb-4">
                   <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                    📈 Document Structure
+                    📈 Summary
                   </h4>
                   <Table striped bordered hover className="professional-table">
                     <tbody>
                       <tr>
-                        <td><strong>Document Type</strong></td>
-                        <td>
-                          <Badge bg={analysisResult.document_structure?.type === 'COMPLETE_ORDER' ? 'success' : 
-                                     analysisResult.document_structure?.type === 'ADJOURNMENT_ONLY' ? 'warning' : 'secondary'}>
-                            {analysisResult.document_structure?.type || 'UNKNOWN'}
-                          </Badge>
-                        </td>
-                      </tr>
-                      <tr>
                         <td><strong>Total Cases</strong></td>
                         <td>{analysisResult.summary?.total_cases || 0}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Has Case Numbers</strong></td>
-                        <td>{analysisResult.document_structure?.has_case_numbers ? '✅' : '❌'}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Has Parties</strong></td>
-                        <td>{analysisResult.document_structure?.has_parties ? '✅' : '❌'}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Has Advocates</strong></td>
-                        <td>{analysisResult.document_structure?.has_advocates ? '✅' : '❌'}</td>
                       </tr>
                     </tbody>
                   </Table>
@@ -317,11 +286,11 @@ const OrderAnalysis = () => {
               </Col>
             </Row>
 
-            {/* Tabular Format Data - Primary Display */}
-            {analysisResult.tabular_data && analysisResult.tabular_data.length > 0 && (
+            {/* Simplified Cases Structure - Primary Display */}
+            {analysisResult.cases && analysisResult.cases.length > 0 && (
               <div className="mb-4">
                 <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  📊 Case Analysis - Tabular Format
+                  📊 Extracted Cases
                 </h4>
                 <Table striped bordered hover className="professional-table" responsive>
                   <thead>
@@ -329,201 +298,34 @@ const OrderAnalysis = () => {
                       <th>Case Type</th>
                       <th>Case Number</th>
                       <th>Year</th>
-                      <th>Date</th>
                       <th>Petitioner</th>
                       <th>Respondent</th>
-                      <th>AGP/GP/Addl GP/B'Pnl</th>
-                      <th>Category</th>
+                      <th>Government Pleader</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {analysisResult.tabular_data.map((row, index) => (
+                    {analysisResult.cases.map((caseItem, index) => (
                       <tr key={index}>
-                        <td>{row.case_type}</td>
-                        <td><strong>{row.case_number}</strong></td>
-                        <td>{row.year}</td>
-                        <td>{row.date}</td>
-                        <td>{row.petitioner}</td>
-                        <td>{row.respondent}</td>
+                        <td><Badge bg="primary">{caseItem.case_type}</Badge></td>
+                        <td><strong>{caseItem.case_number}</strong></td>
+                        <td>{caseItem.case_year}</td>
+                        <td>{caseItem.petitioner || 'N/A'}</td>
+                        <td>{caseItem.respondent || 'N/A'}</td>
                         <td>
-                          <Badge bg="info" style={{ fontSize: '0.75rem' }}>
-                            {row.agp_gp_addl_gp_bpnl || 'None'}
-                          </Badge>
+                          {caseItem.government_pleader && caseItem.government_pleader.length > 0 ? (
+                            <div>
+                              {caseItem.government_pleader.map((gp, idx) => (
+                                <Badge key={idx} bg="info" className="me-1" style={{ fontSize: '0.75rem' }}>
+                                  {gp}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : 'N/A'}
                         </td>
-                        <td>
-                          <Badge bg={getCategoryBadgeVariant(row.category)}>
-                            {getCategoryDisplayName(row.category)}
-                          </Badge>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </Table>
-              </div>
-            )}
-
-            {/* Enhanced Case-by-Case Information (Fallback) */}
-            {(!analysisResult.tabular_data || analysisResult.tabular_data.length === 0) && analysisResult.cases && analysisResult.cases.length > 0 && (
-              <div className="mb-4">
-                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  ⚖️ Case-by-Case Analysis
-                </h4>
-                {analysisResult.cases.map((caseInfo, index) => (
-                  <div key={index} className="mb-3" style={{ border: '1px solid var(--gray-200)', borderRadius: '8px', padding: 'var(--spacing-md)' }}>
-                    <h5 style={{ color: 'var(--secondary-color)', marginBottom: 'var(--spacing-sm)' }}>
-                      📋 {caseInfo.case_number || `Case ${index + 1}`}
-                    </h5>
-                    <Row>
-                      <Col md={3}>
-                        <div>
-                          <strong>Petitioners:</strong>
-                          <ul style={{ marginTop: '0.5rem', marginBottom: '0' }}>
-                            {caseInfo.petitioners && caseInfo.petitioners.length > 0 ? 
-                              caseInfo.petitioners.map((petitioner, i) => (
-                                <li key={i} style={{ fontSize: '0.875rem' }}>{petitioner}</li>
-                              )) :
-                              <li style={{ fontSize: '0.875rem', color: 'var(--gray-500)' }}>None found</li>
-                            }
-                          </ul>
-                        </div>
-                      </Col>
-                      <Col md={3}>
-                        <div>
-                          <strong>Respondents:</strong>
-                          <ul style={{ marginTop: '0.5rem', marginBottom: '0' }}>
-                            {caseInfo.respondents && caseInfo.respondents.length > 0 ? 
-                              caseInfo.respondents.map((respondent, i) => (
-                                <li key={i} style={{ fontSize: '0.875rem' }}>{respondent}</li>
-                              )) :
-                              <li style={{ fontSize: '0.875rem', color: 'var(--gray-500)' }}>None found</li>
-                            }
-                          </ul>
-                        </div>
-                      </Col>
-                      <Col md={3}>
-                        <div>
-                          <strong>AGP Names:</strong>
-                          <ul style={{ marginTop: '0.5rem', marginBottom: '0' }}>
-                            {caseInfo.agp_names && caseInfo.agp_names.length > 0 ? 
-                              caseInfo.agp_names.map((agp, i) => (
-                                <li key={i} style={{ fontSize: '0.875rem' }}>
-                                  <Badge bg="info" style={{ fontSize: '0.75rem' }}>{agp}</Badge>
-                                </li>
-                              )) :
-                              <li style={{ fontSize: '0.875rem', color: 'var(--gray-500)' }}>None found</li>
-                            }
-                          </ul>
-                        </div>
-                      </Col>
-                      <Col md={3}>
-                        <div>
-                          <strong>Other Advocates:</strong>
-                          <ul style={{ marginTop: '0.5rem', marginBottom: '0' }}>
-                            {caseInfo.advocates && caseInfo.advocates.length > 0 ? 
-                              caseInfo.advocates.map((advocate, i) => (
-                                <li key={i} style={{ fontSize: '0.875rem' }}>{advocate}</li>
-                              )) :
-                              <li style={{ fontSize: '0.875rem', color: 'var(--gray-500)' }}>None found</li>
-                            }
-                          </ul>
-                        </div>
-                      </Col>
-                    </Row>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Petitioners */}
-            {analysisResult.petitioners && analysisResult.petitioners.length > 0 && (
-              <div className="mb-4">
-                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  👥 Petitioners
-                </h4>
-                <Table striped bordered hover className="professional-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Confidence</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analysisResult.petitioners.map((petitioner, index) => (
-                      <tr key={index}>
-                        <td>{petitioner.name}</td>
-                        <td>{formatConfidence(petitioner.confidence)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-
-            {/* Respondents */}
-            {analysisResult.respondents && analysisResult.respondents.length > 0 && (
-              <div className="mb-4">
-                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  🏛️ Respondents
-                </h4>
-                <Table striped bordered hover className="professional-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Confidence</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analysisResult.respondents.map((respondent, index) => (
-                      <tr key={index}>
-                        <td>{respondent.name}</td>
-                        <td>{formatConfidence(respondent.confidence)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-
-            {/* AGP Names */}
-            {analysisResult.agp_names && analysisResult.agp_names.length > 0 && (
-              <div className="mb-4">
-                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  ⚖️ AGP Names
-                </h4>
-                <Table striped bordered hover className="professional-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Type</th>
-                      <th>Confidence</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analysisResult.agp_names.map((agp, index) => (
-                      <tr key={index}>
-                        <td>{agp.name}</td>
-                        <td><Badge variant="secondary">{agp.type}</Badge></td>
-                        <td>{formatConfidence(agp.confidence)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-
-            {/* Key Phrases */}
-            {analysisResult.key_phrases && analysisResult.key_phrases.length > 0 && (
-              <div className="mb-4">
-                <h4 style={{ color: 'var(--primary-color)', marginBottom: 'var(--spacing-md)' }}>
-                  🔑 Key Phrases
-                </h4>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--spacing-sm)' }}>
-                  {analysisResult.key_phrases.map((phrase, index) => (
-                    <Badge key={index} bg="info" style={{ fontSize: '0.875rem' }}>
-                      {phrase}
-                    </Badge>
-                  ))}
-                </div>
               </div>
             )}
           </div>
