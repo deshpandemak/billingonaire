@@ -3098,7 +3098,7 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 
 
 def extract_parties_info(case_data: Dict) -> str:
-    """Extract parties information from case data"""
+    """Extract parties information from case data (format: Petitioner vs Respondent)"""
     try:
         # Try to get from order analysis first
         if case_data.get("order_analysis_completed"):
@@ -3106,17 +3106,26 @@ def extract_parties_info(case_data: Dict) -> str:
             respondents = case_data.get("order_respondents", [])
 
             if petitioners and respondents:
-                if isinstance(petitioners, list):
-                    petitioner_str = ", ".join(petitioners[:2])  # Take first 2
-                else:
-                    petitioner_str = str(petitioners)
-
-                if isinstance(respondents, list):
-                    respondent_str = ", ".join(respondents[:2])  # Take first 2
-                else:
-                    respondent_str = str(respondents)
-
-                return f"{petitioner_str} V/S {respondent_str}"
+                # Extract text from dict format (order analysis stores as list of dicts)
+                def extract_text_from_parties(parties):
+                    if isinstance(parties, list):
+                        texts = []
+                        for party in parties[:2]:  # Take first 2
+                            if isinstance(party, dict):
+                                texts.append(party.get("text", str(party)))
+                            else:
+                                texts.append(str(party))
+                        return ", ".join(texts) if texts else ""
+                    elif isinstance(parties, str):
+                        return parties
+                    else:
+                        return str(parties)
+                
+                petitioner_str = extract_text_from_parties(petitioners)
+                respondent_str = extract_text_from_parties(respondents)
+                
+                if petitioner_str and respondent_str:
+                    return f"{petitioner_str} vs {respondent_str}"
 
         # Fallback to case reference
         case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
