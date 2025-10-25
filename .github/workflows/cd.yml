@@ -51,6 +51,44 @@ jobs:
         run: |
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
+          gcloud services enable secretmanager.googleapis.com
+      
+      - name: Setup Firebase Service Account Secret
+        run: |
+          echo "🔐 Setting up Firebase service account secret..."
+          
+          # Check if secret exists, create if not
+          if ! gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
+            echo "Creating GCLOUD_SERVICE_ACCOUNT_KEY secret..."
+            echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' | gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=-
+          else
+            echo "Updating GCLOUD_SERVICE_ACCOUNT_KEY secret..."
+            echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' | gcloud secrets versions add GCLOUD_SERVICE_ACCOUNT_KEY --data-file=-
+          fi
+          
+          # Grant the Cloud Run service account access to the secret
+          gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
+            --member="serviceAccount:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com" \
+            --role="roles/secretmanager.secretAccessor"
+      
+      - name: Verify Service Account Permissions
+        run: |
+          echo "🔍 Verifying service account permissions..."
+          
+          # Check if service account exists
+          if gcloud iam service-accounts describe firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com >/dev/null 2>&1; then
+            echo "✅ Service account exists"
+          else
+            echo "❌ Service account not found"
+            exit 1
+          fi
+          
+          # List current IAM roles for the service account
+          echo "📋 Current IAM roles for service account:"
+          gcloud projects get-iam-policy ${{ env.GCP_PROJECT_ID }} \
+            --flatten="bindings[].members" \
+            --format="table(bindings.role)" \
+            --filter="bindings.members:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
       
       - name: Build and Deploy with Cloud Build (matching Firebase script)
         run: |
@@ -85,7 +123,8 @@ jobs:
             --max-instances=10 \
             --min-instances=1 \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-            --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
+            --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}" \
+            --update-secrets="GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
       
       - name: Verify Deployment
         run: |

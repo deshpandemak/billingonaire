@@ -96,16 +96,29 @@ def ensure_firebase():
     if not _firebase_initialized:
         if not firebase_admin._apps:
             import json
+            
+            # Log environment info for debugging
+            logging.info("🔍 Firebase initialization - Environment check:")
+            logging.info(f"   - Running in Cloud: {os.environ.get('K_SERVICE') is not None}")
+            logging.info(f"   - Service account key available: {bool(os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY'))}")
+            logging.info(f"   - Google credentials env: {bool(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))}")
 
             gcloud_key = os.environ.get("GCLOUD_SERVICE_ACCOUNT_KEY")
             if gcloud_key:
                 try:
-                    # Local/Replit environment with service account key
+                    # Environment with service account key (local/Replit/Cloud Run with secret)
                     cred_dict = json.loads(gcloud_key)
                     cred = credentials.Certificate(cred_dict)
                     firebase_admin.initialize_app(cred)
                     logging.info(
                         "✅ Firebase Admin SDK initialized with service account key"
+                    )
+                except json.JSONDecodeError as e:
+                    _firebase_init_error = f"Invalid JSON in GCLOUD_SERVICE_ACCOUNT_KEY: {str(e)}"
+                    logging.error(f"❌ {_firebase_init_error}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Server configuration error: Invalid Firebase service account JSON. Contact administrator.",
                     )
                 except Exception as e:
                     _firebase_init_error = f"Failed to initialize Firebase with service account key: {str(e)}"
@@ -115,29 +128,40 @@ def ensure_firebase():
                         detail="Server configuration error: Firebase credentials invalid. Contact administrator.",
                     )
             else:
-                # Check if we're in a Cloud environment
+                # Try Application Default Credentials (Cloud Run, Compute Engine, etc.)
                 try:
-                    # Cloud Run with ADC
+                    logging.info("🔄 Attempting to initialize with Application Default Credentials...")
                     firebase_admin.initialize_app()
                     logging.info(
                         "✅ Firebase Admin SDK initialized with Application Default Credentials"
                     )
                 except Exception as e:
-                    _firebase_init_error = (
-                        "Firebase Admin SDK not initialized. Missing GCLOUD_SERVICE_ACCOUNT_KEY environment variable. "
-                        f"Error: {str(e)}"
-                    )
-                    logging.error(f"❌ {_firebase_init_error}")
-                    logging.error(
-                        "💡 To fix: Set GCLOUD_SERVICE_ACCOUNT_KEY environment variable with Firebase service account JSON"
-                    )
-                    logging.error(
-                        "💡 Or set FIREBASE_SERVICE_ACCOUNT_PATH to point to service account key file"
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Server configuration error: Firebase credentials not configured. Contact administrator.",
-                    )
+                    # Final attempt: try with explicit project ID
+                    try:
+                        logging.info("🔄 Retrying with explicit project configuration...")
+                        project_id = os.environ.get('GCP_PROJECT', os.environ.get('GOOGLE_CLOUD_PROJECT', 'billingonaire'))
+                        config = {
+                            'projectId': project_id,
+                        }
+                        firebase_admin.initialize_app(config)
+                        logging.info(f"✅ Firebase Admin SDK initialized with project ID: {project_id}")
+                    except Exception as e2:
+                        _firebase_init_error = (
+                            f"Firebase Admin SDK initialization failed. "
+                            f"ADC Error: {str(e)}. Project Config Error: {str(e2)}. "
+                            f"Missing GCLOUD_SERVICE_ACCOUNT_KEY environment variable."
+                        )
+                        logging.error(f"❌ {_firebase_init_error}")
+                        logging.error(
+                            "💡 To fix: Set GCLOUD_SERVICE_ACCOUNT_KEY environment variable with Firebase service account JSON"
+                        )
+                        logging.error(
+                            "💡 Or ensure Cloud Run service account has Firebase Admin permissions"
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Server configuration error: Firebase credentials not configured. Contact administrator.",
+                        )
         _firebase_initialized = True
 
 
