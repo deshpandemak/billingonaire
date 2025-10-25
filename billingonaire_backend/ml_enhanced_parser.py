@@ -16,7 +16,6 @@ import difflib
 import io
 import logging
 import re
-import statistics
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple

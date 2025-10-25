@@ -1,12 +1,8 @@
-import os
-import sys
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import asyncio
 import json
 import logging
-import re
-import socket
+import os
+import sys
 from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -14,28 +10,19 @@ from typing import Dict, List, Optional
 
 import firebase_admin
 import pandas as pd
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-)
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
 
-from AutoOrderManager import AutoOrderManager
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from Board import Board
 from CourtScraper import BombayHighCourtScraper
 from Dashboard import DashboardData
-from order_analyzer import OrderDocumentAnalyzer
 from OrderManager import OrderManager
 from UserManager import UserManager
-from UserMatterMatcher import MatterMatch, UserMatterMatcher, UserRole
+from UserMatterMatcher import UserRole
 
 app = FastAPI(
     title="Billingonaire API",
@@ -96,12 +83,18 @@ def ensure_firebase():
     if not _firebase_initialized:
         if not firebase_admin._apps:
             import json
-            
+
             # Log environment info for debugging
             logging.info("🔍 Firebase initialization - Environment check:")
-            logging.info(f"   - Running in Cloud: {os.environ.get('K_SERVICE') is not None}")
-            logging.info(f"   - Service account key available: {bool(os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY'))}")
-            logging.info(f"   - Google credentials env: {bool(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))}")
+            logging.info(
+                f"   - Running in Cloud: {os.environ.get('K_SERVICE') is not None}"
+            )
+            logging.info(
+                f"   - Service account key available: {bool(os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY'))}"
+            )
+            logging.info(
+                f"   - Google credentials env: {bool(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))}"
+            )
 
             gcloud_key = os.environ.get("GCLOUD_SERVICE_ACCOUNT_KEY")
             if gcloud_key:
@@ -114,7 +107,9 @@ def ensure_firebase():
                         "✅ Firebase Admin SDK initialized with service account key"
                     )
                 except json.JSONDecodeError as e:
-                    _firebase_init_error = f"Invalid JSON in GCLOUD_SERVICE_ACCOUNT_KEY: {str(e)}"
+                    _firebase_init_error = (
+                        f"Invalid JSON in GCLOUD_SERVICE_ACCOUNT_KEY: {str(e)}"
+                    )
                     logging.error(f"❌ {_firebase_init_error}")
                     raise HTTPException(
                         status_code=500,
@@ -130,7 +125,9 @@ def ensure_firebase():
             else:
                 # Try Application Default Credentials (Cloud Run, Compute Engine, etc.)
                 try:
-                    logging.info("🔄 Attempting to initialize with Application Default Credentials...")
+                    logging.info(
+                        "🔄 Attempting to initialize with Application Default Credentials..."
+                    )
                     firebase_admin.initialize_app()
                     logging.info(
                         "✅ Firebase Admin SDK initialized with Application Default Credentials"
@@ -138,13 +135,20 @@ def ensure_firebase():
                 except Exception as e:
                     # Final attempt: try with explicit project ID
                     try:
-                        logging.info("🔄 Retrying with explicit project configuration...")
-                        project_id = os.environ.get('GCP_PROJECT', os.environ.get('GOOGLE_CLOUD_PROJECT', 'billingonaire'))
+                        logging.info(
+                            "🔄 Retrying with explicit project configuration..."
+                        )
+                        project_id = os.environ.get(
+                            "GCP_PROJECT",
+                            os.environ.get("GOOGLE_CLOUD_PROJECT", "billingonaire"),
+                        )
                         config = {
-                            'projectId': project_id,
+                            "projectId": project_id,
                         }
                         firebase_admin.initialize_app(config)
-                        logging.info(f"✅ Firebase Admin SDK initialized with project ID: {project_id}")
+                        logging.info(
+                            f"✅ Firebase Admin SDK initialized with project ID: {project_id}"
+                        )
                     except Exception as e2:
                         _firebase_init_error = (
                             f"Firebase Admin SDK initialization failed. "
@@ -713,7 +717,8 @@ async def create_or_update_profile(
         else:
             # Update existing profile with safe fields only
             return get_user_manager().update_user_profile(uid, safe_updates)
-    except:
+    except Exception as e:
+        logging.warning(f"Profile update failed, creating new profile: {e}")
         # Create new profile with user role and legal category
         return get_user_manager().create_user_profile(
             uid=uid,
@@ -1009,9 +1014,9 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         if hasattr(board, "ml_parser") and board.ml_parser:
             status = board.ml_parser.get_enhancement_status()
             status["ml_parser_available"] = True
-            status["message"] = (
-                "ML Enhanced Parser is active and improving PDF processing quality"
-            )
+            status[
+                "message"
+            ] = "ML Enhanced Parser is active and improving PDF processing quality"
         else:
             status = {
                 "ml_parser_available": False,
@@ -1243,9 +1248,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
                         if analysis_result.get("success"):
                             result["analysis_completed"] = True
-                            result["analysis_message"] = (
-                                "Order linked and analyzed successfully"
-                            )
+                            result[
+                                "analysis_message"
+                            ] = "Order linked and analyzed successfully"
                             logging.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
@@ -1580,7 +1585,7 @@ async def get_analysis_statistics(current_user=Depends(get_current_user)):
                     ).timestamp()
                     if timestamp > recent_cutoff:
                         stats["recent_analyses"] += 1
-                except:
+                except (ValueError, TypeError):
                     pass
 
         # Calculate average confidence
@@ -2693,9 +2698,7 @@ async def generate_bill_data(
                 logging.info(
                     f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}..."
                 )
-                logging.info(
-                    f"📁 Total cases across all variants: {len(matched_cases)}"
-                )
+                logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
 
                 for case_id, case_data in matched_cases:
                     board_date_raw = case_data.get("board_date")
@@ -2963,7 +2966,7 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
             try:
                 end_dt = datetime.strptime(end_date, "%Y-%m-%d")
                 current_year = end_dt.year
-            except:
+            except ValueError:
                 pass
 
         # Generate unique bill number (transaction-safe to prevent duplicates)
@@ -3293,26 +3296,26 @@ async def export_bill_excel(
         # Header Section
         # Title
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[f"A{current_row}"] = (
-            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
-        )
+        ws[
+            f"A{current_row}"
+        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
         ws[f"A{current_row}"].font = title_font
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[f"A{current_row}"] = (
-            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
-        )
+        ws[
+            f"A{current_row}"
+        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[f"A{current_row}"] = (
-            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
-        )
+        ws[
+            f"A{current_row}"
+        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
@@ -3384,7 +3387,7 @@ async def export_bill_excel(
             try:
                 date_obj = datetime.strptime(date_str, "%Y-%m-%d")
                 formatted_date = date_obj.strftime("%d-%m-%Y")
-            except:
+            except ValueError:
                 formatted_date = str(date_str) if date_str else ""
 
             # Get other fields and ensure they're not None

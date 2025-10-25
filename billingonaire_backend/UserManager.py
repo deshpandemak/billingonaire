@@ -289,7 +289,8 @@ class UserManager:
         try:
             user_profile = self.get_user_profile(uid)
             return user_profile.get("role") == "admin"
-        except:
+        except Exception as e:
+            logging.warning(f"Error checking admin status for {uid}: {e}")
             return False
 
     def get_user_agp_filter(self, uid: str) -> Optional[str]:
@@ -345,7 +346,8 @@ class UserManager:
             )
             return confidence >= 0.50  # 50% confidence threshold
 
-        except:
+        except Exception as e:
+            logging.warning(f"Error checking user AGP access for {uid}: {e}")
             return False
 
     def get_active_user_names(self) -> List[str]:
@@ -415,7 +417,6 @@ class UserManager:
         # Generate all possible initial combinations for the user name
         # E.g., "Pooja Makarand Joshi Deshpande" → ["p", "pm", "pmj", "pmjd", "pooja", "deshpande", etc.]
         user_initials = [word[0] for word in user_words]
-        user_full_words = user_words.copy()
 
         best_match = None
         best_score = 0.0

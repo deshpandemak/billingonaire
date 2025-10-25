@@ -99,7 +99,7 @@ class BombayHighCourtScraper:
                 }
 
             # Parse the form to get any hidden fields or session tokens
-            soup = BeautifulSoup(form_response.content, "html.parser")
+            # soup = BeautifulSoup(form_response.content, "html.parser")
 
             # For now, since there's a CAPTCHA, we'll use a different approach
             # Let's try the alternative E-Courts API or direct case lookup

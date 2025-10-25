@@ -197,8 +197,6 @@ class UserMatterMatcher:
         if not text:
             return None
 
-        text_lower = text.lower()
-
         for role, patterns in self.role_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, text, re.IGNORECASE):

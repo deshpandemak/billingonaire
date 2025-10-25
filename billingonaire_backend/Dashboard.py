@@ -4,8 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
-from fastapi import Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 

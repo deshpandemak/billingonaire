@@ -27,7 +27,6 @@ except ImportError:
 
 
 class Board:
-
     def __init__(self):
         self.db = firestore.client()
 
@@ -160,7 +159,6 @@ class Board:
                     and re.match(r"^\s*\d+\s*$", data.strip())
                     and re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip())
                 ):
-
                     # Extract case details (normalize spaces for consistency)
                     serial_no = data.strip()
                     case_data = result[i + 1].replace(" ", "").split("/")
@@ -455,7 +453,6 @@ class Board:
                             and data.strip().isnumeric()
                             and re.match(case_no_pattern, result[i + 1])
                         ):
-
                             # Extract case details
                             serial_no = data.strip()
                             case_data = result[i + 1].replace(" ", "").split("/")
@@ -524,7 +521,6 @@ class Board:
 
             return matter_df
         except Exception as e:
-
             logging.error(f"Error reading board: {str(e)}")
             logging.error("Stack trace:", exc_info=True)
             raise HTTPException(

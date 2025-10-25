@@ -257,9 +257,9 @@ class AutoOrderManager:
                         # Date mismatch - log and continue to next sequence
                         date_mismatches += 1
                         attempt_log["status"] = "date_mismatch"
-                        attempt_log["message"] = (
-                            f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
-                        )
+                        attempt_log[
+                            "message"
+                        ] = f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
                         result["retry_attempts"].append(attempt_log)
                         logging.info(
                             f"Case {case_ref} seq {sequence_num}: {attempt_log['message']}"
@@ -268,9 +268,9 @@ class AutoOrderManager:
 
                     # SUCCESS! Date matches - mark success and stop retrying
                     attempt_log["status"] = "success"
-                    attempt_log["message"] = (
-                        f"Order found with matching date {date_validation.get('extracted_date')}"
-                    )
+                    attempt_log[
+                        "message"
+                    ] = f"Order found with matching date {date_validation.get('extracted_date')}"
                     result["retry_attempts"].append(attempt_log)
                     result["download_success"] = True
                     result["order_link"] = order_info.get("order_link")
@@ -286,9 +286,9 @@ class AutoOrderManager:
                         logging.error(
                             f"Failed to create order link for {case_ref}: {link_error}"
                         )
-                        result["error"] = (
-                            f"Order found but link creation failed: {str(link_error)}"
-                        )
+                        result[
+                            "error"
+                        ] = f"Order found but link creation failed: {str(link_error)}"
                         return result
 
                     # Step 5: Perform full analysis and store results
@@ -336,16 +336,16 @@ class AutoOrderManager:
                                 )
                                 # Not critical - primary case is already linked
                         else:
-                            result["error"] = (
-                                f"Order linked but analysis failed: {analysis_result.get('error')}"
-                            )
+                            result[
+                                "error"
+                            ] = f"Order linked but analysis failed: {analysis_result.get('error')}"
                     except Exception as analysis_error:
                         logging.error(
                             f"Analysis failed for {case_ref}: {analysis_error}"
                         )
-                        result["error"] = (
-                            f"Order linked but analysis failed: {str(analysis_error)}"
-                        )
+                        result[
+                            "error"
+                        ] = f"Order linked but analysis failed: {str(analysis_error)}"
 
                     # Stop retrying - we found a matching order (even if analysis had issues)
                     return result
@@ -717,7 +717,7 @@ class AutoOrderManager:
                 try:
                     case_board_date = datetime.strptime(board_date, "%Y-%m-%d")
                     date_str = case_board_date.strftime("%d%m%Y")
-                except:
+                except ValueError:
                     case_board_date = datetime.now()
                     date_str = case_board_date.strftime("%d%m%Y")
             else:
@@ -1282,7 +1282,8 @@ class AutoOrderManager:
                 return f"{case_type.upper()}/{num}/{year}"
 
             return None
-        except:
+        except Exception as e:
+            logging.warning(f"Error extracting case reference: {e}")
             return None
 
     def _find_case_id_by_reference(
@@ -1355,7 +1356,8 @@ class AutoOrderManager:
             if order_doc.exists:
                 return order_doc.to_dict().get("status", "not_present")
             return "not_present"
-        except:
+        except Exception as e:
+            logging.warning(f"Error getting order status for {case_id}: {e}")
             return "not_present"
 
     def _get_order_link(self, case_id: str) -> Optional[str]:
@@ -1367,7 +1369,8 @@ class AutoOrderManager:
             if order_doc.exists:
                 return order_doc.to_dict().get("order_link")
             return None
-        except:
+        except Exception as e:
+            logging.warning(f"Error getting order link for {case_id}: {e}")
             return None
 
     def _cleanup_order_data(self, case_id: str, case_ref: str) -> None:
@@ -1429,7 +1432,8 @@ class AutoOrderManager:
                 case_year = int(match.group(3))
                 return (case_type, case_no, case_year)
             return None
-        except:
+        except (ValueError, AttributeError) as e:
+            logging.warning(f"Error parsing case reference {case_ref}: {e}")
             return None
 
     def search_orders(self, search_params: Dict) -> Dict:

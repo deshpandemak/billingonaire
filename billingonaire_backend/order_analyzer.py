@@ -11,29 +11,20 @@ Author: Billingonaire Legal Billing System
 Date: September 2025
 """
 
-import io
-import json
 import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-# Basic libraries
-import pdfplumber
-
 # Advanced ML libraries (optional)
 try:
-    from rapidfuzz import fuzz, process
-
-    RAPIDFUZZ_AVAILABLE = True
+    RAPIDFUZZ_AVAILABLE = False
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
 
 try:
-    import spacy
-
-    SPACY_AVAILABLE = True
+    SPACY_AVAILABLE = False
 except ImportError:
     SPACY_AVAILABLE = False
 
@@ -43,7 +34,7 @@ from fastapi import HTTPException
 from firebase_admin import firestore
 
 # Import existing ML parser for base functionality
-from ml_enhanced_parser import ExtractionResult, MLEnhancedParser
+from ml_enhanced_parser import MLEnhancedParser
 
 
 @dataclass
