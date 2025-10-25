@@ -1389,7 +1389,9 @@ async def get_analysis_history(
                 "order_category": board_data.get("order_category"),
                 "category_confidence": board_data.get("order_category_confidence"),
                 "order_date": board_data.get("order_date"),
-                "order_cases": board_data.get("order_cases", []),  # Simplified cases array
+                "order_cases": board_data.get(
+                    "order_cases", []
+                ),  # Simplified cases array
                 "date_validation": board_data.get("order_date_validation"),
                 "order_link": board_data.get("order_link"),
                 "analysis_timestamp": board_data.get("order_analysis_timestamp"),
@@ -2558,7 +2560,7 @@ async def generate_bill_data(
             for case_doc in all_cases:
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
-                
+
                 # Source 1: respondent_lawyer (primary field)
                 respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
                 if respondent_lawyer:
@@ -2566,24 +2568,30 @@ async def generate_bill_data(
                     if respondent_lawyer not in cases_by_agp:
                         cases_by_agp[respondent_lawyer] = []
                     cases_by_agp[respondent_lawyer].append((case_id, case_data))
-                
+
                 # Source 2: additional_respondent_lawyers (comma-separated from daily board)
                 # Parse properly to keep name+designation pairs intact (e.g., "SHRI A.B.SHARMA,AGP")
-                additional_lawyers = case_data.get("additional_respondent_lawyers", "").strip()
+                additional_lawyers = case_data.get(
+                    "additional_respondent_lawyers", ""
+                ).strip()
                 if additional_lawyers:
                     # Split on patterns that indicate separate advocates
                     # Look for patterns like "AGP," or "GP," followed by space and new name
                     import re
+
                     # Split on AGP/GP followed by comma and space, but keep AGP/GP with the name
-                    lawyer_names = re.split(r'(?:,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.?\s+))', additional_lawyers)
+                    lawyer_names = re.split(
+                        r"(?:,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.?\s+))",
+                        additional_lawyers,
+                    )
                     for lawyer_name in lawyer_names:
-                        lawyer_name = lawyer_name.strip().rstrip(',')
+                        lawyer_name = lawyer_name.strip().rstrip(",")
                         if lawyer_name:
                             unique_agp_names.add(lawyer_name)
                             if lawyer_name not in cases_by_agp:
                                 cases_by_agp[lawyer_name] = []
                             cases_by_agp[lawyer_name].append((case_id, case_data))
-                
+
                 # Source 3: order_agp_names (can be list OR single string from order analysis)
                 order_agp_names = case_data.get("order_agp_names")
                 if order_agp_names:
@@ -2605,8 +2613,10 @@ async def generate_bill_data(
                                 if agp_name not in cases_by_agp:
                                     cases_by_agp[agp_name] = []
                                 cases_by_agp[agp_name].append((case_id, case_data))
-            
-            logging.info(f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)")
+
+            logging.info(
+                f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)"
+            )
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
             matched_agp, confidence = get_user_manager().match_user_name_to_agp(
@@ -2675,9 +2685,9 @@ async def generate_bill_data(
                                     "id": case_id,
                                     "date": board_date_str,
                                     "case_detail": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
-                                    "case_type": case_data.get('case_type', ''),
-                                    "case_no": case_data.get('case_no', ''),
-                                    "case_year": case_data.get('case_year', ''),
+                                    "case_type": case_data.get("case_type", ""),
+                                    "case_no": case_data.get("case_no", ""),
+                                    "case_year": case_data.get("case_year", ""),
                                     "parties_name": parties,
                                     "results": fee_info["result"],
                                     "fees_rs": fee_info["fee"],
@@ -2760,9 +2770,9 @@ async def generate_bill_data(
                                     "id": case_id,
                                     "date": board_date_str,
                                     "case_detail": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
-                                    "case_type": case_data.get('case_type', ''),
-                                    "case_no": case_data.get('case_no', ''),
-                                    "case_year": case_data.get('case_year', ''),
+                                    "case_type": case_data.get("case_type", ""),
+                                    "case_no": case_data.get("case_no", ""),
+                                    "case_year": case_data.get("case_year", ""),
                                     "parties_name": parties,
                                     "results": fee_info["result"],
                                     "fees_rs": fee_info["fee"],
@@ -2820,43 +2830,47 @@ def generate_bill_number_safe(db, user_id: str, year: int) -> tuple:
         # Use a counter document per user per year to ensure atomic increments
         counter_id = f"{user_id}_{year}"
         counter_ref = db.collection("bill-counters").document(counter_id)
-        
+
         # Use Firestore transaction to atomically increment counter
         @firestore.transactional
         def increment_counter(transaction):
             counter_doc = counter_ref.get(transaction=transaction)
-            
+
             if counter_doc.exists:
                 current_seq = counter_doc.to_dict().get("sequence", 0)
                 next_sequence = current_seq + 1
             else:
                 # First bill for this user in this year
                 next_sequence = 1
-            
+
             # Update counter atomically
-            transaction.set(counter_ref, {
-                "user_id": user_id,
-                "year": year,
-                "sequence": next_sequence,
-                "last_updated": firestore.SERVER_TIMESTAMP
-            })
-            
+            transaction.set(
+                counter_ref,
+                {
+                    "user_id": user_id,
+                    "year": year,
+                    "sequence": next_sequence,
+                    "last_updated": firestore.SERVER_TIMESTAMP,
+                },
+            )
+
             return next_sequence
-        
+
         # Execute transaction
         transaction = db.transaction()
         next_sequence = increment_counter(transaction)
-        
+
         # Format: BILL/YEAR/SEQUENCE (e.g., BILL/2025/001)
         bill_number = f"BILL/{year}/{next_sequence:03d}"
-        
+
         logging.info(f"✨ Generated bill number: {bill_number} for user {user_id}")
         return bill_number, next_sequence
-        
+
     except Exception as e:
         logging.error(f"Error generating bill number: {e}")
         # Fallback to timestamp-based number (should rarely happen)
         import time
+
         timestamp_seq = int(time.time()) % 10000
         return f"BILL/{year}/{timestamp_seq:04d}", timestamp_seq
 
@@ -2866,15 +2880,15 @@ def generate_month_description(start_date: str, end_date: str) -> str:
     try:
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
         # Same month
         if start_dt.month == end_dt.month and start_dt.year == end_dt.year:
             return start_dt.strftime("%B %Y")
-        
+
         # Different months, same year
         if start_dt.year == end_dt.year:
             return f"{start_dt.strftime('%B')} - {end_dt.strftime('%B %Y')}"
-        
+
         # Different years
         return f"{start_dt.strftime('%B %Y')} - {end_dt.strftime('%B %Y')}"
     except Exception as e:
@@ -2892,12 +2906,12 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 
         bill_entries = body.get("bill_entries", [])
         bill_metadata = body.get("metadata", {})
-        
+
         # Get date range from metadata (frontend sends startDate/endDate)
         date_range = bill_metadata.get("date_range", {})
         start_date = date_range.get("startDate", date_range.get("start", ""))
         end_date = date_range.get("endDate", date_range.get("end", ""))
-        
+
         # Determine bill year from date range (use end date year)
         current_year = datetime.now().year
         if end_date:
@@ -2906,12 +2920,18 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
                 current_year = end_dt.year
             except:
                 pass
-        
+
         # Generate unique bill number (transaction-safe to prevent duplicates)
-        bill_number, bill_sequence = generate_bill_number_safe(db, user_id, current_year)
-        
+        bill_number, bill_sequence = generate_bill_number_safe(
+            db, user_id, current_year
+        )
+
         # Generate month description
-        month_description = generate_month_description(start_date, end_date) if start_date and end_date else ""
+        month_description = (
+            generate_month_description(start_date, end_date)
+            if start_date and end_date
+            else ""
+        )
 
         # Create a bill document with bill number and year
         bill_data = {
@@ -2933,7 +2953,9 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
         bill_ref.set(bill_data)
         bill_id = bill_ref.id
 
-        logging.info(f"✅ Bill saved: {bill_number} for user {user_id}, {month_description}")
+        logging.info(
+            f"✅ Bill saved: {bill_number} for user {user_id}, {month_description}"
+        )
 
         return JSONResponse(
             content={
@@ -2950,6 +2972,7 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
     except Exception as e:
         logging.error(f"Error saving bill entries: {e}")
         import traceback
+
         traceback.print_exc()
         return JSONResponse(
             status_code=500, content={"error": f"Failed to save bill entries: {str(e)}"}
@@ -2959,7 +2982,9 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 @app.get("/bills/my-bills", tags=["Bill Generation"])
 async def get_my_bills(
     limit: int = Query(20, description="Maximum number of bills to return"),
-    user_id_filter: Optional[str] = Query(None, description="Filter by user ID (admin only)"),
+    user_id_filter: Optional[str] = Query(
+        None, description="Filter by user ID (admin only)"
+    ),
     current_user=Depends(get_current_user),
 ):
     """Get saved bills - logged-in user's bills or all bills (admin only)"""
@@ -2969,7 +2994,7 @@ async def get_my_bills(
         is_admin = get_user_manager().is_admin(user_id)
 
         bills_ref = db.collection("user-bills")
-        
+
         # Admin can view all bills or filter by specific user
         if is_admin and user_id_filter:
             # Admin viewing specific user's bills
@@ -2981,7 +3006,9 @@ async def get_my_bills(
             target_user_id = user_id_filter
         elif is_admin and not user_id_filter:
             # Admin viewing all bills
-            query = bills_ref.order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
+            query = bills_ref.order_by(
+                "created_at", direction=firestore.Query.DESCENDING
+            ).limit(limit)
             target_user_id = "all"
         else:
             # Regular user - only their own bills
@@ -3105,17 +3132,20 @@ async def export_bill_excel(
     bill_id: str = Query(None, description="Bill ID to export"),
     start_date: str = Query(None, description="Start date for generating fresh export"),
     end_date: str = Query(None, description="End date for generating fresh export"),
-    user_name: Optional[str] = Query(None, description="User name for bill header (admin only)"),
+    user_name: Optional[str] = Query(
+        None, description="User name for bill header (admin only)"
+    ),
     current_user=Depends(get_current_user),
 ):
     """Export bill data as Excel format matching AGP bill specification"""
     try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, Border, Side
-        from datetime import datetime
         import io
+        from datetime import datetime
+
         from fastapi.responses import StreamingResponse
-        
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, Side
+
         db = firestore.client()
         user_id = current_user.get("uid")
         is_admin = get_user_manager().is_admin(user_id)
@@ -3123,7 +3153,7 @@ async def export_bill_excel(
         # Get bill data - either from saved bill or generate fresh
         agp_name = "ASSISTANT GOVERNMENT PLEADER"
         bill_number = f"BILL/{datetime.now().strftime('%m')}/{datetime.now().year}"
-        
+
         if bill_id:
             # Export saved bill
             bill_ref = db.collection("user-bills").document(bill_id)
@@ -3145,20 +3175,24 @@ async def export_bill_excel(
 
         elif start_date and end_date:
             # Generate fresh export
-            response = await generate_bill_data(start_date, end_date, user_name, current_user)
+            response = await generate_bill_data(
+                start_date, end_date, user_name, current_user
+            )
             if response.status_code != 200:
                 return response
 
             response_data = json.loads(response.body.decode())
             entries = response_data.get("bill_entries", [])
             metadata = {"date_range": {"start": start_date, "end": end_date}}
-            
+
             # Get AGP name from entries or debug info
             if entries and entries[0].get("agp_name"):
                 agp_name = entries[0].get("agp_name")
-            elif "debug_info" in response_data and response_data["debug_info"].get("matched_agp_name"):
+            elif "debug_info" in response_data and response_data["debug_info"].get(
+                "matched_agp_name"
+            ):
                 agp_name = response_data["debug_info"]["matched_agp_name"]
-            
+
             filename = f"AGP_Bill_{start_date}_to_{end_date}.xlsx"
 
         else:
@@ -3183,66 +3217,85 @@ async def export_bill_excel(
         title_font = Font(bold=True, size=12)
         header_font = Font(bold=True, size=11)
         border_thin = Border(
-            left=Side(style='thin'), 
-            right=Side(style='thin'), 
-            top=Side(style='thin'), 
-            bottom=Side(style='thin')
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin"),
         )
-        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
         # Parse dates for header
         date_range = metadata.get("date_range", {})
         start_dt = datetime.strptime(date_range.get("start", start_date), "%Y-%m-%d")
         end_dt = datetime.strptime(date_range.get("end", end_date), "%Y-%m-%d")
-        period_str = f"{start_dt.strftime('%B %Y').upper()} - {end_dt.strftime('%B %Y').upper()}"
+        period_str = (
+            f"{start_dt.strftime('%B %Y').upper()} - {end_dt.strftime('%B %Y').upper()}"
+        )
 
         # Row counter
         current_row = 1
 
         # Header Section
         # Title
-        ws.merge_cells(f'A{current_row}:H{current_row}')
-        ws[f'A{current_row}'] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
-        ws[f'A{current_row}'].font = title_font
-        ws[f'A{current_row}'].alignment = center_align
+        ws.merge_cells(f"A{current_row}:H{current_row}")
+        ws[f"A{current_row}"] = (
+            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        )
+        ws[f"A{current_row}"].font = title_font
+        ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
-        ws.merge_cells(f'A{current_row}:H{current_row}')
-        ws[f'A{current_row}'] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
-        ws[f'A{current_row}'].alignment = center_align
+        ws.merge_cells(f"A{current_row}:H{current_row}")
+        ws[f"A{current_row}"] = (
+            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        )
+        ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
-        ws.merge_cells(f'A{current_row}:H{current_row}')
-        ws[f'A{current_row}'] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
-        ws[f'A{current_row}'].alignment = center_align
+        ws.merge_cells(f"A{current_row}:H{current_row}")
+        ws[f"A{current_row}"] = (
+            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        )
+        ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Period and Bill Number
-        ws.merge_cells(f'A{current_row}:D{current_row}')
-        ws[f'A{current_row}'] = f"MONTHS :- {period_str}"
-        ws.merge_cells(f'E{current_row}:H{current_row}')
-        ws[f'E{current_row}'] = f"BILL NO:- {bill_number}"
-        ws[f'E{current_row}'].alignment = Alignment(horizontal='right', vertical='center')
+        ws.merge_cells(f"A{current_row}:D{current_row}")
+        ws[f"A{current_row}"] = f"MONTHS :- {period_str}"
+        ws.merge_cells(f"E{current_row}:H{current_row}")
+        ws[f"E{current_row}"] = f"BILL NO:- {bill_number}"
+        ws[f"E{current_row}"].alignment = Alignment(
+            horizontal="right", vertical="center"
+        )
         current_row += 1
 
         # Declaration
-        ws.merge_cells(f'A{current_row}:H{current_row}')
+        ws.merge_cells(f"A{current_row}:H{current_row}")
         declaration_text = (
             f"DECLARATION : I hereby certify that the below mentioned matters were allotted to me by the Government Pleader, "
             f"I personally appeared in the below mentioned matters. The below mentioned entries/information given in above columns "
             f"are true and correct to the best of my knowledge and belief. I further certify that nothing is suppressed by me. "
             f"Also, the fees which is claimed in bill no. {bill_number} has not been claimed by me earlier."
         )
-        ws[f'A{current_row}'] = declaration_text
-        ws[f'A{current_row}'].alignment = left_align
+        ws[f"A{current_row}"] = declaration_text
+        ws[f"A{current_row}"].alignment = left_align
         ws.row_dimensions[current_row].height = 60
         current_row += 1
 
         # Column Headers
-        headers = ["SR. NO.", "DATE", "CASE TYPE", "CASE NO", "CASE YEAR", "RESULTS", "PARTIES NAME", "FEES (RS.)"]
+        headers = [
+            "SR. NO.",
+            "DATE",
+            "CASE TYPE",
+            "CASE NO",
+            "CASE YEAR",
+            "RESULTS",
+            "PARTIES NAME",
+            "FEES (RS.)",
+        ]
         for col_num, header in enumerate(headers, 1):
             cell = ws.cell(row=current_row, column=col_num, value=header)
             cell.font = header_font
@@ -3293,26 +3346,28 @@ async def export_bill_excel(
             current_row += 1
 
         # Total row
-        ws.merge_cells(f'A{current_row}:G{current_row}')
-        ws[f'A{current_row}'] = "TOTAL:"
-        ws[f'A{current_row}'].font = header_font
-        ws[f'A{current_row}'].alignment = Alignment(horizontal='right', vertical='center')
-        ws[f'A{current_row}'].border = border_thin
-        
+        ws.merge_cells(f"A{current_row}:G{current_row}")
+        ws[f"A{current_row}"] = "TOTAL:"
+        ws[f"A{current_row}"].font = header_font
+        ws[f"A{current_row}"].alignment = Alignment(
+            horizontal="right", vertical="center"
+        )
+        ws[f"A{current_row}"].border = border_thin
+
         cell = ws.cell(row=current_row, column=8, value=total_fees)
         cell.font = header_font
         cell.alignment = center_align
         cell.border = border_thin
 
         # Adjust column widths
-        ws.column_dimensions['A'].width = 10  # SR. NO.
-        ws.column_dimensions['B'].width = 15  # DATE
-        ws.column_dimensions['C'].width = 12  # CASE TYPE
-        ws.column_dimensions['D'].width = 12  # CASE NO
-        ws.column_dimensions['E'].width = 12  # CASE YEAR
-        ws.column_dimensions['F'].width = 18  # RESULTS
-        ws.column_dimensions['G'].width = 50  # PARTIES NAME
-        ws.column_dimensions['H'].width = 15  # FEES (RS.)
+        ws.column_dimensions["A"].width = 10  # SR. NO.
+        ws.column_dimensions["B"].width = 15  # DATE
+        ws.column_dimensions["C"].width = 12  # CASE TYPE
+        ws.column_dimensions["D"].width = 12  # CASE NO
+        ws.column_dimensions["E"].width = 12  # CASE YEAR
+        ws.column_dimensions["F"].width = 18  # RESULTS
+        ws.column_dimensions["G"].width = 50  # PARTIES NAME
+        ws.column_dimensions["H"].width = 15  # FEES (RS.)
 
         # Save to BytesIO
         output = io.BytesIO()
@@ -3329,6 +3384,7 @@ async def export_bill_excel(
     except Exception as e:
         logging.error(f"Error exporting bill to Excel: {e}")
         import traceback
+
         traceback.print_exc()
         return JSONResponse(
             status_code=500, content={"error": f"Failed to export bill: {str(e)}"}

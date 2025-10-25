@@ -1188,7 +1188,7 @@ class AutoOrderManager:
                     case_type = case_info.get("case_type")
                     case_number = case_info.get("case_number")
                     case_year = case_info.get("case_year")
-                    
+
                     # Skip if missing required fields
                     if not case_type or not case_number or not case_year:
                         logging.warning(f"Missing required case fields in {case_info}")

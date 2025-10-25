@@ -1176,12 +1176,16 @@ class OrderDocumentAnalyzer:
 
                 case_info = CaseInfo(
                     case_type=parsed.get("case_type", ""),
-                    case_number=int(parsed.get("case_number", "0"))
-                    if parsed.get("case_number", "").isdigit()
-                    else 0,
-                    case_year=int(parsed.get("year", "0"))
-                    if parsed.get("year", "").isdigit()
-                    else 0,
+                    case_number=(
+                        int(parsed.get("case_number", "0"))
+                        if parsed.get("case_number", "").isdigit()
+                        else 0
+                    ),
+                    case_year=(
+                        int(parsed.get("year", "0"))
+                        if parsed.get("year", "").isdigit()
+                        else 0
+                    ),
                     petitioner="",
                     respondent="",
                     government_pleader=[],
@@ -1204,9 +1208,7 @@ class OrderDocumentAnalyzer:
 
         return cases
 
-    def _extract_multi_case_details(
-        self, text: str
-    ) -> Dict[str, Dict[str, Any]]:
+    def _extract_multi_case_details(self, text: str) -> Dict[str, Dict[str, Any]]:
         """
         Extract details for multiple cases from order text
         Returns: {case_key: {case_type, case_number, case_year, petitioner, respondent, government_pleader}}
@@ -1229,9 +1231,13 @@ class OrderDocumentAnalyzer:
             if pet_match:
                 petitioner = pet_match.group(1).strip()
                 # Add "And Ors." if present
-                if re.search(r"And\s+Ors\.", block_text[pet_match.start():pet_match.end()], re.IGNORECASE):
+                if re.search(
+                    r"And\s+Ors\.",
+                    block_text[pet_match.start() : pet_match.end()],
+                    re.IGNORECASE,
+                ):
                     petitioner += " And Ors."
-            
+
             # Fallback: try without title prefixes
             if not petitioner:
                 petitioner_pattern2 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+And\s+Ors\.)?)\s*\.{2,}\s*Petitioner"
@@ -1251,9 +1257,7 @@ class OrderDocumentAnalyzer:
                 respondent = re.sub(r"\s+", " ", respondent)
 
             # Extract government pleader from the advocates section
-            govt_pleaders = self._extract_govt_pleader_from_text(
-                text, case_key
-            )
+            govt_pleaders = self._extract_govt_pleader_from_text(text, case_key)
 
             case_details[case_key] = {
                 "case_type": "WP",
@@ -1266,9 +1270,7 @@ class OrderDocumentAnalyzer:
 
         return case_details
 
-    def _extract_govt_pleader_from_text(
-        self, text: str, case_key: str
-    ) -> List[str]:
+    def _extract_govt_pleader_from_text(self, text: str, case_key: str) -> List[str]:
         """Extract government pleader names for a specific case"""
         pleaders = []
 
@@ -1328,7 +1330,7 @@ class OrderDocumentAnalyzer:
             pet_match = re.search(pet_pattern, block, re.IGNORECASE)
             if pet_match:
                 petitioner = pet_match.group(1).strip()
-                if "And Ors." in block[pet_match.start():pet_match.end()]:
+                if "And Ors." in block[pet_match.start() : pet_match.end()]:
                     petitioner += " And Ors."
             else:
                 # Fallback: try without title prefixes

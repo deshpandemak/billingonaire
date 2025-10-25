@@ -15,3 +15,4 @@ firebase/credentials.json
 firebase/firebasetoken
 *.json
 billingonaire_backend/.coverage
+.venv-1
