@@ -3123,7 +3123,7 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 
 
 def extract_parties_info(case_data: Dict) -> str:
-    """Extract parties information from case data"""
+    """Extract parties information from case data (format: Petitioner vs Respondent)"""
     try:
         # Try to get from order analysis first
         if case_data.get("order_analysis_completed"):
@@ -3131,17 +3131,26 @@ def extract_parties_info(case_data: Dict) -> str:
             respondents = case_data.get("order_respondents", [])
 
             if petitioners and respondents:
-                if isinstance(petitioners, list):
-                    petitioner_str = ", ".join(petitioners[:2])  # Take first 2
-                else:
-                    petitioner_str = str(petitioners)
-
-                if isinstance(respondents, list):
-                    respondent_str = ", ".join(respondents[:2])  # Take first 2
-                else:
-                    respondent_str = str(respondents)
-
-                return f"{petitioner_str} V/S {respondent_str}"
+                # Extract text from dict format (order analysis stores as list of dicts)
+                def extract_text_from_parties(parties):
+                    if isinstance(parties, list):
+                        texts = []
+                        for party in parties[:2]:  # Take first 2
+                            if isinstance(party, dict):
+                                texts.append(party.get("text", str(party)))
+                            else:
+                                texts.append(str(party))
+                        return ", ".join(texts) if texts else ""
+                    elif isinstance(parties, str):
+                        return parties
+                    else:
+                        return str(parties)
+                
+                petitioner_str = extract_text_from_parties(petitioners)
+                respondent_str = extract_text_from_parties(respondents)
+                
+                if petitioner_str and respondent_str:
+                    return f"{petitioner_str} vs {respondent_str}"
 
         # Fallback to case reference
         case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
@@ -3331,12 +3340,18 @@ async def export_bill_excel(
         # Data rows
         total_fees = 0
         for idx, entry in enumerate(entries, 1):
-            # Parse case_detail to extract case type, number, year
-            case_detail = entry.get("case_detail", "")
-            case_parts = case_detail.split("/")
-            case_type = case_parts[0] if len(case_parts) > 0 else ""
-            case_no = case_parts[1] if len(case_parts) > 1 else ""
-            case_year = case_parts[2] if len(case_parts) > 2 else ""
+            # Get case details from separate fields (or parse case_detail if not available)
+            case_type = entry.get("case_type", "")
+            case_no = entry.get("case_no", "")
+            case_year = entry.get("case_year", "")
+            
+            # Fallback: parse case_detail if separate fields not present
+            if not case_type and not case_no and not case_year:
+                case_detail = entry.get("case_detail", "")
+                case_parts = case_detail.split("/")
+                case_type = case_parts[0] if len(case_parts) > 0 else ""
+                case_no = case_parts[1] if len(case_parts) > 1 else ""
+                case_year = case_parts[2] if len(case_parts) > 2 else ""
 
             # Format date
             date_str = entry.get("date", "")
