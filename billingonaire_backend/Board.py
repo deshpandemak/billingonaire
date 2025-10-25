@@ -158,9 +158,7 @@ class Board:
                 if (
                     i + 2 < len(result)
                     and re.match(r"^\s*\d+\s*$", data.strip())
-                    and re.match(
-                        r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip()
-                    )
+                    and re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip())
                 ):
 
                     # Extract case details (normalize spaces for consistency)
@@ -171,9 +169,7 @@ class Board:
                     case_year = case_data[2].strip()
 
                     # Get court/lawyer details from the next part
-                    court_details = (
-                        result[i + 2].strip() if i + 2 < len(result) else ""
-                    )
+                    court_details = result[i + 2].strip() if i + 2 < len(result) else ""
 
                     # Create record for this case
                     if serial_no and case_type and case_no and case_year:
