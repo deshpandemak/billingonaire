@@ -17,7 +17,7 @@ gcloud auth activate-service-account --key-file=/tmp/gcloud-key.json
 gcloud config set project billingonaire
 
 # Navigate to the backend directory (script is run from firebase dir)
-cd ../billingonaire-backend
+cd ../billingonaire_backend
 
 # Build and deploy using Dockerfile to avoid buildpacks permission issues
 echo "🚀 Building and deploying backend to Google Cloud Run..."
@@ -29,11 +29,14 @@ gcloud run deploy billingonaire-backend \
   --region=asia-south1 \
   --platform=managed \
   --allow-unauthenticated \
-  --memory=1Gi \
-  --cpu=1 \
+  --memory=2Gi \
+  --cpu=2 \
   --timeout=540s \
   --max-instances=10 \
-  --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com
+  --min-instances=1 \
+  --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50" \
+  --update-secrets="GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
 
 # Clean up
 rm /tmp/gcloud-key.json

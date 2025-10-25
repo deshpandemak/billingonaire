@@ -364,11 +364,7 @@ class UserManager:
                 user_role = user.get("role", "NO_ROLE")
                 user_active = user.get("is_active", False)
 
-                # Skip admin users and inactive users
-                if user_role == "admin":
-                    logging.info(f"  ⏭️  Skipping admin: {user_name}")
-                    continue
-
+                # Skip only inactive users (include all active users including admins)
                 if not user_active:
                     logging.info(
                         f"  ⏭️  Skipping inactive: {user_name} (role={user_role})"

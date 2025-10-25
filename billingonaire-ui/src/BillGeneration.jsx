@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table, Alert, Modal, Spinner } from 'react-bootstrap';
 import { authenticatedFetchJSON } from './lib/api.js';
+import { auth } from './lib/firebase.js';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const BillGeneration = () => {
     const [dateRange, setDateRange] = useState({
@@ -22,8 +24,9 @@ const BillGeneration = () => {
     const [isAdmin, setIsAdmin] = useState(false);
     const [userList, setUserList] = useState([]);
     const [selectedUser, setSelectedUser] = useState('');
+    const [authReady, setAuthReady] = useState(false);
 
-    // Set default date range to current month and fetch user list if admin
+    // Set default date range to current month
     useEffect(() => {
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -33,13 +36,42 @@ const BillGeneration = () => {
             startDate: formatDateSafe(startOfMonth),
             endDate: formatDateSafe(endOfMonth)
         });
+    }, []);
 
-        // Check admin status and fetch user list
-        checkAdminAndFetchUsers();
+    // Wait for Firebase authentication before fetching user list
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                console.log('🔐 User authenticated, checking admin status...');
+                await checkAdminAndFetchUsers();
+            } else {
+                console.log('❌ No user authenticated');
+                setIsAdmin(false);
+                setUserList([]);
+            }
+            setAuthReady(true);
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const checkAdminAndFetchUsers = async () => {
         try {
+            console.log('🔍 Attempting to fetch active users from /admin/active-users...');
+            
+            // Ensure Firebase auth token is ready
+            const currentUser = auth.currentUser;
+            if (!currentUser) {
+                console.warn('⚠️ No current user in Firebase auth');
+                setIsAdmin(false);
+                setUserList([]);
+                return;
+            }
+            
+            // Verify we can get an ID token
+            const token = await currentUser.getIdToken();
+            console.log('✅ Firebase ID token obtained, length:', token?.length || 0);
+            
             // Fetch active user names list (will work only if user is admin)
             const response = await authenticatedFetchJSON('/admin/active-users');
             console.log('✅ Admin active users response:', response);
@@ -49,6 +81,11 @@ const BillGeneration = () => {
             setUserList(response.user_names || []);
         } catch (err) {
             console.error('❌ Failed to fetch active users:', err);
+            console.error('❌ Error details:', {
+                message: err.message,
+                stack: err.stack,
+                type: err.constructor.name
+            });
             // User is not admin, that's fine
             setIsAdmin(false);
             setUserList([]);
@@ -227,6 +264,9 @@ const BillGeneration = () => {
             id: `new_${Date.now()}`,
             date: formatDateSafe(new Date()),
             case_detail: '',
+            case_type: '',
+            case_no: '',
+            case_year: '',
             parties_name: '',
             results: getResultFromFee(feeAmount),
             fees_rs: feeAmount,
@@ -290,17 +330,52 @@ const BillGeneration = () => {
     const exportMultipleFormats = async () => {
         if (!billData?.bill_entries?.length) return;
         
-        // Export CSV
-        exportToExcel();
-        
-        // Also trigger backend Excel export if available
+        // Trigger backend Excel export (proper AGP format)
         try {
-            const response = await authenticatedFetchJSON(`/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`);
-            if (response.download_url) {
-                window.open(response.download_url, '_blank');
+            // Build URL with parameters
+            let excelUrl = `/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
+            
+            // Add user_name parameter if admin selected a user
+            if (selectedUser) {
+                excelUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
-        } catch {
-            console.log('Excel export not available, CSV exported instead');
+            
+            // Get auth token from Firebase
+            const currentUser = auth.currentUser;
+            if (!currentUser) {
+                alert('Please log in to export bills');
+                return;
+            }
+            
+            const token = await currentUser.getIdToken();
+            
+            // Download Excel file using fetch with auth
+            const response = await fetch(`/api${excelUrl}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `AGP_Bill_${dateRange.startDate}_to_${dateRange.endDate}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                console.log('✅ Excel bill exported successfully in AGP format');
+                alert('✅ Bill exported successfully as Excel file!');
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to export Excel:', response.statusText, errorText);
+                alert(`Failed to export Excel: ${response.statusText}`);
+            }
+        } catch (err) {
+            console.error('Excel export error:', err);
+            alert(`Error exporting Excel: ${err.message}`);
         }
     };
 
@@ -322,7 +397,16 @@ const BillGeneration = () => {
                 body: JSON.stringify(payload)
             });
 
-            alert(`Bill saved successfully! Bill ID: ${response.bill_id}`);
+            const successMessage = `
+✅ Bill saved successfully!
+
+📋 Bill Number: ${response.bill_number}
+📅 Period: ${response.month_description}
+💰 Total Fees: ₹${response.total_fees.toLocaleString()}
+📊 Total Entries: ${response.total_entries}
+            `.trim();
+            
+            alert(successMessage);
             setShowSaveModal(false);
         } catch (err) {
             alert('Failed to save bill: ' + err.message);
@@ -344,21 +428,27 @@ const BillGeneration = () => {
     const exportToExcel = () => {
         if (!billData?.bill_entries?.length) return;
 
-        // Create CSV content with proper escaping
-        const headers = ['DATE', 'CASE DETAIL', 'PARTIES NAME', 'RESULTS', 'FEES (RS.)'];
+        // Create CSV content with proper escaping (matching Excel format)
+        const headers = ['SR. NO.', 'DATE', 'CASE TYPE', 'CASE NO', 'CASE YEAR', 'RESULTS', 'PARTIES NAME', 'FEES (RS.)'];
         const totalFees = billData.bill_entries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0);
         
         const csvContent = [
             headers.map(escapeCSVField).join(','),
-            ...billData.bill_entries.map(entry => [
+            ...billData.bill_entries.map((entry, index) => [
+                escapeCSVField(index + 1),
                 escapeCSVField(entry.date),
-                escapeCSVField(entry.case_detail),
-                escapeCSVField(entry.parties_name),
+                escapeCSVField(entry.case_type || ''),
+                escapeCSVField(entry.case_no || ''),
+                escapeCSVField(entry.case_year || ''),
                 escapeCSVField(entry.results),
+                escapeCSVField(entry.parties_name),
                 escapeCSVField(entry.fees_rs)
             ].join(',')),
             '', // Empty line before total
             [
+                escapeCSVField(''),
+                escapeCSVField(''),
+                escapeCSVField(''),
                 escapeCSVField(''),
                 escapeCSVField(''),
                 escapeCSVField(''),
@@ -549,11 +639,8 @@ const BillGeneration = () => {
                                             <Button variant="outline-warning" size="sm" onClick={() => setBulkEditMode(!bulkEditMode)} className="me-2">
                                                 {bulkEditMode ? 'Cancel Bulk Edit' : '✏️ Bulk Edit'}
                                             </Button>
-                                            <Button variant="info" size="sm" onClick={exportToExcel} className="me-2">
-                                                📊 Export CSV
-                                            </Button>
-                                            <Button variant="outline-info" size="sm" onClick={exportMultipleFormats} className="me-2">
-                                                📄 Export All Formats
+                                            <Button variant="success" size="sm" onClick={exportMultipleFormats} className="me-2">
+                                                📄 Export Excel (XLSX)
                                             </Button>
                                             <Button variant="primary" size="sm" onClick={() => setShowSaveModal(true)}>
                                                 💾 Save Bill
@@ -617,7 +704,9 @@ const BillGeneration = () => {
                                                 <tr>
                                                     {bulkEditMode && <th width="50px">☑️</th>}
                                                     <th>Date</th>
-                                                    <th>Case Detail</th>
+                                                    <th>Case Type</th>
+                                                    <th>Case No</th>
+                                                    <th>Case Year</th>
                                                     <th>Parties Name</th>
                                                     <th>Results</th>
                                                     <th>Fees (₹)</th>
@@ -652,11 +741,36 @@ const BillGeneration = () => {
                                                             {editingRow === index ? (
                                                                 <Form.Control
                                                                     type="text"
-                                                                    value={tempEditData.case_detail || ''}
-                                                                    onChange={(e) => setTempEditData({...tempEditData, case_detail: e.target.value})}
+                                                                    value={tempEditData.case_type || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_type: e.target.value})}
+                                                                    size="sm"
                                                                 />
                                                             ) : (
-                                                                entry.case_detail
+                                                                entry.case_type
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            {editingRow === index ? (
+                                                                <Form.Control
+                                                                    type="text"
+                                                                    value={tempEditData.case_no || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_no: e.target.value})}
+                                                                    size="sm"
+                                                                />
+                                                            ) : (
+                                                                entry.case_no
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            {editingRow === index ? (
+                                                                <Form.Control
+                                                                    type="text"
+                                                                    value={tempEditData.case_year || ''}
+                                                                    onChange={(e) => setTempEditData({...tempEditData, case_year: e.target.value})}
+                                                                    size="sm"
+                                                                />
+                                                            ) : (
+                                                                entry.case_year
                                                             )}
                                                         </td>
                                                         <td>

@@ -87,28 +87,6 @@ const Dashboard = () => {
     end: ''
   });
 
-  // Independent loading for each widget
-  useEffect(() => {
-    fetchWeeklyStatus();
-  }, [fetchWeeklyStatus, weeklyRange.start, weeklyRange.end]);
-
-  useEffect(() => {
-    fetchAgpStats();
-  }, [fetchAgpStats, agpName]);
-
-  useEffect(() => {
-    fetchMonthlyAvg();
-  }, [fetchMonthlyAvg, year]);
-
-  // Fetch new analytics data on component mount and when date range changes
-  useEffect(() => {
-    fetchMattersByDateRange();
-  }, [fetchMattersByDateRange, dateRange.start, dateRange.end]);
-
-  useEffect(() => {
-    fetchAgpDistribution();
-  }, []);
-
   // Fetch weekly board status with independent loading
   const fetchWeeklyStatus = useCallback(async () => {
     setWeeklyLoading(true);
@@ -236,6 +214,28 @@ const Dashboard = () => {
       }
     }
   };
+
+  // Independent loading for each widget - placed after function definitions
+  useEffect(() => {
+    fetchWeeklyStatus();
+  }, [fetchWeeklyStatus]);
+
+  useEffect(() => {
+    fetchAgpStats();
+  }, [fetchAgpStats]);
+
+  useEffect(() => {
+    fetchMonthlyAvg();
+  }, [fetchMonthlyAvg]);
+
+  // Fetch new analytics data on component mount and when date range changes
+  useEffect(() => {
+    fetchMattersByDateRange();
+  }, [fetchMattersByDateRange]);
+
+  useEffect(() => {
+    fetchAgpDistribution();
+  }, []);
 
   // Helper function for pagination
   const getPaginatedData = (data, currentPage) => {

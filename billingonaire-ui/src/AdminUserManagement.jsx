@@ -37,28 +37,6 @@ const AdminUserManagement = () => {
     full_name: ''
   });
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('Auth state changed, user:', user?.email || 'No user');
-      setUser(user);
-      if (user) {
-        console.log('User authenticated, loading profile and data...');
-        await loadUserProfile();
-        // Wait a bit for profile to load before loading users
-        setTimeout(async () => {
-          await loadUsers();
-          await loadAvailableRoles();
-          await loadAvailableLegalCategories();
-          await loadUnsyncedUsers();
-        }, 500);
-      } else {
-        console.log('No user authenticated');
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [loadUsers]);
-
   const loadUserProfile = async () => {
     try {
       console.log('Loading user profile...');
@@ -244,6 +222,29 @@ const AdminUserManagement = () => {
       setError(`Failed to create user: ${error.message}`);
     }
   };
+
+  // useEffect placed after all function definitions to avoid Temporal Dead Zone errors
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed, user:', user?.email || 'No user');
+      setUser(user);
+      if (user) {
+        console.log('User authenticated, loading profile and data...');
+        await loadUserProfile();
+        // Wait a bit for profile to load before loading users
+        setTimeout(async () => {
+          await loadUsers();
+          await loadAvailableRoles();
+          await loadAvailableLegalCategories();
+          await loadUnsyncedUsers();
+        }, 500);
+      } else {
+        console.log('No user authenticated');
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [loadUsers]);
 
   if (loading) {
     return (

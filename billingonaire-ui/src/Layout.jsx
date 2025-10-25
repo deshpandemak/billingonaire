@@ -27,27 +27,46 @@ const Layout = ({ children }) => {
       setUser(user);
       if (user) {
         try {
+          console.log('🔐 Layout: User authenticated, fetching profile for:', user.email);
+          
+          // Get Firebase ID token
+          const idToken = await user.getIdToken();
+          console.log('✅ Layout: Firebase ID token obtained, length:', idToken?.length || 0);
+          
           // Get user profile to check role
           const response = await fetch(getApiUrl('/user/profile'), {
             headers: {
-              'Authorization': `Bearer ${await user.getIdToken()}`
+              'Authorization': `Bearer ${idToken}`
             }
           });
+          
+          console.log('📡 Layout: Profile fetch response status:', response.status);
+          
           if (response.ok) {
             const profile = await response.json();
-            console.log('✅ User profile loaded:', profile);
+            console.log('✅ Layout: User profile loaded:', profile);
+            console.log('👤 Layout: User role:', profile.role);
+            console.log('🔑 Layout: Is admin?', profile.role === 'admin');
             setUserProfile(profile);
           } else {
-            console.error('❌ Failed to load user profile, response not ok:', response.status);
-            // Set basic profile structure for fallback
-            setUserProfile({ email: user.email, role: 'user' });
+            console.error('❌ Layout: Failed to load user profile, response not ok:', response.status);
+            const errorText = await response.text();
+            console.error('❌ Layout: Error details:', errorText);
+            // Keep profile as null to show loading state instead of assuming role
+            setUserProfile(null);
           }
         } catch (error) {
-          console.error('❌ Error loading user profile:', error);
-          // Set basic profile structure for fallback
-          setUserProfile({ email: user.email, role: 'user' });
+          console.error('❌ Layout: Error loading user profile:', error);
+          console.error('❌ Layout: Error details:', {
+            message: error.message,
+            stack: error.stack,
+            type: error.constructor.name
+          });
+          // Keep profile as null to show loading state instead of assuming role
+          setUserProfile(null);
         }
       } else {
+        console.log('❌ Layout: No user authenticated');
         setUserProfile(null);
       }
     });
