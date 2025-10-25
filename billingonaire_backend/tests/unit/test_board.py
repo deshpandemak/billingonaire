@@ -128,6 +128,9 @@ class TestBoardDataProcessing:
             case_year="2024",
         )
         assert "additional_cases" in result
+        assert isinstance(result["additional_cases"], list)
+        assert "WP/999/2024" in result["additional_cases"]
+        assert "WP/888/2024" in result["additional_cases"]
 
 
 class TestBoardFileReading:
@@ -196,8 +199,8 @@ class TestBoardStorageOperations:
                     "serial_number": "1",
                     "petitioner_lawyer": "Test",
                     "respondent_lawyer": "Test",
-                    "additional_cases": "",
-                    "additional_respondent_lawyers": "",
+                    "additional_cases": [],
+                    "additional_respondent_lawyers": [],
                 }
             ]
         )

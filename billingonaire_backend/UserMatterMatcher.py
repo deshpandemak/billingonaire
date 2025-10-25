@@ -381,6 +381,28 @@ class UserMatterMatcher:
                                 )
                             )
 
+                # Check additional_respondent_lawyers (array field)
+                additional_lawyers = doc_data.get("additional_respondent_lawyers", [])
+                if additional_lawyers and isinstance(additional_lawyers, list):
+                    # Join array into searchable text
+                    text_to_search = " ".join(str(lawyer) for lawyer in additional_lawyers)
+                    text_matches = self.find_user_matches_in_text(
+                        text_to_search, user_role, "additional_respondent_lawyers"
+                    )
+                    for matched_text, confidence in text_matches:
+                        matches.append(
+                            MatterMatch(
+                                case_id=case_id,
+                                case_ref=case_ref,
+                                match_source="board_data",
+                                match_field="additional_respondent_lawyers",
+                                matched_text=matched_text,
+                                confidence_score=confidence,
+                                role_type=user_role.role_type,
+                                board_date=str(doc_data.get("board_date", "")),
+                            )
+                        )
+
                 # Check order analysis fields if available
                 if doc_data.get("order_analysis_completed"):
                     order_fields = {
@@ -503,6 +525,28 @@ class UserMatterMatcher:
                                 board_date=str(doc_data.get("board_date", "")),
                             )
                         )
+
+            # Search additional_respondent_lawyers (array field)
+            additional_lawyers = doc_data.get("additional_respondent_lawyers", [])
+            if additional_lawyers and isinstance(additional_lawyers, list):
+                # Join array into searchable text
+                text_to_search = " ".join(str(lawyer) for lawyer in additional_lawyers)
+                text_matches = self.find_user_matches_in_text(
+                    text_to_search, user_role, "additional_respondent_lawyers"
+                )
+                for matched_text, confidence in text_matches:
+                    matches.append(
+                        MatterMatch(
+                            case_id=case_id,
+                            case_ref=case_ref,
+                            match_source="board_data",
+                            match_field="additional_respondent_lawyers",
+                            matched_text=matched_text,
+                            confidence_score=confidence,
+                            role_type=user_role.role_type,
+                            board_date=str(doc_data.get("board_date", "")),
+                        )
+                    )
 
             # Search order analysis fields if available
             if doc_data.get("order_analysis_completed"):

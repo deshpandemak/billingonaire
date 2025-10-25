@@ -107,7 +107,8 @@ class Board:
         date_pattern = r"(\d+/\d+/\d+)"
         court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
         case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
-        case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
+        # Updated: removed [\d ]+ to \d+ to prevent greedy matching with spaces
+        case_pattern = r"\s+(\d+)\s+([A-Za-z()]+/\s*\d+/\d+)"
 
         # Extract board date
         date = re.findall(date_pattern, text)
@@ -159,7 +160,7 @@ class Board:
                 if (
                     i + 2 < len(result)
                     and re.match(r"^\s*\d+\s*$", data.strip())
-                    and re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", result[i + 1].strip())
+                    and re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip())
                 ):
 
                     # Extract case details (normalize spaces for consistency)
@@ -191,7 +192,7 @@ class Board:
                     # Handle standalone patterns
                     if re.match(r"^\s*\d+\s*$", data.strip()):
                         serial_no = data.strip()
-                    elif re.match(r"^[A-Za-z()]*/\s*\d+/[\d ]+$", data.strip()):
+                    elif re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", data.strip()):
                         case_no_year = data.strip().split("/")
                         case_type = case_no_year[0].strip()
                         case_no = case_no_year[1].strip()
@@ -264,9 +265,17 @@ class Board:
         case_year,
     ):
         court_data = court_details.strip()
-        lawyers = re.match(r"(.*?)(SHRI.*?|SMT.*?|MS.*?)(WITH|$)", court_data)
+        # Updated pattern to stop at page header markers and case references
+        # Stops at: WITH, IN THE COURT, IN CASE/, Page:, C.R. No:, * (section markers)
+        # This prevents capturing page header content in respondent_lawyer field
+        lawyers = re.match(
+            r"(.*?)(SHRI.*?|SMT.*?|MS.*?)(WITH|IN THE COURT|IN \w+/|Page:|C\.R\. No:|\*|$)",
+            court_data,
+        )
         remaining_data = ""
-        additional_cases = re.findall(r"([A-Za-z()]*/\s*\d+/[\d ]+)", court_data)
+        # Updated pattern: removed spaces from year part ([\d ]+) -> (\d+)
+        # This prevents greedy matching like "IA/1808/2025 11" instead of "IA/1808/2025"
+        additional_cases = re.findall(r"([A-Za-z()]+/\s*\d+/\d+)", court_data)
         # print(str(court_data))
         # print(str(lawyers.group(1)))
         # print(str(lawyers.group(2)))
@@ -286,20 +295,51 @@ class Board:
         #     else:
         #         petitioner_lawyer = lawyers[0]
         #         respondent_lawyer = lawyers[1]
+        # Clean up respondent lawyer (remove case references and IN keyword)
+        respondent_lawyer_raw = respondent_lawyer
         respondent_lawyer = respondent_lawyer.replace("IN", "")
         respondent_lawyer = respondent_lawyer.replace("in", "")
         for case in additional_cases:
             respondent_lawyer = respondent_lawyer.replace(case, "")
+        respondent_lawyer = respondent_lawyer.strip()
 
+        # Remove extracted parts from court_data to get additional lawyers
+        # Use the raw respondent_lawyer for removal to ensure exact match
         court_data = court_data.replace(petitioner_lawyer, "")
-        court_data = court_data.replace(respondent_lawyer, "")
-        court_data = court_data.replace("WITH", "")
-        court_data = court_data.replace("with", "")
+        court_data = court_data.replace(respondent_lawyer_raw, "")
+        court_data = court_data.replace("WITH", " ")  # Replace WITH with space for splitting
+        court_data = court_data.replace("with", " ")
         court_data = court_data.replace("IN", "")
         court_data = court_data.replace("in", "")
         court_data = court_data.replace("*", "")
-        court_data = re.sub(r"([A-Za-z()]*/\s*\d+/[\d ]+)", "", court_data)
+        # Updated: removed [\d ]+ to \d+ to prevent greedy matching
+        court_data = re.sub(r"([A-Za-z()]+/\s*\d+/\d+)", "", court_data)
+        
+        # Remove page header content before splitting lawyers
+        # Stop at any of these markers: IN THE COURT, Page:, C.R. No:, Bench ID:, HEADER NOTE, etc.
+        header_match = re.search(
+            r"(THE COURT|Page:|C\.R\. No:|Bench ID:|HEADER NOTE|APPELLATE SIDE|BEFORE THE)",
+            court_data,
+            re.IGNORECASE
+        )
+        if header_match:
+            # Keep only text before the header marker
+            court_data = court_data[:header_match.start()]
+        
         court_data = court_data.strip()
+        
+        # Parse additional respondent lawyers into array
+        additional_respondent_lawyers = []
+        if court_data:
+            # Split on:
+            # 1. Two or more spaces before lawyer titles (handles "GP      SMT" pattern)
+            # 2. Comma before lawyer titles (handles "AGP, SHRI" pattern)
+            lawyers_list = re.split(
+                r"(?:\s{2,}(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.)|,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.))",
+                court_data
+            )
+            additional_respondent_lawyers = [lawyer.strip() for lawyer in lawyers_list if lawyer.strip()]
+        
         return {
             "file_name": file_name,
             "board_date": board_date,
@@ -309,8 +349,8 @@ class Board:
             "serial_number": serial_no,
             "petitioner_lawyer": petitioner_lawyer,
             "respondent_lawyer": respondent_lawyer,
-            "additional_cases": ",".join(c.strip() for c in additional_cases),
-            "additional_respondent_lawyers": court_data,
+            "additional_cases": [c.strip() for c in additional_cases],
+            "additional_respondent_lawyers": additional_respondent_lawyers,
         }
 
     def read_board(self, filename, file):
@@ -320,8 +360,10 @@ class Board:
             date_pattern = r"(\d+/\d+/\d+)"
             court_pattern = r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
             case_stage1_pattern = r"(.*?)\s*\*\s*(.*?)\s*\*\s*"
-            case_pattern = r"\s+(\d+)\s+([A-Za-z()]*/\s*\d+/[\d ]+)"
-            case_no_pattern = r"([A-Za-z()]*/\s*\d+/[\d ]+)"
+            # Updated pattern to handle both "54 WP/123/2024" and "54. WP/123/2024" formats
+            # Also updated: removed [\d ]+ to \d+ to prevent greedy matching with spaces
+            case_pattern = r"(?:\s+|^)(\d+)\.?\s+([A-Za-z()]+/\s*\d+/\d+)"
+            case_no_pattern = r"([A-Za-z()]+/\s*\d+/\d+)"
 
             with pdfplumber.open(file) as reader:
                 number_of_pages = len(reader.pages)
@@ -330,7 +372,8 @@ class Board:
                     page = reader.pages[i]
                     page_text = page.extract_text()
                     if page_text:
-                        text += page_text.replace("\n", " ")
+                        # Add space after page content to prevent concatenation issues
+                        text += page_text.replace("\n", " ") + " "
                 # Explicit error if no text extracted
                 if not text.strip():
                     logging.error("No text could be extracted from the PDF file.")
@@ -442,7 +485,11 @@ class Board:
                             i += 1
 
             matter_df = pd.DataFrame(matter_list)
-            matter_df = matter_df.drop_duplicates()
+            # Drop duplicates based on case identifiers only (not array columns)
+            # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
+            matter_df = matter_df.drop_duplicates(
+                subset=['file_name', 'case_type', 'case_no', 'case_year', 'serial_number']
+            )
 
             return matter_df
         except Exception as e:

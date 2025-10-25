@@ -2594,22 +2594,10 @@ async def generate_bill_data(
                         cases_by_agp[respondent_lawyer] = []
                     cases_by_agp[respondent_lawyer].append((case_id, case_data))
 
-                # Source 2: additional_respondent_lawyers (comma-separated from daily board)
-                # Parse properly to keep name+designation pairs intact (e.g., "SHRI A.B.SHARMA,AGP")
-                additional_lawyers = case_data.get(
-                    "additional_respondent_lawyers", ""
-                ).strip()
-                if additional_lawyers:
-                    # Split on patterns that indicate separate advocates
-                    # Look for patterns like "AGP," or "GP," followed by space and new name
-                    import re
-
-                    # Split on AGP/GP followed by comma and space, but keep AGP/GP with the name
-                    lawyer_names = re.split(
-                        r"(?:,\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.?\s+))",
-                        additional_lawyers,
-                    )
-                    for lawyer_name in lawyer_names:
+                # Source 2: additional_respondent_lawyers (now an array from daily board)
+                additional_lawyers = case_data.get("additional_respondent_lawyers", [])
+                if additional_lawyers and isinstance(additional_lawyers, list):
+                    for lawyer_name in additional_lawyers:
                         lawyer_name = lawyer_name.strip().rstrip(",")
                         if lawyer_name:
                             unique_agp_names.add(lawyer_name)

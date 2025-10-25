@@ -219,9 +219,9 @@ const Table = () => {
           agpNames.push(params.data.respondent_lawyer);
         }
         
-        // Additional AGPs from board
-        if (params.data?.additional_respondent_lawyers) {
-          agpNames.push(params.data.additional_respondent_lawyers);
+        // Additional AGPs from board (now an array)
+        if (params.data?.additional_respondent_lawyers && Array.isArray(params.data.additional_respondent_lawyers)) {
+          agpNames.push(...params.data.additional_respondent_lawyers);
         }
         
         // Government pleaders from order analysis (simplified structure)
