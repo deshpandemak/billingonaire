@@ -75,11 +75,11 @@ jobs:
             --allow-unauthenticated \
             --memory 2Gi \
             --cpu 2 \
-            --timeout 3600s \
+            --timeout 540s \
             --max-instances 10 \
             --min-instances 1 \
-            --set-env-vars "ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50" \
-            --set-secrets "GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
+            --service-account firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
+            --set-env-vars "ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
       
       - name: Verify Deployment
         run: |
