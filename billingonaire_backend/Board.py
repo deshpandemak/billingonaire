@@ -509,15 +509,20 @@ class Board:
             matter_df = pd.DataFrame(matter_list)
             # Drop duplicates based on case identifiers only (not array columns)
             # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
-            matter_df = matter_df.drop_duplicates(
-                subset=[
-                    "file_name",
-                    "case_type",
-                    "case_no",
-                    "case_year",
-                    "serial_number",
-                ]
-            )
+            # NOTE: Some boards may not have serial numbers for every entry. If
+            # serial numbers are empty for many rows, including them in the
+            # deduplication subset will collapse distinct records into one.
+            # Include 'serial_number' in the subset only when it contains
+            # meaningful (non-empty) values.
+            subset_fields = ["file_name", "case_type", "case_no", "case_year"]
+            if (
+                "serial_number" in matter_df.columns
+                and not matter_df["serial_number"].dropna().empty
+                and any(str(x).strip() for x in matter_df["serial_number"].dropna())
+            ):
+                subset_fields.append("serial_number")
+
+            matter_df = matter_df.drop_duplicates(subset=subset_fields)
 
             return matter_df
         except Exception as e:
