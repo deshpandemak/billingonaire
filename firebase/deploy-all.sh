@@ -29,8 +29,7 @@ gcloud run deploy billingonaire-backend \
   --memory=2Gi \
   --max-instances=10 \
   --min-instances=1 \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50" \
-  --update-secrets="GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
 
 cd ..
 
