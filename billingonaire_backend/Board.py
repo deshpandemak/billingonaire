@@ -104,8 +104,8 @@ class Board:
             r"(.*?)I\s*N\s*TH\s*E\s*CO\s*U\s*R\s*T\s*O\s*F.*|"
             r"(.*?)BEFORE\s*THE\s*.*|(.*?)\s*THE\s*CO\s*U\s*RT\s*OF\s*.*"
         )
-        # Updated: removed [\d ]+ to \d+ to prevent greedy matching with spaces
-        case_pattern = r"\s+(\d+)\s+([A-Za-z()]+/\s*\d+/\d+)"
+        # Updated pattern to match standard parsing: handle start of string and optional dots
+        case_pattern = r"(?:\s+|^)(\d+)\.?\s+([A-Za-z()]+/\s*\d+/\d+)"
 
         # Extract board date
         date = re.findall(date_pattern, text)
@@ -153,18 +153,21 @@ class Board:
                 # Stage headers like "* FOR SPEAKING TO THE MINUTES *" don't represent actual cases
                 i += 1
             else:
+                # Define case_no_pattern for validation (matches standard parsing)
+                case_no_pattern = r"([A-Za-z()]+/\s*\d+/\d+)"
+                
                 # Check if this is a serial number followed by case number
                 if (
                     i + 2 < len(result)
-                    and re.match(r"^\s*\d+\s*$", data.strip())
-                    and re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", result[i + 1].strip())
+                    and data.strip().isnumeric()
+                    and re.match(case_no_pattern, result[i + 1])
                 ):
-                    # Extract case details (normalize spaces for consistency)
+                    # Extract case details (matches standard parsing exactly)
                     serial_no = data.strip()
                     case_data = result[i + 1].replace(" ", "").split("/")
-                    case_type = case_data[0].strip()
-                    case_no = case_data[1].strip()
-                    case_year = case_data[2].strip()
+                    case_type = case_data[0]
+                    case_no = case_data[1]
+                    case_year = case_data[2]
 
                     # Get court/lawyer details from the next part
                     court_details = result[i + 2].strip() if i + 2 < len(result) else ""
@@ -185,36 +188,50 @@ class Board:
 
                     i += 3  # Skip the next 2 parts as they've been processed
                 else:
-                    # Handle standalone patterns
-                    if re.match(r"^\s*\d+\s*$", data.strip()):
-                        serial_no = data.strip()
-                    elif re.match(r"^[A-Za-z()]+/\s*\d+/\d+$", data.strip()):
-                        case_no_year = data.strip().split("/")
-                        case_type = case_no_year[0].strip()
-                        case_no = case_no_year[1].strip()
-                        case_year = case_no_year[2].strip()
+                    # Handle standalone patterns (matches standard parsing)
+                    if data.isnumeric():
+                        serial_no = data
+                    elif re.match(case_no_pattern, data):
+                        data = data.replace(" ", "")
+                        case_number = data.split("/")
+                        case_type = case_number[0]
+                        case_no = case_number[1]
+                        case_year = case_number[2]
+                    else:
+                        # Only create records for meaningful content (matches standard parsing)
+                        if data.strip() and len(data.strip()) > 3:
+                            record = self.create_enhanced_record(
+                                court_details=data.strip(),
+                                file_name=filename,
+                                board_date=board_date,
+                                serial_no=serial_no,
+                                case_type=case_type,
+                                case_no=case_no,
+                                case_year=case_year,
+                                ml_result=ml_result,
+                            )
+                            matter_list.append(record)
                     i += 1
 
-        # Create DataFrame and remove duplicates for consistency with standard parsing
+        # Create DataFrame and remove duplicates (matches standard parsing exactly)
         matter_df = pd.DataFrame(matter_list)
+        
+        # Drop duplicates based on case identifiers only (not array columns)
+        # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
+        # NOTE: Some boards may not have serial numbers for every entry. If
+        # serial numbers are empty for many rows, including them in the
+        # deduplication subset will collapse distinct records into one.
+        # Include 'serial_number' in the subset only when it contains
+        # meaningful (non-empty) values.
+        subset_fields = ["file_name", "case_type", "case_no", "case_year"]
+        if (
+            "serial_number" in matter_df.columns
+            and not matter_df["serial_number"].dropna().empty
+            and any(str(x).strip() for x in matter_df["serial_number"].dropna())
+        ):
+            subset_fields.append("serial_number")
 
-        # Drop duplicates excluding list columns which are unhashable
-        if not matter_df.empty:
-            # Get all columns except those containing lists
-            hashable_columns = []
-            for col in matter_df.columns:
-                # Check if the column contains lists by looking at the first non-null value
-                first_value = (
-                    matter_df[col].dropna().iloc[0]
-                    if not matter_df[col].dropna().empty
-                    else None
-                )
-                if not isinstance(first_value, list):
-                    hashable_columns.append(col)
-
-            # Drop duplicates based only on hashable columns
-            if hashable_columns:
-                matter_df = matter_df.drop_duplicates(subset=hashable_columns)
+        matter_df = matter_df.drop_duplicates(subset=subset_fields)
 
         return matter_df
 
