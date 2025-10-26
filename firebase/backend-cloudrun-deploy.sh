@@ -24,6 +24,16 @@ echo "🚀 Building and deploying backend to Google Cloud Run..."
 gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
 
 echo "🚀 Deploying to Cloud Run..."
+
+# Check if secret exists in Secret Manager
+SECRET_MOUNT=""
+if gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
+  echo "✅ Using Secret Manager for service account key"
+  SECRET_MOUNT="--update-secrets=GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
+else
+  echo "⚠️ Secret not found in Secret Manager - service will use ADC"
+fi
+
 gcloud run deploy billingonaire-backend \
   --image=gcr.io/billingonaire/billingonaire-backend \
   --region=asia-south1 \
@@ -35,7 +45,8 @@ gcloud run deploy billingonaire-backend \
   --max-instances=10 \
   --min-instances=1 \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=billingonaire" \
+  $SECRET_MOUNT
 
 # Clean up
 rm /tmp/gcloud-key.json

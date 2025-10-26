@@ -53,48 +53,26 @@ jobs:
           gcloud services enable run.googleapis.com
           gcloud services enable secretmanager.googleapis.com
       
-      - name: Create Firebase Secret if Not Exists
+      - name: Setup Secret Manager
         run: |
-          echo "🔐 Ensuring Firebase service account secret exists..."
+          echo "🔐 Setting up Secret Manager for deployment..."
           
-          # Try to create the secret if it doesn't exist
+          # Enable Secret Manager API
+          gcloud services enable secretmanager.googleapis.com
+          
+          # Check if secret exists, create if it doesn't
           if ! gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
-            echo "Creating GCLOUD_SERVICE_ACCOUNT_KEY secret..."
-            
-            # Use a different service account or approach for secret creation
-            # Create a temporary file with the secret content
-            echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' > /tmp/service-account-key.json
-            
-            # Try to create the secret using gcloud with proper error handling
-            if gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=/tmp/service-account-key.json 2>/dev/null; then
-              echo "✅ Secret created successfully"
-            else
-              echo "⚠️ Could not create secret automatically"
-              echo "🔧 Creating secret using alternative approach..."
-              
-              # Alternative: Try using the Compute Engine default service account
-              gcloud config set account "$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)"
-              
-              if gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=/tmp/service-account-key.json; then
-                echo "✅ Secret created with alternative approach"
-              else
-                echo "❌ Failed to create secret - continuing without Secret Manager"
-                echo "   Cloud Run will use Application Default Credentials instead"
-              fi
-            fi
-            
-            # Clean up temporary file
-            rm -f /tmp/service-account-key.json
+            echo "🔑 Creating GCLOUD_SERVICE_ACCOUNT_KEY secret..."
+            echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' | gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=-
+            echo "✅ Secret created successfully"
           else
             echo "✅ GCLOUD_SERVICE_ACCOUNT_KEY secret already exists"
           fi
           
-          # Grant access to the secret if it exists
-          if gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
-            gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
-              --member="serviceAccount:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com" \
-              --role="roles/secretmanager.secretAccessor" || echo "⚠️ Access binding may already exist"
-          fi
+          # Grant access to the Cloud Run service account
+          gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
+            --member="serviceAccount:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com" \
+            --role="roles/secretmanager.secretAccessor" || echo "⚠️ Access binding may already exist"
       
       - name: Verify Service Account Permissions
         run: |
@@ -115,39 +93,19 @@ jobs:
             --format="table(bindings.role)" \
             --filter="bindings.members:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
       
-      - name: Build and Deploy with Cloud Build (matching Firebase script)
+      - name: Build and Deploy to Cloud Run
         run: |
           echo "🚀 Building and deploying backend to Google Cloud Run..."
           
-          # Verify we have the Dockerfile
-          if [ ! -f billingonaire_backend/Dockerfile ]; then
-            echo "❌ Error: Dockerfile not found in billingonaire_backend/"
-            exit 1
-          fi
-          
-          # Check current directory and list contents
-          echo "📂 Current directory: $(pwd)"
-          echo "📂 Backend directory contents:"
-          ls -la billingonaire_backend/
-          
           cd billingonaire_backend
           
-          # Build container image using Cloud Build (same as Firebase script)
+          # Build container image using Cloud Build
           echo "🔨 Building Docker image..."
           gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }} .
           
           echo "🚀 Deploying to Cloud Run..."
           
-          # Check if secret exists before trying to mount it
-          SECRET_MOUNT=""
-          if gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
-            echo "✅ Secret found - mounting to Cloud Run"
-            SECRET_MOUNT="--update-secrets=GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest"
-          else
-            echo "⚠️ Secret not found - deploying without secret mount"
-            echo "   Application will use Application Default Credentials"
-          fi
-          
+          # Deploy with Secret Manager integration
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }} \
             --region=${{ env.GCP_REGION }} \
@@ -160,7 +118,7 @@ jobs:
             --min-instances=1 \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
             --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}" \
-            $SECRET_MOUNT
+            --update-secrets=GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest
       
       - name: Verify Deployment
         run: |
@@ -204,7 +162,7 @@ jobs:
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          firebaseServiceAccount: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
           channelId: live
           projectId: ${{ env.GCP_PROJECT_ID }}
       
