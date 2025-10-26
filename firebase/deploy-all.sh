@@ -18,6 +18,7 @@ gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
 
 echo ""
 echo "🚀 Deploying backend to Cloud Run..."
+echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 gcloud run deploy billingonaire-backend \
   --image=gcr.io/billingonaire/billingonaire-backend:latest \
   --region=asia-south1 \
@@ -29,7 +30,7 @@ gcloud run deploy billingonaire-backend \
   --memory=2Gi \
   --max-instances=10 \
   --min-instances=1 \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=billingonaire"
 
 cd ..
 

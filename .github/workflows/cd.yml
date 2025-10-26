@@ -104,28 +104,6 @@ jobs:
         run: |
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
-          gcloud services enable secretmanager.googleapis.com
-      
-      - name: Setup Secret Manager
-        run: |
-          echo "🔐 Setting up Secret Manager for deployment..."
-          
-          # Enable Secret Manager API
-          gcloud services enable secretmanager.googleapis.com
-          
-          # Check if secret exists, create if it doesn't
-          if ! gcloud secrets describe GCLOUD_SERVICE_ACCOUNT_KEY >/dev/null 2>&1; then
-            echo "🔑 Creating GCLOUD_SERVICE_ACCOUNT_KEY secret..."
-            echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' | gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=-
-            echo "✅ Secret created successfully"
-          else
-            echo "✅ GCLOUD_SERVICE_ACCOUNT_KEY secret already exists"
-          fi
-          
-          # Grant access to the Cloud Run service account
-          gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
-            --member="serviceAccount:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com" \
-            --role="roles/secretmanager.secretAccessor" || echo "⚠️ Access binding may already exist"
       
       - name: Verify Service Account Permissions
         run: |
@@ -145,6 +123,8 @@ jobs:
             --flatten="bindings[].members" \
             --format="table(bindings.role)" \
             --filter="bindings.members:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
+          
+          echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
       
       - name: Build and Deploy to Cloud Run
         run: |
@@ -158,7 +138,7 @@ jobs:
           
           echo "🚀 Deploying to Cloud Run..."
           
-          # Deploy with Secret Manager integration
+          # Deploy with Application Default Credentials (service account)
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }} \
             --region=${{ env.GCP_REGION }} \
@@ -170,8 +150,7 @@ jobs:
             --max-instances=10 \
             --min-instances=1 \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-            --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}" \
-            --update-secrets=GCLOUD_SERVICE_ACCOUNT_KEY=GCLOUD_SERVICE_ACCOUNT_KEY:latest
+            --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}"
       
       - name: Verify Deployment
         run: |
