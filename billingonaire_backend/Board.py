@@ -155,7 +155,7 @@ class Board:
             else:
                 # Define case_no_pattern for validation (matches standard parsing)
                 case_no_pattern = r"([A-Za-z()]+/\s*\d+/\d+)"
-                
+
                 # Check if this is a serial number followed by case number
                 if (
                     i + 2 < len(result)
@@ -215,7 +215,7 @@ class Board:
 
         # Create DataFrame and remove duplicates (matches standard parsing exactly)
         matter_df = pd.DataFrame(matter_list)
-        
+
         # Drop duplicates based on case identifiers only (not array columns)
         # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
         # NOTE: Some boards may not have serial numbers for every entry. If
