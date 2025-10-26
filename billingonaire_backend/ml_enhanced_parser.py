@@ -306,7 +306,8 @@ class MLEnhancedParser:
             for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
-                    text += page_text.replace("\n", " ")
+                    # Add space after page content to prevent concatenation issues
+                    text += page_text.replace("\n", " ") + " "
 
         if not text.strip():
             confidence = 0.0
