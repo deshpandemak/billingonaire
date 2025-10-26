@@ -189,6 +189,7 @@ jobs:
           npm run build
         env:
           NODE_ENV: production
+          VITE_API_URL: https://billingonaire-backend-819125105651.asia-south1.run.app
       
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0

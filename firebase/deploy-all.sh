@@ -38,7 +38,7 @@ cd ..
 echo ""
 echo "📦 Building frontend..."
 cd billingonaire-ui
-npm run build
+VITE_API_URL=https://billingonaire-backend-819125105651.asia-south1.run.app npm run build
 
 echo ""
 echo "🚀 Deploying frontend to Firebase Hosting..."
