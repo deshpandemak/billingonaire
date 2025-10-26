@@ -1,0 +1,31 @@
+# Alternative: If your secret is base64-encoded
+# Replace the "Validate Service Account Secret Format" and "Authenticate to Google Cloud" steps with:
+
+      - name: Decode and Validate Base64 Service Account Secret
+        env:
+          SA_KEY_B64: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
+        run: |
+          echo "$SA_KEY_B64" | base64 --decode > /tmp/sa-key.json
+          
+          # Validate the decoded JSON
+          python3 - <<'EOF'
+          import json, sys
+          try:
+              with open('/tmp/sa-key.json') as f:
+                  data = json.load(f)
+              if data.get('type') != 'service_account':
+                  print('❌ ERROR: Not a service account key')
+                  sys.exit(1)
+              print('✅ Valid service account key')
+              print(f'   Project: {data.get("project_id")}')
+              print(f'   Email: {data.get("client_email")}')
+          except Exception as e:
+              print(f'❌ ERROR: {e}')
+              sys.exit(1)
+          EOF
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_file: '/tmp/sa-key.json'  # Use file instead of json
+          project_id: '${{ env.GCP_PROJECT_ID }}'

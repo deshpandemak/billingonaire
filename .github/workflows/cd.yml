@@ -27,6 +27,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Service Account Secret Format
+        env:
+          SA_KEY: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
+        run: |
+          python3 - <<'EOF'
+          import os, sys, json
+          
+          sa_key = os.environ.get('SA_KEY', '').strip()
+          
+          # Check if secret exists
+          if not sa_key:
+              print('❌ ERROR: GCLOUD_SERVICE_ACCOUNT_KEY secret is empty or not set')
+              sys.exit(1)
+          
+          # Check if it starts with HTML
+          if sa_key.startswith('<!') or sa_key.startswith('<html'):
+              print('❌ ERROR: Secret contains HTML instead of JSON')
+              print('   The secret appears to be an HTML page (starts with "<!doctype" or "<html>")')
+              print('   Please re-create the secret with the actual JSON service account key')
+              sys.exit(2)
+          
+          # Check if it starts with JSON
+          if not sa_key.startswith('{'):
+              print('❌ ERROR: Secret does not start with "{" - not valid JSON format')
+              print('   First 50 chars:', sa_key[:50] if len(sa_key) > 50 else sa_key)
+              print('   Hint: If base64-encoded, decode it first or use credentials_file instead')
+              sys.exit(3)
+          
+          # Try parsing as JSON
+          try:
+              parsed = json.loads(sa_key)
+          except json.JSONDecodeError as e:
+              print(f'❌ ERROR: Secret is not valid JSON: {e}')
+              sys.exit(4)
+          
+          # Verify it's a service account key
+          if parsed.get('type') != 'service_account':
+              print('❌ ERROR: JSON parsed but "type" field is not "service_account"')
+              print(f'   Found type: {parsed.get("type")}')
+              sys.exit(5)
+          
+          # Check required fields
+          required_fields = ['project_id', 'private_key_id', 'private_key', 'client_email']
+          missing = [f for f in required_fields if f not in parsed]
+          if missing:
+              print(f'❌ ERROR: Service account JSON missing required fields: {missing}')
+              sys.exit(6)
+          
+          print('✅ Service account secret format is valid')
+          print(f'   Project: {parsed.get("project_id")}')
+          print(f'   Email: {parsed.get("client_email")}')
+          EOF
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
