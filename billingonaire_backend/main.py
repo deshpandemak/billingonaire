@@ -17,12 +17,12 @@ from firebase_admin import auth, credentials, firestore
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from Board import Board
-from CourtScraper import BombayHighCourtScraper
-from Dashboard import DashboardData
-from OrderManager import OrderManager
-from UserManager import UserManager
-from UserMatterMatcher import UserRole
+from Board import Board  # noqa: E402
+from CourtScraper import BombayHighCourtScraper  # noqa: E402
+from Dashboard import DashboardData  # noqa: E402
+from OrderManager import OrderManager  # noqa: E402
+from UserManager import UserManager  # noqa: E402
+from UserMatterMatcher import UserRole  # noqa: E402
 
 app = FastAPI(
     title="Billingonaire API",
@@ -2747,7 +2747,7 @@ async def generate_bill_data(
                                     "editable": True,
                                 }
                                 bill_entries.append(bill_entry)
-                        except ValueError as date_error:
+                        except ValueError:
                             logging.warning(
                                 f"Invalid date format for case {case_id}: {board_date_str}"
                             )
@@ -2833,7 +2833,7 @@ async def generate_bill_data(
                                 }
                                 bill_entries.append(bill_entry)
 
-                        except ValueError as date_error:
+                        except ValueError:
                             logging.warning(
                                 f"Invalid date format for case {case_id}: {board_date_str}"
                             )

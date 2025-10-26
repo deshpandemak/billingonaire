@@ -371,22 +371,36 @@ class Board:
                 r",\s*(?=(?:SHRI|SMT|MS|MR|DR|PROF)\.))",
                 court_data,
             )
-            
+
             # Filter out section markers and clean each lawyer name
             for lawyer in lawyers_list:
                 lawyer = lawyer.strip()
                 if not lawyer:
                     continue
-                
+
                 # Remove section markers (FOR ADMISSION, FOR ORDERS, etc.) and dashes
                 # These are board section headers, not lawyer names
-                lawyer = re.sub(r'\s*FOR\s+(ADMISSION|CIRCULATION|ORDERS|HEARING|FINAL).*?(?=\s+[A-Z]|$)', '', lawyer, flags=re.IGNORECASE)
-                lawyer = re.sub(r'\s*DUE\s+(ADMISSION|ORDERS|MATTERS).*?(?=\s+[A-Z]|$)', '', lawyer, flags=re.IGNORECASE)
-                lawyer = re.sub(r'\s*\([^)]*DUE\s+MATTERS[^)]*\)', '', lawyer, flags=re.IGNORECASE)  # Remove (DUE MATTERS)
-                lawyer = re.sub(r'\s*-{2,}.*$', '', lawyer)  # Remove trailing dashes
-                lawyer = re.sub(r'\s*\d+\s*$', '', lawyer)  # Remove trailing numbers (like " 1", " - 1")
+                lawyer = re.sub(
+                    r"\s*FOR\s+(ADMISSION|CIRCULATION|ORDERS|HEARING|FINAL).*?(?=\s+[A-Z]|$)",
+                    "",
+                    lawyer,
+                    flags=re.IGNORECASE,
+                )
+                lawyer = re.sub(
+                    r"\s*DUE\s+(ADMISSION|ORDERS|MATTERS).*?(?=\s+[A-Z]|$)",
+                    "",
+                    lawyer,
+                    flags=re.IGNORECASE,
+                )
+                lawyer = re.sub(
+                    r"\s*\([^)]*DUE\s+MATTERS[^)]*\)", "", lawyer, flags=re.IGNORECASE
+                )  # Remove (DUE MATTERS)
+                lawyer = re.sub(r"\s*-{2,}.*$", "", lawyer)  # Remove trailing dashes
+                lawyer = re.sub(
+                    r"\s*\d+\s*$", "", lawyer
+                )  # Remove trailing numbers (like " 1", " - 1")
                 lawyer = lawyer.strip()
-                
+
                 # Only add if there's meaningful content left (lawyer name)
                 if lawyer and len(lawyer) > 5:  # Minimum reasonable lawyer name length
                     additional_respondent_lawyers.append(lawyer)

@@ -879,7 +879,6 @@ class OrderDocumentAnalyzer:
 
         # Split by lines and process each
         lines = text.split("\n")
-        current_party = None
 
         for line in lines:
             line = line.strip()
