@@ -279,19 +279,7 @@ class AutoOrderManager:
                         f"✅ Case {case_ref} - SUCCESS at sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
-                    # Step 4: Create order link in database
-                    try:
-                        self._create_order_link(case_id, order_info)
-                    except Exception as link_error:
-                        logging.error(
-                            f"Failed to create order link for {case_ref}: {link_error}"
-                        )
-                        result[
-                            "error"
-                        ] = f"Order found but link creation failed: {str(link_error)}"
-                        return result
-
-                    # Step 5: Perform full analysis and store results
+                    # Step 4: Perform full analysis first (before creating order link)
                     try:
                         analysis_result = self._analyze_order_with_date_validation(
                             case_id,
@@ -301,54 +289,78 @@ class AutoOrderManager:
                             order_info.get("order_link"),
                         )
 
-                        if analysis_result.get("success"):
-                            result["analysis_success"] = True
-                            result["analysis_data"] = analysis_result.get("data")
+                        if not analysis_result.get("success"):
+                            # Analysis failed - log and continue to next sequence
+                            # Don't create order link yet since analysis failed
+                            logging.warning(
+                                f"Analysis failed for {case_ref} seq {sequence_num}: {analysis_result.get('error')}"
+                            )
+                            attempt_log["status"] = "analysis_failed"
+                            attempt_log[
+                                "message"
+                            ] = f"Analysis failed: {analysis_result.get('error')}"
+                            result["retry_attempts"].append(attempt_log)
+                            continue
 
-                            # Step 6: Create search index
-                            try:
-                                self._create_search_index_entry(
-                                    case_id, case_data, analysis_result["data"]
-                                )
-                            except Exception as index_error:
-                                logging.error(
-                                    f"Failed to create search index for {case_ref}: {index_error}"
-                                )
-                                # Not critical - we have the order and analysis
+                        # Analysis succeeded! Now we can safely create the order link
+                        result["analysis_success"] = True
+                        result["analysis_data"] = analysis_result.get("data")
 
-                            # Step 7: Link order to additional cases found in the order (multi-case linking)
-                            try:
-                                linked_cases = self._link_order_to_additional_cases(
-                                    case_id,
-                                    case_ref,
-                                    analysis_result["data"],
-                                    order_info,
-                                    case_data.get("board_date"),
-                                )
-                                if linked_cases:
-                                    result["additional_cases_linked"] = linked_cases
-                                    logging.info(
-                                        f"Linked order to {len(linked_cases)} additional cases: {linked_cases}"
-                                    )
-                            except Exception as multi_link_error:
-                                logging.warning(
-                                    f"Failed to link order to additional cases for {case_ref}: {multi_link_error}"
-                                )
-                                # Not critical - primary case is already linked
-                        else:
+                        # Step 5: Create order link in database (only after successful analysis)
+                        try:
+                            self._create_order_link(case_id, order_info)
+                        except Exception as link_error:
+                            logging.error(
+                                f"Failed to create order link for {case_ref}: {link_error}"
+                            )
                             result[
                                 "error"
-                            ] = f"Order linked but analysis failed: {analysis_result.get('error')}"
-                    except Exception as analysis_error:
-                        logging.error(
-                            f"Analysis failed for {case_ref}: {analysis_error}"
-                        )
-                        result[
-                            "error"
-                        ] = f"Order linked but analysis failed: {str(analysis_error)}"
+                            ] = f"Order analyzed but link creation failed: {str(link_error)}"
+                            return result
 
-                    # Stop retrying - we found a matching order (even if analysis had issues)
-                    return result
+                        # Step 6: Create search index
+                        try:
+                            self._create_search_index_entry(
+                                case_id, case_data, analysis_result["data"]
+                            )
+                        except Exception as index_error:
+                            logging.error(
+                                f"Failed to create search index for {case_ref}: {index_error}"
+                            )
+                            # Not critical - we have the order and analysis
+
+                        # Step 7: Link order to additional cases found in the order (multi-case linking)
+                        try:
+                            linked_cases = self._link_order_to_additional_cases(
+                                case_id,
+                                case_ref,
+                                analysis_result["data"],
+                                order_info,
+                                case_data.get("board_date"),
+                            )
+                            if linked_cases:
+                                result["additional_cases_linked"] = linked_cases
+                                logging.info(
+                                    f"Linked order to {len(linked_cases)} additional cases: {linked_cases}"
+                                )
+                        except Exception as multi_link_error:
+                            logging.warning(
+                                f"Failed to link order to additional cases for {case_ref}: {multi_link_error}"
+                            )
+                            # Not critical - primary case is already linked
+
+                        # Success! Stop retrying
+                        return result
+
+                    except Exception as analysis_error:
+                        # Analysis threw an exception - log and continue to next sequence
+                        logging.warning(
+                            f"Analysis exception for {case_ref} seq {sequence_num}: {analysis_error}"
+                        )
+                        attempt_log["status"] = "analysis_exception"
+                        attempt_log["message"] = str(analysis_error)
+                        result["retry_attempts"].append(attempt_log)
+                        continue
 
                 except Exception as e:
                     # Log this attempt's error and continue
