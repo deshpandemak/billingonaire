@@ -270,6 +270,100 @@ class TestSectionMarkerRemoval:
             for lawyer in add_lawyers:
                 assert len(lawyer) > 5
 
+    @patch("billingonaire_backend.Board.firestore")
+    def test_remove_for_fal_hearg_marker(self, mock_firestore):
+        """Test removal of 'FOR FAL HEARG' section markers (WP/12108/2016)"""
+        mock_firestore.client.return_value = MagicMock()
+        board = Board()
+
+        court_details = (
+            "PLAINTIFF SHRI. X. Y. Z, AGP WITH MS. P. B. CPHAWAN, AGP FOR FAL HEARG"
+        )
+
+        record = board.create_record(
+            court_details=court_details,
+            file_name="test.pdf",
+            board_date="2016-01-01",
+            serial_no="1",
+            case_type="WP",
+            case_no="12108",
+            case_year="2016",
+        )
+
+        add_lawyers = record["additional_respondent_lawyers"]
+
+        # Should have clean lawyer name
+        assert len(add_lawyers) >= 1
+        # Find the lawyer with the problematic marker
+        lawyer_with_marker = [l for l in add_lawyers if "P. B. CPHAWAN" in l]
+        assert len(lawyer_with_marker) == 1
+        lawyer = lawyer_with_marker[0]
+        assert "MS. P. B. CPHAWAN" in lawyer
+        assert "FOR FAL HEARG" not in lawyer
+        assert "FOR HEARG" not in lawyer
+        # "FAL" should not appear after AGP
+        assert not lawyer.endswith("FAL")
+
+    @patch("billingonaire_backend.Board.firestore")
+    def test_remove_for_hearg_and_fal_disposal_marker(self, mock_firestore):
+        """Test removal of 'FOR HEARG AND FAL DISPOSAL' section markers (WP/9206/2025)"""
+        mock_firestore.client.return_value = MagicMock()
+        board = Board()
+
+        court_details = "DEFENDANT SHRI. B. C. D, GP WITH SMT. A. A. PURAV, AGP FOR HEARG AND FAL DISPOSAL"
+
+        record = board.create_record(
+            court_details=court_details,
+            file_name="test.pdf",
+            board_date="2025-01-01",
+            serial_no="1",
+            case_type="WP",
+            case_no="9206",
+            case_year="2025",
+        )
+
+        add_lawyers = record["additional_respondent_lawyers"]
+
+        # Should have clean lawyer name
+        assert len(add_lawyers) >= 1
+        # Find the lawyer with the problematic marker
+        lawyer_with_marker = [l for l in add_lawyers if "A. A. PURAV" in l]
+        assert len(lawyer_with_marker) == 1
+        lawyer = lawyer_with_marker[0]
+        assert "SMT. A. A. PURAV" in lawyer
+        assert "FOR HEARG" not in lawyer
+        assert "AND FAL DISPOSAL" not in lawyer
+        assert "DISPOSAL" not in lawyer
+
+    @patch("billingonaire_backend.Board.firestore")
+    def test_filter_standalone_matters(self, mock_firestore):
+        """Test that standalone 'MATTERS)' is filtered out (WP/9976/2025)"""
+        mock_firestore.client.return_value = MagicMock()
+        board = Board()
+
+        # Simulate a case where parsing results in "MATTERS)" as a lawyer entry
+        court_details = "TEST CASE SHRI. X. Y. Z, AGP WITH MATTERS)"
+
+        record = board.create_record(
+            court_details=court_details,
+            file_name="test.pdf",
+            board_date="2025-01-01",
+            serial_no="1",
+            case_type="WP",
+            case_no="9976",
+            case_year="2025",
+        )
+
+        add_lawyers = record["additional_respondent_lawyers"]
+
+        # "MATTERS)" should be filtered out (too short after cleanup)
+        if add_lawyers:
+            for lawyer in add_lawyers:
+                assert (
+                    "MATTERS" not in lawyer or "SHRI" in lawyer
+                )  # MATTERS only OK if part of full entry
+                assert not lawyer.strip() == "MATTERS"
+
 
 class TestRegressionCases:
     """Regression tests for specific bug cases"""

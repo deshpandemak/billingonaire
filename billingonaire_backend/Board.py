@@ -380,25 +380,38 @@ class Board:
 
                 # Remove section markers (FOR ADMISSION, FOR ORDERS, etc.) and dashes
                 # These are board section headers, not lawyer names
+                # Handle patterns like "FOR HEARG", "FOR FAL HEARG", "FOR FINAL DISPOSAL", etc.
                 lawyer = re.sub(
-                    r"\s*FOR\s+(ADMISSION|CIRCULATION|ORDERS|HEARING|FINAL).*?(?=\s+[A-Z]|$)",
+                    r"\s*FOR\s+(ADMISSION|CIRCULATION|ORDERS|HEARING|HEARG|FINAL|FAL)(\s+(AND|DISPOSAL|HEARG|HEARING))?.*$",
                     "",
                     lawyer,
                     flags=re.IGNORECASE,
                 )
                 lawyer = re.sub(
-                    r"\s*DUE\s+(ADMISSION|ORDERS|MATTERS).*?(?=\s+[A-Z]|$)",
+                    r"\s*DUE\s+(ADMISSION|ORDERS|MATTERS).*$",
                     "",
                     lawyer,
                     flags=re.IGNORECASE,
                 )
                 lawyer = re.sub(
-                    r"\s*\([^)]*DUE\s+MATTERS[^)]*\)", "", lawyer, flags=re.IGNORECASE
-                )  # Remove (DUE MATTERS)
+                    r"\s*\([^)]*(?:DUE\s+)?MATTERS[^)]*\)",
+                    "",
+                    lawyer,
+                    flags=re.IGNORECASE,
+                )  # Remove (DUE MATTERS) or (MATTERS)
                 lawyer = re.sub(r"\s*-{2,}.*$", "", lawyer)  # Remove trailing dashes
                 lawyer = re.sub(
                     r"\s*\d+\s*$", "", lawyer
                 )  # Remove trailing numbers (like " 1", " - 1")
+                # Remove any leftover parentheses or brackets
+                lawyer = re.sub(r"[()[\]]", "", lawyer)
+                # Remove standalone section markers
+                lawyer = re.sub(
+                    r"^\s*(?:MATTERS|ADMISSION|ORDERS|HEARING|HEARG|DISPOSAL)\s*$",
+                    "",
+                    lawyer,
+                    flags=re.IGNORECASE,
+                )
                 lawyer = lawyer.strip()
 
                 # Only add if there's meaningful content left (lawyer name)
