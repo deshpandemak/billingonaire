@@ -1,164 +1,137 @@
-# billingonaire
+# Billingonaire - Legal Billing Management System
 
-## Repository Structure
+A professional legal billing management system designed for the legal industry. Automates processing of daily court board PDF files, extracts AGP assignments, fetches court orders, and generates comprehensive billing analytics.
 
-The repository is structured as follows:
+## 🚀 Production URLs
+
+- **Frontend**: https://billingonaire.web.app
+- **Backend API**: https://billingonaire-backend-819125105651.asia-south1.run.app
+
+## 📁 Project Structure
 
 ```
 billingonaire/
-├── billingonaire-backend/
-│   ├── main.py
-│   ├── requirements.txt
-│   ├── .gitignore
-├── billingonaire-ui/
-│   ├── <frontend files and directories>
-├── .gitignore
-├── README.md
+├── billingonaire_backend/     # FastAPI backend
+│   ├── main.py               # Main API server
+│   ├── Board.py              # PDF parsing and board management
+│   ├── requirements.txt      # Python dependencies
+│   └── tests/               # Backend tests
+├── billingonaire-ui/         # React frontend (Vite)
+│   ├── src/                 # React components
+│   ├── package.json         # Node dependencies
+│   └── vite.config.js       # Vite configuration
+├── firebase/                # Deployment scripts
+│   ├── deploy-all.sh        # Deploy both frontend and backend
+│   ├── backend-cloudrun-deploy.sh
+│   └── frontend-deploy.sh
+└── .github/workflows/       # CI/CD pipelines
 ```
 
-## Running the FastAPI Application
+## 🛠️ Local Development
 
-To run the FastAPI application, follow these steps:
+### Backend Setup
 
-1. Navigate to the `billingonaire-backend` directory:
-
+1. Navigate to backend directory:
 ```bash
-cd billingonaire-backend
+cd billingonaire_backend
 ```
 
-2. Install the required dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Start the FastAPI application using Uvicorn:
-
-```bash
-uvicorn main:app --reload
-```
-
-The FastAPI application will be running at `http://127.0.0.1:8000`.
-
-## Accessing OpenAPI Documentation
-
-FastAPI provides built-in support for OpenAPI documentation. Once the FastAPI application is running, you can access the OpenAPI documentation at the following URLs:
-
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- ReDoc: `http://127.0.0.1:8000/redoc`
-
-## Backend Deployment
-
-To deploy the backend, follow these steps:
-
-1. Navigate to the `billingonaire-backend` directory:
-
-```bash
-cd billingonaire-backend
-```
-
-2. Install the required dependencies:
-
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Deploy the backend using the deployment script:
-
+3. Run development server:
 ```bash
-../firebase/backend-deploy.sh
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Windows Backend Deployment
+4. Access API documentation:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
-To deploy the backend on Windows, follow these steps:
+### Frontend Setup
 
-1. Navigate to the `billingonaire-backend` directory:
-
-```cmd
-cd billingonaire-backend
-```
-
-2. Install the required dependencies:
-
-```cmd
-pip install -r requirements.txt
-```
-
-3. Deploy the backend using the Windows deployment script:
-
-```cmd
-../firebase/backend-deploy.bat
-```
-
-## Frontend Deployment
-
-To deploy the frontend, follow these steps:
-
-1. Navigate to the `billingonaire-ui` directory:
-
+1. Navigate to frontend directory:
 ```bash
 cd billingonaire-ui
 ```
 
-2. Install the required dependencies:
-
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-3. Build the frontend:
-
+3. Run development server:
 ```bash
-npm run build
+npm run dev
 ```
 
-4. Deploy the frontend using the deployment script:
+4. Access application: http://localhost:5000
+
+## 🚢 Production Deployment
+
+### Deploy Both (Recommended)
 
 ```bash
-../firebase/frontend-deploy.sh
+./firebase/deploy-all.sh
 ```
 
-### Windows Frontend Deployment
+This script:
+- Builds and deploys backend to Google Cloud Run
+- Builds and deploys frontend to Firebase Hosting
 
-To deploy the frontend on Windows, follow these steps:
+### Deploy Backend Only
 
-1. Navigate to the `billingonaire-ui` directory:
+```bash
+./firebase/backend-cloudrun-deploy.sh
+```
 
-```cmd
+### Deploy Frontend Only
+
+```bash
+./firebase/frontend-deploy.sh
+```
+
+### Environment Variables Required
+
+- `GCLOUD_SERVICE_ACCOUNT_KEY`: Google Cloud service account credentials
+- `FIREBASE_TOKEN`: Firebase deployment token
+
+## 🧪 Testing
+
+### Backend Tests
+
+```bash
+cd billingonaire_backend
+pytest tests/
+```
+
+### Frontend Tests
+
+```bash
 cd billingonaire-ui
+npm run test:unit
 ```
 
-2. Install the required dependencies:
+## 🔑 Key Features
 
-```cmd
-npm install
-```
+- **PDF Processing**: Automated parsing of daily court board files
+- **Order Management**: Download and analysis of court orders with ML
+- **Bill Generation**: Professional AGP-compliant Excel bill export
+- **Analytics Dashboard**: Weekly status, AGP statistics, monthly averages
+- **Role-Based Access**: Admin and user permissions
+- **Firebase Authentication**: Secure user management
 
-3. Build the frontend:
+## 📚 Tech Stack
 
-```cmd
-npm run build
-```
+- **Frontend**: React 18, Vite, React Bootstrap
+- **Backend**: Python 3.11, FastAPI, Uvicorn
+- **Database**: Firebase Firestore
+- **Authentication**: Firebase Auth
+- **Deployment**: Google Cloud Run (backend), Firebase Hosting (frontend)
+- **CI/CD**: GitHub Actions
 
-4. Deploy the frontend using the Windows deployment script:
+## 📝 Documentation
 
-```cmd
-../firebase/frontend-deploy.bat
-```
-
-## Ansible Playbook Deployment
-
-To deploy both the frontend and backend using the Ansible playbook, follow these steps:
-
-1. Navigate to the `ansible` directory:
-
-```bash
-cd ansible
-```
-
-2. Run the Ansible playbook:
-
-```bash
-ansible-playbook deploy.yml
-```
+For detailed project architecture and recent changes, see `replit.md`.
