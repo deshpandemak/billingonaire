@@ -25,12 +25,15 @@ except ImportError:
 
 # Advanced ML libraries (optional)
 try:
-    RAPIDFUZZ_AVAILABLE = False
+    from rapidfuzz import fuzz, process
+    RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
 
 try:
-    SPACY_AVAILABLE = False
+    import spacy
+    from spacy.matcher import Matcher
+    SPACY_AVAILABLE = True
 except ImportError:
     SPACY_AVAILABLE = False
 

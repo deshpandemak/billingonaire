@@ -1,4 +1,4 @@
-# Build timestamp: 2025-10-27T01:15:00Z - Force rebuild with spaCy model
+# Build timestamp: 2025-10-27T17:55:00Z - Force rebuild with spaCy model and --no-cache flag
 FROM python:3.11-slim
 
 WORKDIR /app
