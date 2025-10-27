@@ -5,20 +5,20 @@
 ## Critical Issues Identified
 
 ### Issue 1: spaCy Model Missing in Production ✅ FIXED
-**Symptom:**
+**Symptom (before fix):**
 ```
 WARNING:root:Could not initialize spaCy: [E050] Can't find model 'en_core_web_sm'
 ERROR: Could not install requirement https://github.com/explosion/spacy-models/releases/download/-en_core_web_sm/-en_core_web_sm.tar.gz because of HTTP error 404
 ```
 
 **Root Cause:**
-- Dockerfile installs spaCy library but spacy download command generates malformed URL
-- `python -m spacy download en_core_web_sm` produces URL with missing version: `-en_core_web_sm` instead of `en_core_web_sm-3.7.1`
+- Dockerfile installs spaCy library but spacy download command was generating malformed URL
+- `python -m spacy download en_core_web_sm` was producing URL with missing version: `-en_core_web_sm` instead of `en_core_web_sm-3.7.1`
 
 **Fix Applied:**
 - Changed from `python -m spacy download en_core_web_sm` to direct pip install with specific version
 - Using: `pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl`
-- **STATUS**: Fixed - using reliable pip install method instead of spacy's download mechanism
+- **STATUS**: Fixed - using reliable pip install method instead of spacy's broken download mechanism
 
 ---
 
