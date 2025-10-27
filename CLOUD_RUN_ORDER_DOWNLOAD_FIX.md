@@ -78,7 +78,7 @@ except ImportError:
 - ✅ ML features activated when dependencies installed
 
 ### Fix 2: Added --no-cache to Cloud Build
-**Changed .github/workflows/cd.yml Line 135-137**:
+**Changed .github/workflows/cd.yml Lines 132-137**:
 
 ```yaml
 # Build container image using Cloud Build with --no-cache to force rebuild
