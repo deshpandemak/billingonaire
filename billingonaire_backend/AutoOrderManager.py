@@ -829,14 +829,25 @@ class AutoOrderManager:
             query_str = encoded_query.decode("utf-8")
             full_url = base_url + url + query_str
 
-            # Make the request
+            # Make the request with browser-like User-Agent
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            
             try:
-                response = requests.get(full_url, timeout=30)
+                response = requests.get(full_url, headers=headers, timeout=30)
+                
+                # Log response details for debugging
+                content_type = response.headers.get("Content-Type", "unknown")
+                logging.info(
+                    f"Sequence {sequence_number}: HTTP {response.status_code}, "
+                    f"Content-Type: {content_type}, Size: {len(response.content)} bytes"
+                )
 
                 # Check if response is a PDF
-                if response.headers.get("Content-Type") == "application/pdf":
+                if content_type == "application/pdf":
                     logging.info(
-                        f"PDF found for: {order_filename} (seq: {sequence_number})"
+                        f"✅ PDF found for: {order_filename} (seq: {sequence_number})"
                     )
                     return {
                         "success": True,
@@ -846,14 +857,33 @@ class AutoOrderManager:
                         "sequence_number": sequence_number,
                     }
                 else:
+                    # Log non-PDF response for debugging
+                    response_preview = response.text[:500] if len(response.text) < 500 else response.text[:500] + "..."
+                    logging.warning(
+                        f"⚠️ Sequence {sequence_number} returned non-PDF: "
+                        f"Status={response.status_code}, "
+                        f"Content-Type={content_type}, "
+                        f"Response preview: {response_preview}"
+                    )
                     return {
                         "success": False,
-                        "error": f"No PDF found at sequence {sequence_number}",
+                        "error": f"No PDF found at sequence {sequence_number} (got {content_type})",
+                        "http_status": response.status_code,
+                        "response_preview": response_preview[:200],
                     }
 
+            except requests.Timeout as e:
+                error_msg = f"Timeout after 30s for sequence {sequence_number}: {str(e)}"
+                logging.error(f"🔴 {error_msg}")
+                return {"success": False, "error": error_msg}
+            except requests.ConnectionError as e:
+                error_msg = f"Connection error for sequence {sequence_number}: {str(e)}"
+                logging.error(f"🔴 {error_msg}")
+                return {"success": False, "error": error_msg}
             except requests.RequestException as e:
-                logging.warning(f"Request failed for sequence {sequence_number}: {e}")
-                return {"success": False, "error": f"Request failed: {str(e)}"}
+                error_msg = f"Request failed for sequence {sequence_number}: {str(e)}"
+                logging.error(f"🔴 {error_msg}")
+                return {"success": False, "error": error_msg}
 
         except Exception as e:
             logging.error(f"Error downloading PDF from Bombay HC: {e}")
