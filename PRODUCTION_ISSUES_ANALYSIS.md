@@ -4,20 +4,21 @@
 
 ## Critical Issues Identified
 
-### Issue 1: spaCy Model Missing in Production ✅ PARTIALLY FIXED
-**Symptom:**
+### Issue 1: spaCy Model Missing in Production ✅ FIXED
+**Symptom (before fix):**
 ```
 WARNING:root:Could not initialize spaCy: [E050] Can't find model 'en_core_web_sm'
+ERROR: Could not install requirement https://github.com/explosion/spacy-models/releases/download/-en_core_web_sm/-en_core_web_sm.tar.gz because of HTTP error 404
 ```
 
 **Root Cause:**
-- Dockerfile installs spaCy library but doesn't download the language model
-- Production Docker image missing: `python -m spacy download en_core_web_sm`
+- Dockerfile installs spaCy library but spacy download command was generating malformed URL
+- `python -m spacy download en_core_web_sm` was producing URL with missing version: `-en_core_web_sm` instead of `en_core_web_sm-3.7.1`
 
 **Fix Applied:**
-- Added `RUN python -m spacy download en_core_web_sm` to Dockerfile (line 16)
-- **STATUS**: Code updated, but Cloud Build using cached Dockerfile
-- **ACTION NEEDED**: Force rebuild or wait for cache invalidation
+- Changed from `python -m spacy download en_core_web_sm` to direct pip install with specific version
+- Using: `pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl`
+- **STATUS**: Fixed - using reliable pip install method instead of spacy's broken download mechanism
 
 ---
 
@@ -66,8 +67,8 @@ logging.warning(
 
 ### 1. billingonaire_backend/Dockerfile
 ```dockerfile
-# Line 16 - Download spaCy language model
-RUN python -m spacy download en_core_web_sm
+# Line 17 - Download spaCy language model using pip for reliability
+RUN pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 ```
 
 ### 2. billingonaire_backend/AutoOrderManager.py
