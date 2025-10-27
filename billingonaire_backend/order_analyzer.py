@@ -39,8 +39,6 @@ try:
 except ImportError:
     SPACY_AVAILABLE = False
 
-from fastapi import HTTPException
-
 # Firebase imports
 from firebase_admin import firestore
 
@@ -250,9 +248,7 @@ class OrderDocumentAnalyzer:
         )
 
         if not extraction_result or not extraction_result.text.strip():
-            raise HTTPException(
-                status_code=400, detail="Could not extract text from order document"
-            )
+            raise ValueError("Could not extract text from order document")
 
         text = extraction_result.text
 
@@ -1692,6 +1688,4 @@ class OrderDocumentAnalyzer:
 
         except Exception as e:
             logging.error(f"Error saving analysis result: {e}")
-            raise HTTPException(
-                status_code=500, detail="Failed to save analysis result"
-            )
+            raise RuntimeError(f"Failed to save analysis result: {str(e)}")
