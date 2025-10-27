@@ -5,3 +5,8 @@ venv/
 # Ignore __pycache__ directories and .pyc files
 __pycache__/
 *.pyc
+
+# Ignore pytest coverage files
+.coverage
+coverage.xml
+htmlcov/

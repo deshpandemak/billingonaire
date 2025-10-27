@@ -132,9 +132,9 @@ jobs:
           
           cd billingonaire_backend
           
-          # Build container image using Cloud Build
-          echo "🔨 Building Docker image..."
-          gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }} .
+          # Build container image using Cloud Build with --no-cache to force rebuild
+          echo "🔨 Building Docker image (forcing rebuild without cache)..."
+          gcloud builds submit --no-cache --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }} .
           
           echo "🚀 Deploying to Cloud Run..."
           
