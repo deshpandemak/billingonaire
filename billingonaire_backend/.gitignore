@@ -6,7 +6,7 @@ venv/
 __pycache__/
 *.pyc
 
-# Ignore test coverage files
+# Ignore pytest coverage files
 .coverage
 coverage.xml
 htmlcov/
