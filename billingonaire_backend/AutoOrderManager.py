@@ -833,10 +833,10 @@ class AutoOrderManager:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            
+
             try:
                 response = requests.get(full_url, headers=headers, timeout=30)
-                
+
                 # Log response details for debugging
                 content_type = response.headers.get("Content-Type", "unknown")
                 logging.info(
@@ -858,7 +858,11 @@ class AutoOrderManager:
                     }
                 else:
                     # Log non-PDF response for debugging
-                    response_preview = response.text[:500] if len(response.text) < 500 else response.text[:500] + "..."
+                    response_preview = (
+                        response.text[:500]
+                        if len(response.text) < 500
+                        else response.text[:500] + "..."
+                    )
                     logging.warning(
                         f"⚠️ Sequence {sequence_number} returned non-PDF: "
                         f"Status={response.status_code}, "
@@ -873,7 +877,9 @@ class AutoOrderManager:
                     }
 
             except requests.Timeout as e:
-                error_msg = f"Timeout after 30s for sequence {sequence_number}: {str(e)}"
+                error_msg = (
+                    f"Timeout after 30s for sequence {sequence_number}: {str(e)}"
+                )
                 logging.error(f"🔴 {error_msg}")
                 return {"success": False, "error": error_msg}
             except requests.ConnectionError as e:
