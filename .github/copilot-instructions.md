@@ -212,7 +212,7 @@ npm run build
 ```bash
 # Backend
 cd billingonaire_backend
-pytest tests/ -v --cov=. --cov-report=term
+pytest tests/unit -v --cov=. --cov-report=term
 
 # Frontend
 cd billingonaire-ui
