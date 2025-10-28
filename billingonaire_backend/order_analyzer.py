@@ -23,22 +23,6 @@ try:
 except ImportError:
     pdfplumber = None
 
-# Advanced ML libraries (optional)
-try:
-    from rapidfuzz import fuzz, process
-
-    RAPIDFUZZ_AVAILABLE = True
-except ImportError:
-    RAPIDFUZZ_AVAILABLE = False
-
-try:
-    import spacy
-    from spacy.matcher import Matcher
-
-    SPACY_AVAILABLE = True
-except ImportError:
-    SPACY_AVAILABLE = False
-
 from fastapi import HTTPException
 
 # Firebase imports
