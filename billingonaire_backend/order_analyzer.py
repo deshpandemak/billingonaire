@@ -248,7 +248,7 @@ class OrderDocumentAnalyzer:
         )
 
         if not extraction_result or not extraction_result.text.strip():
-            raise ValueError("Could not extract text from order document")
+            raise ValueError(f"Could not extract text from order document: {filename}")
 
         text = extraction_result.text
 
