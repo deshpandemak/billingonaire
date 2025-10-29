@@ -279,7 +279,21 @@ class AutoOrderManager:
                         f"✅ Case {case_ref} - SUCCESS at sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
-                    # Step 4: Perform full analysis first (before creating order link)
+                    # Step 4: Create order link first (since download succeeded)
+                    try:
+                        self._create_order_link(case_id, order_info)
+                    except Exception as link_error:
+                        logging.error(
+                            f"Failed to create order link for {case_ref}: {link_error}"
+                        )
+                        result[
+                            "error"
+                        ] = f"Order downloaded but link creation failed: {str(link_error)}"
+                        result["download_success"] = True
+                        result["order_link"] = order_info.get("order_link")
+                        return result
+
+                    # Step 5: Perform analysis (after order link is created)
                     try:
                         analysis_result = self._analyze_order_with_date_validation(
                             case_id,
@@ -290,8 +304,8 @@ class AutoOrderManager:
                         )
 
                         if not analysis_result.get("success"):
-                            # Analysis failed - log and continue to next sequence
-                            # Don't create order link yet since analysis failed
+                            # Analysis failed but order download succeeded
+                            # Keep the order link and mark status as order_analysis_failed
                             logging.warning(
                                 f"Analysis failed for {case_ref} seq {sequence_num}: {analysis_result.get('error')}"
                             )
@@ -300,23 +314,32 @@ class AutoOrderManager:
                                 "message"
                             ] = f"Analysis failed: {analysis_result.get('error')}"
                             result["retry_attempts"].append(attempt_log)
-                            continue
-
-                        # Analysis succeeded! Now we can safely create the order link
-                        result["analysis_success"] = True
-                        result["analysis_data"] = analysis_result.get("data")
-
-                        # Step 5: Create order link in database (only after successful analysis)
-                        try:
-                            self._create_order_link(case_id, order_info)
-                        except Exception as link_error:
-                            logging.error(
-                                f"Failed to create order link for {case_ref}: {link_error}"
-                            )
                             result[
                                 "error"
-                            ] = f"Order analyzed but link creation failed: {str(link_error)}"
+                            ] = f"Order downloaded but analysis failed: {analysis_result.get('error')}"
+
+                            # Update status to order_analysis_failed
+                            try:
+                                self.db.collection(self.boards_collection).document(
+                                    case_id
+                                ).update(
+                                    {
+                                        "order_status": "order_analysis_failed",
+                                        "order_status_updated_at": datetime.now().isoformat(),
+                                        "order_failure_reason": result["error"],
+                                    }
+                                )
+                            except Exception as status_error:
+                                logging.error(
+                                    f"Failed to update order_analysis_failed status: {status_error}"
+                                )
+
+                            # Return with download success but analysis failure
                             return result
+
+                        # Analysis succeeded!
+                        result["analysis_success"] = True
+                        result["analysis_data"] = analysis_result.get("data")
 
                         # Step 6: Create search index
                         try:
@@ -353,14 +376,36 @@ class AutoOrderManager:
                         return result
 
                     except Exception as analysis_error:
-                        # Analysis threw an exception - log and continue to next sequence
+                        # Analysis threw an exception but order download succeeded
+                        # Keep the order link and mark status as order_analysis_failed
                         logging.warning(
                             f"Analysis exception for {case_ref} seq {sequence_num}: {analysis_error}"
                         )
                         attempt_log["status"] = "analysis_exception"
                         attempt_log["message"] = str(analysis_error)
                         result["retry_attempts"].append(attempt_log)
-                        continue
+                        result[
+                            "error"
+                        ] = f"Order downloaded but analysis threw exception: {str(analysis_error)}"
+
+                        # Update status to order_analysis_failed
+                        try:
+                            self.db.collection(self.boards_collection).document(
+                                case_id
+                            ).update(
+                                {
+                                    "order_status": "order_analysis_failed",
+                                    "order_status_updated_at": datetime.now().isoformat(),
+                                    "order_failure_reason": result["error"],
+                                }
+                            )
+                        except Exception as status_error:
+                            logging.error(
+                                f"Failed to update order_analysis_failed status: {status_error}"
+                            )
+
+                        # Return with download success but analysis failure
+                        return result
 
                 except Exception as e:
                     # Log this attempt's error and continue
