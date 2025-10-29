@@ -1,5 +1,4 @@
 import pytest
-from fastapi import HTTPException
 
 from billingonaire_backend.ml_enhanced_parser import MLEnhancedParser
 
@@ -11,7 +10,7 @@ def test_parser_initialization():
 
 def test_enhance_pdf_extraction():
     parser = MLEnhancedParser()
-    with pytest.raises(HTTPException):
+    with pytest.raises(ValueError):
         parser.enhance_pdf_extraction("dummy.pdf", b"PDF content")
 
 

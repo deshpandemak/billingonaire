@@ -40,8 +40,6 @@ try:
 except ImportError:
     SPACY_AVAILABLE = False
 
-from fastapi import HTTPException
-
 # Firebase imports
 from firebase_admin import firestore
 
@@ -258,9 +256,8 @@ class MLEnhancedParser:
 
         # Select best extraction result
         if not extraction_results:
-            raise HTTPException(
-                status_code=400,
-                detail="Could not extract text from PDF using any method. Please check if the file is valid.",
+            raise ValueError(
+                f"Could not extract text from PDF '{filename}'. File may be corrupted or invalid."
             )
 
         # Choose best result based on confidence and text quality
