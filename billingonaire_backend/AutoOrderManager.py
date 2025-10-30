@@ -845,6 +845,8 @@ class AutoOrderManager:
             order_filename: Filename for the order
             sequence_number: Specific sequence number to try (0-49)
         """
+        # DEBUG: Log function entry
+        logging.warning(f"🔍 ENTERING _download_pdf_bombay_hc_simple: seq={sequence_number}, case_type={case_type}, case_number={case_number}")
         try:
             base_url = "https://bombayhighcourt.nic.in/"
             url = "generatenewauth.php?bhcpar="
