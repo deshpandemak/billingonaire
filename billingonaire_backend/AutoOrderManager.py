@@ -765,9 +765,11 @@ class AutoOrderManager:
                 return {"success": False, "error": "Invalid case reference format"}
 
             case_type, case_number, year = case_parts
+            logging.warning(f"🔵 Before zfill: case_number={case_number}, type={type(case_number)}")
 
             # Format case number with leading zeros
-            case_number = case_number.zfill(7)
+            case_number = str(case_number).zfill(7)
+            logging.warning(f"🔵 After zfill: case_number={case_number}")
 
             # Convert board_date to datetime object for comparison
             case_board_date = None
