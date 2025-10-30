@@ -751,13 +751,17 @@ class AutoOrderManager:
             case_data: Case data dictionary
             sequence_number: Specific sequence number to try (0-49)
         """
+        case_ref = case_data.get("case_ref", "UNKNOWN")
+        logging.warning(f"🔵 _download_order_for_case ENTERED for {case_ref}, seq={sequence_number}")
         try:
             case_ref = case_data["case_ref"]
             board_date = case_data.get("board_date")
 
             # Parse case reference
             case_parts = self._parse_case_reference(case_ref)
+            logging.warning(f"🔵 After parse: case_parts={case_parts}")
             if not case_parts:
+                logging.warning(f"🔵 EARLY RETURN: Invalid case reference format")
                 return {"success": False, "error": "Invalid case reference format"}
 
             case_type, case_number, year = case_parts
