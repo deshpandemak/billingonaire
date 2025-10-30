@@ -98,6 +98,16 @@ class OrderDocumentAnalyzer:
                 r"\bsuit\s+dismissed?\b",
                 r"\bpetition\s+dismissed?\b",
                 r"\bwrit\s+dismissed?\b",
+                # Conclusive language
+                r"\bpetition\s+(?:is\s+)?allowed\b",
+                r"\bpetition\s+(?:is\s+)?granted\b",
+                r"\brelief\s+(?:is\s+)?granted\b",
+                r"\bwrit\s+(?:is\s+)?allowed\b",
+                r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
+                r"\bconclusion\b.*?\bdisposed\b",
+                r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
+                r"\baccordingly\b.*?\bdisposed\b",
+                r"\bhence\b.*?\bdisposed\b",
             ],
             "ADJOURNED": [
                 # Adjournment phrases
@@ -328,7 +338,15 @@ class OrderDocumentAnalyzer:
         if not any(scores[cat]["score"] > 0 for cat in scores):
             return "ADJOURNED", 0.5  # Default assumption
 
-        # Enhanced category selection logic
+        # CRITICAL: Absolute priority to DISPOSED_OFF if any disposal indicators found
+        if scores.get("DISPOSED_OFF", {}).get("score", 0) > 0:
+            best_category = "DISPOSED_OFF"
+            confidence = scores["DISPOSED_OFF"]["confidence"]
+            # Boost confidence for disposal - it's definitive
+            confidence = min(confidence * 1.3, 1.0)
+            return best_category, confidence
+
+        # Enhanced category selection logic for non-disposal cases
         best_category = max(scores.keys(), key=lambda x: scores[x]["score"])
         confidence = scores[best_category]["confidence"]
 
@@ -337,22 +355,20 @@ class OrderDocumentAnalyzer:
             scores.get("HEARD_AND_ADJOURNED", {}).get("score", 0) > 0
             and scores.get("ADJOURNED", {}).get("score", 0) > 0
         ):
-            # If both categories have matches, prefer HEARD_AND_ADJOURNED if scores are close
+            # If both categories have matches, prefer HEARD_AND_ADJOURNED aggressively
             heard_score = scores["HEARD_AND_ADJOURNED"]["score"]
             adj_score = scores["ADJOURNED"]["score"]
 
-            # If HEARD_AND_ADJOURNED has at least 50% of ADJOURNED's score, prefer it
-            # Lower threshold because hearing is more significant than simple adjournment
-            if heard_score >= (adj_score * 0.5):
+            # If HEARD_AND_ADJOURNED has at least 30% of ADJOURNED's score, prefer it
+            # Very low threshold because hearing indicators are more significant
+            if heard_score >= (adj_score * 0.3):
                 best_category = "HEARD_AND_ADJOURNED"
                 confidence = scores["HEARD_AND_ADJOURNED"]["confidence"]
                 # Boost confidence for proper classification
-                confidence = min(confidence * 1.3, 1.0)
+                confidence = min(confidence * 1.4, 1.0)
 
         # Boost confidence for clear indicators
-        if best_category == "DISPOSED_OFF" and scores[best_category]["score"] >= 2:
-            confidence = min(confidence * 1.2, 1.0)
-        elif (
+        if (
             best_category == "HEARD_AND_ADJOURNED"
             and scores[best_category]["score"] >= 2
         ):
