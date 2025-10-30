@@ -15,6 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
 
+# Configure logging to show INFO level messages
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s"
+)
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from Board import Board  # noqa: E402
