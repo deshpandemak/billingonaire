@@ -757,8 +757,13 @@ class AutoOrderManager:
             case_ref = case_data["case_ref"]
             board_date = case_data.get("board_date")
 
+            # Determine if this needs stamp number search BEFORE parsing
+            search_stamp_no = "(ST)" in case_ref
+            # Remove (ST) suffix for parsing
+            case_ref_for_parsing = case_ref.replace("(ST)", "").strip()
+
             # Parse case reference
-            case_parts = self._parse_case_reference(case_ref)
+            case_parts = self._parse_case_reference(case_ref_for_parsing)
             logging.warning(f"🔵 After parse: case_parts={case_parts}")
             if not case_parts:
                 logging.warning(f"🔵 EARLY RETURN: Invalid case reference format")
@@ -789,12 +794,7 @@ class AutoOrderManager:
 
             order_filename = f"{case_ref.replace('/', '-')}-{date_str}.pdf"
 
-            # Determine if this needs stamp number search (BEFORE dictionary check!)
-            search_stamp_no = "ST" in case_type
-            if search_stamp_no:
-                case_type = case_type.replace(" ", "").replace("(ST)", "").strip()
-
-            # Check if case type is supported (after ST stripping)
+            # Check if case type is supported
             if case_type not in self.casetype_dict:
                 return {
                     "success": False,
