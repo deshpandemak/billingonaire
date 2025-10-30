@@ -108,6 +108,12 @@ class OrderDocumentAnalyzer:
                 r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
                 r"\baccordingly\b.*?\bdisposed\b",
                 r"\bhence\b.*?\bdisposed\b",
+                # Closed/Closure language (esp. for contempt petitions)
+                r"\bcase\s+(?:is\s+)?closed\b",
+                r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
+                r"\bmatter\s+(?:is\s+)?closed\b",
+                r"\bclos(?:ed|ure)\b.*?\b(?:case|matter|petition)\b",
+                r"\b(?:case|matter|petition)\b.*?\bclos(?:ed|ure)\b",
             ],
             "ADJOURNED": [
                 # Adjournment phrases
@@ -280,15 +286,18 @@ class OrderDocumentAnalyzer:
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""
         scores = {}
+        logging.info(f"🔍 Classifying order text (length: {len(text)} chars)")
 
         for category, patterns in self.order_patterns.items():
             score = 0
             matches = 0
+            matched_patterns = []
 
             for pattern in patterns:
                 regex_matches = re.findall(pattern, text, re.IGNORECASE)
                 if regex_matches:
                     matches += len(regex_matches)
+                    matched_patterns.append(pattern[:50])  # Log first 50 chars of pattern
                     # Weight patterns based on specificity and importance
                     if "disposed" in pattern.lower():
                         score += len(regex_matches) * 2.5  # Disposal is definitive
@@ -333,9 +342,17 @@ class OrderDocumentAnalyzer:
                 "matches": matches,
                 "confidence": min(score / 10.0, 1.0),  # Normalize to 0-1
             }
+            
+            # Log category results
+            if matched_patterns:
+                logging.info(f"  📊 {category}: score={score:.2f}, matches={matches}, patterns={matched_patterns[:3]}")
+            elif category == "DISPOSED_OFF":
+                # Always log disposal check even if no matches
+                logging.info(f"  ❌ {category}: No disposal patterns found")
 
         # Determine best category with enhanced logic
         if not any(scores[cat]["score"] > 0 for cat in scores):
+            logging.warning("⚠️ No patterns matched - defaulting to ADJOURNED")
             return "ADJOURNED", 0.5  # Default assumption
 
         # CRITICAL: Absolute priority to DISPOSED_OFF if any disposal indicators found
@@ -344,6 +361,7 @@ class OrderDocumentAnalyzer:
             confidence = scores["DISPOSED_OFF"]["confidence"]
             # Boost confidence for disposal - it's definitive
             confidence = min(confidence * 1.3, 1.0)
+            logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - DISPOSAL DETECTED")
             return best_category, confidence
 
         # Enhanced category selection logic for non-disposal cases
@@ -374,6 +392,7 @@ class OrderDocumentAnalyzer:
         ):
             confidence = min(confidence * 1.2, 1.0)
 
+        logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})")
         return best_category, confidence
 
     def _parse_document_structure(self, text: str) -> Dict[str, Any]:
