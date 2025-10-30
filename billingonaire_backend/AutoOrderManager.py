@@ -783,18 +783,18 @@ class AutoOrderManager:
 
             order_filename = f"{case_ref.replace('/', '-')}-{date_str}.pdf"
 
-            # Check if case type is supported
+            # Determine if this needs stamp number search (BEFORE dictionary check!)
+            search_stamp_no = "ST" in case_type
+            if search_stamp_no:
+                case_type = case_type.replace(" ", "").replace("(ST)", "").strip()
+
+            # Check if case type is supported (after ST stripping)
             if case_type not in self.casetype_dict:
                 return {
                     "success": False,
                     "error": f"Case type {case_type} not supported for automated download",
                     "suggested_filename": order_filename,
                 }
-
-            # Determine if this needs stamp number search
-            search_stamp_no = "ST" in case_type
-            if search_stamp_no:
-                case_type = case_type.replace(" ", "").replace("(ST)", "").strip()
 
             # Try to download using specific sequence number
             download_result = self._download_pdf_bombay_hc_simple(
