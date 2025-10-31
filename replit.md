@@ -41,3 +41,20 @@ Billingonaire features a modern web application architecture with a React fronte
 - **Firebase**: Firestore (database), Firebase Auth (authentication), Firebase Admin SDK (backend integration), Firebase Hosting (frontend deployment).
 - **Google Cloud Run**: Backend deployment and hosting.
 - **Bombay High Court Website**: Source for automated court order downloads.
+
+## Recent Changes (October 31, 2025)
+### ML Categorization Enhancements
+- **Absolute DISPOSED_OFF Priority**: Any disposal indicators now trigger immediate DISPOSED_OFF classification
+- **Enhanced Disposal Patterns**: Added detection for "case is closed", "contempt case closed", "petition allowed/granted", "relief granted"
+- **Aggressive HEARD_AND_ADJOURNED Detection**: Lowered threshold to 30% of ADJOURNED score for better hearing detection
+- **Comprehensive Diagnostic Logging**: Added detailed pattern matching logs showing scores, matched patterns, and classification decisions
+- **Bug Fix**: Fixed AttributeError in AutoOrderManager (case_number.zfill() without str() conversion)
+- **Bug Fix**: Fixed IA(ST) case parsing by moving (ST) suffix stripping before regex parsing
+
+### Production Deployment Status
+**Last Deployed**: October 31, 2025  
+**Production URLs**:
+- Frontend: https://billingonaire.web.app
+- Backend: https://billingonaire-backend-819125105651.asia-south1.run.app
+
+**Deployment Method**: Manual deployment via `firebase/deploy-all.sh` script (updated to use service account authentication instead of deprecated FIREBASE_TOKEN)

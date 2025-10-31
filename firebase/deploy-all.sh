@@ -42,8 +42,10 @@ VITE_API_URL=https://billingonaire-backend-819125105651.asia-south1.run.app npm 
 
 echo ""
 echo "🚀 Deploying frontend to Firebase Hosting..."
+# Use service account key instead of deprecated FIREBASE_TOKEN
+export GOOGLE_APPLICATION_CREDENTIALS=<(echo "$GCLOUD_SERVICE_ACCOUNT_KEY")
 firebase use billingonaire
-firebase deploy --only hosting --token "$FIREBASE_TOKEN"
+firebase deploy --only hosting
 
 cd ..
 
