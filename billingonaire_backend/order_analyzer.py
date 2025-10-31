@@ -178,37 +178,52 @@ class OrderDocumentAnalyzer:
         """Create patterns for entity extraction"""
         return {
             "PETITIONER": [
-                # Standard petitioner patterns
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s*\.{3,}\s*)?\.{3,}\s*Petitioners?",
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s*\.{3,}\s*)?\.{3,}\s*Applicants?",
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s*\.{3,}\s*)?\.{3,}\s*Appellants?",
-                # Multiple petition formats
-                r"Petitioners?\s*:\s*([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s+vs?\.|\s+versus)",
-                # Alternative formats
-                r"([A-Z][a-zA-Z\s\.]+)\s+\.{3,}\s*PETITIONER",
-                r"In\s+the\s+matter\s+of\s*:?\s*([A-Z][a-zA-Z\s\.]+)",
+                # Standard petitioner patterns with dots
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Appellants?",
+                # Without title prefixes
+                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
+                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
+                # Colon format
+                r"Petitioners?\s*:\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                # Versus format (before vs/versus)
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s+vs?\.|\s+versus)",
+                # Newline separated format (handles multiline)
+                r"^((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Petitioner|Applicant)",
+                # In the matter of format
+                r"In\s+the\s+matter\s+of\s*:?\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+)",
             ],
             "RESPONDENT": [
-                # Standard respondent patterns
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s*\.{3,}\s*)?\.{3,}\s*Respondents?",
-                r"([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s*\.{3,}\s*)?\.{3,}\s*Defendants?",
-                r"The\s+State\s+Of\s+Maharashtra.*?\.{3,}\s*Respondents?",
-                # Versus patterns
-                r"(?:vs?\.|\bversus\b)\s*([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
-                # State patterns
-                r"(The\s+State\s+Of\s+Maharashtra[^\.]*?)(?:\s*\.{3,}\s*)?\.{3,}\s*Respondents?",
-                r"Respondents?\s*:\s*([A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                # Standard respondent patterns with dots
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|The\s+)?[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Defendants?",
+                # Without dots
+                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                # State patterns - multiple variations
+                r"(The\s+State\s+Of\s+Maharashtra(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                r"(State\s+Of\s+Maharashtra(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                r"The\s+State\s+Of\s+Maharashtra.*?(?=\s*\.{2,}\s*Respondents?)",
+                # Versus patterns (after vs/versus)
+                r"(?:vs?\.|\bversus\b)\s+((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)?\s*[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                # Colon format
+                r"Respondents?\s*:\s*((?:The\s+)?[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                # Newline separated format
+                r"^((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Respondent|Defendant)",
             ],
             "AGP_ENHANCED": [
-                # Enhanced AGP patterns building on existing parser
-                r"(?:Smt\.?|Shri\.?|Ms\.?|Mr\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+\.?)\s*,?\s*AGP",
-                r"(?:Smt\.?|Shri\.?|Ms\.?|Mr\.?)\s+([A-Z][a-zA-Z\s\.]+),?\s*AGP",
-                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+\.?)\s*,?\s*AGP",
-                r"AGP\s+([A-Z][a-zA-Z\s\.]+)",
-                # Additional patterns for GP
-                r"(?:Smt\.?|Shri\.?|Ms\.?|Mr\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+\.?)\s*,?\s*(?:Addl\.?\s*)?GP",
-                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+\.?)\s*,?\s*(?:Addl\.?\s*)?GP",
+                # Enhanced AGP patterns with titles
+                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
+                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z]\.?)?\s+[A-Za-z]+)\s*,?\s*(?:AGP|A\.?\s*G\.?\s*P\.?)",
+                # Without titles
+                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
+                r"(?:AGP|A\.?\s*G\.?\s*P\.?)\s+([A-Z][a-zA-Z\s\.]+)",
+                # GP patterns
+                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
+                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
+                # "for State" patterns
+                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z\s\.]+?)\s+for\s+(?:the\s+)?State",
+                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z\s\.]+?)\s+for\s+Respondent.*?State",
             ],
         }
 
@@ -1630,10 +1645,13 @@ class OrderDocumentAnalyzer:
     def _extract_petitioners(self, text: str) -> List[Dict[str, Any]]:
         """Extract petitioner names and information"""
         petitioners = []
+        logging.info(f"🔍 Extracting petitioners from text (length: {len(text)} chars)")
 
-        for pattern in self.entity_patterns["PETITIONER"]:
+        for idx, pattern in enumerate(self.entity_patterns["PETITIONER"]):
             matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
+            match_count = 0
             for match in matches:
+                match_count += 1
                 try:
                     name = (
                         match.group(1).strip()
@@ -1660,21 +1678,30 @@ class OrderDocumentAnalyzer:
                                 "confidence": 0.9,
                             }
                         )
+                        logging.info(f"  ✅ Pattern {idx+1} found petitioner: '{name}'")
                 except IndexError:
                     logging.warning(
                         f"Pattern {pattern} matched but has no capturing groups"
                     )
                     continue
+            
+            if match_count == 0:
+                logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
-        return self._deduplicate_entities(petitioners)
+        deduplicated = self._deduplicate_entities(petitioners)
+        logging.info(f"  📊 Total petitioners extracted: {len(deduplicated)} (after deduplication from {len(petitioners)})")
+        return deduplicated
 
     def _extract_respondents(self, text: str) -> List[Dict[str, Any]]:
         """Extract respondent names and information"""
         respondents = []
+        logging.info(f"🔍 Extracting respondents from text (length: {len(text)} chars)")
 
-        for pattern in self.entity_patterns["RESPONDENT"]:
+        for idx, pattern in enumerate(self.entity_patterns["RESPONDENT"]):
             matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
+            match_count = 0
             for match in matches:
+                match_count += 1
                 try:
                     name = (
                         match.group(1).strip()
@@ -1701,23 +1728,32 @@ class OrderDocumentAnalyzer:
                                 "confidence": 0.9,
                             }
                         )
+                        logging.info(f"  ✅ Pattern {idx+1} found respondent: '{name}'")
                 except IndexError:
                     logging.warning(
                         f"Pattern {pattern} matched but has no capturing groups"
                     )
                     continue
+            
+            if match_count == 0:
+                logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
-        return self._deduplicate_entities(respondents)
+        deduplicated = self._deduplicate_entities(respondents)
+        logging.info(f"  📊 Total respondents extracted: {len(deduplicated)} (after deduplication from {len(respondents)})")
+        return deduplicated
 
     def _extract_agp_names(
         self, text: str, existing_entities: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Extract AGP names using enhanced patterns and existing ML results"""
         agp_names = []
+        logging.info(f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)")
 
         # Use existing ML parser results
+        ml_count = 0
         for entity in existing_entities:
             if entity.get("label") in ["AGP", "GP", "AG", "ADDL_GP", "B_PNL"]:
+                ml_count += 1
                 agp_names.append(
                     {
                         "name": entity.get("text", ""),
@@ -1729,11 +1765,14 @@ class OrderDocumentAnalyzer:
                         "source": "ml_parser",
                     }
                 )
+        logging.info(f"  📊 ML Parser found {ml_count} AGP/GP names")
 
         # Enhance with additional patterns
-        for pattern in self.entity_patterns["AGP_ENHANCED"]:
+        for idx, pattern in enumerate(self.entity_patterns["AGP_ENHANCED"]):
             matches = re.finditer(pattern, text, re.IGNORECASE)
+            match_count = 0
             for match in matches:
+                match_count += 1
                 name = match.group(1).strip()
                 # Clean up the name
                 name = re.sub(r"\s+", " ", name)
@@ -1750,8 +1789,14 @@ class OrderDocumentAnalyzer:
                             "source": "enhanced_patterns",
                         }
                     )
+                    logging.info(f"  ✅ Pattern {idx+1} found AGP: '{name}'")
+            
+            if match_count == 0:
+                logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
-        return self._deduplicate_entities(agp_names)
+        deduplicated = self._deduplicate_entities(agp_names)
+        logging.info(f"  📊 Total AGP/GP extracted: {len(deduplicated)} (after deduplication from {len(agp_names)})")
+        return deduplicated
 
     def _extract_dates(self, text: str) -> List[Dict[str, Any]]:
         """Extract dates from order text"""
