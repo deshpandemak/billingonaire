@@ -115,7 +115,7 @@ class OrderDocumentAnalyzer:
             ],
             "ADJOURNED": [
                 # Adjournment phrases
-                r"\bstand\s+over\s+to\b",
+                r"\bstands?\s+over\s+to\b",
                 r"\badjourned?\s+to\b",
                 r"\blist(?:ed)?\s+(?:the\s+same\s+)?on\b",
                 r"\bnext\s+(?:date|hearing)\s+(?:of|on)\b",
@@ -157,6 +157,8 @@ class OrderDocumentAnalyzer:
                 r"\b(?:learned\s+)?counsel.*?(?:appears?|appeared)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
                 r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appears?)\b",
+                r"\b(?:AGP|APP).*?(?:appears?|appeared|submits?|states?)\b",
+                r"\bappears?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 # Court observations after hearing
                 r"\bcourt.*?observes?\s+that\b",
