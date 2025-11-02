@@ -1294,22 +1294,49 @@ class OrderDocumentAnalyzer:
         case_details = {}
         logging.info("🔍 Extracting multi-case details from order text")
 
-        # Pattern to match case blocks with all details
-        # Looking for: "WRIT PETITION NO.11347 OF 2024" or "CONTEMPT PETITION NO.363 OF 2025" followed by petitioner, versus, respondent
-        # EXCLUDE cases preceded by "IN" (e.g., "IN WP/8485/2007") which are associated cases, not main cases
-        # Use negative lookbehind to exclude "IN" cases
-        case_block_pattern = r"(?<!IN\s)(?<!IN\s\s)(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|CONTEMPT PETITION NO\.|WITH|IN\s+(?:WRIT|CRIMINAL|CIVIL|CONTEMPT)|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
-
         # First, filter out all "IN" references to avoid treating them as separate cases
         # Pattern to identify "IN" cases: "IN WP/8485/2007" or "IN WRIT PETITION NO.8485 OF 2007"
         in_pattern = r"IN\s+(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
         in_matches = re.findall(in_pattern, text, re.IGNORECASE)
-        in_cases = [f"{num}/{year}" for num, year in in_matches]
+        in_cases = set(f"{num}/{year}" for num, year in in_matches)
         if in_cases:
             logging.info(f"  Found {len(in_cases)} IN case(s) (associated cases): {in_cases}")
         
-        matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
-        logging.info(f"  Found {len(matches)} main case block(s) in order text (excluding IN cases)")
+        # Simpler approach: Find all case headers, then extract text between them
+        # Pattern to match case headers: "CONTEMPT PETITION NO.363 OF 2025"
+        case_header_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
+        
+        # Find all matches with their positions
+        all_case_matches = []
+        for match in re.finditer(case_header_pattern, text, re.IGNORECASE):
+            case_type_full = match.group(1)
+            case_number = match.group(2)
+            case_year = match.group(3)
+            start_pos = match.end()  # Start extracting after the case header
+            
+            # Skip if this is an "IN" case
+            # Check if "IN " appears within 10 chars before this match
+            before_text = text[max(0, match.start()-10):match.start()]
+            if re.search(r"IN\s*$", before_text, re.IGNORECASE):
+                logging.info(f"  Skipping IN case: {case_type_full} {case_number}/{case_year}")
+                continue
+            
+            all_case_matches.append((case_type_full, case_number, case_year, start_pos))
+        
+        logging.info(f"  Found {len(all_case_matches)} main case block(s) in order text (excluding IN cases)")
+        
+        # Extract text blocks for each case
+        matches = []
+        for i, (case_type_full, case_number, case_year, start_pos) in enumerate(all_case_matches):
+            # Determine end position: either start of next case or end of text
+            if i + 1 < len(all_case_matches):
+                end_pos = all_case_matches[i + 1][3] - 50  # End 50 chars before next case header
+            else:
+                end_pos = len(text)  # Last case: go to end of text
+            
+            # Extract block text between cases
+            block_text = text[start_pos:end_pos]
+            matches.append((case_type_full, case_number, case_year, block_text))
 
         for case_type_full, case_number, year, block_text in matches:
             # Map case type to abbreviation
