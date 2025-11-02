@@ -1293,6 +1293,7 @@ class OrderDocumentAnalyzer:
         """
         case_details = {}
         logging.info("🔍 Extracting multi-case details from order text")
+        logging.info(f"  📄 FULL TEXT (first 800 chars): {text[:800]}")
 
         # First, filter out all "IN" references to avoid treating them as separate cases
         # Pattern to identify "IN" cases: "IN WP/8485/2007" or "IN WRIT PETITION NO.8485 OF 2007"
