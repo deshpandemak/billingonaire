@@ -1699,8 +1699,9 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                     "data": {
                         "order_category": case_data.get("order_category"),
                         "order_date": case_data.get("order_date"),
-                        "order_petitioners": case_data.get("order_petitioners"),
-                        "order_respondents": case_data.get("order_respondents"),
+                        "order_petitioner": case_data.get("order_petitioner"),
+                        "order_respondent": case_data.get("order_respondent"),
+                        "government_pleader": case_data.get("government_pleader"),
                     },
                 }
             )
@@ -1935,12 +1936,9 @@ async def upload_manual_order(
                     "analysis": {
                         "order_category": analysis_result["data"].get("order_category"),
                         "order_date": analysis_result["data"].get("order_date"),
-                        "petitioners_count": len(
-                            analysis_result["data"].get("order_petitioners", [])
-                        ),
-                        "respondents_count": len(
-                            analysis_result["data"].get("order_respondents", [])
-                        ),
+                        "order_petitioner": analysis_result["data"].get("order_petitioner"),
+                        "order_respondent": analysis_result["data"].get("order_respondent"),
+                        "government_pleader": analysis_result["data"].get("government_pleader"),
                     },
                 }
             )
@@ -2607,7 +2605,7 @@ async def generate_bill_data(
             logging.info(f"Admin {user_id} generating bill for user: {user_name}")
 
             # Step 1: Collect all unique AGP names with PRIORITY ORDER
-            # Priority: 1) order_agp_names (government_pleader from order analysis)
+            # Priority: 1) government_pleader (from order analysis)
             #          2) respondent_lawyer (from board data)
             #          3) additional_respondent_lawyers (from board data)
             boards_ref = db.collection("daily-boards")
@@ -2620,25 +2618,25 @@ async def generate_bill_data(
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
 
-                # PRIORITY 1: order_agp_names (government_pleader from order analysis)
+                # PRIORITY 1: government_pleader (from order analysis)
                 # This is the MOST ACCURATE source as it's extracted from the actual court order
-                order_agp_names = case_data.get("order_agp_names")
+                government_pleader = case_data.get("government_pleader")
                 has_order_agp = False
                 
-                if order_agp_names:
+                if government_pleader:
                     # Handle both string and list formats
-                    if isinstance(order_agp_names, str):
+                    if isinstance(government_pleader, str):
                         # Single string - treat as one name
-                        agp_name = order_agp_names.strip()
+                        agp_name = government_pleader.strip()
                         if agp_name:
                             unique_agp_names.add(agp_name)
                             if agp_name not in cases_by_agp:
                                 cases_by_agp[agp_name] = []
                             cases_by_agp[agp_name].append((case_id, case_data))
                             has_order_agp = True
-                    elif isinstance(order_agp_names, list):
+                    elif isinstance(government_pleader, list):
                         # List of names
-                        for agp_name in order_agp_names:
+                        for agp_name in government_pleader:
                             agp_name = str(agp_name).strip() if agp_name else ""
                             if agp_name:
                                 unique_agp_names.add(agp_name)
@@ -2647,7 +2645,7 @@ async def generate_bill_data(
                                 cases_by_agp[agp_name].append((case_id, case_data))
                                 has_order_agp = True
 
-                # PRIORITY 2 & 3: Only use board data if NO order_agp_names exists
+                # PRIORITY 2 & 3: Only use board data if NO government_pleader exists
                 # This ensures government_pleader from order analysis takes precedence
                 if not has_order_agp:
                     # Source 2: respondent_lawyer (from board data)
@@ -2670,7 +2668,7 @@ async def generate_bill_data(
                                 cases_by_agp[lawyer_name].append((case_id, case_data))
 
             logging.info(
-                f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: order_agp_names > respondent_lawyer > additional_respondent_lawyers)"
+                f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: government_pleader > respondent_lawyer > additional_respondent_lawyers)"
             )
             
             # Log sample of AGP names for debugging
@@ -3167,27 +3165,13 @@ def extract_parties_info(case_data: Dict) -> str:
     try:
         # Try to get from order analysis first
         if case_data.get("order_analysis_completed"):
-            petitioners = case_data.get("order_petitioners", [])
-            respondents = case_data.get("order_respondents", [])
+            petitioners = case_data.get("order_petitioner", "")
+            respondents = case_data.get("order_respondent", "")
 
             if petitioners and respondents:
-                # Extract text from dict format (order analysis stores as list of dicts)
-                def extract_text_from_parties(parties):
-                    if isinstance(parties, list):
-                        texts = []
-                        for party in parties[:2]:  # Take first 2
-                            if isinstance(party, dict):
-                                texts.append(party.get("text", str(party)))
-                            else:
-                                texts.append(str(party))
-                        return ", ".join(texts) if texts else ""
-                    elif isinstance(parties, str):
-                        return parties
-                    else:
-                        return str(parties)
-
-                petitioner_str = extract_text_from_parties(petitioners)
-                respondent_str = extract_text_from_parties(respondents)
+                # Now stored as strings, not arrays
+                petitioner_str = str(petitioners).strip() if petitioners else ""
+                respondent_str = str(respondents).strip() if respondents else ""
 
                 if petitioner_str and respondent_str:
                     return f"{petitioner_str} vs {respondent_str}"

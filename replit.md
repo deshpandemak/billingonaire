@@ -42,8 +42,19 @@ Billingonaire features a modern web application architecture with a React fronte
 - **Google Cloud Run**: Backend deployment and hosting.
 - **Bombay High Court Website**: Source for automated court order downloads.
 
-## Recent Changes (October 31, 2025)
-### ML Categorization Enhancements
+## Recent Changes
+
+### November 2, 2025 - Flattened Order Data Structure
+- **Restructured Order Analysis Storage**: Changed from array-based `order_cases[]` to **flattened structure** where each case's order analysis data is stored directly in its daily-board document
+- **Field Naming Standardization**: Renamed `order_agp_names` to `government_pleader` throughout the entire codebase for consistency
+- **Multi-Case Order Handling**: When processing orders with multiple clubbed cases, each case now gets its own flattened data (order_petitioner, order_respondent, government_pleader) in its respective daily-board entry
+- **Data Structure Changes**:
+  - OLD: `order_cases: [{petitioner, respondent, government_pleader}, ...]`
+  - NEW: Direct fields `order_petitioner` (string), `order_respondent` (string), `government_pleader` (array)
+- **Bill Generation Priority**: `government_pleader` (order analysis) → `respondent_lawyer` (board data) → `additional_respondent_lawyers` (board data)
+- **Files Updated**: AutoOrderManager.py, main.py, UserMatterMatcher.py
+
+### October 31, 2025 - ML Categorization Enhancements
 - **Absolute DISPOSED_OFF Priority**: Any disposal indicators now trigger immediate DISPOSED_OFF classification
 - **Enhanced Disposal Patterns**: Added detection for "case is closed", "contempt case closed", "petition allowed/granted", "relief granted"
 - **Aggressive HEARD_AND_ADJOURNED Detection**: Lowered threshold to 30% of ADJOURNED score for better hearing detection

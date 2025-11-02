@@ -1032,7 +1032,7 @@ class AutoOrderManager:
                 # FLATTENED case data for THIS case only (not an array)
                 "order_petitioner": this_case_data.get("petitioner", ""),
                 "order_respondent": this_case_data.get("respondent", ""),
-                "order_agp_names": this_case_data.get("government_pleader", []),
+                "government_pleader": this_case_data.get("government_pleader", []),
                 # Date validation
                 "order_date_validation": date_validation,
                 # Order link
@@ -1069,7 +1069,7 @@ class AutoOrderManager:
                                 "order_date": analysis_result.order_date,
                                 "order_petitioner": add_case.get("petitioner", ""),
                                 "order_respondent": add_case.get("respondent", ""),
-                                "order_agp_names": add_case.get("government_pleader", []),
+                                "government_pleader": add_case.get("government_pleader", []),
                                 "order_date_validation": date_validation,
                                 "order_link": order_link or self._get_order_link(case_id),
                                 "order_analysis_timestamp": datetime.now().isoformat(),
@@ -1213,9 +1213,9 @@ class AutoOrderManager:
             board_data = board_doc.to_dict()
 
             # Extract data with consistent field names
-            petitioners = board_data.get("order_petitioners", [])
-            respondents = board_data.get("order_respondents", [])
-            agp_names = board_data.get("order_agp_names", [])
+            petitioners = board_data.get("order_petitioner", "")
+            respondents = board_data.get("order_respondent", "")
+            agp_names = board_data.get("government_pleader", [])
             key_phrases = board_data.get("order_key_phrases", [])
 
             # Convert party names to strings (handle both string and dict formats)
@@ -1555,9 +1555,9 @@ class AutoOrderManager:
                 "order_category_confidence": None,
                 "order_date": None,
                 "order_next_hearing_date": None,
-                "order_petitioners": None,
-                "order_respondents": None,
-                "order_cases": None,
+                "order_petitioner": None,
+                "order_respondent": None,
+                "government_pleader": None,
                 "order_key_phrases": None,
                 "order_text": None,
                 "order_analysis_timestamp": None,
