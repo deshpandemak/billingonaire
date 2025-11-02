@@ -171,14 +171,8 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Priority: order_petitioner (order analysis) → petitioner_lawyer (board data) → empty
-        if (params.data?.order_petitioner) {
-          return params.data.order_petitioner;
-        }
-        if (params.data?.petitioner_lawyer) {
-          return params.data.petitioner_lawyer;
-        }
-        return '-';
+        // Only show data from order analysis
+        return params.data?.order_petitioner || '-';
       }
     },
     { 
@@ -189,14 +183,8 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Priority: order_respondent (order analysis) → respondent_lawyer (board data) → empty
-        if (params.data?.order_respondent) {
-          return params.data.order_respondent;
-        }
-        if (params.data?.respondent_lawyer) {
-          return params.data.respondent_lawyer;
-        }
-        return '-';
+        // Only show data from order analysis
+        return params.data?.order_respondent || '-';
       }
     },
     { 
