@@ -822,17 +822,21 @@ class OrderDocumentAnalyzer:
         agps = []
 
         # Split text on "and" to handle multiple advocates
-        parts = re.split(r'\s+and\s+', text, flags=re.IGNORECASE)
+        parts = re.split(r"\s+and\s+", text, flags=re.IGNORECASE)
 
         for part in parts:
             # Pattern for individual advocate: Mr./Ms. Name, Role
-            pattern = r'(?:Mr\.|Ms\.|Adv\.)\s+([A-Z]\.\s*[A-Z]\.\s*[A-Za-z]+)\s*,\s*([^,\n]+)'
+            pattern = (
+                r"(?:Mr\.|Ms\.|Adv\.)\s+([A-Z]\.\s*[A-Z]\.\s*[A-Za-z]+)\s*,\s*([^,\n]+)"
+            )
             matches = re.findall(pattern, part, re.IGNORECASE)
 
             for match in matches:
                 name, role_desc = match
                 # Extract the role (AGP, GP, Addl. GP, etc.)
-                role_match = re.search(r'(?:Addl\.?\s*)?(?:AGP|G\.?\s*P\.?)', role_desc, re.IGNORECASE)
+                role_match = re.search(
+                    r"(?:Addl\.?\s*)?(?:AGP|G\.?\s*P\.?)", role_desc, re.IGNORECASE
+                )
                 if role_match:
                     role = role_match.group(0)
                     agps.append((name.strip(), role.strip()))
