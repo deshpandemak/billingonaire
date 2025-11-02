@@ -1360,7 +1360,8 @@ class OrderDocumentAnalyzer:
             # Pattern 1: Handle PDF format with "…Petitioner" separator (split name)
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata …Petitioner Jagannath Veer"
             # This means the full name is "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer"
-            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s]+?)?)(?:\s*…\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-]+?)\s*(?:Versus|vs\.?)"
+            # Also supports: "Bhimrao s/o Gangaramji …Petitioner"
+            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*…\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|vs\.?)"
             pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
             if pet_match1:
                 # Combine parts before and after "…Petitioner"
@@ -1371,8 +1372,9 @@ class OrderDocumentAnalyzer:
 
             # Pattern 2: Handle "IN THE MATTER BETWEEN" format for IA cases
             # Example: "IN THE MATTER BETWEEN Kanhaiyalal Madhavji Thakkar …Petitioner"
+            # Also supports: "Bhimrao s/o Gangaramji Chourpagar …Petitioner"
             if not petitioner:
-                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-]+?)?)\s*…\s*Petitioners?"
+                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*…\s*Petitioners?"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
@@ -1380,8 +1382,9 @@ class OrderDocumentAnalyzer:
 
             # Pattern 3: Standard format before "Versus"
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer Versus"
+            # Also supports: "Bhimrao s/o Gangaramji Chourpagar Versus"
             if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-]+?)?)\s*(?:Versus|vs\.?)\s"
+                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:Versus|vs\.?)\s"
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
