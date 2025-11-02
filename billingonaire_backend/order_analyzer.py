@@ -1352,73 +1352,31 @@ class OrderDocumentAnalyzer:
             logging.info(f"  📄 BLOCK TEXT (first 500 chars): {block_text[:500]}")
 
             # Enhanced petitioner extraction with multiple patterns
-            # Support for: Alias names, titles (Mr., Smt., etc.), compound names, and special characters
+            # Support for: Alias names, "…Petitioner" separator, titles, compound names
             petitioner = ""
 
-            # Pattern 1: Name with "Alias" (e.g., "Name1 Alias Name2") - most specific, try first
-            petitioner_pattern1 = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Dr\.?)?\s*[A-Z][a-zA-Z\s\.\-]+?\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-]+?)(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?)*)?\s*\.{2,}\s*Petitioners?"
+            # Pattern 1: Handle PDF format with "…Petitioner" separator
+            # Example: "Hemlata Kirtikumar Kakade Alias Hemlata …Petitioner Jagannath Veer"
+            # This means the full name is "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer"
+            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s]+?)?)(?:\s*…\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-]+?)\s*(?:Versus|vs\.?)"
             pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
             if pet_match1:
-                petitioner = pet_match1.group(1).strip()
-                # Check for "And Ors." or "& Anr." after the name
-                ors_match = re.search(
-                    r"((?:And|&)\s+(?:Ors?\.?|Anr\.?))",
-                    block_text[pet_match1.start() : pet_match1.end() + 30],
-                    re.IGNORECASE,
-                )
-                if ors_match:
-                    petitioner += " " + ors_match.group(1).strip()
-                logging.info(f"    ✅ Petitioner Pattern 1 (Alias) matched: '{petitioner}'")
+                # Combine parts before and after "…Petitioner"
+                part1 = pet_match1.group(1).strip()
+                part2 = pet_match1.group(2).strip()
+                petitioner = f"{part1} {part2}"
+                logging.info(f"    ✅ Petitioner Pattern 1 (Split by …Petitioner) matched: '{petitioner}'")
 
-            # Pattern 2: Standard format with title and dots (flexible name matching)
+            # Pattern 2: Standard format before "Versus"
+            # Example: "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer Versus"
             if not petitioner:
-                petitioner_pattern2 = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Dr\.?)\s+[A-Z][a-zA-Z\s\.\-&]+?)(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?)*)?\s*\.{2,}\s*Petitioners?"
+                petitioner_pattern2 = r"([A-Z][a-zA-Z\s\.\-]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-]+?)?)\s*(?:Versus|vs\.?)\s"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
-                    # Check for "And Ors." or "& Anr." after the name
-                    ors_match = re.search(
-                        r"((?:And|&)\s+(?:Ors?\.?|Anr\.?))",
-                        block_text[pet_match2.start() : pet_match2.end() + 30],
-                        re.IGNORECASE,
-                    )
-                    if ors_match:
-                        petitioner += " " + ors_match.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 2 (Title+Dots) matched: '{petitioner}'")
-
-            # Pattern 3: Name without title followed by petitioner designation
-            if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-&]+?)(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?)*)?\s*\.{2,}\s*Petitioners?"
-                pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
-                if pet_match3:
-                    petitioner = pet_match3.group(1).strip()
-                    # Check for "And Ors." or "& Anr." after the name
-                    ors_match = re.search(
-                        r"((?:And|&)\s+(?:Ors?\.?|Anr\.?))",
-                        block_text[pet_match3.start() : pet_match3.end() + 30],
-                        re.IGNORECASE,
-                    )
-                    if ors_match:
-                        petitioner += " " + ors_match.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 3 (No title+Dots) matched: '{petitioner}'")
-
-            # Pattern 4: Name before "versus" or "vs" (fallback) - very greedy
-            if not petitioner:
-                versus_pattern = r"([A-Z][a-zA-Z\s\.\-&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-]+?)?)(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?)*)?\s*(?:versus|vs\.?)\s"
-                versus_match = re.search(
-                    versus_pattern, block_text.strip(), re.IGNORECASE | re.MULTILINE
-                )
-                if versus_match:
-                    petitioner = versus_match.group(1).strip()
-                    # Check for "And Ors." or "& Anr." after the name
-                    ors_match = re.search(
-                        r"((?:And|&)\s+(?:Ors?\.?|Anr\.?))",
-                        block_text[versus_match.start() : versus_match.end() + 30],
-                        re.IGNORECASE,
-                    )
-                    if ors_match:
-                        petitioner += " " + ors_match.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 4 (Before versus) matched: '{petitioner}'")
+                    # Remove any trailing "…Petitioner" if present
+                    petitioner = re.sub(r"\s*…\s*Petitioners?\s*$", "", petitioner, flags=re.IGNORECASE).strip()
+                    logging.info(f"    ✅ Petitioner Pattern 2 (Before Versus) matched: '{petitioner}'")
 
             # Clean up petitioner name
             if petitioner:
@@ -1426,11 +1384,12 @@ class OrderDocumentAnalyzer:
                 # Remove trailing dots
                 petitioner = re.sub(r"\.{2,}$", "", petitioner).strip()
 
-            # Extract respondent - support for & Anr., And Ors., multiple respondents, titles
+            # Extract respondent - support for "…Respondents" separator, & Anr., And Ors.
             respondent = ""
             
-            # Pattern 1: versus ... Respondent (with dots) - handles multi-line, special characters, & Anr.
-            respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*)\s*\.{2,}\s*Respondents?"
+            # Pattern 1: versus ... …Respondents (with "…" separator)
+            # Example: "Versus Mr. Harun Attar & Anr. …Respondents"
+            respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*…\s*Respondents?"
             resp_match1 = re.search(
                 respondent_pattern1, block_text, re.DOTALL | re.IGNORECASE
             )
@@ -1438,19 +1397,20 @@ class OrderDocumentAnalyzer:
                 respondent = resp_match1.group(1).strip()
                 # Clean up whitespace and newlines
                 respondent = re.sub(r"\s+", " ", respondent).strip()
-                logging.info(f"    ✅ Respondent Pattern 1 (dots) matched: '{respondent}'")
+                logging.info(f"    ✅ Respondent Pattern 1 (…Respondents separator) matched: '{respondent}'")
             
-            # Pattern 2: versus ... (without dots) - less specific fallback
+            # Pattern 2: versus ... before next major section (Mr./Ms./CORAM)
             if not respondent:
-                respondent_pattern2 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)(?:\s+(?:Mr\.|Ms\.|Adv\.)|$)"
+                respondent_pattern2 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)(?:\s+(?:Mr\.|Ms\.|Adv\.|CORAM)|\n|$)"
                 resp_match2 = re.search(
                     respondent_pattern2, block_text, re.DOTALL | re.IGNORECASE
                 )
                 if resp_match2:
                     respondent = resp_match2.group(1).strip()
-                    # Clean up whitespace and newlines
+                    # Clean up whitespace, newlines, and trailing separator
                     respondent = re.sub(r"\s+", " ", respondent).strip()
-                    logging.info(f"    ✅ Respondent Pattern 2 (no dots) matched: '{respondent}'")
+                    respondent = re.sub(r"\s*…\s*$", "", respondent).strip()
+                    logging.info(f"    ✅ Respondent Pattern 2 (before next section) matched: '{respondent}'")
             
             if not respondent:
                 logging.warning(f"    ❌ No respondent found for case {case_key}")
@@ -1476,12 +1436,12 @@ class OrderDocumentAnalyzer:
         pleaders = []
         logging.info(f"    🔍 Extracting AGP/GP names for case {case_key}")
 
-        # Pattern 1: Direct case association with specific case number
-        # "Mr. N.C. Walimbe, Addl. G.P. a/w Mr. R.A. Salunkhe, AGP for the Respondent State in CP/363/2025"
-        # Also handles multiple AGP/GP with "a/w" (along with) connector
-        pattern1 = rf"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?|A\.?\s*G\.?\s*P\.?))(?:\s+a/w\s+(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?|A\.?\s*G\.?\s*P\.?)))?\s+(?:for\s+)?(?:the\s+)?Respondent"
+        # Pattern 1: Extract AGP/GP names who appear "for the Respondent-State" or similar
+        # Example: "Mr. N.C. Walimbe, Addl. G.P. a/w Mr. R.A. Salunkhe, AGP for the Respondent-State."
+        # MUST include "for" and "Respondent" to avoid matching petitioner's advocates
+        pattern1 = r"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+(?:a/w\s+(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+)?for\s+(?:the\s+)?Respondent(?:-State|s?)?"
         
-        # Search for ALL occurrences, not just the first one
+        # Search for ALL occurrences
         for match in re.finditer(pattern1, text, re.IGNORECASE):
             name1 = match.group(1).strip()
             role1 = match.group(2).strip()
