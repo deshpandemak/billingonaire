@@ -1404,9 +1404,9 @@ class OrderDocumentAnalyzer:
                     logging.info(f"    ✅ Petitioner Pattern 2 (IN THE MATTER BETWEEN) matched: '{petitioner}'")
 
             # Pattern 3: Handle "Name …Petitioner Versus" format (name before separator, nothing after)
-            # Example: "Sunil Shivaji Wagh …Petitioner Versus"
+            # Example: "Sunil Shivaji Wagh …Petitioner Versus" or "Alvito Carvalho …Petitioner/Applicant Versus"
             if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*…\s*Petitioners?\s+(?:Versus|vs\.?)"
+                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*…\s*Petitioners?(?:/Applicant|/Appellant)?\s+(?:Versus|vs\.?)"
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
