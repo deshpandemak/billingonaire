@@ -1462,8 +1462,8 @@ class OrderDocumentAnalyzer:
         # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent No.1-State."
         # Also supports: "Mr. N.C. Walimbe, Addl. G.P. a/w Smt. S.R. Crasto, AGP, for the Respondent No.1-State."
         # MUST include "for" and "Respondent" to avoid matching petitioner's advocates
-        # Use word boundary and lookbehind to avoid capturing previous sentences
-        pattern1 = r"(?:^|\.|\n)\s*((?:Adv\.|Ms\.|Mr\.|Shri\.?|Smt\.?)\s+)([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s*)?(?:AGP|GP|G\.?\s*P\.?))\s+(?:(?:a/w|with)\s+((?:Adv\.|Ms\.|Mr\.|Shri\.?|Smt\.?)\s+)([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s*)?(?:AGP|GP|G\.?\s*P\.?))\s*,?\s*)?for\s+(?:the\s+)?Respondent(?:\s+Nos?\.?\s*[0-9\-and\s]+)?(?:-State|s?)?"
+        # Simplified pattern to handle role variations (Addl.G.P., Addl. G.P., AGP, etc.)
+        pattern1 = r"(?:^|\.|\n)\s*((?:Adv\.|Ms\.|Mr\.|Shri\.?|Smt\.?)\s+)([A-Z][A-Za-z\s\.]+?),\s+([A-Za-z\s\.]+?)\s+(?:(?:a/w|with)\s+((?:Adv\.|Ms\.|Mr\.|Shri\.?|Smt\.?)\s+)([A-Z][A-Za-z\s\.]+?),\s+([A-Za-z\s\.]+?)\s*,?\s*)?for\s+(?:the\s+)?Respondent(?:\s+Nos?\.?\s*[0-9\-and\s]+)?(?:-State|s?)?"
         
         # Search for ALL occurrences
         for match in re.finditer(pattern1, text, re.IGNORECASE):
@@ -1471,23 +1471,28 @@ class OrderDocumentAnalyzer:
             name1 = match.group(2).strip()
             role1 = match.group(3).strip()
             
-            # Normalize role
-            role1_normalized = self._normalize_agp_role(role1)
-            formatted1 = f"{title1} {name1}, {role1_normalized}"
-            if formatted1 not in pleaders:
-                pleaders.append(formatted1)
-                logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
+            # Only process if role1 contains AGP/GP/G.P.
+            if re.search(r'(?:AGP|GP|G\.?\s*P\.?)', role1, re.IGNORECASE):
+                # Normalize role
+                role1_normalized = self._normalize_agp_role(role1)
+                formatted1 = f"{title1} {name1}, {role1_normalized}"
+                if formatted1 not in pleaders:
+                    pleaders.append(formatted1)
+                    logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
 
-            # Check for second advocate (a/w pattern)
-            if match.group(4):
-                title2 = match.group(4).strip()
-                name2 = match.group(5).strip()
-                role2 = match.group(6).strip() if match.group(6) else "AGP"
-                role2_normalized = self._normalize_agp_role(role2)
-                formatted2 = f"{title2} {name2}, {role2_normalized}"
-                if formatted2 not in pleaders:
-                    pleaders.append(formatted2)
-                    logging.info(f"      ✅ AGP Pattern 1.2 (a/w) matched: '{formatted2}'")
+                # Check for second advocate (a/w or with pattern)
+                if match.group(4):
+                    title2 = match.group(4).strip()
+                    name2 = match.group(5).strip()
+                    role2 = match.group(6).strip() if match.group(6) else "AGP"
+                    
+                    # Only process if role2 contains AGP/GP/G.P.
+                    if re.search(r'(?:AGP|GP|G\.?\s*P\.?)', role2, re.IGNORECASE):
+                        role2_normalized = self._normalize_agp_role(role2)
+                        formatted2 = f"{title2} {name2}, {role2_normalized}"
+                        if formatted2 not in pleaders:
+                            pleaders.append(formatted2)
+                            logging.info(f"      ✅ AGP Pattern 1.2 (a/w) matched: '{formatted2}'")
 
         logging.info(f"      📊 Total AGP/GP found from Pattern 1: {len(pleaders)}")
         
