@@ -154,11 +154,11 @@ class OrderDocumentAnalyzer:
                 r"\bafter\s+hearing\s+(?:learned\s+)?(?:counsel|advocate)\s+for\s+(?:the\s+)?(?:petitioner|respondent)\b",
                 # Counsel submissions patterns (indicates hearing)
                 r"\b(?:learned\s+)?counsel.*?submits?\b",
-                r"\b(?:learned\s+)?counsel.*?(?:appears?|appeared)\b",
+                r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
-                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appears?)\b",
-                r"\b(?:AGP|APP).*?(?:appears?|appeared|submits?|states?)\b",
-                r"\bappears?\s+(?:as\s+)?(?:AGP|APP)\b",
+                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?)\b",
+                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?)\b",
+                r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 # Court observations after hearing
                 r"\bcourt.*?observes?\s+that\b",
