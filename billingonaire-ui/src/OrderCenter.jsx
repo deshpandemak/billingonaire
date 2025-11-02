@@ -407,8 +407,8 @@ const OrderCenter = () => {
                                     <tr key={index}>
                                         <td>{caseItem.case_ref}</td>
                                         <td>{caseItem.board_date}</td>
-                                        <td>{caseItem.petitioner_lawyer}</td>
-                                        <td>{caseItem.respondent_lawyer}</td>
+                                        <td>{caseItem.order_petitioner || caseItem.petitioner_lawyer || '-'}</td>
+                                        <td>{caseItem.order_respondent || caseItem.respondent_lawyer || '-'}</td>
                                         <td>
                                             <Button 
                                                 variant="outline-primary" 

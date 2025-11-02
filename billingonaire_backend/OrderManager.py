@@ -73,6 +73,8 @@ class OrderManager:
                         "case_year": case_data.get("case_year"),
                         "petitioner_lawyer": case_data.get("petitioner_lawyer"),
                         "respondent_lawyer": case_data.get("respondent_lawyer"),
+                        "order_petitioner": case_data.get("order_petitioner", ""),
+                        "order_respondent": case_data.get("order_respondent", ""),
                         "file_name": case_data.get("file_name"),
                         "order_status": order_status,
                         "order_notes": case_data.get("order_notes", ""),
