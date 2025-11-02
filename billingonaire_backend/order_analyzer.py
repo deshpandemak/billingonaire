@@ -1401,7 +1401,7 @@ class OrderDocumentAnalyzer:
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata …Petitioner Jagannath Veer"
             # This means the full name is "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer"
             # Also supports: "Bhimrao s/o Gangaramji …Petitioner"
-            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*(?:…|\.{2,})\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|vs\.?)"
+            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*(?:…|\.{2,})\s*Petitioners?\.?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|V/s\.?|vs\.?)"
             pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
             if pet_match1:
                 # Combine parts before and after "…Petitioner" or "...Petitioner"
@@ -1416,7 +1416,7 @@ class OrderDocumentAnalyzer:
             # Example: "IN THE MATTER BETWEEN Kanhaiyalal Madhavji Thakkar …Petitioner"
             # Also supports: "Bhimrao s/o Gangaramji Chourpagar …Petitioner"
             if not petitioner:
-                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?"
+                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?\.?"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
@@ -1426,9 +1426,9 @@ class OrderDocumentAnalyzer:
 
             # Pattern 3: Handle "Name …Petitioner Versus" format (name before separator, nothing after)
             # Example: "Sunil Shivaji Wagh …Petitioner Versus" or "Alvito Carvalho …Petitioner/Applicant Versus"
-            # Also handles "...Petitioners" (three dots) variant
+            # Also handles "...Petitioners" (three dots) variant and "V/s" (slash variant)
             if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?(?:/Applicant|/Appellant)?\s+(?:Versus|vs\.?)"
+                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?\.?(?:/Applicant|/Appellant)?\s+(?:Versus|V/s\.?|vs\.?)"
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
@@ -1441,7 +1441,7 @@ class OrderDocumentAnalyzer:
             # Also supports: "Bhimrao s/o Gangaramji Chourpagar Versus"
             if not petitioner:
                 # Must be at least 3 words to avoid matching just "Petitioner Versus"
-                petitioner_pattern4 = r"([A-Z][a-zA-Z]+(?:\s+[a-zA-Z\.\-/]+){2,}(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+)?)\s+(?:Versus|vs\.?)\s"
+                petitioner_pattern4 = r"([A-Z][a-zA-Z]+(?:\s+[a-zA-Z\.\-/]+){2,}(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+)?)\s+(?:Versus|V/s\.?|vs\.?)\s"
                 pet_match4 = re.search(petitioner_pattern4, block_text, re.IGNORECASE)
                 if pet_match4:
                     petitioner = pet_match4.group(1).strip()
@@ -1474,9 +1474,9 @@ class OrderDocumentAnalyzer:
             # Extract respondent - support for "…Respondents" or "...Respondents" separator, & Anr., And Ors.
             respondent = ""
 
-            # Pattern 1: versus ... …Respondents or ...Respondents (with ellipsis or dots separator)
-            # Example: "Versus Mr. Harun Attar & Anr. …Respondents" or "Versus State of Maharashtra ...Respondents"
-            respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The|State\s+of)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*(?:…|\.{2,})\s*Respondents?"
+            # Pattern 1: versus/v/s ... …Respondents or ...Respondents (with ellipsis or dots separator)
+            # Example: "Versus Mr. Harun Attar & Anr. …Respondents" or "V/s. State of Maharashtra ...Respondents"
+            respondent_pattern1 = r"(?:versus|V/s\.?)\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The|State\s+of)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*(?:…|\.{2,})\s*Respondents?\.?"
             resp_match1 = re.search(
                 respondent_pattern1, block_text, re.DOTALL | re.IGNORECASE
             )
