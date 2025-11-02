@@ -1439,7 +1439,8 @@ class OrderDocumentAnalyzer:
         # Pattern 1: Extract AGP/GP names who appear "for the Respondent-State" or similar
         # Example: "Mr. N.C. Walimbe, Addl. G.P. a/w Mr. R.A. Salunkhe, AGP for the Respondent-State."
         # MUST include "for" and "Respondent" to avoid matching petitioner's advocates
-        pattern1 = r"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+(?:a/w\s+(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)?([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+)?for\s+(?:the\s+)?Respondent(?:-State|s?)?"
+        # Use word boundary and lookbehind to avoid capturing previous sentences
+        pattern1 = r"(?:^|\.|\n)\s*(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+(?:a/w\s+(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)([A-Z][A-Za-z\s\.]+?),\s+((?:Addl\.?\s+)?(?:AGP|GP|G\.?\s*P\.?))\s+)?for\s+(?:the\s+)?Respondent(?:-State|s?)?"
         
         # Search for ALL occurrences
         for match in re.finditer(pattern1, text, re.IGNORECASE):
