@@ -2661,6 +2661,11 @@ async def generate_bill_data(
             logging.info(
                 f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)"
             )
+            
+            # Log sample of AGP names for debugging
+            agp_names_list = sorted(list(unique_agp_names))
+            logging.info(f"📝 Sample AGP names (first 10): {agp_names_list[:10]}")
+            logging.info(f"📝 Sample AGP names (last 10): {agp_names_list[-10:]}")
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
             matched_agp, confidence = get_user_manager().match_user_name_to_agp(

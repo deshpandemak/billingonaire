@@ -420,6 +420,9 @@ class UserManager:
 
         best_match = None
         best_score = 0.0
+        
+        logging.info(f"🔍 Fuzzy matching '{user_name}' against {len(agp_names_in_data)} AGP names")
+        logging.info(f"   User words: {user_words}, User initials: {user_initials}")
 
         for agp_name in agp_names_in_data:
             if not agp_name:
@@ -465,8 +468,10 @@ class UserManager:
 
                 # If no decent last name match found, skip this AGP
                 if last_name_score < 0.60:  # Slightly lenient for spelling variations
+                    logging.debug(f"   ⏭️  Skipping '{agp_name}' - last name '{agp_last}' didn't match (score: {last_name_score:.2f})")
                     continue
 
+                logging.debug(f"   ✅ '{agp_name}' - last name match: {last_name_score:.2f}")
                 scores.append(("last_name", last_name_score, 0.35))
 
             # 2. Check if AGP name contains user's initials pattern
@@ -516,6 +521,11 @@ class UserManager:
             if combined_score > best_score:
                 best_score = combined_score
                 best_match = agp_name
+        
+        if best_match:
+            logging.info(f"✅ Best match found: '{best_match}' with score {best_score:.2%}")
+        else:
+            logging.warning(f"⚠️ No match found for '{user_name}' among {len(agp_names_in_data)} AGP names")
 
         return (best_match, best_score)
 
