@@ -47,7 +47,7 @@ def test_scenario_1():
     ]
 
     df = pd.DataFrame(data)
-    test_deduplication(df, "Different cases with empty serials")
+    run_deduplication_test(df, "Different cases with empty serials")
 
 
 def test_scenario_2():
@@ -83,7 +83,7 @@ def test_scenario_2():
     ]
 
     df = pd.DataFrame(data)
-    test_deduplication(df, "Same case appearing multiple times")
+    run_deduplication_test(df, "Same case appearing multiple times")
 
 
 def test_scenario_3():
@@ -119,10 +119,10 @@ def test_scenario_3():
     ]
 
     df = pd.DataFrame(data)
-    test_deduplication(df, "Mix of populated and empty serials")
+    run_deduplication_test(df, "Mix of populated and empty serials")
 
 
-def test_deduplication(df, scenario_name):
+def run_deduplication_test(df, scenario_name):
     """Test both old and new deduplication logic"""
     print(f"\n📊 Testing: {scenario_name}")
     print(f"Original records: {len(df)}")

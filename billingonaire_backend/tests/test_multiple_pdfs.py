@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "billingonaire_backen
 logging.basicConfig(level=logging.WARNING)  # Reduce noise
 
 
-def test_pdf_file(pdf_path, pdf_name):
+def process_pdf_file(pdf_path, pdf_name):
     """Test a single PDF file and return parsing results"""
     try:
         from unittest.mock import MagicMock
@@ -107,7 +107,7 @@ def main():
         pdf_path = f"/workspaces/billingonaire/attached_assets/{pdf_name}"
         if os.path.exists(pdf_path):
             print(f"Testing: {pdf_name}")
-            result = test_pdf_file(pdf_path, pdf_name)
+            result = process_pdf_file(pdf_path, pdf_name)
             results.append(result)
         else:
             print(f"❌ File not found: {pdf_name}")

@@ -182,9 +182,9 @@ class OrderDocumentAnalyzer:
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Appellants?",
-                # Without title prefixes
-                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
-                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
+                # Without title prefixes - more flexible to handle middle initials and dots
+                r"([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
+                r"([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
                 # Colon format
                 r"Petitioners?\s*:\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
                 # Versus format (before vs/versus)
@@ -193,37 +193,42 @@ class OrderDocumentAnalyzer:
                 r"^((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Petitioner|Applicant)",
                 # In the matter of format
                 r"In\s+the\s+matter\s+of\s*:?\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+)",
+                # Direct name pattern for cases like "Ramchandra B. Sathe & Ors."
+                r"^([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)\s*\.{2,}\s*Petitioners?",
             ],
             "RESPONDENT": [
-                # Standard respondent patterns with dots
-                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|The\s+)?[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
-                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Defendants?",
-                # Without dots
-                r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
-                # State patterns - multiple variations
-                r"(The\s+State\s+Of\s+Maharashtra(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
-                r"(State\s+Of\s+Maharashtra(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                # Standard respondent patterns with dots - more specific to avoid false matches
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|The\s+)?[A-Z][a-zA-Z\s\.]+?(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?(?=\s|$)",
+                r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Defendants?",
+                # Without dots - more specific to avoid matching across versus
+                r"(?:versus|vs\.?)\s+([A-Z][a-zA-Z\s]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                # State patterns - multiple variations (case insensitive)
+                r"(The\s+State\s+Of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                r"(State\s+Of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
+                r"(State\s+of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
                 r"The\s+State\s+Of\s+Maharashtra.*?(?=\s*\.{2,}\s*Respondents?)",
-                # Versus patterns (after vs/versus)
-                r"(?:vs?\.|\bversus\b)\s+((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)?\s*[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                # Versus patterns (after vs/versus) - more specific
+                r"(?:vs?\.|\bversus\b)\s+((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)?\s*[A-Z][a-zA-Z\s\.]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
                 # Colon format
-                r"Respondents?\s*:\s*((?:The\s+)?[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
+                r"Respondents?\s*:\s*((?:The\s+)?[A-Z][a-zA-Z\s\.]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)",
                 # Newline separated format
                 r"^((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Respondent|Defendant)",
+                # Direct state pattern for "State of Maharashtra"
+                r"^(State\s+of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)\s*\.{2,}\s*Respondents?",
             ],
             "AGP_ENHANCED": [
-                # Enhanced AGP patterns with titles
-                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
-                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z]\.?)?\s+[A-Za-z]+)\s*,?\s*(?:AGP|A\.?\s*G\.?\s*P\.?)",
-                # Without titles
-                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
-                r"(?:AGP|A\.?\s*G\.?\s*P\.?)\s+([A-Z][a-zA-Z\s\.]+)",
-                # GP patterns
-                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
-                r"([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
+                # Enhanced AGP patterns with titles - capture full name including title
+                r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
+                r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]\.?)?\s+[A-Za-z]+)\s*,?\s*(?:AGP|A\.?\s*G\.?\s*P\.?)",
+                # Without titles - only match when no title is present (use word boundaries)
+                r"\b([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)(?!\s*(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?))",
+                # GP patterns with titles
+                r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
+                # GP patterns without titles
+                r"\b([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)(?!\s*(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?))",
                 # "for State" patterns
-                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z\s\.]+?)\s+for\s+(?:the\s+)?State",
-                r"(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+([A-Z][a-zA-Z\s\.]+?)\s+for\s+Respondent.*?State",
+                r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z\s\.]+?)\s+for\s+(?:the\s+)?State",
+                r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z\s\.]+?)\s+for\s+Respondent.*?State",
             ],
         }
 
