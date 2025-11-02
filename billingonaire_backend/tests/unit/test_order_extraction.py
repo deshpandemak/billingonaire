@@ -143,7 +143,7 @@ def test_case_extraction():
 
         # Validate against expected
         expected = expected_cases[idx]
-        print(f"\n  Validation:")
+        print("\n  Validation:")
         print(
             f"    Petitioner match: {petitioner == expected['petitioner'] if 'petitioner' in locals() else 'SKIPPED'}"
         )

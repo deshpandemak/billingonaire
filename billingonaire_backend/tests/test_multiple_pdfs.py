@@ -141,7 +141,7 @@ def main():
                 f"  - {case['name']}: {case['total_records']} → {case['old_logic_records']} records"
             )
     else:
-        print(f"\n✅ All tested PDFs work correctly with both old and new logic")
+        print("\n✅ All tested PDFs work correctly with both old and new logic")
         print("   The fix prevents potential future issues with different PDF formats")
 
 

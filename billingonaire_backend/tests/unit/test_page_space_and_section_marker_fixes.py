@@ -295,7 +295,7 @@ class TestSectionMarkerRemoval:
         # Should have clean lawyer name
         assert len(add_lawyers) >= 1
         # Find the lawyer with the problematic marker
-        lawyer_with_marker = [l for l in add_lawyers if "P. B. CPHAWAN" in l]
+        lawyer_with_marker = [lawyer for lawyer in add_lawyers if "P. B. CPHAWAN" in lawyer]
         assert len(lawyer_with_marker) == 1
         lawyer = lawyer_with_marker[0]
         assert "MS. P. B. CPHAWAN" in lawyer
@@ -327,7 +327,7 @@ class TestSectionMarkerRemoval:
         # Should have clean lawyer name
         assert len(add_lawyers) >= 1
         # Find the lawyer with the problematic marker
-        lawyer_with_marker = [l for l in add_lawyers if "A. A. PURAV" in l]
+        lawyer_with_marker = [lawyer for lawyer in add_lawyers if "A. A. PURAV" in lawyer]
         assert len(lawyer_with_marker) == 1
         lawyer = lawyer_with_marker[0]
         assert "SMT. A. A. PURAV" in lawyer

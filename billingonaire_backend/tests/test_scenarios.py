@@ -162,7 +162,7 @@ def run_deduplication_test(df, scenario_name):
         else:
             print(f"  ⚠️ New logic removes {-diff} more records")
     else:
-        print(f"  ➖ Both give same result")
+        print("  ➖ Both give same result")
 
 
 if __name__ == "__main__":

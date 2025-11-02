@@ -65,7 +65,7 @@ def test_pdf_parsing():
 
                 if df is not None and not df.empty:
                     record_count = len(df)
-                    print(f"✅ PDF parsed successfully!")
+                    print("✅ PDF parsed successfully!")
                     print(f"📊 Records extracted: {record_count}")
 
                     # Show sample records
@@ -88,8 +88,7 @@ def test_pdf_parsing():
                     if record_count > 5:
                         print(f"... and {record_count - 5} more records")
 
-                    # Show column info
-                    print(f"\n📊 DataFrame info:")
+                    print("\n📊 DataFrame info:")
                     print(f"  Columns: {list(df.columns)}")
                     print(f"  Shape: {df.shape}")
 
@@ -133,4 +132,4 @@ if __name__ == "__main__":
     if result is not None:
         print(f"\n🎉 Test completed successfully - {len(result)} records extracted")
     else:
-        print(f"\n💥 Test failed - check the errors above")
+        print("\n💥 Test failed - check the errors above")

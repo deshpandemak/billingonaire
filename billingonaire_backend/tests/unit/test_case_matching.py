@@ -17,9 +17,10 @@ from dataclasses import asdict
 from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
-
+# Add backend to path for imports
 sys.path.insert(0, "/workspaces/billingonaire/billingonaire_backend")
+
+import pytest
 
 from AutoOrderManager import AutoOrderManager
 from order_analyzer import CaseInfo, OrderAnalysisResult, OrderDocumentAnalyzer
@@ -181,12 +182,12 @@ class TestCaseMatching:
         board_date = "2025-01-15"
 
         # Verify types before query
-        assert isinstance(case_type, str), f"case_type must be str"
+        assert isinstance(case_type, str), "case_type must be str"
         assert isinstance(case_no, int), f"case_no must be int, got {type(case_no)}"
         assert isinstance(
             case_year, int
         ), f"case_year must be int, got {type(case_year)}"
-        assert isinstance(board_date, str), f"board_date must be str"
+        assert isinstance(board_date, str), "board_date must be str"
 
         # This validates that the types are correct for Firestore queries
         # In actual AutoOrderManager, these would be used in where() clauses
