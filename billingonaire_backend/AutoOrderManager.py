@@ -751,7 +751,9 @@ class AutoOrderManager:
             sequence_number: Specific sequence number to try (0-49)
         """
         case_ref = case_data.get("case_ref", "UNKNOWN")
-        logging.warning(f"🔵 _download_order_for_case ENTERED for {case_ref}, seq={sequence_number}")
+        logging.warning(
+            f"🔵 _download_order_for_case ENTERED for {case_ref}, seq={sequence_number}"
+        )
         try:
             case_ref = case_data["case_ref"]
             board_date = case_data.get("board_date")
@@ -769,7 +771,9 @@ class AutoOrderManager:
                 return {"success": False, "error": "Invalid case reference format"}
 
             case_type, case_number, year = case_parts
-            logging.warning(f"🔵 Before zfill: case_number={case_number}, type={type(case_number)}")
+            logging.warning(
+                f"🔵 Before zfill: case_number={case_number}, type={type(case_number)}"
+            )
 
             # Format case number with leading zeros
             case_number = str(case_number).zfill(7)
@@ -851,7 +855,9 @@ class AutoOrderManager:
             sequence_number: Specific sequence number to try (0-49)
         """
         # DEBUG: Log function entry
-        logging.warning(f"🔍 ENTERING _download_pdf_bombay_hc_simple: seq={sequence_number}, case_type={case_type}, case_number={case_number}")
+        logging.warning(
+            f"🔍 ENTERING _download_pdf_bombay_hc_simple: seq={sequence_number}, case_type={case_type}, case_number={case_number}"
+        )
         try:
             base_url = "https://bombayhighcourt.nic.in/"
             url = "generatenewauth.php?bhcpar="
@@ -1233,7 +1239,9 @@ class AutoOrderManager:
                 "order_updated_at": datetime.now().isoformat(),
             }
 
-            self.db.collection(self.boards_collection).document(case_id).update(case_update)
+            self.db.collection(self.boards_collection).document(case_id).update(
+                case_update
+            )
             logging.info(f"Order link created in daily-boards for {case_id}")
 
         except Exception as e:

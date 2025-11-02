@@ -35,7 +35,7 @@ def test_auto_order_manager_initialization():
         manager = AutoOrderManager()
         assert manager is not None
         assert manager.boards_collection == "daily-boards"
-        assert manager.orders_collection == "case-orders"
+        # orders_collection removed - order status now consolidated in daily-boards
         assert manager.search_index_collection == "order-search-index"
 
 

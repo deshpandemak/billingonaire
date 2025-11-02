@@ -12,8 +12,6 @@ Run with: pytest test_case_matching.py -v
 """
 
 import os
-
-# Import the classes to test
 import sys
 from dataclasses import asdict
 from datetime import datetime

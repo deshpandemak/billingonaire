@@ -98,7 +98,9 @@ class OrderManager:
     def _check_order_exists(self, case_id: str) -> bool:
         """Check if an order exists for this case in daily-boards collection"""
         try:
-            board_doc = self.db.collection(self.boards_collection).document(case_id).get()
+            board_doc = (
+                self.db.collection(self.boards_collection).document(case_id).get()
+            )
             if board_doc.exists:
                 board_data = board_doc.to_dict()
                 order_status = board_data.get("order_status", "not_present")
@@ -123,7 +125,9 @@ class OrderManager:
         try:
             # Prepare order data for daily-boards collection
             order_update = {
-                "order_status": order_data.get("status", "linked"),  # linked, failed, manually_uploaded
+                "order_status": order_data.get(
+                    "status", "linked"
+                ),  # linked, failed, manually_uploaded
                 "order_link": order_data.get("order_link"),
                 "order_text": order_data.get("order_text"),
                 "order_fetch_date": datetime.now().isoformat(),
@@ -134,9 +138,15 @@ class OrderManager:
             }
 
             # Update the daily-boards document directly
-            self.db.collection(self.boards_collection).document(case_id).update(order_update)
+            self.db.collection(self.boards_collection).document(case_id).update(
+                order_update
+            )
 
-            return {"success": True, "case_id": case_id, "status": order_update["order_status"]}
+            return {
+                "success": True,
+                "case_id": case_id,
+                "status": order_update["order_status"],
+            }
 
         except Exception as e:
             logging.error(f"Error creating order link for case {case_id}: {e}")
@@ -162,7 +172,9 @@ class OrderManager:
                 "order_updated_at": datetime.now().isoformat(),
             }
 
-            self.db.collection(self.boards_collection).document(case_id).update(update_data)
+            self.db.collection(self.boards_collection).document(case_id).update(
+                update_data
+            )
 
             return {"success": True, "case_id": case_id, "new_status": status}
 
@@ -174,7 +186,9 @@ class OrderManager:
         """Get order details for a specific case from daily-boards collection"""
         try:
             # Get order details from daily-boards document
-            board_doc = self.db.collection(self.boards_collection).document(case_id).get()
+            board_doc = (
+                self.db.collection(self.boards_collection).document(case_id).get()
+            )
 
             if board_doc.exists:
                 board_data = board_doc.to_dict()

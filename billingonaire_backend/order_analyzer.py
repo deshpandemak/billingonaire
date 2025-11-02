@@ -23,8 +23,6 @@ try:
 except ImportError:
     pdfplumber = None
 
-from fastapi import HTTPException
-
 # Firebase imports
 from firebase_admin import firestore
 
@@ -297,7 +295,9 @@ class OrderDocumentAnalyzer:
                 regex_matches = re.findall(pattern, text, re.IGNORECASE)
                 if regex_matches:
                     matches += len(regex_matches)
-                    matched_patterns.append(pattern[:50])  # Log first 50 chars of pattern
+                    matched_patterns.append(
+                        pattern[:50]
+                    )  # Log first 50 chars of pattern
                     # Weight patterns based on specificity and importance
                     if "disposed" in pattern.lower():
                         score += len(regex_matches) * 2.5  # Disposal is definitive
@@ -342,10 +342,12 @@ class OrderDocumentAnalyzer:
                 "matches": matches,
                 "confidence": min(score / 10.0, 1.0),  # Normalize to 0-1
             }
-            
+
             # Log category results
             if matched_patterns:
-                logging.info(f"  📊 {category}: score={score:.2f}, matches={matches}, patterns={matched_patterns[:3]}")
+                logging.info(
+                    f"  📊 {category}: score={score:.2f}, matches={matches}, patterns={matched_patterns[:3]}"
+                )
             elif category == "DISPOSED_OFF":
                 # Always log disposal check even if no matches
                 logging.info(f"  ❌ {category}: No disposal patterns found")
@@ -361,7 +363,9 @@ class OrderDocumentAnalyzer:
             confidence = scores["DISPOSED_OFF"]["confidence"]
             # Boost confidence for disposal - it's definitive
             confidence = min(confidence * 1.3, 1.0)
-            logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - DISPOSAL DETECTED")
+            logging.info(
+                f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - DISPOSAL DETECTED"
+            )
             return best_category, confidence
 
         # Enhanced category selection logic for non-disposal cases
@@ -1251,7 +1255,11 @@ class OrderDocumentAnalyzer:
             if pet_match1:
                 petitioner = pet_match1.group(1).strip()
                 # Check for "And Ors." in the nearby text and add it
-                if re.search(r"And\s+Ors\.?", block_text[pet_match1.start():pet_match1.end() + 50], re.IGNORECASE):
+                if re.search(
+                    r"And\s+Ors\.?",
+                    block_text[pet_match1.start() : pet_match1.end() + 50],
+                    re.IGNORECASE,
+                ):
                     petitioner += " And Ors."
                 print(f"Pattern 1 matched: {petitioner}")
 
@@ -1262,13 +1270,19 @@ class OrderDocumentAnalyzer:
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
                     # Check for "And Ors." in the nearby text and add it
-                    if re.search(r"And\s+Ors\.?", block_text[pet_match2.start():pet_match2.end() + 50], re.IGNORECASE):
+                    if re.search(
+                        r"And\s+Ors\.?",
+                        block_text[pet_match2.start() : pet_match2.end() + 50],
+                        re.IGNORECASE,
+                    ):
                         petitioner += " And Ors."
                     print(f"Pattern 2 matched: {petitioner}")
 
             # Pattern 3: Petitioner mentioned in sentence format
             if not petitioner:
-                petitioner_pattern3 = r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                petitioner_pattern3 = (
+                    r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                )
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
@@ -1276,17 +1290,21 @@ class OrderDocumentAnalyzer:
 
             # Pattern 4: Name before "versus" or "vs" (fallback)
             if not petitioner:
-                versus_pattern = r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
-                versus_match = re.search(versus_pattern, block_text.strip(), re.IGNORECASE | re.MULTILINE)
+                versus_pattern = (
+                    r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
+                )
+                versus_match = re.search(
+                    versus_pattern, block_text.strip(), re.IGNORECASE | re.MULTILINE
+                )
                 if versus_match:
                     petitioner = versus_match.group(1).strip()
                     print(f"Pattern 4 matched: {petitioner}")
 
             # Clean up petitioner name
             if petitioner:
-                petitioner = re.sub(r'\s+', ' ', petitioner).strip()
+                petitioner = re.sub(r"\s+", " ", petitioner).strip()
                 # Remove trailing dots
-                petitioner = re.sub(r'\.{2,}$', '', petitioner).strip()
+                petitioner = re.sub(r"\.{2,}$", "", petitioner).strip()
 
             # Extract respondent
             respondent = ""
@@ -1349,7 +1367,7 @@ class OrderDocumentAnalyzer:
                 # Pattern 1: "Adv. Full Name, Role" - PRIORITY: capture everything after Adv. until comma
                 r"Adv\.\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b",
                 # Pattern 2: "Full Name, Role" - fallback for cases without Adv. prefix (must start with capital letter, not 'a' or 'w')
-                r'\b(?!a/|w\s)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b',
+                r"\b(?!a/|w\s)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b",
                 # Pattern 3: "AGP Shri/Mr. Name" - role followed by title and name (improved)
                 r"(?:AGP|GP|Addl\.?\s*GP)\s+(?:Shri\.?|Smt\.?|Mr\.?|Ms\.?)\s+([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*)\b",
                 # Pattern 4: "Government Pleader: Name" (improved)
@@ -1361,7 +1379,7 @@ class OrderDocumentAnalyzer:
             # Process patterns with priority (Adv. patterns first, then filter general matches)
             adv_matches = []
             general_matches = []
-            
+
             for i, pattern in enumerate(agp_patterns):
                 matches = re.findall(pattern, text, re.IGNORECASE)
                 for match in matches:
@@ -1369,12 +1387,25 @@ class OrderDocumentAnalyzer:
                         name, role = match
                         name = name.strip()
                         role = role.strip()
-                        
+
                         # Skip if name contains common words that indicate it's not a person
                         # Use word boundaries to avoid false positives (e.g., "and" in "Deshpande")
-                        if any(re.search(r'\b' + re.escape(word) + r'\b', name, re.IGNORECASE) for word in ['for', 'the', 'and', 'with', 'in', 'state', 'respondent']):
+                        if any(
+                            re.search(
+                                r"\b" + re.escape(word) + r"\b", name, re.IGNORECASE
+                            )
+                            for word in [
+                                "for",
+                                "the",
+                                "and",
+                                "with",
+                                "in",
+                                "state",
+                                "respondent",
+                            ]
+                        ):
                             continue
-                            
+
                         # Normalize role
                         role_upper = role.upper().replace(".", "").replace(" ", "")
                         if "AGP" in role_upper or "APP" in role_upper:
@@ -1385,7 +1416,12 @@ class OrderDocumentAnalyzer:
                             normalized_role = "GP"
 
                         # Clean name - remove any remaining titles
-                        name = re.sub(r'^(Ms\.|Mr\.|Adv\.|Shri\.?|Smt\.?)\s+', '', name, flags=re.IGNORECASE).strip()
+                        name = re.sub(
+                            r"^(Ms\.|Mr\.|Adv\.|Shri\.?|Smt\.?)\s+",
+                            "",
+                            name,
+                            flags=re.IGNORECASE,
+                        ).strip()
 
                         if name and len(name) > 1:
                             if i == 0:  # Pattern 1 (Adv. prefix) gets priority
@@ -1395,28 +1431,45 @@ class OrderDocumentAnalyzer:
                                 # Avoid duplicates by checking if this name is a substring of any Adv. match
                                 is_duplicate = False
                                 for adv_match in adv_matches:
-                                    adv_name = adv_match.replace("Adv. ", "").split(", ")[0]
+                                    adv_name = adv_match.replace("Adv. ", "").split(
+                                        ", "
+                                    )[0]
                                     if name in adv_name or adv_name in name:
                                         is_duplicate = True
                                         break
                                 if not is_duplicate:
-                                    general_matches.append(f"Adv. {name}, {normalized_role}")
+                                    general_matches.append(
+                                        f"Adv. {name}, {normalized_role}"
+                                    )
 
             # Combine results: Adv. patterns first, then general patterns
             all_matches = adv_matches + general_matches
-            
+
             # Handle "a/w" (along with) pattern for second advocates
-            aw_pattern = r"a/w\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b"
+            aw_pattern = (
+                r"a/w\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b"
+            )
             aw_matches = re.findall(aw_pattern, text, re.IGNORECASE)
             for match in aw_matches:
                 name, role = match
                 name = name.strip()
                 role = role.strip()
-                
+
                 # Skip if name contains common words
-                if any(re.search(r'\b' + re.escape(word) + r'\b', name, re.IGNORECASE) for word in ['for', 'the', 'and', 'with', 'in', 'state', 'respondent']):
+                if any(
+                    re.search(r"\b" + re.escape(word) + r"\b", name, re.IGNORECASE)
+                    for word in [
+                        "for",
+                        "the",
+                        "and",
+                        "with",
+                        "in",
+                        "state",
+                        "respondent",
+                    ]
+                ):
                     continue
-                    
+
                 # Normalize role
                 role_upper = role.upper().replace(".", "").replace(" ", "")
                 if "AGP" in role_upper or "APP" in role_upper:
@@ -1428,7 +1481,7 @@ class OrderDocumentAnalyzer:
 
                 if name and len(name) > 1:
                     all_matches.append(f"Adv. {name}, {normalized_role}")
-            
+
             # Add all matches to pleaders list
             pleaders.extend(all_matches)
 
@@ -1466,7 +1519,11 @@ class OrderDocumentAnalyzer:
             pet_match1 = re.search(pet_pattern1, block, re.IGNORECASE)
             if pet_match1:
                 petitioner = pet_match1.group(1).strip()
-                if re.search(r"And\s+Ors\.?", block[pet_match1.start():pet_match1.end() + 50], re.IGNORECASE):
+                if re.search(
+                    r"And\s+Ors\.?",
+                    block[pet_match1.start() : pet_match1.end() + 50],
+                    re.IGNORECASE,
+                ):
                     petitioner += " And Ors."
 
             # Pattern 2: Name followed by petitioner designation (more flexible)
@@ -1478,22 +1535,28 @@ class OrderDocumentAnalyzer:
 
             # Pattern 3: Petitioner mentioned in sentence format
             if not petitioner:
-                pet_pattern3 = r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                pet_pattern3 = (
+                    r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                )
                 pet_match3 = re.search(pet_pattern3, block, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
 
             # Pattern 4: Name before "versus" or "vs" (fallback)
             if not petitioner:
-                versus_pattern = r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
-                versus_match = re.search(versus_pattern, block.strip(), re.IGNORECASE | re.MULTILINE)
+                versus_pattern = (
+                    r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
+                )
+                versus_match = re.search(
+                    versus_pattern, block.strip(), re.IGNORECASE | re.MULTILINE
+                )
                 if versus_match:
                     petitioner = versus_match.group(1).strip()
 
             # Clean up petitioner name
             if petitioner:
-                petitioner = re.sub(r'\s+', ' ', petitioner).strip()
-                petitioner = re.sub(r'\.{2,}$', '', petitioner).strip()
+                petitioner = re.sub(r"\s+", " ", petitioner).strip()
+                petitioner = re.sub(r"\.{2,}$", "", petitioner).strip()
 
             # Enhanced respondent extraction
             respondent = ""
@@ -1511,7 +1574,7 @@ class OrderDocumentAnalyzer:
             # Clean up respondent
             if respondent:
                 respondent = re.sub(r"\s+", " ", respondent).strip()
-                respondent = re.sub(r'\.{2,}$', '', respondent).strip()
+                respondent = re.sub(r"\.{2,}$", "", respondent).strip()
 
         return petitioner, respondent
 
