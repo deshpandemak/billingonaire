@@ -1397,26 +1397,26 @@ class OrderDocumentAnalyzer:
             # Support for: Alias names, "…Petitioner" separator, titles, compound names
             petitioner = ""
 
-            # Pattern 1: Handle PDF format with "…Petitioner" separator (split name)
+            # Pattern 1: Handle PDF format with "…Petitioner" or "...Petitioner" separator (split name)
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata …Petitioner Jagannath Veer"
             # This means the full name is "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer"
             # Also supports: "Bhimrao s/o Gangaramji …Petitioner"
-            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*…\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|vs\.?)"
+            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*(?:…|\.{2,})\s*Petitioners?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|vs\.?)"
             pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
             if pet_match1:
-                # Combine parts before and after "…Petitioner"
+                # Combine parts before and after "…Petitioner" or "...Petitioner"
                 part1 = pet_match1.group(1).strip()
                 part2 = pet_match1.group(2).strip()
                 petitioner = f"{part1} {part2}"
                 logging.info(
-                    f"    ✅ Petitioner Pattern 1 (Split by …Petitioner) matched: '{petitioner}'"
+                    f"    ✅ Petitioner Pattern 1 (Split by …/...Petitioner) matched: '{petitioner}'"
                 )
 
             # Pattern 2: Handle "IN THE MATTER BETWEEN" format for IA cases
             # Example: "IN THE MATTER BETWEEN Kanhaiyalal Madhavji Thakkar …Petitioner"
             # Also supports: "Bhimrao s/o Gangaramji Chourpagar …Petitioner"
             if not petitioner:
-                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*…\s*Petitioners?"
+                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
@@ -1426,13 +1426,14 @@ class OrderDocumentAnalyzer:
 
             # Pattern 3: Handle "Name …Petitioner Versus" format (name before separator, nothing after)
             # Example: "Sunil Shivaji Wagh …Petitioner Versus" or "Alvito Carvalho …Petitioner/Applicant Versus"
+            # Also handles "...Petitioners" (three dots) variant
             if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*…\s*Petitioners?(?:/Applicant|/Appellant)?\s+(?:Versus|vs\.?)"
+                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?(?:/Applicant|/Appellant)?\s+(?:Versus|vs\.?)"
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
                     logging.info(
-                        f"    ✅ Petitioner Pattern 3 (Name …Petitioner Versus) matched: '{petitioner}'"
+                        f"    ✅ Petitioner Pattern 3 (Name …/...Petitioner Versus) matched: '{petitioner}'"
                     )
 
             # Pattern 4: Standard format before "Versus" (no separator)
@@ -1470,12 +1471,12 @@ class OrderDocumentAnalyzer:
                     r"\s*\.{2,}\s*PETITIONER.*$", "", petitioner, flags=re.IGNORECASE
                 ).strip()
 
-            # Extract respondent - support for "…Respondents" separator, & Anr., And Ors.
+            # Extract respondent - support for "…Respondents" or "...Respondents" separator, & Anr., And Ors.
             respondent = ""
 
-            # Pattern 1: versus ... …Respondents (with "…" separator)
-            # Example: "Versus Mr. Harun Attar & Anr. …Respondents"
-            respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*…\s*Respondents?"
+            # Pattern 1: versus ... …Respondents or ...Respondents (with ellipsis or dots separator)
+            # Example: "Versus Mr. Harun Attar & Anr. …Respondents" or "Versus State of Maharashtra ...Respondents"
+            respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The|State\s+of)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*(?:…|\.{2,})\s*Respondents?"
             resp_match1 = re.search(
                 respondent_pattern1, block_text, re.DOTALL | re.IGNORECASE
             )
@@ -1484,7 +1485,7 @@ class OrderDocumentAnalyzer:
                 # Clean up whitespace and newlines
                 respondent = re.sub(r"\s+", " ", respondent).strip()
                 logging.info(
-                    f"    ✅ Respondent Pattern 1 (…Respondents separator) matched: '{respondent}'"
+                    f"    ✅ Respondent Pattern 1 (…/...Respondents separator) matched: '{respondent}'"
                 )
 
             # Pattern 2: versus ... before next major section (Mr./Ms./CORAM)
