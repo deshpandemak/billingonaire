@@ -1463,9 +1463,9 @@ class OrderDocumentAnalyzer:
         # Match format: "Title Name, Role (a/w|with) Title Name, Role for Respondent"
         logging.info(f"      🔍 Testing Pattern 1 for AGP/GP extraction...")
         
-        # First, let's try a simpler pattern that definitely should match
-        # Match: "Mr./Ms./etc. Name(s), Role ... for Respondent"
-        simple_pattern = r"((?:Mr\.|Ms\.|Smt\.|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\s\.]+?)\s+(?:a/w|with)\s+((?:Mr\.|Ms\.|Smt\.|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\s\.]+?),?\s*for\s+(?:the\s+)?Respondent"
+        # Fixed pattern - the role can have any characters including periods and spaces
+        # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent"
+        simple_pattern = r"((?:Mr\.|Ms\.|Smt\.|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)\s+(?:a/w|with)\s+((?:Mr\.|Ms\.|Smt\.|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)(?:,\s*)?for\s+(?:the\s+)?Respondent"
         
         for match in re.finditer(simple_pattern, text, re.IGNORECASE):
             title1_name1 = match.group(1).strip()
