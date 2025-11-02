@@ -994,17 +994,48 @@ class AutoOrderManager:
                         logging.warning(f"Could not convert case object to dict: {e}")
                         continue
 
-            # Create order analysis data to merge with board data - SIMPLIFIED STRUCTURE
+            # Find the data for THIS specific case from the cases array
+            # Match by case_type, case_number, case_year
+            this_case_data = None
+            additional_cases = []
+            
+            # Parse the case_ref to get case details (e.g., "WP/12345/2025" → type="WP", number=12345, year=2025)
+            case_parts = self._parse_case_reference(case_ref)
+            if case_parts:
+                for case_dict in cases_as_dicts:
+                    if (
+                        case_dict.get("case_type") == case_parts[0]
+                        and case_dict.get("case_number") == case_parts[1]
+                        and case_dict.get("case_year") == case_parts[2]
+                    ):
+                        this_case_data = case_dict
+                    else:
+                        additional_cases.append(case_dict)
+            
+            # If no match found, use first case or empty dict
+            if not this_case_data and cases_as_dicts:
+                this_case_data = cases_as_dicts[0]
+                additional_cases = cases_as_dicts[1:] if len(cases_as_dicts) > 1 else []
+            elif not this_case_data:
+                this_case_data = {
+                    "petitioner": "",
+                    "respondent": "",
+                    "government_pleader": []
+                }
+            
+            # Create FLATTENED order analysis data (no order_cases array)
             order_analysis = {
-                # Order analysis results - simplified structure
+                # Order analysis results
                 "order_category": analysis_result.order_category,
                 "order_category_confidence": analysis_result.category_confidence,
                 "order_date": analysis_result.order_date,
-                # Simplified cases structure with all details per case
-                "order_cases": cases_as_dicts,
+                # FLATTENED case data for THIS case only (not an array)
+                "order_petitioner": this_case_data.get("petitioner", ""),
+                "order_respondent": this_case_data.get("respondent", ""),
+                "order_agp_names": this_case_data.get("government_pleader", []),
                 # Date validation
                 "order_date_validation": date_validation,
-                # Order link - use passed link or fallback to querying case-orders
+                # Order link
                 "order_link": order_link or self._get_order_link(case_id),
                 # Analysis metadata
                 "order_analysis_timestamp": datetime.now().isoformat(),
@@ -1015,16 +1046,51 @@ class AutoOrderManager:
                 "order_status_updated_at": datetime.now().isoformat(),
             }
 
-            # Update the daily-boards document directly with order analysis
+            # Update the daily-boards document directly with FLATTENED order analysis
             self.db.collection(self.boards_collection).document(case_id).update(
                 order_analysis
             )
+            
+            # If there are additional cases in this order, update their daily-boards too
+            if additional_cases:
+                logging.info(f"Found {len(additional_cases)} additional cases in order for {case_ref}, updating their boards")
+                for add_case in additional_cases:
+                    try:
+                        add_case_ref = f"{add_case.get('case_type')}/{add_case.get('case_number')}/{add_case.get('case_year')}"
+                        add_case_id = f"{expected_board_date.replace('-', '')}-{add_case_ref.replace('/', '-')}"
+                        
+                        # Check if this case exists in daily-boards
+                        add_board_doc = self.db.collection(self.boards_collection).document(add_case_id).get()
+                        if add_board_doc.exists:
+                            # Update with FLATTENED data for this specific case
+                            add_case_order_data = {
+                                "order_category": analysis_result.order_category,
+                                "order_category_confidence": analysis_result.category_confidence,
+                                "order_date": analysis_result.order_date,
+                                "order_petitioner": add_case.get("petitioner", ""),
+                                "order_respondent": add_case.get("respondent", ""),
+                                "order_agp_names": add_case.get("government_pleader", []),
+                                "order_date_validation": date_validation,
+                                "order_link": order_link or self._get_order_link(case_id),
+                                "order_analysis_timestamp": datetime.now().isoformat(),
+                                "order_analysis_completed": True,
+                                "order_last_updated": datetime.now().isoformat(),
+                                "order_status": "analysed",
+                                "order_status_updated_at": datetime.now().isoformat(),
+                            }
+                            self.db.collection(self.boards_collection).document(add_case_id).update(add_case_order_data)
+                            logging.info(f"  ✅ Updated order analysis for additional case: {add_case_ref}")
+                        else:
+                            logging.info(f"  ⏭️  Skipping {add_case_ref} - not found in daily-boards for date {expected_board_date}")
+                    except Exception as e:
+                        logging.warning(f"  ❌ Failed to update additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}")
 
-            # Prepare full analysis data for response (includes case_id and case_ref for compatibility)
+            # Prepare full analysis data for response
             full_analysis_data = {
                 "case_id": case_id,
                 "case_ref": case_ref,
                 **order_analysis,
+                "additional_cases_updated": len(additional_cases),
             }
 
             return {"success": True, "data": full_analysis_data}
