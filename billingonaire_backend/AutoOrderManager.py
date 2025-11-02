@@ -998,7 +998,7 @@ class AutoOrderManager:
             # Match by case_type, case_number, case_year
             this_case_data = None
             additional_cases = []
-            
+
             # Parse the case_ref to get case details (e.g., "WP/12345/2025" → type="WP", number=12345, year=2025)
             case_parts = self._parse_case_reference(case_ref)
             if case_parts:
@@ -1011,7 +1011,7 @@ class AutoOrderManager:
                         this_case_data = case_dict
                     else:
                         additional_cases.append(case_dict)
-            
+
             # If no match found, use first case or empty dict
             if not this_case_data and cases_as_dicts:
                 this_case_data = cases_as_dicts[0]
@@ -1020,9 +1020,9 @@ class AutoOrderManager:
                 this_case_data = {
                     "petitioner": "",
                     "respondent": "",
-                    "government_pleader": []
+                    "government_pleader": [],
                 }
-            
+
             # Create FLATTENED order analysis data (no order_cases array)
             order_analysis = {
                 # Order analysis results
@@ -1050,17 +1050,23 @@ class AutoOrderManager:
             self.db.collection(self.boards_collection).document(case_id).update(
                 order_analysis
             )
-            
+
             # If there are additional cases in this order, update their daily-boards too
             if additional_cases:
-                logging.info(f"Found {len(additional_cases)} additional cases in order for {case_ref}, updating their boards")
+                logging.info(
+                    f"Found {len(additional_cases)} additional cases in order for {case_ref}, updating their boards"
+                )
                 for add_case in additional_cases:
                     try:
                         add_case_ref = f"{add_case.get('case_type')}/{add_case.get('case_number')}/{add_case.get('case_year')}"
                         add_case_id = f"{expected_board_date.replace('-', '')}-{add_case_ref.replace('/', '-')}"
-                        
+
                         # Check if this case exists in daily-boards
-                        add_board_doc = self.db.collection(self.boards_collection).document(add_case_id).get()
+                        add_board_doc = (
+                            self.db.collection(self.boards_collection)
+                            .document(add_case_id)
+                            .get()
+                        )
                         if add_board_doc.exists:
                             # Update with FLATTENED data for this specific case
                             add_case_order_data = {
@@ -1069,21 +1075,32 @@ class AutoOrderManager:
                                 "order_date": analysis_result.order_date,
                                 "order_petitioner": add_case.get("petitioner", ""),
                                 "order_respondent": add_case.get("respondent", ""),
-                                "government_pleader": add_case.get("government_pleader", []),
+                                "government_pleader": add_case.get(
+                                    "government_pleader", []
+                                ),
                                 "order_date_validation": date_validation,
-                                "order_link": order_link or self._get_order_link(case_id),
+                                "order_link": order_link
+                                or self._get_order_link(case_id),
                                 "order_analysis_timestamp": datetime.now().isoformat(),
                                 "order_analysis_completed": True,
                                 "order_last_updated": datetime.now().isoformat(),
                                 "order_status": "analysed",
                                 "order_status_updated_at": datetime.now().isoformat(),
                             }
-                            self.db.collection(self.boards_collection).document(add_case_id).update(add_case_order_data)
-                            logging.info(f"  ✅ Updated order analysis for additional case: {add_case_ref}")
+                            self.db.collection(self.boards_collection).document(
+                                add_case_id
+                            ).update(add_case_order_data)
+                            logging.info(
+                                f"  ✅ Updated order analysis for additional case: {add_case_ref}"
+                            )
                         else:
-                            logging.info(f"  ⏭️  Skipping {add_case_ref} - not found in daily-boards for date {expected_board_date}")
+                            logging.info(
+                                f"  ⏭️  Skipping {add_case_ref} - not found in daily-boards for date {expected_board_date}"
+                            )
                     except Exception as e:
-                        logging.warning(f"  ❌ Failed to update additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}")
+                        logging.warning(
+                            f"  ❌ Failed to update additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}"
+                        )
 
             # Prepare full analysis data for response
             full_analysis_data = {
@@ -1221,7 +1238,7 @@ class AutoOrderManager:
             # Convert to strings (now simple since they're already strings, not arrays)
             petitioner_text = str(petitioner).strip() if petitioner else ""
             respondent_text = str(respondent).strip() if respondent else ""
-            
+
             agp_name_strings = [
                 str(name) if not isinstance(name, str) else name for name in agp_names
             ]
@@ -1240,7 +1257,7 @@ class AutoOrderManager:
                 "serial_number": board_data.get("serial_number"),
                 # Parties information from order analysis (now flattened strings, not arrays)
                 "petitioner": petitioner_text,  # Single string for UI display
-                "respondent": respondent_text,   # Single string for UI display
+                "respondent": respondent_text,  # Single string for UI display
                 "petitioner_text": petitioner_text.lower(),  # For text search
                 "respondent_text": respondent_text.lower(),  # For text search
                 # Order information with consistent field names

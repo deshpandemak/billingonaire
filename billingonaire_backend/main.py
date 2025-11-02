@@ -1936,9 +1936,15 @@ async def upload_manual_order(
                     "analysis": {
                         "order_category": analysis_result["data"].get("order_category"),
                         "order_date": analysis_result["data"].get("order_date"),
-                        "order_petitioner": analysis_result["data"].get("order_petitioner"),
-                        "order_respondent": analysis_result["data"].get("order_respondent"),
-                        "government_pleader": analysis_result["data"].get("government_pleader"),
+                        "order_petitioner": analysis_result["data"].get(
+                            "order_petitioner"
+                        ),
+                        "order_respondent": analysis_result["data"].get(
+                            "order_respondent"
+                        ),
+                        "government_pleader": analysis_result["data"].get(
+                            "government_pleader"
+                        ),
                     },
                 }
             )
@@ -2622,7 +2628,7 @@ async def generate_bill_data(
                 # This is the MOST ACCURATE source as it's extracted from the actual court order
                 government_pleader = case_data.get("government_pleader")
                 has_order_agp = False
-                
+
                 if government_pleader:
                     # Handle both string and list formats
                     if isinstance(government_pleader, str):
@@ -2657,7 +2663,9 @@ async def generate_bill_data(
                         cases_by_agp[respondent_lawyer].append((case_id, case_data))
 
                     # Source 3: additional_respondent_lawyers (from board data)
-                    additional_lawyers = case_data.get("additional_respondent_lawyers", [])
+                    additional_lawyers = case_data.get(
+                        "additional_respondent_lawyers", []
+                    )
                     if additional_lawyers and isinstance(additional_lawyers, list):
                         for lawyer_name in additional_lawyers:
                             lawyer_name = lawyer_name.strip().rstrip(",")
@@ -2670,7 +2678,7 @@ async def generate_bill_data(
             logging.info(
                 f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: government_pleader > respondent_lawyer > additional_respondent_lawyers)"
             )
-            
+
             # Log sample of AGP names for debugging
             agp_names_list = sorted(list(unique_agp_names))
             logging.info(f"📝 Sample AGP names (first 10): {agp_names_list[:10]}")
@@ -2707,7 +2715,7 @@ async def generate_bill_data(
                     f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}..."
                 )
                 logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
-                
+
                 # Track filtering for debugging
                 date_filtered = 0
                 duplicate_filtered = 0
@@ -2765,9 +2773,13 @@ async def generate_bill_data(
                             )
                             continue
 
-                logging.info(f"📊 Filtering summary: {len(matched_cases)} total cases → {len(bill_entries)} included")
+                logging.info(
+                    f"📊 Filtering summary: {len(matched_cases)} total cases → {len(bill_entries)} included"
+                )
                 logging.info(f"   - Date range: {start_date} to {end_date}")
-                logging.info(f"   - Cases outside date range: {len(matched_cases) - len(bill_entries)}")
+                logging.info(
+                    f"   - Cases outside date range: {len(matched_cases) - len(bill_entries)}"
+                )
                 logging.info(
                     f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'"
                 )
@@ -3652,34 +3664,34 @@ async def rebuild_search_index(
     """Rebuild search index for analyzed orders to pick up flattened data structure"""
     try:
         db = firestore.client()
-        
+
         # Get analyzed orders from daily-boards
         query = (
             db.collection("daily-boards")
             .where("order_analysis_completed", "==", True)
             .limit(limit)
         )
-        
+
         docs = query.stream()
-        
+
         rebuilt_count = 0
         errors = []
-        
+
         for doc in docs:
             try:
                 case_id = doc.id
                 case_data = doc.to_dict()
-                
+
                 # Rebuild search index entry
                 get_auto_order_manager()._create_search_index_entry(
                     case_id, case_data, {}
                 )
                 rebuilt_count += 1
-                
+
             except Exception as e:
                 logging.error(f"Error rebuilding search index for {doc.id}: {e}")
                 errors.append({"case_id": doc.id, "error": str(e)})
-        
+
         return JSONResponse(
             content={
                 "success": True,
@@ -3688,7 +3700,7 @@ async def rebuild_search_index(
                 "message": f"Rebuilt search index for {rebuilt_count} cases",
             }
         )
-    
+
     except Exception as e:
         logging.error(f"Error rebuilding search index: {e}")
         return JSONResponse(
