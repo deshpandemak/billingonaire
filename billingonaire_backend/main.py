@@ -3229,6 +3229,7 @@ async def export_bill_excel(
             entries = bill_data.get("entries", [])
             metadata = bill_data.get("metadata", {})
             agp_name = entries[0].get("agp_name", agp_name) if entries else agp_name
+            bill_number = bill_data.get("bill_number", bill_number)
             filename = f"bill_{bill_id}.xlsx"
 
         elif start_date and end_date:
@@ -3463,11 +3464,14 @@ async def export_bill_excel(
         wb.save(output)
         output.seek(0)
 
-        # Return as downloadable file
+        # Return as downloadable file with proper headers
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
         )
 
     except Exception as e:

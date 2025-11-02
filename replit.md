@@ -54,8 +54,10 @@ Billingonaire features a modern web application architecture with a React fronte
 - **Bill Generation Updates**:
   - Priority: `government_pleader` (order analysis) → `respondent_lawyer` (board data) → `additional_respondent_lawyers` (board data)
   - Parties Name format: `<order_petitioner> Versus <order_respondent>` using order analysis data
+  - Removed confidence score column from bill generation UI
+  - Fixed Excel export with proper headers and filename quoting
 - **Search Index Updates**: Updated search index creation to use flattened structure, returning `petitioner` and `respondent` as single strings for UI display
-- **Files Updated**: AutoOrderManager.py, main.py, UserMatterMatcher.py
+- **Files Updated**: AutoOrderManager.py, main.py, UserMatterMatcher.py, BillGeneration.jsx
 
 ### October 31, 2025 - ML Categorization Enhancements
 - **Absolute DISPOSED_OFF Priority**: Any disposal indicators now trigger immediate DISPOSED_OFF classification

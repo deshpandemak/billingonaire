@@ -710,7 +710,6 @@ const BillGeneration = () => {
                                                     <th>Parties Name</th>
                                                     <th>Results</th>
                                                     <th>Fees (₹)</th>
-                                                    <th>Confidence</th>
                                                     <th>Actions</th>
                                                 </tr>
                                             </thead>
@@ -817,14 +816,6 @@ const BillGeneration = () => {
                                                         </td>
                                                         <td>
                                                             <strong>₹{(editingRow === index ? tempEditData.fees_rs : entry.fees_rs)?.toLocaleString()}</strong>
-                                                        </td>
-                                                        <td>
-                                                            <span className={`badge ${
-                                                                entry.confidence_score >= 0.9 ? 'bg-success' :
-                                                                entry.confidence_score >= 0.75 ? 'bg-warning' : 'bg-secondary'
-                                                            }`}>
-                                                                {(entry.confidence_score * 100).toFixed(0)}%
-                                                            </span>
                                                         </td>
                                                         <td>
                                                             {editingRow === index ? (
