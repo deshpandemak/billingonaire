@@ -3163,18 +3163,18 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 def extract_parties_info(case_data: Dict) -> str:
     """Extract parties information from case data (format: Petitioner vs Respondent)"""
     try:
-        # Try to get from order analysis first
+        # Try to get from order analysis first (now flattened as strings)
         if case_data.get("order_analysis_completed"):
-            petitioners = case_data.get("order_petitioner", "")
-            respondents = case_data.get("order_respondent", "")
+            petitioner = case_data.get("order_petitioner", "")
+            respondent = case_data.get("order_respondent", "")
 
-            if petitioners and respondents:
-                # Now stored as strings, not arrays
-                petitioner_str = str(petitioners).strip() if petitioners else ""
-                respondent_str = str(respondents).strip() if respondents else ""
+            if petitioner and respondent:
+                # Now stored as strings directly
+                petitioner_str = str(petitioner).strip()
+                respondent_str = str(respondent).strip()
 
                 if petitioner_str and respondent_str:
-                    return f"{petitioner_str} vs {respondent_str}"
+                    return f"{petitioner_str} Versus {respondent_str}"
 
         # Fallback to case reference
         case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"

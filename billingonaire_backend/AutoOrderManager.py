@@ -1212,26 +1212,16 @@ class AutoOrderManager:
 
             board_data = board_doc.to_dict()
 
-            # Extract data with consistent field names
-            petitioners = board_data.get("order_petitioner", "")
-            respondents = board_data.get("order_respondent", "")
+            # Extract data with consistent field names (now flattened, not arrays)
+            petitioner = board_data.get("order_petitioner", "")
+            respondent = board_data.get("order_respondent", "")
             agp_names = board_data.get("government_pleader", [])
             key_phrases = board_data.get("order_key_phrases", [])
 
-            # Convert party names to strings (handle both string and dict formats)
-            def extract_text_from_parties(parties):
-                """Extract text from party lists, handling both strings and dicts"""
-                result = []
-                for party in parties:
-                    if isinstance(party, str):
-                        result.append(party)
-                    elif isinstance(party, dict):
-                        # Extract name field from dict if present
-                        result.append(party.get("name", ""))
-                return result
-
-            petitioner_strings = extract_text_from_parties(petitioners)
-            respondent_strings = extract_text_from_parties(respondents)
+            # Convert to strings (now simple since they're already strings, not arrays)
+            petitioner_text = str(petitioner).strip() if petitioner else ""
+            respondent_text = str(respondent).strip() if respondent else ""
+            
             agp_name_strings = [
                 str(name) if not isinstance(name, str) else name for name in agp_names
             ]
@@ -1248,15 +1238,11 @@ class AutoOrderManager:
                 "petitioner_lawyer": board_data.get("petitioner_lawyer"),
                 "respondent_lawyer": board_data.get("respondent_lawyer"),
                 "serial_number": board_data.get("serial_number"),
-                # Parties information from order analysis
-                "petitioner_names": petitioner_strings,
-                "respondent_names": respondent_strings,
-                "petitioner_text": " ".join(
-                    petitioner_strings
-                ).lower(),  # For text search
-                "respondent_text": " ".join(
-                    respondent_strings
-                ).lower(),  # For text search
+                # Parties information from order analysis (now flattened strings, not arrays)
+                "petitioner": petitioner_text,  # Single string for UI display
+                "respondent": respondent_text,   # Single string for UI display
+                "petitioner_text": petitioner_text.lower(),  # For text search
+                "respondent_text": respondent_text.lower(),  # For text search
                 # Order information with consistent field names
                 "order_category": board_data.get("order_category"),
                 "order_date": board_data.get("order_date"),

@@ -44,14 +44,17 @@ Billingonaire features a modern web application architecture with a React fronte
 
 ## Recent Changes
 
-### November 2, 2025 - Flattened Order Data Structure
+### November 2, 2025 - Flattened Order Data Structure & UI Updates
 - **Restructured Order Analysis Storage**: Changed from array-based `order_cases[]` to **flattened structure** where each case's order analysis data is stored directly in its daily-board document
 - **Field Naming Standardization**: Renamed `order_agp_names` to `government_pleader` throughout the entire codebase for consistency
 - **Multi-Case Order Handling**: When processing orders with multiple clubbed cases, each case now gets its own flattened data (order_petitioner, order_respondent, government_pleader) in its respective daily-board entry
 - **Data Structure Changes**:
   - OLD: `order_cases: [{petitioner, respondent, government_pleader}, ...]`
   - NEW: Direct fields `order_petitioner` (string), `order_respondent` (string), `government_pleader` (array)
-- **Bill Generation Priority**: `government_pleader` (order analysis) → `respondent_lawyer` (board data) → `additional_respondent_lawyers` (board data)
+- **Bill Generation Updates**:
+  - Priority: `government_pleader` (order analysis) → `respondent_lawyer` (board data) → `additional_respondent_lawyers` (board data)
+  - Parties Name format: `<order_petitioner> Versus <order_respondent>` using order analysis data
+- **Search Index Updates**: Updated search index creation to use flattened structure, returning `petitioner` and `respondent` as single strings for UI display
 - **Files Updated**: AutoOrderManager.py, main.py, UserMatterMatcher.py
 
 ### October 31, 2025 - ML Categorization Enhancements
