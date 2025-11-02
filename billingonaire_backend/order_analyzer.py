@@ -1242,26 +1242,51 @@ class OrderDocumentAnalyzer:
         for case_number, year, block_text in matches:
             case_key = f"WP/{case_number}/{year}"
 
-            # Extract petitioner
+            # Enhanced petitioner extraction with multiple patterns
             petitioner = ""
-            petitioner_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?)\s+[A-Za-z\s\.]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioner"
-            pet_match = re.search(petitioner_pattern, block_text, re.IGNORECASE)
-            if pet_match:
-                petitioner = pet_match.group(1).strip()
-                # Add "And Ors." if present
-                if re.search(
-                    r"And\s+Ors\.",
-                    block_text[pet_match.start() : pet_match.end()],
-                    re.IGNORECASE,
-                ):
-                    petitioner += " And Ors."
 
-            # Fallback: try without title prefixes
+            # Pattern 1: Standard format with title and dots
+            petitioner_pattern1 = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Dr\.?)\s+[A-Za-z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioners?"
+            pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
+            if pet_match1:
+                petitioner = pet_match1.group(1).strip()
+                # Check for "And Ors." in the nearby text and add it
+                if re.search(r"And\s+Ors\.?", block_text[pet_match1.start():pet_match1.end() + 50], re.IGNORECASE):
+                    petitioner += " And Ors."
+                print(f"Pattern 1 matched: {petitioner}")
+
+            # Pattern 2: Name followed by petitioner designation (more flexible) - IMPROVED
             if not petitioner:
-                petitioner_pattern2 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+And\s+Ors\.)?)\s*\.{2,}\s*Petitioner"
+                petitioner_pattern2 = r"([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioners?"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
+                    # Check for "And Ors." in the nearby text and add it
+                    if re.search(r"And\s+Ors\.?", block_text[pet_match2.start():pet_match2.end() + 50], re.IGNORECASE):
+                        petitioner += " And Ors."
+                    print(f"Pattern 2 matched: {petitioner}")
+
+            # Pattern 3: Petitioner mentioned in sentence format
+            if not petitioner:
+                petitioner_pattern3 = r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
+                if pet_match3:
+                    petitioner = pet_match3.group(1).strip()
+                    print(f"Pattern 3 matched: {petitioner}")
+
+            # Pattern 4: Name before "versus" or "vs" (fallback)
+            if not petitioner:
+                versus_pattern = r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
+                versus_match = re.search(versus_pattern, block_text.strip(), re.IGNORECASE | re.MULTILINE)
+                if versus_match:
+                    petitioner = versus_match.group(1).strip()
+                    print(f"Pattern 4 matched: {petitioner}")
+
+            # Clean up petitioner name
+            if petitioner:
+                petitioner = re.sub(r'\s+', ' ', petitioner).strip()
+                # Remove trailing dots
+                petitioner = re.sub(r'\.{2,}$', '', petitioner).strip()
 
             # Extract respondent
             respondent = ""
@@ -1289,12 +1314,12 @@ class OrderDocumentAnalyzer:
         return case_details
 
     def _extract_govt_pleader_from_text(self, text: str, case_key: str) -> List[str]:
-        """Extract government pleader names for a specific case"""
+        """Extract government pleader names for a specific case with enhanced patterns"""
         pleaders = []
 
-        # Pattern 1: Direct case association
+        # Pattern 1: Direct case association with specific case number
         # "Adv. P. P. Kakade, Addl. GP a/w M J. Deshpande, AGP for the Respondent State in WP/11347/2024"
-        pattern1 = rf"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+)([^,]+),\s+((?:Addl\.\s+)?(?:AGP|GP))(?:\s+a/w\s+([^,]+),\s+((?:AGP|GP)))?\s+for\s+the\s+Respondent\s+State\s+in\s+{re.escape(case_key)}"
+        pattern1 = rf"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+|Shri\.?\s+|Smt\.?\s+)([^,]+),\s+((?:Addl\.?\s+)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))(?:\s+a/w\s+([^,]+),\s+((?:Addl\.?\s+)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?)))?\s+(?:for\s+)?(?:the\s+)?Respondent\s+State\s+in\s+{re.escape(case_key)}"
         match1 = re.search(pattern1, text, re.IGNORECASE)
 
         if match1:
@@ -1306,28 +1331,116 @@ class OrderDocumentAnalyzer:
             if match1.group(3):
                 name2 = match1.group(3).strip()
                 role2 = match1.group(4).strip() if match1.group(4) else "AGP"
-                pleaders.append(f"{name2}, {role2}")
+                pleaders.append(f"Adv. {name2}, {role2}")
 
-        # Pattern 2: General State advocates (if no specific case match)
+        # Pattern 2: Case-specific but different format
+        # "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State in WP/11347/2024"
         if not pleaders:
-            # Look for AGP/GP mentions in the advocates section
-            agp_pattern = r"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+)([A-Za-z\s\.]+?),?\s+((?:Addl\.\s+)?(?:AGP|GP|A\.?\s*G\.?P\.?))\s+(?:for\s+)?(?:the\s+)?(?:Respondent\s+)?State"
-            agp_matches = re.findall(agp_pattern, text, re.IGNORECASE)
+            pattern2 = rf"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+|Shri\.?\s+|Smt\.?\s+)([A-Za-z\s\.]+?)\s+(?:for\s+)?Respondent\s+Nos?\.([0-9\s,to\-]+)State\s+in\s+{re.escape(case_key)}"
+            match2 = re.search(pattern2, text, re.IGNORECASE)
+            if match2:
+                name = match2.group(1).strip()
+                pleaders.append(f"Adv. {name}, GP")
 
-            for name, role in agp_matches:
+        # Pattern 3: General State advocates (if no specific case match found)
+        if not pleaders:
+            # More precise patterns for AGP/GP mentions
+            agp_patterns = [
+                # Pattern 1: "Adv. Full Name, Role" - PRIORITY: capture everything after Adv. until comma
+                r"Adv\.\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b",
+                # Pattern 2: "Full Name, Role" - fallback for cases without Adv. prefix (must start with capital letter, not 'a' or 'w')
+                r'\b(?!a/|w\s)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b',
+                # Pattern 3: "AGP Shri/Mr. Name" - role followed by title and name (improved)
+                r"(?:AGP|GP|Addl\.?\s*GP)\s+(?:Shri\.?|Smt\.?|Mr\.?|Ms\.?)\s+([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*)\b",
+                # Pattern 4: "Government Pleader: Name" (improved)
+                r"(?:Government\s+Pleader|Govt\.?\s+Pleader)\s*:?\s*([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*)",
+                # Pattern 5: "APP/AGP Name" - standalone role and name (exclude common words) (improved)
+                r"\b(?:APP|AGP|A\.?\s*P\.?\s*P\.?|A\.?\s*G\.?\s*P\.?)\s+(?!for|the|and|with|in\b)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*)\b",
+            ]
+
+            # Process patterns with priority (Adv. patterns first, then filter general matches)
+            adv_matches = []
+            general_matches = []
+            
+            for i, pattern in enumerate(agp_patterns):
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple) and len(match) == 2:
+                        name, role = match
+                        name = name.strip()
+                        role = role.strip()
+                        
+                        # Skip if name contains common words that indicate it's not a person
+                        # Use word boundaries to avoid false positives (e.g., "and" in "Deshpande")
+                        if any(re.search(r'\b' + re.escape(word) + r'\b', name, re.IGNORECASE) for word in ['for', 'the', 'and', 'with', 'in', 'state', 'respondent']):
+                            continue
+                            
+                        # Normalize role
+                        role_upper = role.upper().replace(".", "").replace(" ", "")
+                        if "AGP" in role_upper or "APP" in role_upper:
+                            normalized_role = "AGP"
+                        elif "ADDLGP" in role_upper or "ADDL" in role_upper:
+                            normalized_role = "Addl. GP"
+                        else:
+                            normalized_role = "GP"
+
+                        # Clean name - remove any remaining titles
+                        name = re.sub(r'^(Ms\.|Mr\.|Adv\.|Shri\.?|Smt\.?)\s+', '', name, flags=re.IGNORECASE).strip()
+
+                        if name and len(name) > 1:
+                            if i == 0:  # Pattern 1 (Adv. prefix) gets priority
+                                adv_matches.append(f"Adv. {name}, {normalized_role}")
+                            else:
+                                # For general patterns, check if this name is already covered by Adv. patterns
+                                # Avoid duplicates by checking if this name is a substring of any Adv. match
+                                is_duplicate = False
+                                for adv_match in adv_matches:
+                                    adv_name = adv_match.replace("Adv. ", "").split(", ")[0]
+                                    if name in adv_name or adv_name in name:
+                                        is_duplicate = True
+                                        break
+                                if not is_duplicate:
+                                    general_matches.append(f"Adv. {name}, {normalized_role}")
+
+            # Combine results: Adv. patterns first, then general patterns
+            all_matches = adv_matches + general_matches
+            
+            # Handle "a/w" (along with) pattern for second advocates
+            aw_pattern = r"a/w\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b"
+            aw_matches = re.findall(aw_pattern, text, re.IGNORECASE)
+            for match in aw_matches:
+                name, role = match
                 name = name.strip()
-                role = role.strip().replace(".", "").replace(" ", "")
+                role = role.strip()
+                
+                # Skip if name contains common words
+                if any(re.search(r'\b' + re.escape(word) + r'\b', name, re.IGNORECASE) for word in ['for', 'the', 'and', 'with', 'in', 'state', 'respondent']):
+                    continue
+                    
                 # Normalize role
-                if "AGP" in role.upper():
-                    role = "AGP"
-                elif "ADDLGP" in role.upper() or "ADDL" in role.upper():
-                    role = "Addl. GP"
+                role_upper = role.upper().replace(".", "").replace(" ", "")
+                if "AGP" in role_upper or "APP" in role_upper:
+                    normalized_role = "AGP"
+                elif "ADDLGP" in role_upper or "ADDL" in role_upper:
+                    normalized_role = "Addl. GP"
                 else:
-                    role = "GP"
+                    normalized_role = "GP"
 
-                pleaders.append(f"Adv. {name}, {role}")
+                if name and len(name) > 1:
+                    all_matches.append(f"Adv. {name}, {normalized_role}")
+            
+            # Add all matches to pleaders list
+            pleaders.extend(all_matches)
 
-        return pleaders
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_pleaders = []
+        for pleader in pleaders:
+            if pleader not in seen:
+                seen.add(pleader)
+                unique_pleaders.append(pleader)
+
+        return unique_pleaders
 
     def _extract_parties_for_case(
         self, text: str, case_canonical: str
@@ -1345,26 +1458,60 @@ class OrderDocumentAnalyzer:
         if match:
             block = match.group(2)
 
-            # Extract petitioner
-            pet_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?)\s+[A-Za-z\s\.]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioner"
-            pet_match = re.search(pet_pattern, block, re.IGNORECASE)
-            if pet_match:
-                petitioner = pet_match.group(1).strip()
-                if "And Ors." in block[pet_match.start() : pet_match.end()]:
+            # Enhanced petitioner extraction with multiple patterns
+            petitioner = ""
+
+            # Pattern 1: Standard format with title and dots
+            pet_pattern1 = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Dr\.?)\s+[A-Za-z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioners?"
+            pet_match1 = re.search(pet_pattern1, block, re.IGNORECASE)
+            if pet_match1:
+                petitioner = pet_match1.group(1).strip()
+                if re.search(r"And\s+Ors\.?", block[pet_match1.start():pet_match1.end() + 50], re.IGNORECASE):
                     petitioner += " And Ors."
-            else:
-                # Fallback: try without title prefixes
-                pet_pattern2 = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+And\s+Ors\.)?)\s*\.{2,}\s*Petitioner"
+
+            # Pattern 2: Name followed by petitioner designation (more flexible)
+            if not petitioner:
+                pet_pattern2 = r"([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*\.{2,}\s*Petitioners?"
                 pet_match2 = re.search(pet_pattern2, block, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
 
-            # Extract respondent
-            resp_pattern = r"versus\s+(.*?)(?:\s*\.{2,}\s*Respondent)"
-            resp_match = re.search(resp_pattern, block, re.DOTALL | re.IGNORECASE)
-            if resp_match:
-                respondent = resp_match.group(1).strip()
-                respondent = re.sub(r"\s+", " ", respondent)
+            # Pattern 3: Petitioner mentioned in sentence format
+            if not petitioner:
+                pet_pattern3 = r"Petitioners?\s*:?\s*([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?"
+                pet_match3 = re.search(pet_pattern3, block, re.IGNORECASE)
+                if pet_match3:
+                    petitioner = pet_match3.group(1).strip()
+
+            # Pattern 4: Name before "versus" or "vs" (fallback)
+            if not petitioner:
+                versus_pattern = r"^([A-Z][a-zA-Z\s\.\-]+?)(?:\s+And\s+Ors\.?)?\s*(?:versus|vs\.?)\s"
+                versus_match = re.search(versus_pattern, block.strip(), re.IGNORECASE | re.MULTILINE)
+                if versus_match:
+                    petitioner = versus_match.group(1).strip()
+
+            # Clean up petitioner name
+            if petitioner:
+                petitioner = re.sub(r'\s+', ' ', petitioner).strip()
+                petitioner = re.sub(r'\.{2,}$', '', petitioner).strip()
+
+            # Enhanced respondent extraction
+            respondent = ""
+            resp_pattern1 = r"versus\s+(.*?)(?:\s*\.{2,}\s*Respondent)"
+            resp_match1 = re.search(resp_pattern1, block, re.DOTALL | re.IGNORECASE)
+            if resp_match1:
+                respondent = resp_match1.group(1).strip()
+            else:
+                # Fallback: look for respondent after versus without requiring dots
+                resp_pattern2 = r"versus\s+(.*?)(?=\s*\.{2,}|$)"
+                resp_match2 = re.search(resp_pattern2, block, re.DOTALL | re.IGNORECASE)
+                if resp_match2:
+                    respondent = resp_match2.group(1).strip()
+
+            # Clean up respondent
+            if respondent:
+                respondent = re.sub(r"\s+", " ", respondent).strip()
+                respondent = re.sub(r'\.{2,}$', '', respondent).strip()
 
         return petitioner, respondent
 

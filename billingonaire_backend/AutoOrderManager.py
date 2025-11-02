@@ -24,9 +24,8 @@ class AutoOrderManager:
         self.order_analyzer = OrderDocumentAnalyzer()
         self.court_scraper = BombayHighCourtScraper()
 
-        # Collections
+        # Collections - consolidated order status into daily-boards
         self.boards_collection = "daily-boards"
-        self.orders_collection = "case-orders"
         self.search_index_collection = "order-search-index"
 
         # Case type mappings for court lookup
@@ -1219,37 +1218,23 @@ class AutoOrderManager:
             logging.error(f"Error creating search index for case {case_id}: {e}")
 
     def _create_order_link(self, case_id: str, order_info: Dict) -> None:
-        """Create order link in the database and update case document"""
+        """Create order link in the database - consolidated in daily-boards collection"""
         try:
-            # Create order document in case-orders collection
-            order_doc = {
-                "case_id": case_id,
-                "status": "linked",
-                "order_link": order_info.get("order_link"),
-                "fetch_date": datetime.now().isoformat(),
-                "source": order_info.get("source", "auto"),
-                "filename": order_info.get("filename"),
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-
-            self.db.collection(self.orders_collection).document(case_id).set(order_doc)
-
-            # CRITICAL: Also update the daily-boards case document so UI can see the link
+            # Update the daily-boards case document with order information
             case_update = {
                 "order_downloaded": True,
                 "order_link": order_info.get("order_link"),
                 "order_filename": order_info.get("filename"),
                 "order_source": order_info.get("source", "auto"),
                 "order_downloaded_at": datetime.now().isoformat(),
-                "order_status": "order_linked",
-                "order_status_updated_at": datetime.now().isoformat(),
+                "order_status": "linked",
+                "order_fetch_date": datetime.now().isoformat(),
+                "order_created_at": datetime.now().isoformat(),
+                "order_updated_at": datetime.now().isoformat(),
             }
 
-            self.db.collection(self.boards_collection).document(case_id).update(
-                case_update
-            )
-            logging.info(f"Order link created and case document updated for {case_id}")
+            self.db.collection(self.boards_collection).document(case_id).update(case_update)
+            logging.info(f"Order link created in daily-boards for {case_id}")
 
         except Exception as e:
             logging.error(f"Error creating order link for case {case_id}: {e}")

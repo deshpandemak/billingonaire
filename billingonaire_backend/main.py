@@ -1900,28 +1900,19 @@ async def upload_manual_order(
         # Create a temporary order link (or upload to storage)
         order_link = f"manual_upload_{case_id}_{file.filename}"
 
-        # Update case document with manual order link
+        # Update case document with manual order link and status
         update_data = {
             "order_downloaded": True,
             "order_link": order_link,
             "order_filename": file.filename,
             "order_source": "manual_upload",
             "order_downloaded_at": datetime.now().isoformat(),
+            "order_status": "linked",
+            "order_fetch_date": datetime.now().isoformat(),
+            "order_created_at": datetime.now().isoformat(),
+            "order_updated_at": datetime.now().isoformat(),
         }
         db.collection("daily-boards").document(case_id).update(update_data)
-
-        # Create order document
-        order_doc = {
-            "case_id": case_id,
-            "status": "linked",
-            "order_link": order_link,
-            "fetch_date": datetime.now().isoformat(),
-            "source": "manual_upload",
-            "filename": file.filename,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-        }
-        db.collection("case-orders").document(case_id).set(order_doc)
 
         # AUTOMATICALLY ANALYZE THE UPLOADED ORDER
         analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
