@@ -58,6 +58,7 @@ Billingonaire features a modern web application architecture with a React fronte
   - Fixed Excel export with proper headers and filename quoting
 - **Search Index Updates**: Updated search index creation to use flattened structure, returning `petitioner` and `respondent` as single strings for UI display
 - **Order Center UI Updates**: Order search screen now displays `order_petitioner` and `order_respondent` from order analysis (with fallback to board data if not available)
+- **Search Index Rebuild Feature**: Added `/auto-orders/rebuild-search-index` endpoint and UI button to rebuild search index for analyzed orders to pick up flattened data structure
 - **Files Updated**: AutoOrderManager.py, main.py, UserMatterMatcher.py, BillGeneration.jsx, OrderCenter.jsx, OrderManager.py
 
 ### October 31, 2025 - ML Categorization Enhancements

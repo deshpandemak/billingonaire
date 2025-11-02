@@ -3644,6 +3644,59 @@ async def get_search_index_stats(current_user=Depends(get_current_user)):
         )
 
 
+@app.post("/auto-orders/rebuild-search-index", tags=["Auto Order Management"])
+async def rebuild_search_index(
+    limit: int = Query(100, description="Number of cases to rebuild"),
+    current_user=Depends(get_current_user),
+):
+    """Rebuild search index for analyzed orders to pick up flattened data structure"""
+    try:
+        db = firestore.client()
+        
+        # Get analyzed orders from daily-boards
+        query = (
+            db.collection("daily-boards")
+            .where("order_analysis_completed", "==", True)
+            .limit(limit)
+        )
+        
+        docs = query.stream()
+        
+        rebuilt_count = 0
+        errors = []
+        
+        for doc in docs:
+            try:
+                case_id = doc.id
+                case_data = doc.to_dict()
+                
+                # Rebuild search index entry
+                get_auto_order_manager()._create_search_index_entry(
+                    case_id, case_data, {}
+                )
+                rebuilt_count += 1
+                
+            except Exception as e:
+                logging.error(f"Error rebuilding search index for {doc.id}: {e}")
+                errors.append({"case_id": doc.id, "error": str(e)})
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "rebuilt_count": rebuilt_count,
+                "errors": errors,
+                "message": f"Rebuilt search index for {rebuilt_count} cases",
+            }
+        )
+    
+    except Exception as e:
+        logging.error(f"Error rebuilding search index: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to rebuild search index: {str(e)}"},
+        )
+
+
 @app.get("/auto-orders/tabular-data", tags=["Auto Order Management"])
 async def get_order_tabular_data(
     petitioner_search: str = Query(None),

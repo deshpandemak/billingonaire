@@ -241,6 +241,33 @@ const OrderCenter = () => {
         }
     };
 
+    const handleRebuildSearchIndex = async () => {
+        if (!window.confirm('Rebuild search index for all analyzed orders? This will update the search results to show the latest petitioner/respondent data.')) {
+            return;
+        }
+
+        setSearchLoading(true);
+        setError('');
+        setSuccess('');
+
+        try {
+            const result = await authenticatedFetchJSON('/auto-orders/rebuild-search-index?limit=500', {
+                method: 'POST',
+            });
+
+            if (result.success) {
+                setSuccess(`✅ Search index rebuilt! ${result.rebuilt_count} cases updated.`);
+                await loadAutoProcessingData(); // Refresh stats
+            } else {
+                setError(result.error || 'Rebuild failed');
+            }
+        } catch (e) {
+            setError(`Rebuild failed: ${e.message}`);
+        } finally {
+            setSearchLoading(false);
+        }
+    };
+
     const OverviewTab = () => (
         <div>
             <Row className="mb-4">
@@ -595,20 +622,37 @@ const OrderCenter = () => {
                             </Form.Group>
                         </Col>
                     </Row>
-                    <Button 
-                        variant="outline-primary" 
-                        onClick={handleSearchOrders} 
-                        disabled={searchLoading}
-                    >
-                        {searchLoading ? (
-                            <>
-                                <Spinner size="sm" className="me-2" />
-                                Searching...
-                            </>
-                        ) : (
-                            '🔍 Search Orders'
-                        )}
-                    </Button>
+                    <div className="d-flex gap-2 mb-3">
+                        <Button 
+                            variant="outline-primary" 
+                            onClick={handleSearchOrders} 
+                            disabled={searchLoading}
+                        >
+                            {searchLoading ? (
+                                <>
+                                    <Spinner size="sm" className="me-2" />
+                                    Searching...
+                                </>
+                            ) : (
+                                '🔍 Search Orders'
+                            )}
+                        </Button>
+                        <Button 
+                            variant="outline-warning" 
+                            onClick={handleRebuildSearchIndex} 
+                            disabled={searchLoading}
+                            title="Rebuild search index to update petitioner/respondent data"
+                        >
+                            {searchLoading ? (
+                                <>
+                                    <Spinner size="sm" className="me-2" />
+                                    Rebuilding...
+                                </>
+                            ) : (
+                                '🔄 Rebuild Index'
+                            )}
+                        </Button>
+                    </div>
 
                     {searchResults.length > 0 && (
                         <div className="mt-4">
