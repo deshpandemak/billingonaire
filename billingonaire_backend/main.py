@@ -2606,7 +2606,10 @@ async def generate_bill_data(
             # Admin generating bill for specific user - use ENHANCED fuzzy matching
             logging.info(f"Admin {user_id} generating bill for user: {user_name}")
 
-            # Step 1: Collect all unique AGP names from MULTIPLE sources in board data
+            # Step 1: Collect all unique AGP names with PRIORITY ORDER
+            # Priority: 1) order_agp_names (government_pleader from order analysis)
+            #          2) respondent_lawyer (from board data)
+            #          3) additional_respondent_lawyers (from board data)
             boards_ref = db.collection("daily-boards")
             all_cases = boards_ref.stream()
 
@@ -2617,27 +2620,11 @@ async def generate_bill_data(
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
 
-                # Source 1: respondent_lawyer (primary field)
-                respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
-                if respondent_lawyer:
-                    unique_agp_names.add(respondent_lawyer)
-                    if respondent_lawyer not in cases_by_agp:
-                        cases_by_agp[respondent_lawyer] = []
-                    cases_by_agp[respondent_lawyer].append((case_id, case_data))
-
-                # Source 2: additional_respondent_lawyers (now an array from daily board)
-                additional_lawyers = case_data.get("additional_respondent_lawyers", [])
-                if additional_lawyers and isinstance(additional_lawyers, list):
-                    for lawyer_name in additional_lawyers:
-                        lawyer_name = lawyer_name.strip().rstrip(",")
-                        if lawyer_name:
-                            unique_agp_names.add(lawyer_name)
-                            if lawyer_name not in cases_by_agp:
-                                cases_by_agp[lawyer_name] = []
-                            cases_by_agp[lawyer_name].append((case_id, case_data))
-
-                # Source 3: order_agp_names (can be list OR single string from order analysis)
+                # PRIORITY 1: order_agp_names (government_pleader from order analysis)
+                # This is the MOST ACCURATE source as it's extracted from the actual court order
                 order_agp_names = case_data.get("order_agp_names")
+                has_order_agp = False
+                
                 if order_agp_names:
                     # Handle both string and list formats
                     if isinstance(order_agp_names, str):
@@ -2648,6 +2635,7 @@ async def generate_bill_data(
                             if agp_name not in cases_by_agp:
                                 cases_by_agp[agp_name] = []
                             cases_by_agp[agp_name].append((case_id, case_data))
+                            has_order_agp = True
                     elif isinstance(order_agp_names, list):
                         # List of names
                         for agp_name in order_agp_names:
@@ -2657,9 +2645,32 @@ async def generate_bill_data(
                                 if agp_name not in cases_by_agp:
                                     cases_by_agp[agp_name] = []
                                 cases_by_agp[agp_name].append((case_id, case_data))
+                                has_order_agp = True
+
+                # PRIORITY 2 & 3: Only use board data if NO order_agp_names exists
+                # This ensures government_pleader from order analysis takes precedence
+                if not has_order_agp:
+                    # Source 2: respondent_lawyer (from board data)
+                    respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
+                    if respondent_lawyer:
+                        unique_agp_names.add(respondent_lawyer)
+                        if respondent_lawyer not in cases_by_agp:
+                            cases_by_agp[respondent_lawyer] = []
+                        cases_by_agp[respondent_lawyer].append((case_id, case_data))
+
+                    # Source 3: additional_respondent_lawyers (from board data)
+                    additional_lawyers = case_data.get("additional_respondent_lawyers", [])
+                    if additional_lawyers and isinstance(additional_lawyers, list):
+                        for lawyer_name in additional_lawyers:
+                            lawyer_name = lawyer_name.strip().rstrip(",")
+                            if lawyer_name:
+                                unique_agp_names.add(lawyer_name)
+                                if lawyer_name not in cases_by_agp:
+                                    cases_by_agp[lawyer_name] = []
+                                cases_by_agp[lawyer_name].append((case_id, case_data))
 
             logging.info(
-                f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)"
+                f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: order_agp_names > respondent_lawyer > additional_respondent_lawyers)"
             )
             
             # Log sample of AGP names for debugging
@@ -2698,6 +2709,10 @@ async def generate_bill_data(
                     f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}..."
                 )
                 logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
+                
+                # Track filtering for debugging
+                date_filtered = 0
+                duplicate_filtered = 0
 
                 for case_id, case_data in matched_cases:
                     board_date_raw = case_data.get("board_date")
@@ -2752,6 +2767,9 @@ async def generate_bill_data(
                             )
                             continue
 
+                logging.info(f"📊 Filtering summary: {len(matched_cases)} total cases → {len(bill_entries)} included")
+                logging.info(f"   - Date range: {start_date} to {end_date}")
+                logging.info(f"   - Cases outside date range: {len(matched_cases) - len(bill_entries)}")
                 logging.info(
                     f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'"
                 )
