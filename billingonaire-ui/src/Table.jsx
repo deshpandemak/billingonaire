@@ -171,16 +171,14 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (simplified structure with petitioner field per case)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          // Get the petitioner from the first case (if there are multiple cases, show first one)
-          const firstCase = params.data.order_cases[0];
-          if (firstCase.petitioner) {
-            return firstCase.petitioner;
-          }
+        // Priority: order_petitioner (order analysis) → petitioner_lawyer (board data) → empty
+        if (params.data?.order_petitioner) {
+          return params.data.order_petitioner;
         }
-        
-        return '';
+        if (params.data?.petitioner_lawyer) {
+          return params.data.petitioner_lawyer;
+        }
+        return '-';
       }
     },
     { 
@@ -191,16 +189,14 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (simplified structure with respondent field per case)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          // Get the respondent from the first case (if there are multiple cases, show first one)
-          const firstCase = params.data.order_cases[0];
-          if (firstCase.respondent) {
-            return firstCase.respondent;
-          }
+        // Priority: order_respondent (order analysis) → respondent_lawyer (board data) → empty
+        if (params.data?.order_respondent) {
+          return params.data.order_respondent;
         }
-        
-        return '';
+        if (params.data?.respondent_lawyer) {
+          return params.data.respondent_lawyer;
+        }
+        return '-';
       }
     },
     { 
