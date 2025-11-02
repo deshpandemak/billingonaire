@@ -1292,15 +1292,26 @@ class OrderDocumentAnalyzer:
         Returns: {case_key: {case_type, case_number, case_year, petitioner, respondent, government_pleader}}
         """
         case_details = {}
+        logging.info("🔍 Extracting multi-case details from order text")
 
         # Pattern to match case blocks with all details
-        # Looking for: "WRIT PETITION NO.11347 OF 2024" followed by petitioner, versus, respondent
-        case_block_pattern = r"(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
+        # Looking for: "WRIT PETITION NO.11347 OF 2024" or "CONTEMPT PETITION NO.363 OF 2025" followed by petitioner, versus, respondent
+        case_block_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|CONTEMPT PETITION NO\.|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
 
         matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
+        logging.info(f"  Found {len(matches)} case block(s) in order text")
 
-        for case_number, year, block_text in matches:
-            case_key = f"WP/{case_number}/{year}"
+        for case_type_full, case_number, year, block_text in matches:
+            # Map case type to abbreviation
+            case_type_map = {
+                "WRIT PETITION": "WP",
+                "CRIMINAL WRIT PETITION": "CWP",
+                "CIVIL APPLICATION": "CA",
+                "CONTEMPT PETITION": "CP"
+            }
+            case_type = case_type_map.get(case_type_full.upper(), "WP")
+            case_key = f"{case_type}/{case_number}/{year}"
+            logging.info(f"  Processing case: {case_key} (type: {case_type_full})")
 
             # Enhanced petitioner extraction with multiple patterns
             petitioner = ""
@@ -1317,7 +1328,7 @@ class OrderDocumentAnalyzer:
                     re.IGNORECASE,
                 ):
                     petitioner += " And Ors."
-                print(f"Pattern 1 matched: {petitioner}")
+                logging.info(f"    ✅ Petitioner Pattern 1 matched: '{petitioner}'")
 
             # Pattern 2: Name followed by petitioner designation (more flexible) - IMPROVED
             if not petitioner:
@@ -1332,7 +1343,7 @@ class OrderDocumentAnalyzer:
                         re.IGNORECASE,
                     ):
                         petitioner += " And Ors."
-                    print(f"Pattern 2 matched: {petitioner}")
+                    logging.info(f"    ✅ Petitioner Pattern 2 matched: '{petitioner}'")
 
             # Pattern 3: Petitioner mentioned in sentence format
             if not petitioner:
@@ -1342,7 +1353,7 @@ class OrderDocumentAnalyzer:
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
-                    print(f"Pattern 3 matched: {petitioner}")
+                    logging.info(f"    ✅ Petitioner Pattern 3 matched: '{petitioner}'")
 
             # Pattern 4: Name before "versus" or "vs" (fallback)
             if not petitioner:
@@ -1354,7 +1365,7 @@ class OrderDocumentAnalyzer:
                 )
                 if versus_match:
                     petitioner = versus_match.group(1).strip()
-                    print(f"Pattern 4 matched: {petitioner}")
+                    logging.info(f"    ✅ Petitioner Pattern 4 matched: '{petitioner}'")
 
             # Clean up petitioner name
             if petitioner:
@@ -1372,18 +1383,23 @@ class OrderDocumentAnalyzer:
                 respondent = resp_match.group(1).strip()
                 # Clean up whitespace
                 respondent = re.sub(r"\s+", " ", respondent)
+                logging.info(f"    ✅ Respondent extracted: '{respondent}'")
+            else:
+                logging.warning(f"    ❌ No respondent found for case {case_key}")
 
             # Extract government pleader from the advocates section
             govt_pleaders = self._extract_govt_pleader_from_text(text, case_key)
+            logging.info(f"    📊 AGP/GP extracted: {govt_pleaders}")
 
             case_details[case_key] = {
-                "case_type": "WP",
+                "case_type": case_type,
                 "case_number": int(case_number),
                 "case_year": int(year),
                 "petitioner": petitioner,
                 "respondent": respondent,
                 "government_pleader": govt_pleaders,
             }
+            logging.info(f"  ✅ Case {case_key} details: Petitioner={petitioner}, Respondent={respondent}, AGP={govt_pleaders}")
 
         return case_details
 
