@@ -430,7 +430,7 @@ class OrderDocumentAnalyzer:
         order_lines = []
 
         # Patterns for section identification
-        case_number_pattern = r"(?:WRIT\s+PETITION\s+NO\.|WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/\s]+OF\s+\d+|\b(?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+"
+        case_number_pattern = r"(?:WRIT\s+PETITION\s+NO\.|CRIMINAL\s+PETITION\s+NO\.|CIVIL\s+PETITION\s+NO\.|WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/\s]+OF\s+\d+|\b(?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s]*\d+[-/]\d+"
         parties_pattern = (
             r"\.{2,}.*?(?:Petitioner|Applicant|Appellant|Respondent|Defendant)"
         )
@@ -577,7 +577,7 @@ class OrderDocumentAnalyzer:
         # Comprehensive patterns for different case formats
         patterns = [
             # "WRIT PETITION NO.11347 OF 2024" format
-            r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})",
+            r"(WRIT PETITION|CRIMINAL PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})",
             # "WP/11347/2024" or "WP-11347-2024" format
             r"(WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)[\s\-/]+([0-9]+)[\s\-/]+([0-9]{4})",
             # "11347/2024" standalone format
@@ -654,6 +654,11 @@ class OrderDocumentAnalyzer:
                 for agp_info in case_agp_mapping[canonical_id]:
                     agp_names.append(f"{agp_info['name']} ({agp_info['role']})")
 
+            # Fallback: If no case-specific AGPs found, extract general AGPs from text
+            if not agp_names:
+                general_agps = self._extract_general_agps(text)
+                agp_names = [f"{name} ({role})" for name, role in general_agps]
+
             agp_string = ", ".join(agp_names) if agp_names else ""
 
             # Create tabular row with properly parsed data
@@ -676,7 +681,7 @@ class OrderDocumentAnalyzer:
         """Extract case numbers from text with enhanced pattern matching"""
         patterns = [
             # Pattern for "WRIT PETITION NO.11347 OF 2024" format
-            r"(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*([0-9]+\s+OF\s+[0-9]+)",
+            r"((?:WRIT PETITION|CRIMINAL PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION)(?:\s+NO\.?)?\s*[0-9]+\s+OF\s+[0-9]+)",
             # Standard case format like "WP-11347-2024" or "WP/11347/2024"
             r"((?:WP|PIL|CRLP|CRLWP|CRMPL|CP|APPWP|CPWP|APPPL)\s*[-\s/]*\d+[-/]\d+)",
             # Case references in advocate assignments "WP/11347/2024"
@@ -693,11 +698,15 @@ class OrderDocumentAnalyzer:
         for case in case_numbers:
             case = case.strip()
             if case and len(case) > 4:  # Filter out very short matches
-                # Convert "11347 OF 2024" to "11347/2024" format
-                case = re.sub(r"\s+OF\s+", "/", case, flags=re.IGNORECASE)
-                # Normalize separators to forward slash
-                case = re.sub(r"[-\s]+", "/", case)
-                normalized_cases.append(case)
+                # For full case references like "CRIMINAL PETITION NO.363 OF 2025"
+                # Convert to canonical format for parsing
+                if " OF " in case.upper():
+                    # Keep the full reference for parsing
+                    normalized_cases.append(case)
+                else:
+                    # For other formats, normalize separators
+                    case = re.sub(r"[-\s]+", "/", case)
+                    normalized_cases.append(case)
 
         return list(set(normalized_cases))
 
@@ -808,6 +817,28 @@ class OrderDocumentAnalyzer:
 
         return case_agp_mapping
 
+    def _extract_general_agps(self, text: str) -> List[Tuple[str, str]]:
+        """Extract AGP/GP names from text without case associations"""
+        agps = []
+
+        # Split text on "and" to handle multiple advocates
+        parts = re.split(r'\s+and\s+', text, flags=re.IGNORECASE)
+
+        for part in parts:
+            # Pattern for individual advocate: Mr./Ms. Name, Role
+            pattern = r'(?:Mr\.|Ms\.|Adv\.)\s+([A-Z]\.\s*[A-Z]\.\s*[A-Za-z]+)\s*,\s*([^,\n]+)'
+            matches = re.findall(pattern, part, re.IGNORECASE)
+
+            for match in matches:
+                name, role_desc = match
+                # Extract the role (AGP, GP, Addl. GP, etc.)
+                role_match = re.search(r'(?:Addl\.?\s*)?(?:AGP|G\.?\s*P\.?)', role_desc, re.IGNORECASE)
+                if role_match:
+                    role = role_match.group(0)
+                    agps.append((name.strip(), role.strip()))
+
+        return agps
+
     def _extract_all_case_numbers(self, text: str) -> List[str]:
         """Helper method to get all case numbers for AGP mapping"""
         patterns = [
@@ -839,7 +870,7 @@ class OrderDocumentAnalyzer:
         case_parties_mapping = {}
 
         # Enhanced pattern to match case blocks with parties - handles different case number formats
-        case_block_pattern = r"(WRIT PETITION NO\.\s*([0-9]+)\s+OF\s+([0-9]+))(.*?)(?=(?:WRIT PETITION NO\.|WITH|Mr\.\s+\w+\s+\w+\s+for|Ms\.\s+\w+\s+\w+\s+for|$))"
+        case_block_pattern = r"((?:WRIT|CRIMINAL|CIVIL) PETITION NO\.\s*([0-9]+)\s+OF\s+([0-9]+))(.*?)(?=(?:WRIT PETITION NO\.|CRIMINAL PETITION NO\.|CIVIL PETITION NO\.|WITH|Mr\.\s+\w+\s+\w+\s+for|Ms\.\s+\w+\s+\w+\s+for|$))"
 
         matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
 
@@ -847,7 +878,7 @@ class OrderDocumentAnalyzer:
             canonical_case_num = f"{case_num}/{year}"
 
             # Enhanced petitioner extraction
-            petitioner_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Shree)\s+[A-Za-z\s\.]+?)(?:\s+\.{2,}\s*(?:Petitioner|Applicant))"
+            petitioner_pattern = r"((?:Shri?\.?|Smt\.?|Mr\.?|Ms\.?|Shree)\s+)?([A-Za-z][A-Za-z\s\.]+?)(?:\s+\.{2,}\s*(?:Petitioner|Applicant))"
             petitioner_match = re.search(
                 petitioner_pattern, case_content, re.IGNORECASE
             )
@@ -866,7 +897,11 @@ class OrderDocumentAnalyzer:
                 )
 
             # Extract petitioner and clean up
-            petitioner = petitioner_match.group(1).strip() if petitioner_match else ""
+            petitioner = ""
+            if petitioner_match:
+                title = petitioner_match.group(1) or ""
+                name = petitioner_match.group(2) or ""
+                petitioner = (title + name).strip()
 
             # Extract and clean respondent
             respondent = ""
