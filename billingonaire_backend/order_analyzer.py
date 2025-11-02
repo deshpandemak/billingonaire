@@ -1304,8 +1304,8 @@ class OrderDocumentAnalyzer:
             logging.info(f"  Found {len(in_cases)} IN case(s) (associated cases): {in_cases}")
         
         # Simpler approach: Find all case headers, then extract text between them
-        # Pattern to match case headers: "CONTEMPT PETITION NO.363 OF 2025"
-        case_header_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
+        # Pattern to match case headers: "CONTEMPT PETITION NO.363 OF 2025" or "INTERIM APPLICATION (ST) NO. 21796 OF 2025"
+        case_header_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION|INTERIM APPLICATION\s*\(ST\))(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
         
         # Find all matches with their positions
         all_case_matches = []
@@ -1345,7 +1345,8 @@ class OrderDocumentAnalyzer:
                 "WRIT PETITION": "WP",
                 "CRIMINAL WRIT PETITION": "CWP",
                 "CIVIL APPLICATION": "CA",
-                "CONTEMPT PETITION": "CP"
+                "CONTEMPT PETITION": "CP",
+                "INTERIM APPLICATION (ST)": "IA(ST)"
             }
             case_type = case_type_map.get(case_type_full.upper(), "WP")
             case_key = f"{case_type}/{case_number}/{year}"
