@@ -1322,6 +1322,7 @@ class OrderDocumentAnalyzer:
             case_type = case_type_map.get(case_type_full.upper(), "WP")
             case_key = f"{case_type}/{case_number}/{year}"
             logging.info(f"  Processing case: {case_key} (type: {case_type_full})")
+            logging.info(f"  📄 BLOCK TEXT (first 500 chars): {block_text[:500]}")
 
             # Enhanced petitioner extraction with multiple patterns
             # Support for: Alias names, titles (Mr., Smt., etc.), compound names, and special characters
