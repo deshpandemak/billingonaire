@@ -1296,10 +1296,20 @@ class OrderDocumentAnalyzer:
 
         # Pattern to match case blocks with all details
         # Looking for: "WRIT PETITION NO.11347 OF 2024" or "CONTEMPT PETITION NO.363 OF 2025" followed by petitioner, versus, respondent
-        case_block_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|CONTEMPT PETITION NO\.|WITH|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
+        # EXCLUDE cases preceded by "IN" (e.g., "IN WP/8485/2007") which are associated cases, not main cases
+        # Use negative lookbehind to exclude "IN" cases
+        case_block_pattern = r"(?<!IN\s)(?<!IN\s\s)(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})(.*?)(?=(?:WRIT PETITION NO\.|CONTEMPT PETITION NO\.|WITH|IN\s+(?:WRIT|CRIMINAL|CIVIL|CONTEMPT)|(?:Mr\.|Ms\.|Adv\.)\s+[A-Z].*?for|$))"
 
+        # First, filter out all "IN" references to avoid treating them as separate cases
+        # Pattern to identify "IN" cases: "IN WP/8485/2007" or "IN WRIT PETITION NO.8485 OF 2007"
+        in_pattern = r"IN\s+(?:WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION)(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
+        in_matches = re.findall(in_pattern, text, re.IGNORECASE)
+        in_cases = [f"{num}/{year}" for num, year in in_matches]
+        if in_cases:
+            logging.info(f"  Found {len(in_cases)} IN case(s) (associated cases): {in_cases}")
+        
         matches = re.findall(case_block_pattern, text, re.DOTALL | re.IGNORECASE)
-        logging.info(f"  Found {len(matches)} case block(s) in order text")
+        logging.info(f"  Found {len(matches)} main case block(s) in order text (excluding IN cases)")
 
         for case_type_full, case_number, year, block_text in matches:
             # Map case type to abbreviation
