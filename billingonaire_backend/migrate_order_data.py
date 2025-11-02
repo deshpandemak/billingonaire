@@ -91,7 +91,7 @@ def migrate_order_data():
                 logger.error(f"Error migrating case {case_id}: {e}")
                 error_count += 1
 
-        logger.info(f"Migration completed:")
+        logger.info("Migration completed:")
         logger.info(f"  - Migrated: {migrated_count} cases")
         logger.info(f"  - Skipped: {skipped_count} cases")
         logger.info(f"  - Errors: {error_count} cases")

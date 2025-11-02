@@ -397,9 +397,9 @@ class OrderDocumentAnalyzer:
             r"cannot\s+be\s+taken\s+up\s+today",
             r"no\s+time\s+available",
             r"matter\s+not\s+reached",
-            r"insufficient\s+time"
+            r"insufficient\s+time",
         ]
-        
+
         is_non_hearing_adjournment = any(
             re.search(pattern, text, re.IGNORECASE) for pattern in no_hearing_patterns
         )
@@ -422,12 +422,14 @@ class OrderDocumentAnalyzer:
                 confidence = scores["HEARD_AND_ADJOURNED"]["confidence"]
                 # Boost confidence for proper classification
                 confidence = min(confidence * 1.4, 1.0)
-        
+
         # Override to ADJOURNED if non-hearing detected
         if is_non_hearing_adjournment and best_category == "HEARD_AND_ADJOURNED":
             best_category = "ADJOURNED"
             confidence = scores.get("ADJOURNED", {}).get("confidence", 0.5)
-            logging.info(f"   🔄 Overriding to ADJOURNED - no hearing indicators detected")
+            logging.info(
+                "   🔄 Overriding to ADJOURNED - no hearing indicators detected"
+            )
 
         # Boost confidence for clear indicators
         if (
@@ -1324,12 +1326,14 @@ class OrderDocumentAnalyzer:
         in_matches = re.findall(in_pattern, text, re.IGNORECASE)
         in_cases = set(f"{num}/{year}" for num, year in in_matches)
         if in_cases:
-            logging.info(f"  Found {len(in_cases)} IN case(s) (associated cases): {in_cases}")
-        
+            logging.info(
+                f"  Found {len(in_cases)} IN case(s) (associated cases): {in_cases}"
+            )
+
         # Simpler approach: Find all case headers, then extract text between them
         # Pattern to match case headers: "CONTEMPT PETITION NO.363 OF 2025" or "INTERIM APPLICATION (ST) NO. 21796 OF 2025"
         case_header_pattern = r"(WRIT PETITION|CRIMINAL WRIT PETITION|CIVIL APPLICATION|CONTEMPT PETITION|INTERIM APPLICATION\s*\(ST\))(?:\s+NO\.?)?\s*([0-9]+)\s+OF\s+([0-9]{4})"
-        
+
         # Find all matches with their positions
         all_case_matches = []
         for match in re.finditer(case_header_pattern, text, re.IGNORECASE):
@@ -1337,27 +1341,35 @@ class OrderDocumentAnalyzer:
             case_number = match.group(2)
             case_year = match.group(3)
             start_pos = match.end()  # Start extracting after the case header
-            
+
             # Skip if this is an "IN" case
             # Check if "IN " appears within 10 chars before this match
-            before_text = text[max(0, match.start()-10):match.start()]
+            before_text = text[max(0, match.start() - 10) : match.start()]
             if re.search(r"IN\s*$", before_text, re.IGNORECASE):
-                logging.info(f"  Skipping IN case: {case_type_full} {case_number}/{case_year}")
+                logging.info(
+                    f"  Skipping IN case: {case_type_full} {case_number}/{case_year}"
+                )
                 continue
-            
+
             all_case_matches.append((case_type_full, case_number, case_year, start_pos))
-        
-        logging.info(f"  Found {len(all_case_matches)} main case block(s) in order text (excluding IN cases)")
-        
+
+        logging.info(
+            f"  Found {len(all_case_matches)} main case block(s) in order text (excluding IN cases)"
+        )
+
         # Extract text blocks for each case
         matches = []
-        for i, (case_type_full, case_number, case_year, start_pos) in enumerate(all_case_matches):
+        for i, (case_type_full, case_number, case_year, start_pos) in enumerate(
+            all_case_matches
+        ):
             # Determine end position: either start of next case or end of text
             if i + 1 < len(all_case_matches):
-                end_pos = all_case_matches[i + 1][3] - 50  # End 50 chars before next case header
+                end_pos = (
+                    all_case_matches[i + 1][3] - 50
+                )  # End 50 chars before next case header
             else:
                 end_pos = len(text)  # Last case: go to end of text
-            
+
             # Extract block text between cases
             block_text = text[start_pos:end_pos]
             matches.append((case_type_full, case_number, case_year, block_text))
@@ -1369,7 +1381,7 @@ class OrderDocumentAnalyzer:
                 "CRIMINAL WRIT PETITION": "CWP",
                 "CIVIL APPLICATION": "CA",
                 "CONTEMPT PETITION": "CP",
-                "INTERIM APPLICATION (ST)": "IA(ST)"
+                "INTERIM APPLICATION (ST)": "IA(ST)",
             }
             case_type = case_type_map.get(case_type_full.upper(), "WP")
             case_key = f"{case_type}/{case_number}/{year}"
@@ -1391,7 +1403,9 @@ class OrderDocumentAnalyzer:
                 part1 = pet_match1.group(1).strip()
                 part2 = pet_match1.group(2).strip()
                 petitioner = f"{part1} {part2}"
-                logging.info(f"    ✅ Petitioner Pattern 1 (Split by …Petitioner) matched: '{petitioner}'")
+                logging.info(
+                    f"    ✅ Petitioner Pattern 1 (Split by …Petitioner) matched: '{petitioner}'"
+                )
 
             # Pattern 2: Handle "IN THE MATTER BETWEEN" format for IA cases
             # Example: "IN THE MATTER BETWEEN Kanhaiyalal Madhavji Thakkar …Petitioner"
@@ -1401,7 +1415,9 @@ class OrderDocumentAnalyzer:
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 2 (IN THE MATTER BETWEEN) matched: '{petitioner}'")
+                    logging.info(
+                        f"    ✅ Petitioner Pattern 2 (IN THE MATTER BETWEEN) matched: '{petitioner}'"
+                    )
 
             # Pattern 3: Handle "Name …Petitioner Versus" format (name before separator, nothing after)
             # Example: "Sunil Shivaji Wagh …Petitioner Versus" or "Alvito Carvalho …Petitioner/Applicant Versus"
@@ -1410,7 +1426,9 @@ class OrderDocumentAnalyzer:
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 3 (Name …Petitioner Versus) matched: '{petitioner}'")
+                    logging.info(
+                        f"    ✅ Petitioner Pattern 3 (Name …Petitioner Versus) matched: '{petitioner}'"
+                    )
 
             # Pattern 4: Standard format before "Versus" (no separator)
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer Versus"
@@ -1421,27 +1439,35 @@ class OrderDocumentAnalyzer:
                 pet_match4 = re.search(petitioner_pattern4, block_text, re.IGNORECASE)
                 if pet_match4:
                     petitioner = pet_match4.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 4 (Before Versus, no separator) matched: '{petitioner}'")
+                    logging.info(
+                        f"    ✅ Petitioner Pattern 4 (Before Versus, no separator) matched: '{petitioner}'"
+                    )
 
             # Pattern 5: Handle "Name ....PETITIONER V/S" format (uppercase, dots separator)
             # Example: "Manikrao Shankar Devkate ....PETITIONER V/S"
             if not petitioner:
-                petitioner_pattern5 = r"([A-Z][a-zA-Z]+(?:\s+[a-zA-Z\.\-/]+){1,})\s+\.{2,}\s*PETITIONER"
+                petitioner_pattern5 = (
+                    r"([A-Z][a-zA-Z]+(?:\s+[a-zA-Z\.\-/]+){1,})\s+\.{2,}\s*PETITIONER"
+                )
                 pet_match5 = re.search(petitioner_pattern5, block_text)
                 if pet_match5:
                     petitioner = pet_match5.group(1).strip()
-                    logging.info(f"    ✅ Petitioner Pattern 5 (....PETITIONER format) matched: '{petitioner}'")
+                    logging.info(
+                        f"    ✅ Petitioner Pattern 5 (....PETITIONER format) matched: '{petitioner}'"
+                    )
 
             # Clean up petitioner name
             if petitioner:
                 petitioner = re.sub(r"\s+", " ", petitioner).strip()
                 # Remove trailing dots and labels
                 petitioner = re.sub(r"\.{2,}.*$", "", petitioner).strip()
-                petitioner = re.sub(r"\s*\.{2,}\s*PETITIONER.*$", "", petitioner, flags=re.IGNORECASE).strip()
+                petitioner = re.sub(
+                    r"\s*\.{2,}\s*PETITIONER.*$", "", petitioner, flags=re.IGNORECASE
+                ).strip()
 
             # Extract respondent - support for "…Respondents" separator, & Anr., And Ors.
             respondent = ""
-            
+
             # Pattern 1: versus ... …Respondents (with "…" separator)
             # Example: "Versus Mr. Harun Attar & Anr. …Respondents"
             respondent_pattern1 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*…\s*Respondents?"
@@ -1452,8 +1478,10 @@ class OrderDocumentAnalyzer:
                 respondent = resp_match1.group(1).strip()
                 # Clean up whitespace and newlines
                 respondent = re.sub(r"\s+", " ", respondent).strip()
-                logging.info(f"    ✅ Respondent Pattern 1 (…Respondents separator) matched: '{respondent}'")
-            
+                logging.info(
+                    f"    ✅ Respondent Pattern 1 (…Respondents separator) matched: '{respondent}'"
+                )
+
             # Pattern 2: versus ... before next major section (Mr./Ms./CORAM)
             if not respondent:
                 respondent_pattern2 = r"versus\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)(?:\s+(?:Mr\.|Ms\.|Adv\.|CORAM)|\n|$)"
@@ -1465,8 +1493,10 @@ class OrderDocumentAnalyzer:
                     # Clean up whitespace, newlines, and trailing separator
                     respondent = re.sub(r"\s+", " ", respondent).strip()
                     respondent = re.sub(r"\s*…\s*$", "", respondent).strip()
-                    logging.info(f"    ✅ Respondent Pattern 2 (before next section) matched: '{respondent}'")
-            
+                    logging.info(
+                        f"    ✅ Respondent Pattern 2 (before next section) matched: '{respondent}'"
+                    )
+
             # Pattern 3: Handle "....RESPONDENT And Ors" format (uppercase, dots separator)
             # Example: "The State Of Maharashtra Throu.govt Pleader....RESPONDENT And Ors"
             if not respondent:
@@ -1475,8 +1505,10 @@ class OrderDocumentAnalyzer:
                 if resp_match3:
                     respondent = resp_match3.group(1).strip()
                     respondent = re.sub(r"\s+", " ", respondent).strip()
-                    logging.info(f"    ✅ Respondent Pattern 3 (....RESPONDENT format) matched: '{respondent}'")
-            
+                    logging.info(
+                        f"    ✅ Respondent Pattern 3 (....RESPONDENT format) matched: '{respondent}'"
+                    )
+
             if not respondent:
                 logging.warning(f"    ❌ No respondent found for case {case_key}")
 
@@ -1492,7 +1524,9 @@ class OrderDocumentAnalyzer:
                 "respondent": respondent,
                 "government_pleader": govt_pleaders,
             }
-            logging.info(f"  ✅ Case {case_key} details: Petitioner={petitioner}, Respondent={respondent}, AGP={govt_pleaders}")
+            logging.info(
+                f"  ✅ Case {case_key} details: Petitioner={petitioner}, Respondent={respondent}, AGP={govt_pleaders}"
+            )
 
         return case_details
 
@@ -1504,38 +1538,42 @@ class OrderDocumentAnalyzer:
         # Pattern 1: Extract AGP/GP names who appear "for the Respondent-State" or similar
         # Simpler, more robust pattern that handles both "a/w" and "with"
         # Match format: "Title Name, Role (a/w|with) Title Name, Role for Respondent"
-        logging.info(f"      🔍 Testing Pattern 1 for AGP/GP extraction...")
+        logging.info("      🔍 Testing Pattern 1 for AGP/GP extraction...")
         logging.info(f"      📄 Text snippet being searched (100 chars): '{text[:100]}'")
-        
+
         # Ultra-simplified pattern - titles may or may not have periods, names can have spaces and periods
         # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent"
         simple_pattern = r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)\s+(?:a/w|with)\s+((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)(?:,\s*)?for\s+(?:the\s+)?Respondent"
-        
+
         for match in re.finditer(simple_pattern, text, re.IGNORECASE):
             title1_name1 = match.group(1).strip()
             role1 = match.group(2).strip()
             title2_name2 = match.group(3).strip()
             role2 = match.group(4).strip()
-            
-            logging.info(f"      🎯 Simple pattern matched: '{title1_name1}' role='{role1}', '{title2_name2}' role='{role2}'")
-            
+
+            logging.info(
+                f"      🎯 Simple pattern matched: '{title1_name1}' role='{role1}', '{title2_name2}' role='{role2}'"
+            )
+
             # Only process if roles contain AGP/GP/G.P.
-            if re.search(r'(?:AGP|GP|G\.?\s*P\.?)', role1, re.IGNORECASE):
+            if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role1, re.IGNORECASE):
                 role1_normalized = self._normalize_agp_role(role1)
                 formatted1 = f"{title1_name1}, {role1_normalized}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
-            
-            if re.search(r'(?:AGP|GP|G\.?\s*P\.?)', role2, re.IGNORECASE):
+
+            if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
                 formatted2 = f"{title2_name2}, {role2_normalized}"
                 if formatted2 not in pleaders:
                     pleaders.append(formatted2)
-                    logging.info(f"      ✅ AGP Pattern 1.2 (a/w|with) matched: '{formatted2}'")
+                    logging.info(
+                        f"      ✅ AGP Pattern 1.2 (a/w|with) matched: '{formatted2}'"
+                    )
 
         logging.info(f"      📊 Total AGP/GP found from Pattern 1: {len(pleaders)}")
-        
+
         # Pattern 2: Case-specific but different format
         # "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State in WP/11347/2024"
         if not pleaders:
@@ -1823,12 +1861,14 @@ class OrderDocumentAnalyzer:
                         f"Pattern {pattern} matched but has no capturing groups"
                     )
                     continue
-            
+
             if match_count == 0:
                 logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
         deduplicated = self._deduplicate_entities(petitioners)
-        logging.info(f"  📊 Total petitioners extracted: {len(deduplicated)} (after deduplication from {len(petitioners)})")
+        logging.info(
+            f"  📊 Total petitioners extracted: {len(deduplicated)} (after deduplication from {len(petitioners)})"
+        )
         return deduplicated
 
     def _extract_respondents(self, text: str) -> List[Dict[str, Any]]:
@@ -1873,12 +1913,14 @@ class OrderDocumentAnalyzer:
                         f"Pattern {pattern} matched but has no capturing groups"
                     )
                     continue
-            
+
             if match_count == 0:
                 logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
         deduplicated = self._deduplicate_entities(respondents)
-        logging.info(f"  📊 Total respondents extracted: {len(deduplicated)} (after deduplication from {len(respondents)})")
+        logging.info(
+            f"  📊 Total respondents extracted: {len(deduplicated)} (after deduplication from {len(respondents)})"
+        )
         return deduplicated
 
     def _extract_agp_names(
@@ -1929,12 +1971,14 @@ class OrderDocumentAnalyzer:
                         }
                     )
                     logging.info(f"  ✅ Pattern {idx+1} found AGP: '{name}'")
-            
+
             if match_count == 0:
                 logging.debug(f"  ❌ Pattern {idx+1} found no matches")
 
         deduplicated = self._deduplicate_entities(agp_names)
-        logging.info(f"  📊 Total AGP/GP extracted: {len(deduplicated)} (after deduplication from {len(agp_names)})")
+        logging.info(
+            f"  📊 Total AGP/GP extracted: {len(deduplicated)} (after deduplication from {len(agp_names)})"
+        )
         return deduplicated
 
     def _extract_dates(self, text: str) -> List[Dict[str, Any]]:

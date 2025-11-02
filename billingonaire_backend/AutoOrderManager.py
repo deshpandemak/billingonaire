@@ -767,7 +767,7 @@ class AutoOrderManager:
             case_parts = self._parse_case_reference(case_ref_for_parsing)
             logging.warning(f"🔵 After parse: case_parts={case_parts}")
             if not case_parts:
-                logging.warning(f"🔵 EARLY RETURN: Invalid case reference format")
+                logging.warning("🔵 EARLY RETURN: Invalid case reference format")
                 return {"success": False, "error": "Invalid case reference format"}
 
             case_type, case_number, year = case_parts

@@ -32,12 +32,12 @@ def test_old_vs_new_deduplication():
         board.ml_parser = None
 
         # Read the PDF file
-        pdf_path = "/workspaces/billingonaire/attached_assets/9r6f2-p2e8f.pdf"
+        pdf_path = "/workspaces/billingonaire/attached_assets/9r6f2-p2e8f.pd"
         with open(pdf_path, "rb") as file:
             file_stream = BytesIO(file.read())
 
             # Parse the PDF to get the raw matter_list before deduplication
-            df = board.readFile("9r6f2-p2e8f.pdf", file_stream)
+            df = board.readFile("9r6f2-p2e8f.pd", file_stream)
 
             print("🔍 Analysis of deduplication behavior:")
             print("=" * 60)
@@ -57,7 +57,7 @@ def test_old_vs_new_deduplication():
 
             # Show serial number distribution
             if "serial_number" in df.columns:
-                print(f"\nSerial number analysis:")
+                print("\nSerial number analysis:")
                 print(f"  Unique serial numbers: {df['serial_number'].nunique()}")
                 print(f"  Total records: {len(df)}")
                 print(
@@ -71,17 +71,17 @@ def test_old_vs_new_deduplication():
                         f"  Duplicated serial numbers found: {duplicated_serials.sum()} cases"
                     )
                 else:
-                    print(f"  No duplicated serial numbers - all unique")
+                    print("  No duplicated serial numbers - all unique")
 
             # Show why the old logic would fail differently
-            print(f"\nDeduplication test:")
+            print("\nDeduplication test:")
             print(f"  New logic (dynamic subset): {len(df)} records preserved")
             print(f"  Old logic (fixed subset): {len(df_old_logic)} records preserved")
 
             if len(df) != len(df_old_logic):
                 print(f"  ❌ Old logic would lose {len(df) - len(df_old_logic)} records")
             else:
-                print(f"  ✅ Both methods give same result for this PDF")
+                print("  ✅ Both methods give same result for this PDF")
 
             return df
 
