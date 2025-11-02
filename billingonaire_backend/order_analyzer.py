@@ -389,10 +389,27 @@ class OrderDocumentAnalyzer:
         best_category = max(scores.keys(), key=lambda x: scores[x]["score"])
         confidence = scores[best_category]["confidence"]
 
+        # CRITICAL: Check for non-hearing adjournments (no actual hearing took place)
+        # Patterns indicating no hearing occurred
+        no_hearing_patterns = [
+            r"Balance\s+Daily\s+Board\s+cannot\s+be\s+taken\s+up",
+            r"paucity\s+of\s+time",
+            r"cannot\s+be\s+taken\s+up\s+today",
+            r"no\s+time\s+available",
+            r"matter\s+not\s+reached",
+            r"insufficient\s+time"
+        ]
+        
+        is_non_hearing_adjournment = any(
+            re.search(pattern, text, re.IGNORECASE) for pattern in no_hearing_patterns
+        )
+
         # CRITICAL FIX: Prioritize HEARD_AND_ADJOURNED over ADJOURNED when both match
+        # BUT: If it's clearly a non-hearing adjournment, stay with ADJOURNED
         if (
             scores.get("HEARD_AND_ADJOURNED", {}).get("score", 0) > 0
             and scores.get("ADJOURNED", {}).get("score", 0) > 0
+            and not is_non_hearing_adjournment  # NEW: Check for non-hearing
         ):
             # If both categories have matches, prefer HEARD_AND_ADJOURNED aggressively
             heard_score = scores["HEARD_AND_ADJOURNED"]["score"]
@@ -405,6 +422,12 @@ class OrderDocumentAnalyzer:
                 confidence = scores["HEARD_AND_ADJOURNED"]["confidence"]
                 # Boost confidence for proper classification
                 confidence = min(confidence * 1.4, 1.0)
+        
+        # Override to ADJOURNED if non-hearing detected
+        if is_non_hearing_adjournment and best_category == "HEARD_AND_ADJOURNED":
+            best_category = "ADJOURNED"
+            confidence = scores.get("ADJOURNED", {}).get("confidence", 0.5)
+            logging.info(f"   🔄 Overriding to ADJOURNED - no hearing indicators detected")
 
         # Boost confidence for clear indicators
         if (
@@ -1400,11 +1423,21 @@ class OrderDocumentAnalyzer:
                     petitioner = pet_match4.group(1).strip()
                     logging.info(f"    ✅ Petitioner Pattern 4 (Before Versus, no separator) matched: '{petitioner}'")
 
+            # Pattern 5: Handle "Name ....PETITIONER V/S" format (uppercase, dots separator)
+            # Example: "Manikrao Shankar Devkate ....PETITIONER V/S"
+            if not petitioner:
+                petitioner_pattern5 = r"([A-Z][a-zA-Z]+(?:\s+[a-zA-Z\.\-/]+){1,})\s+\.{2,}\s*PETITIONER"
+                pet_match5 = re.search(petitioner_pattern5, block_text)
+                if pet_match5:
+                    petitioner = pet_match5.group(1).strip()
+                    logging.info(f"    ✅ Petitioner Pattern 5 (....PETITIONER format) matched: '{petitioner}'")
+
             # Clean up petitioner name
             if petitioner:
                 petitioner = re.sub(r"\s+", " ", petitioner).strip()
-                # Remove trailing dots
-                petitioner = re.sub(r"\.{2,}$", "", petitioner).strip()
+                # Remove trailing dots and labels
+                petitioner = re.sub(r"\.{2,}.*$", "", petitioner).strip()
+                petitioner = re.sub(r"\s*\.{2,}\s*PETITIONER.*$", "", petitioner, flags=re.IGNORECASE).strip()
 
             # Extract respondent - support for "…Respondents" separator, & Anr., And Ors.
             respondent = ""
@@ -1433,6 +1466,16 @@ class OrderDocumentAnalyzer:
                     respondent = re.sub(r"\s+", " ", respondent).strip()
                     respondent = re.sub(r"\s*…\s*$", "", respondent).strip()
                     logging.info(f"    ✅ Respondent Pattern 2 (before next section) matched: '{respondent}'")
+            
+            # Pattern 3: Handle "....RESPONDENT And Ors" format (uppercase, dots separator)
+            # Example: "The State Of Maharashtra Throu.govt Pleader....RESPONDENT And Ors"
+            if not respondent:
+                respondent_pattern3 = r"V/S\s+((?:The\s+)?[A-Za-z\s\.\-&,]+?)\s+\.{2,}\s*RESPONDENT(?:\s+And\s+Ors)?"
+                resp_match3 = re.search(respondent_pattern3, block_text)
+                if resp_match3:
+                    respondent = resp_match3.group(1).strip()
+                    respondent = re.sub(r"\s+", " ", respondent).strip()
+                    logging.info(f"    ✅ Respondent Pattern 3 (....RESPONDENT format) matched: '{respondent}'")
             
             if not respondent:
                 logging.warning(f"    ❌ No respondent found for case {case_key}")
