@@ -1470,7 +1470,7 @@ class OrderDocumentAnalyzer:
             # Pattern 3: Handle "....RESPONDENT And Ors" format (uppercase, dots separator)
             # Example: "The State Of Maharashtra Throu.govt Pleader....RESPONDENT And Ors"
             if not respondent:
-                respondent_pattern3 = r"V/S\s+((?:The\s+)?[A-Za-z\s\.\-&,]+?)\s+\.{2,}\s*RESPONDENT(?:\s+And\s+Ors)?"
+                respondent_pattern3 = r"V/S\s+((?:The\s+)?[A-Za-z\s\.\-&,]+?)\s*\.{2,}\s*RESPONDENT(?:\s+And\s+Ors)?"
                 resp_match3 = re.search(respondent_pattern3, block_text)
                 if resp_match3:
                     respondent = resp_match3.group(1).strip()
