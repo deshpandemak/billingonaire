@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'html', // GitHub reporter for CI
   
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure', // Only save video on failure
@@ -35,7 +35,7 @@ export default defineConfig({
 
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:5173',
+    url: 'http://localhost:5000',
     reuseExistingServer: !process.env.CI,
     timeout: 60000, // Reduced timeout for faster CI
   },
