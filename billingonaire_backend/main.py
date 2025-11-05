@@ -1733,8 +1733,9 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                     "data": {
                         "order_category": case_data.get("order_category"),
                         "order_date": case_data.get("order_date"),
-                        "order_petitioners": case_data.get("order_petitioners"),
-                        "order_respondents": case_data.get("order_respondents"),
+                        "order_petitioner": case_data.get("order_petitioner"),
+                        "order_respondent": case_data.get("order_respondent"),
+                        "government_pleader": case_data.get("government_pleader"),
                     },
                 }
             )
@@ -1969,11 +1970,14 @@ async def upload_manual_order(
                     "analysis": {
                         "order_category": analysis_result["data"].get("order_category"),
                         "order_date": analysis_result["data"].get("order_date"),
-                        "petitioners_count": len(
-                            analysis_result["data"].get("order_petitioners", [])
+                        "order_petitioner": analysis_result["data"].get(
+                            "order_petitioner"
                         ),
-                        "respondents_count": len(
-                            analysis_result["data"].get("order_respondents", [])
+                        "order_respondent": analysis_result["data"].get(
+                            "order_respondent"
+                        ),
+                        "government_pleader": analysis_result["data"].get(
+                            "government_pleader"
                         ),
                     },
                 }
@@ -2640,7 +2644,10 @@ async def generate_bill_data(
             # Admin generating bill for specific user - use ENHANCED fuzzy matching
             logging.info(f"Admin {user_id} generating bill for user: {user_name}")
 
-            # Step 1: Collect all unique AGP names from MULTIPLE sources in board data
+            # Step 1: Collect all unique AGP names with PRIORITY ORDER
+            # Priority: 1) government_pleader (from order analysis)
+            #          2) respondent_lawyer (from board data)
+            #          3) additional_respondent_lawyers (from board data)
             boards_ref = db.collection("daily-boards")
             all_cases = boards_ref.stream()
 
@@ -2651,50 +2658,65 @@ async def generate_bill_data(
                 case_data = case_doc.to_dict()
                 case_id = case_doc.id
 
-                # Source 1: respondent_lawyer (primary field)
-                respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
-                if respondent_lawyer:
-                    unique_agp_names.add(respondent_lawyer)
-                    if respondent_lawyer not in cases_by_agp:
-                        cases_by_agp[respondent_lawyer] = []
-                    cases_by_agp[respondent_lawyer].append((case_id, case_data))
+                # PRIORITY 1: government_pleader (from order analysis)
+                # This is the MOST ACCURATE source as it's extracted from the actual court order
+                government_pleader = case_data.get("government_pleader")
+                has_order_agp = False
 
-                # Source 2: additional_respondent_lawyers (now an array from daily board)
-                additional_lawyers = case_data.get("additional_respondent_lawyers", [])
-                if additional_lawyers and isinstance(additional_lawyers, list):
-                    for lawyer_name in additional_lawyers:
-                        lawyer_name = lawyer_name.strip().rstrip(",")
-                        if lawyer_name:
-                            unique_agp_names.add(lawyer_name)
-                            if lawyer_name not in cases_by_agp:
-                                cases_by_agp[lawyer_name] = []
-                            cases_by_agp[lawyer_name].append((case_id, case_data))
-
-                # Source 3: order_agp_names (can be list OR single string from order analysis)
-                order_agp_names = case_data.get("order_agp_names")
-                if order_agp_names:
+                if government_pleader:
                     # Handle both string and list formats
-                    if isinstance(order_agp_names, str):
+                    if isinstance(government_pleader, str):
                         # Single string - treat as one name
-                        agp_name = order_agp_names.strip()
+                        agp_name = government_pleader.strip()
                         if agp_name:
                             unique_agp_names.add(agp_name)
                             if agp_name not in cases_by_agp:
                                 cases_by_agp[agp_name] = []
                             cases_by_agp[agp_name].append((case_id, case_data))
-                    elif isinstance(order_agp_names, list):
+                            has_order_agp = True
+                    elif isinstance(government_pleader, list):
                         # List of names
-                        for agp_name in order_agp_names:
+                        for agp_name in government_pleader:
                             agp_name = str(agp_name).strip() if agp_name else ""
                             if agp_name:
                                 unique_agp_names.add(agp_name)
                                 if agp_name not in cases_by_agp:
                                     cases_by_agp[agp_name] = []
                                 cases_by_agp[agp_name].append((case_id, case_data))
+                                has_order_agp = True
+
+                # PRIORITY 2 & 3: Only use board data if NO government_pleader exists
+                # This ensures government_pleader from order analysis takes precedence
+                if not has_order_agp:
+                    # Source 2: respondent_lawyer (from board data)
+                    respondent_lawyer = case_data.get("respondent_lawyer", "").strip()
+                    if respondent_lawyer:
+                        unique_agp_names.add(respondent_lawyer)
+                        if respondent_lawyer not in cases_by_agp:
+                            cases_by_agp[respondent_lawyer] = []
+                        cases_by_agp[respondent_lawyer].append((case_id, case_data))
+
+                    # Source 3: additional_respondent_lawyers (from board data)
+                    additional_lawyers = case_data.get(
+                        "additional_respondent_lawyers", []
+                    )
+                    if additional_lawyers and isinstance(additional_lawyers, list):
+                        for lawyer_name in additional_lawyers:
+                            lawyer_name = lawyer_name.strip().rstrip(",")
+                            if lawyer_name:
+                                unique_agp_names.add(lawyer_name)
+                                if lawyer_name not in cases_by_agp:
+                                    cases_by_agp[lawyer_name] = []
+                                cases_by_agp[lawyer_name].append((case_id, case_data))
 
             logging.info(
-                f"📚 Collected {len(unique_agp_names)} unique AGP names from all sources (respondent_lawyer, additional_respondent_lawyers, order_agp_names)"
+                f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: government_pleader > respondent_lawyer > additional_respondent_lawyers)"
             )
+
+            # Log sample of AGP names for debugging
+            agp_names_list = sorted(list(unique_agp_names))
+            logging.info(f"📝 Sample AGP names (first 10): {agp_names_list[:10]}")
+            logging.info(f"📝 Sample AGP names (last 10): {agp_names_list[-10:]}")
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
             matched_agp, confidence = get_user_manager().match_user_name_to_agp(
@@ -2727,6 +2749,10 @@ async def generate_bill_data(
                     f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}..."
                 )
                 logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
+
+                # Track filtering for debugging
+                date_filtered = 0
+                duplicate_filtered = 0
 
                 for case_id, case_data in matched_cases:
                     board_date_raw = case_data.get("board_date")
@@ -2781,6 +2807,13 @@ async def generate_bill_data(
                             )
                             continue
 
+                logging.info(
+                    f"📊 Filtering summary: {len(matched_cases)} total cases → {len(bill_entries)} included"
+                )
+                logging.info(f"   - Date range: {start_date} to {end_date}")
+                logging.info(
+                    f"   - Cases outside date range: {len(matched_cases) - len(bill_entries)}"
+                )
                 logging.info(
                     f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'"
                 )
@@ -3176,32 +3209,18 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 def extract_parties_info(case_data: Dict) -> str:
     """Extract parties information from case data (format: Petitioner vs Respondent)"""
     try:
-        # Try to get from order analysis first
+        # Try to get from order analysis first (now flattened as strings)
         if case_data.get("order_analysis_completed"):
-            petitioners = case_data.get("order_petitioners", [])
-            respondents = case_data.get("order_respondents", [])
+            petitioner = case_data.get("order_petitioner", "")
+            respondent = case_data.get("order_respondent", "")
 
-            if petitioners and respondents:
-                # Extract text from dict format (order analysis stores as list of dicts)
-                def extract_text_from_parties(parties):
-                    if isinstance(parties, list):
-                        texts = []
-                        for party in parties[:2]:  # Take first 2
-                            if isinstance(party, dict):
-                                texts.append(party.get("text", str(party)))
-                            else:
-                                texts.append(str(party))
-                        return ", ".join(texts) if texts else ""
-                    elif isinstance(parties, str):
-                        return parties
-                    else:
-                        return str(parties)
-
-                petitioner_str = extract_text_from_parties(petitioners)
-                respondent_str = extract_text_from_parties(respondents)
+            if petitioner and respondent:
+                # Now stored as strings directly
+                petitioner_str = str(petitioner).strip()
+                respondent_str = str(respondent).strip()
 
                 if petitioner_str and respondent_str:
-                    return f"{petitioner_str} vs {respondent_str}"
+                    return f"{petitioner_str} Versus {respondent_str}"
 
         # Fallback to case reference
         case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
@@ -3256,6 +3275,7 @@ async def export_bill_excel(
             entries = bill_data.get("entries", [])
             metadata = bill_data.get("metadata", {})
             agp_name = entries[0].get("agp_name", agp_name) if entries else agp_name
+            bill_number = bill_data.get("bill_number", bill_number)
             filename = f"bill_{bill_id}.xlsx"
 
         elif start_date and end_date:
@@ -3490,11 +3510,14 @@ async def export_bill_excel(
         wb.save(output)
         output.seek(0)
 
-        # Return as downloadable file
+        # Return as downloadable file with proper headers
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
         )
 
     except Exception as e:
@@ -3664,6 +3687,59 @@ async def get_search_index_stats(current_user=Depends(get_current_user)):
         logging.error(f"Error getting search index stats: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get search stats: {str(e)}"}
+        )
+
+
+@app.post("/auto-orders/rebuild-search-index", tags=["Auto Order Management"])
+async def rebuild_search_index(
+    limit: int = Query(100, description="Number of cases to rebuild"),
+    current_user=Depends(get_current_user),
+):
+    """Rebuild search index for analyzed orders to pick up flattened data structure"""
+    try:
+        db = firestore.client()
+
+        # Get analyzed orders from daily-boards
+        query = (
+            db.collection("daily-boards")
+            .where("order_analysis_completed", "==", True)
+            .limit(limit)
+        )
+
+        docs = query.stream()
+
+        rebuilt_count = 0
+        errors = []
+
+        for doc in docs:
+            try:
+                case_id = doc.id
+                case_data = doc.to_dict()
+
+                # Rebuild search index entry
+                get_auto_order_manager()._create_search_index_entry(
+                    case_id, case_data, {}
+                )
+                rebuilt_count += 1
+
+            except Exception as e:
+                logging.error(f"Error rebuilding search index for {doc.id}: {e}")
+                errors.append({"case_id": doc.id, "error": str(e)})
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "rebuilt_count": rebuilt_count,
+                "errors": errors,
+                "message": f"Rebuilt search index for {rebuilt_count} cases",
+            }
+        )
+
+    except Exception as e:
+        logging.error(f"Error rebuilding search index: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to rebuild search index: {str(e)}"},
         )
 
 

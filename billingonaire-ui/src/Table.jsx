@@ -172,16 +172,8 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (simplified structure with petitioner field per case)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          // Get the petitioner from the first case (if there are multiple cases, show first one)
-          const firstCase = params.data.order_cases[0];
-          if (firstCase.petitioner) {
-            return firstCase.petitioner;
-          }
-        }
-        
-        return '';
+        // Only show data from order analysis
+        return params.data?.order_petitioner || '-';
       }
     },
     { 
@@ -192,16 +184,8 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Try order_cases first (simplified structure with respondent field per case)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          // Get the respondent from the first case (if there are multiple cases, show first one)
-          const firstCase = params.data.order_cases[0];
-          if (firstCase.respondent) {
-            return firstCase.respondent;
-          }
-        }
-        
-        return '';
+        // Only show data from order analysis
+        return params.data?.order_respondent || '-';
       }
     },
     { 

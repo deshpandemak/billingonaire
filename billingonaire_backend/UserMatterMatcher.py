@@ -33,7 +33,7 @@ class MatterMatch:
     case_ref: str
     match_source: str  # 'board_data', 'order_analysis'
     match_field: (
-        str  # 'petitioner_lawyer', 'respondent_lawyer', 'order_agp_names', etc.
+        str  # 'petitioner_lawyer', 'respondent_lawyer', 'government_pleader', etc.
     )
     matched_text: str
     confidence_score: float
@@ -554,9 +554,9 @@ class UserMatterMatcher:
                 # Check order analysis fields if available
                 if doc_data.get("order_analysis_completed"):
                     order_fields = {
-                        "order_agp_names": doc_data.get("order_agp_names", []),
-                        "order_petitioners": doc_data.get("order_petitioners", []),
-                        "order_respondents": doc_data.get("order_respondents", []),
+                        "government_pleader": doc_data.get("government_pleader", []),
+                        "order_petitioner": doc_data.get("order_petitioner", ""),
+                        "order_respondent": doc_data.get("order_respondent", ""),
                     }
 
                     for field_name, field_value in order_fields.items():
@@ -699,9 +699,9 @@ class UserMatterMatcher:
             # Search order analysis fields if available
             if doc_data.get("order_analysis_completed"):
                 order_fields = {
-                    "order_agp_names": doc_data.get("order_agp_names"),
-                    "order_petitioners": doc_data.get("order_petitioners"),
-                    "order_respondents": doc_data.get("order_respondents"),
+                    "government_pleader": doc_data.get("government_pleader"),
+                    "order_petitioner": doc_data.get("order_petitioner"),
+                    "order_respondent": doc_data.get("order_respondent"),
                 }
 
                 for field_name, field_value in order_fields.items():

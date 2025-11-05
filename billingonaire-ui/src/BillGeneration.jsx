@@ -197,8 +197,22 @@ const BillGeneration = () => {
             
             setBillData(response);
         } catch (err) {
-            setError(err.message || 'Failed to generate bill data');
-            setProcessingStatus('Generation failed');
+            // Gracefully handle "No matching AGP" errors by showing empty bill
+            if (err.message && err.message.includes('400')) {
+                console.log('⚠️ No matching cases found - showing empty bill');
+                setBillData({
+                    bill_entries: [],
+                    total_fees: 0,
+                    user_name: selectedUser || 'Current User',
+                    start_date: dateRange.startDate,
+                    end_date: dateRange.endDate,
+                    generated_at: new Date().toISOString()
+                });
+                setProcessingStatus('No matching cases found');
+            } else {
+                setError(err.message || 'Failed to generate bill data');
+                setProcessingStatus('Generation failed');
+            }
         } finally {
             setLoading(false);
             setProcessingProgress(0);
@@ -710,12 +724,29 @@ const BillGeneration = () => {
                                                     <th>Parties Name</th>
                                                     <th>Results</th>
                                                     <th>Fees (₹)</th>
-                                                    <th>Confidence</th>
                                                     <th>Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {billData.bill_entries.map((entry, index) => (
+                                                {billData.bill_entries.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan={bulkEditMode ? "9" : "8"} className="text-center py-5">
+                                                            <div className="text-muted">
+                                                                <h5>📭 No cases found</h5>
+                                                                <p className="mb-0">
+                                                                    No matching cases were found for <strong>{billData.user_name}</strong> in the selected date range.
+                                                                    <br />
+                                                                    This could mean:
+                                                                </p>
+                                                                <ul className="list-unstyled mt-2">
+                                                                    <li>• No cases assigned to this user in this period</li>
+                                                                    <li>• User name doesn't match any AGP names in the system</li>
+                                                                    <li>• Try adjusting the date range or selecting a different user</li>
+                                                                </ul>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ) : billData.bill_entries.map((entry, index) => (
                                                     <tr key={index} className={selectedRows.has(index) ? 'table-warning' : ''}>
                                                         {bulkEditMode && (
                                                             <td>
@@ -817,14 +848,6 @@ const BillGeneration = () => {
                                                         </td>
                                                         <td>
                                                             <strong>₹{(editingRow === index ? tempEditData.fees_rs : entry.fees_rs)?.toLocaleString()}</strong>
-                                                        </td>
-                                                        <td>
-                                                            <span className={`badge ${
-                                                                entry.confidence_score >= 0.9 ? 'bg-success' :
-                                                                entry.confidence_score >= 0.75 ? 'bg-warning' : 'bg-secondary'
-                                                            }`}>
-                                                                {(entry.confidence_score * 100).toFixed(0)}%
-                                                            </span>
                                                         </td>
                                                         <td>
                                                             {editingRow === index ? (
