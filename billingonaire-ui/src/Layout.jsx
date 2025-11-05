@@ -6,7 +6,6 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
-import OrderCenter from './OrderCenter';
 import BillGeneration from './BillGeneration';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
