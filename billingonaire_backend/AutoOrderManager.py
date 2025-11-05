@@ -122,23 +122,22 @@ class AutoOrderManager:
         """
         try:
             if not case_ids:
-                return {
-                    "success": False,
-                    "error": "No case IDs provided"
-                }
+                return {"success": False, "error": "No case IDs provided"}
 
             results = {
                 "total_cases": len(case_ids),
                 "successful": 0,
                 "failed": 0,
                 "processed_cases": [],
-                "errors": []
+                "errors": [],
             }
 
             for case_id in case_ids:
                 try:
                     # Get case data from Firestore
-                    doc_ref = self.db.collection(self.boards_collection).document(case_id)
+                    doc_ref = self.db.collection(self.boards_collection).document(
+                        case_id
+                    )
                     doc = doc_ref.get()
 
                     if not doc.exists:
@@ -1749,55 +1748,6 @@ class AutoOrderManager:
         except Exception as e:
             logging.error(f"Error searching orders: {e}")
             return {"success": False, "error": str(e)}
-
-    def bulk_process_orders(self, case_ids: List[str]) -> Dict:
-        """Process multiple cases for order download and analysis"""
-        try:
-            results = {
-                "total_requested": len(case_ids),
-                "successful": 0,
-                "failed": 0,
-                "results": [],
-            }
-
-            for case_id in case_ids:
-                try:
-                    # Get case data
-                    case_doc = (
-                        self.db.collection(self.boards_collection)
-                        .document(case_id)
-                        .get()
-                    )
-                    if not case_doc.exists:
-                        results["results"].append(
-                            {
-                                "case_id": case_id,
-                                "success": False,
-                                "error": "Case not found",
-                            }
-                        )
-                        results["failed"] += 1
-                        continue
-
-                    case_data = case_doc.to_dict()
-                    case_data["id"] = case_id
-                    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-                    case_data["case_ref"] = case_ref
-
-                    # Process the case
-                    result = self._process_single_case(case_data)
-                    results["results"].append(result)
-
-                    if result.get("download_success") or result.get("analysis_success"):
-                        results["successful"] += 1
-                    else:
-                        results["failed"] += 1
-
-                except Exception as e:
-                    results["results"].append(
-                        {"case_id": case_id, "success": False, "error": str(e)}
-                    )
-                    results["failed"] += 1
 
             return {"success": True, "results": results}
 

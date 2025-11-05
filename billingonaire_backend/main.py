@@ -362,7 +362,9 @@ async def process_order_queue_worker(worker_id: int):
             # Set timeout to 5 minutes (300 seconds) to prevent hanging
             try:
                 loop = asyncio.get_event_loop()
-                max_sequences = case_info.get("max_sequences", 50)  # Get max_sequences from case_info, default to 50
+                max_sequences = case_info.get(
+                    "max_sequences", 50
+                )  # Get max_sequences from case_info, default to 50
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
