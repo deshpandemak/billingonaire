@@ -7,7 +7,6 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from firebase_admin import firestore
@@ -21,7 +20,9 @@ class UserRole:
     full_name: str
     name_variations: List[str]
     pattern_keywords: List[str]  # Role-specific keywords
-    confidence_threshold: float = 0.75
+    confidence_threshold: float = (
+        0.50  # Lowered from 0.75 to match bill generation logic
+    )
 
 
 @dataclass
@@ -124,7 +125,7 @@ class UserMatterMatcher:
         return name.lower()
 
     def generate_name_variations(self, full_name: str) -> List[str]:
-        """Generate possible name variations for matching"""
+        """Generate possible name variations for matching - enhanced to match UserManager logic"""
         variations = [full_name]
         normalized = self.normalize_name(full_name)
         variations.append(normalized)
@@ -153,6 +154,72 @@ class UserMatterMatcher:
                     ]
                 )
 
+        # Enhanced variations similar to UserManager logic
+        import re
+
+        user_words = re.findall(r"\b\w+\b", normalized)
+        if len(user_words) >= 2:
+            # Generate initials combinations
+            user_initials = [word[0] for word in user_words]
+
+            # All initials with dots: "P.M.J.D."
+            if len(user_initials) >= 2:
+                initials_with_dots = ".".join(user_initials) + "."
+                variations.append(initials_with_dots)
+
+                # Partial initials combinations
+                for i in range(2, len(user_initials) + 1):
+                    partial_initials = ".".join(user_initials[:i]) + "."
+                    variations.append(partial_initials)
+
+            # Last name with different initial combinations
+            last_name = user_words[-1]
+            for i in range(1, len(user_initials)):
+                init_combo = "".join(user_initials[:i])
+                variations.extend(
+                    [
+                        f"{init_combo}.{last_name}",
+                        f"{init_combo} {last_name}",
+                    ]
+                )
+
+            # Handle compound last names (e.g., "Joshi Deshpande")
+            if len(user_words) >= 3:
+                # Check if second-to-last word might be part of last name
+                middle_word = user_words[-2]
+                compound_last = f"{middle_word} {last_name}"
+                variations.append(compound_last)
+
+                # Initials with compound last name
+                for i in range(1, len(user_initials)):
+                    init_combo = "".join(user_initials[:i])
+                    variations.extend(
+                        [
+                            f"{init_combo}.{compound_last}",
+                            f"{init_combo} {compound_last}",
+                        ]
+                    )
+
+                # Special case: middle name as last name (e.g., "P.M.Joshi" for "Pooja Makarand Joshi Deshpande")
+                for i in range(1, len(user_words) - 1):  # Don't use actual last name
+                    middle_as_last = user_words[i]
+                    for j in range(1, len(user_initials)):
+                        init_combo = "".join(user_initials[:j])
+                        variations.extend(
+                            [
+                                f"{init_combo}.{middle_as_last}",
+                                f"{init_combo} {middle_as_last}",
+                            ]
+                        )
+                        # Also add with spaces between initials
+                        spaced_initials = " ".join(user_initials[:j])
+                        variations.extend(
+                            [
+                                f"{spaced_initials}.{middle_as_last}",
+                                f"{spaced_initials} {middle_as_last}",
+                            ]
+                        )
+
         # Remove duplicates while preserving order
         seen = set()
         unique_variations = []
@@ -164,7 +231,7 @@ class UserMatterMatcher:
         return unique_variations
 
     def fuzzy_match_score(self, name1: str, name2: str) -> float:
-        """Calculate fuzzy matching score between two names"""
+        """Calculate fuzzy matching score between two names - enhanced for legal name variations"""
         if not name1 or not name2:
             return 0.0
 
@@ -175,22 +242,101 @@ class UserMatterMatcher:
         if norm1 == norm2:
             return 1.0
 
-        # Use SequenceMatcher for similarity
-        similarity = SequenceMatcher(None, norm1, norm2).ratio()
+        import re
+        from difflib import SequenceMatcher
 
-        # Boost score for partial word matches
-        words1 = set(norm1.split())
-        words2 = set(norm2.split())
+        # Extract words from both names
+        words1 = re.findall(r"\b\w+\b", norm1)
+        words2 = re.findall(r"\b\w+\b", norm2)
 
-        if words1 and words2:
-            word_intersection = len(words1.intersection(words2))
-            word_union = len(words1.union(words2))
-            word_similarity = word_intersection / word_union if word_union > 0 else 0
+        if not words1 or not words2:
+            return 0.0
 
-            # Combine sequence and word similarity
-            similarity = max(similarity, word_similarity)
+        scores = []
 
-        return similarity
+        # 1. Last name matching (but more flexible for legal names)
+        last_name_score = 0.0
+        if len(words1) > 0 and len(words2) > 0:
+            last1 = words1[-1]
+            last2 = words2[-1]
+
+            if last1 == last2:
+                last_name_score = 1.0
+            elif last1 in last2 or last2 in last1:
+                last_name_score = 0.8
+            else:
+                # Check for close spelling variations
+                word_similarity = SequenceMatcher(None, last1, last2).ratio()
+                if word_similarity >= 0.75:
+                    last_name_score = word_similarity * 0.9
+                else:
+                    # For legal names, check if the "last name" in name2 could be a middle name in name1
+                    # E.g., "P.M.Joshi" vs "Pooja Makarand Joshi Deshpande"
+                    if (
+                        len(words1) >= 3 and last2 in words1[:-1]
+                    ):  # last2 appears in name1 except actual last name
+                        last_name_score = (
+                            0.7  # Good score for middle name used as last name
+                        )
+
+        scores.append(("last_name", last_name_score, 0.25))  # Reduced weight
+
+        # 2. Initials pattern matching (higher priority for legal names)
+        initials1 = [word[0] for word in words1]
+        initials2 = [word[0] for word in words2]
+
+        initials_match = 0.0
+        if initials1 and initials2:
+            # Check if name2 initials are a prefix of name1 initials
+            if len(initials2) <= len(initials1):
+                matches = sum(
+                    1
+                    for i, init2 in enumerate(initials2)
+                    if i < len(initials1) and init2 == initials1[i]
+                )
+                if matches > 0:
+                    initials_match = matches / len(initials1)
+                    # Boost score if we have strong initials match
+                    if initials_match >= 0.5:
+                        initials_match = min(1.0, initials_match + 0.2)
+
+        scores.append(("initials", initials_match, 0.35))  # Increased weight
+
+        # 3. Full word matches (check for shared names)
+        full_word_matches = 0
+        for word1 in words1:
+            for word2 in words2:
+                if len(word1) > 1 and len(word2) > 1:
+                    if word1 == word2:
+                        full_word_matches += 1
+                    elif word1 in word2 or word2 in word1:
+                        full_word_matches += 0.5
+
+        if words1:
+            full_word_score = min(full_word_matches / len(words1), 1.0)
+            scores.append(("full_words", full_word_score, 0.25))
+
+        # 4. Overall sequence similarity
+        seq_score = SequenceMatcher(None, norm1, norm2).ratio()
+        scores.append(("sequence", seq_score, 0.15))
+
+        # Calculate weighted combined score
+        combined_score = sum(score * weight for _, score, weight in scores)
+
+        # Special case: If initials match very well but last name doesn't,
+        # still give a reasonable score (for cases like "P.M.Joshi" -> "Pooja Makarand Joshi Deshpande")
+        initials_score = next(
+            (score for name, score, _ in scores if name == "initials"), 0
+        )
+        last_name_score = next(
+            (score for name, score, _ in scores if name == "last_name"), 0
+        )
+
+        if initials_score >= 0.6 and last_name_score < 0.5:
+            # Boost the score for strong initials match even with weak last name match
+            combined_score = min(1.0, combined_score + 0.2)
+
+        return combined_score
 
     def extract_role_from_text(self, text: str) -> Optional[str]:
         """Extract government pleader role from text using pattern matching"""
@@ -308,7 +454,9 @@ class UserMatterMatcher:
                 full_name=data.get("full_name", ""),
                 name_variations=name_variations,
                 pattern_keywords=data.get("pattern_keywords", []),
-                confidence_threshold=data.get("confidence_threshold", 0.75),
+                confidence_threshold=data.get(
+                    "confidence_threshold", 0.50
+                ),  # Lowered default
             )
 
         except Exception as e:

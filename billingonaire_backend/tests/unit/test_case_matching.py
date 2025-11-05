@@ -17,9 +17,6 @@ from dataclasses import asdict
 from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
-# Add backend to path for imports
-sys.path.insert(0, "/workspaces/billingonaire/billingonaire_backend")
-
 import pytest
 
 from AutoOrderManager import AutoOrderManager

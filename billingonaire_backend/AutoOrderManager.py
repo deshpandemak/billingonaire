@@ -47,13 +47,16 @@ class AutoOrderManager:
             r"Smt\.\s*Pooja\s*(?:Joshi\s*)?Deshpande",
         ]
 
-    def get_orders_for_cases(self, case_filters: Dict = None, limit: int = 50) -> Dict:
+    def get_orders_for_cases(
+        self, case_filters: Dict = None, limit: int = 50, max_sequences: int = None
+    ) -> Dict:
         """
         Main method to automatically get orders for filtered cases
 
         Args:
             case_filters: Optional filters for case selection
             limit: Maximum number of cases to process
+            max_sequences: Maximum number of sequence numbers to try per case
 
         Returns:
             Dictionary with processing results
@@ -81,7 +84,7 @@ class AutoOrderManager:
 
             for case_data in filtered_cases:
                 try:
-                    case_result = self._process_single_case(case_data)
+                    case_result = self._process_single_case(case_data, max_sequences)
                     results["processed_cases"].append(case_result)
 
                     if case_result.get("download_success"):
@@ -159,8 +162,13 @@ class AutoOrderManager:
             logging.error(f"Error getting filtered matters: {e}")
             return []
 
-    def _process_single_case(self, case_data: Dict) -> Dict:
-        """Process a single case with retry logic - try up to N sequence numbers"""
+    def _process_single_case(self, case_data: Dict, max_sequences: int = None) -> Dict:
+        """Process a single case with retry logic - try up to N sequence numbers
+
+        Args:
+            case_data: Dictionary containing case information
+            max_sequences: Maximum number of sequence numbers to try (default: from env or 50)
+        """
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
         order_status = case_data.get("order_status", "not_linked")
@@ -186,14 +194,17 @@ class AutoOrderManager:
                 f"📋 {case_ref} - Status is 'order_linked', analyzing existing order"
             )
             try:
-                return self._analyze_existing_order(case_data, result)
+                return self._analyze_existing_order(case_data, result, max_sequences)
             except Exception as e:
                 logging.error(f"Failed to analyze existing order for {case_ref}: {e}")
                 result["error"] = f"Failed to analyze existing order: {str(e)}"
                 return result
 
-        # Configurable max retries - default to 50 for comprehensive search
-        MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
+        # Configurable max retries - use parameter, env var, or default to 50
+        if max_sequences is not None and max_sequences > 0:
+            MAX_RETRIES = max_sequences
+        else:
+            MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
         logging.info(
             f"Processing {case_ref} - will try up to {MAX_RETRIES} sequence numbers"
         )
@@ -452,8 +463,16 @@ class AutoOrderManager:
 
         return result
 
-    def _analyze_existing_order(self, case_data: Dict, result: Dict) -> Dict:
-        """Analyze an order that's already been downloaded (order_linked status)"""
+    def _analyze_existing_order(
+        self, case_data: Dict, result: Dict, max_sequences: int = None
+    ) -> Dict:
+        """Analyze an order that's already been downloaded (order_linked status)
+
+        Args:
+            case_data: Dictionary containing case information
+            result: Existing result dictionary
+            max_sequences: Maximum number of sequence numbers to try if fallback needed
+        """
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
         order_link = case_data.get("order_link")
@@ -473,6 +492,7 @@ class AutoOrderManager:
                     case_data,
                     result,
                     f"Stored order link expired (HTTP {response.status_code})",
+                    max_sequences,
                 )
 
             # Validate content type
@@ -485,6 +505,7 @@ class AutoOrderManager:
                     case_data,
                     result,
                     f"Stored order link returned invalid content type: {content_type}",
+                    max_sequences,
                 )
 
             pdf_content = response.content
@@ -495,7 +516,10 @@ class AutoOrderManager:
                     f"Order link returned empty/small content for {case_ref}, falling back to fresh download"
                 )
                 return self._fallback_to_fresh_download(
-                    case_data, result, "Stored order link returned empty or invalid PDF"
+                    case_data,
+                    result,
+                    "Stored order link returned empty or invalid PDF",
+                    max_sequences,
                 )
 
             logging.info(
@@ -589,9 +613,16 @@ class AutoOrderManager:
             return result
 
     def _fallback_to_fresh_download(
-        self, case_data: Dict, result: Dict, reason: str
+        self, case_data: Dict, result: Dict, reason: str, max_sequences: int = None
     ) -> Dict:
-        """Fallback to fresh download when stored order link is invalid"""
+        """Fallback to fresh download when stored order link is invalid
+
+        Args:
+            case_data: Dictionary containing case information
+            result: Existing result dictionary
+            reason: Reason for fallback
+            max_sequences: Maximum number of sequence numbers to try (default: from env or 50)
+        """
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
 
@@ -612,13 +643,18 @@ class AutoOrderManager:
             case_data_fresh["order_status"] = "not_linked"
             case_data_fresh.pop("order_link", None)
 
-            # Now process with normal download flow (will try sequence numbers 1-50)
+            # Now process with normal download flow (will try up to N sequence numbers)
+            # Use parameter, env var, or default to 50
+            if max_sequences is not None and max_sequences > 0:
+                MAX_RETRIES = max_sequences
+            else:
+                MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
+
             logging.info(
-                f"Processing {case_ref} with fresh download (trying up to 50 sequence numbers)"
+                f"Processing {case_ref} with fresh download (trying up to {MAX_RETRIES} sequence numbers)"
             )
 
             # Use existing _process_single_case logic but with modified case_data
-            MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
             download_failures = 0
             date_mismatches = 0
 

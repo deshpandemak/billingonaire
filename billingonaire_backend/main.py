@@ -1612,8 +1612,26 @@ async def auto_process_orders(request: Request, current_user=Depends(get_current
         body = await request.json()
         filters = body.get("filters", {})
         limit = body.get("limit", 50)
+        max_sequences = body.get("max_sequences")  # Optional parameter
 
-        result = get_auto_order_manager().get_orders_for_cases(filters, limit)
+        # Validate max_sequences if provided
+        if max_sequences is not None:
+            try:
+                max_sequences = int(max_sequences)
+                if max_sequences < 1 or max_sequences > 100:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "max_sequences must be between 1 and 100"},
+                    )
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "max_sequences must be a valid integer"},
+                )
+
+        result = get_auto_order_manager().get_orders_for_cases(
+            filters, limit, max_sequences
+        )
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -1639,11 +1657,27 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         case_id = body.get("case_id")
         case_ref = body.get("case_ref")
         board_date = body.get("board_date")
+        max_sequences = body.get("max_sequences")  # Optional parameter
 
         if not case_id or not case_ref:
             return JSONResponse(
                 status_code=400, content={"error": "case_id and case_ref are required"}
             )
+
+        # Validate max_sequences if provided
+        if max_sequences is not None:
+            try:
+                max_sequences = int(max_sequences)
+                if max_sequences < 1 or max_sequences > 100:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "max_sequences must be between 1 and 100"},
+                    )
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "max_sequences must be a valid integer"},
+                )
 
         # Fetch existing case data from database to check order status
         case_doc = db.collection("daily-boards").document(case_id).get()
@@ -1657,8 +1691,8 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         case_data["case_ref"] = case_ref
         case_data["board_date"] = board_date
 
-        # Process the single case
-        result = get_auto_order_manager()._process_single_case(case_data)
+        # Process the single case with optional max_sequences
+        result = get_auto_order_manager()._process_single_case(case_data, max_sequences)
 
         return JSONResponse(content=result)
 
