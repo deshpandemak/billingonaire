@@ -109,6 +109,72 @@ class AutoOrderManager:
             logging.error(f"Error in get_orders_for_cases: {e}")
             return {"success": False, "error": str(e)}
 
+    def bulk_process_orders(self, case_ids: List[str], max_sequences: int = 50) -> Dict:
+        """
+        Bulk process specific cases by their IDs with configurable max sequences
+
+        Args:
+            case_ids: List of case document IDs to process
+            max_sequences: Maximum number of sequence numbers to try per case
+
+        Returns:
+            Dictionary with processing results
+        """
+        try:
+            if not case_ids:
+                return {
+                    "success": False,
+                    "error": "No case IDs provided"
+                }
+
+            results = {
+                "total_cases": len(case_ids),
+                "successful": 0,
+                "failed": 0,
+                "processed_cases": [],
+                "errors": []
+            }
+
+            for case_id in case_ids:
+                try:
+                    # Get case data from Firestore
+                    doc_ref = self.db.collection(self.boards_collection).document(case_id)
+                    doc = doc_ref.get()
+
+                    if not doc.exists:
+                        results["errors"].append(f"Case {case_id} not found")
+                        results["failed"] += 1
+                        continue
+
+                    case_data = doc.to_dict()
+                    case_data["id"] = case_id
+
+                    # Format case reference
+                    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+                    case_data["case_ref"] = case_ref
+
+                    # Process the case
+                    case_result = self._process_single_case(case_data, max_sequences)
+                    results["processed_cases"].append(case_result)
+
+                    if case_result.get("download_success"):
+                        results["successful"] += 1
+                    else:
+                        results["failed"] += 1
+
+                except Exception as e:
+                    error_msg = f"Error processing case {case_id}: {str(e)}"
+                    logging.error(error_msg)
+                    results["errors"].append(error_msg)
+                    results["failed"] += 1
+
+            results["success"] = True
+            return results
+
+        except Exception as e:
+            logging.error(f"Error in bulk_process_orders: {e}")
+            return {"success": False, "error": str(e)}
+
     def _get_filtered_matters(
         self, filters: Dict = None, limit: int = 50
     ) -> List[Dict]:

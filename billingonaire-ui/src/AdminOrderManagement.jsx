@@ -21,6 +21,7 @@ const AdminOrderManagement = () => {
     const [selectedStatuses, setSelectedStatuses] = useState(['not_linked', 'order_failed']);
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
+    const [maxSequences, setMaxSequences] = useState(50);
 
     const statusLabels = {
         'not_linked': 'Not Linked',
@@ -152,7 +153,8 @@ const AdminOrderManagement = () => {
                 body: JSON.stringify({
                     order_statuses: selectedStatuses,
                     limit: limit,
-                    days_back: daysBack
+                    days_back: daysBack,
+                    max_sequences: maxSequences
                 })
             });
             
@@ -392,6 +394,21 @@ const AdminOrderManagement = () => {
                                             />
                                             <Form.Text className="text-muted">
                                                 From last N days
+                                            </Form.Text>
+                                        </Form.Group>
+                                    </Col>
+                                    <Col md={3}>
+                                        <Form.Group>
+                                            <Form.Label><strong>Max Sequences</strong></Form.Label>
+                                            <Form.Control
+                                                type="number"
+                                                value={maxSequences}
+                                                onChange={(e) => setMaxSequences(parseInt(e.target.value))}
+                                                min="1"
+                                                max="200"
+                                            />
+                                            <Form.Text className="text-muted">
+                                                Sequences to try per case
                                             </Form.Text>
                                         </Form.Group>
                                     </Col>

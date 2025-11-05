@@ -18,6 +18,12 @@ const OrderManagement = () => {
   const [filterCaseType, setFilterCaseType] = useState('all');
   const [filterYear, setFilterYear] = useState('all');
 
+  // Bulk processing states
+  const [selectedCases, setSelectedCases] = useState(new Set());
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkMaxSequences, setBulkMaxSequences] = useState(50);
+  const [bulkResults, setBulkResults] = useState(null);
+
   useEffect(() => {
     loadCasesWithoutOrders();
   }, [loadCasesWithoutOrders]);
@@ -163,6 +169,62 @@ const OrderManagement = () => {
     }
   };
 
+  // Bulk processing functions
+  const handleBulkCaseSelection = (caseId, checked) => {
+    const newSelected = new Set(selectedCases);
+    if (checked) {
+      newSelected.add(caseId);
+    } else {
+      newSelected.delete(caseId);
+    }
+    setSelectedCases(newSelected);
+  };
+
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedCases(new Set(filteredCases.map(c => c.id)));
+    } else {
+      setSelectedCases(new Set());
+    }
+  };
+
+  const handleBulkProcessOrders = async () => {
+    if (selectedCases.size === 0) {
+      setError('Please select at least one case for bulk processing');
+      return;
+    }
+
+    setBulkProcessing(true);
+    setError(null);
+    setBulkResults(null);
+
+    try {
+      const result = await authenticatedFetchJSON('/orders/bulk-process-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_ids: Array.from(selectedCases),
+          max_sequences: bulkMaxSequences
+        })
+      });
+
+      if (result.success) {
+        setBulkResults(result.results);
+        // Refresh the cases list to show updated status
+        loadCasesWithoutOrders(0);
+        setSelectedCases(new Set());
+        alert(`Bulk processing completed! ${result.results.successful} successful, ${result.results.failed} failed.`);
+      } else {
+        setError(result.error || 'Bulk processing failed');
+      }
+    } catch (e) {
+      console.error('Bulk processing failed:', e);
+      setError(`Bulk processing failed: ${e.message}`);
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
   const filteredCases = casesWithoutOrders.filter(caseItem => {
     if (filterBench !== 'all' && !caseItem.case_ref.includes('WP') && filterBench === 'mumbai_appellate') {
       return false;
@@ -247,6 +309,84 @@ const OrderManagement = () => {
                 </div>
               </div>
 
+              {/* Bulk Processing Controls */}
+              <div className="row mb-4">
+                <div className="col-12">
+                  <div className="card">
+                    <div className="card-header">
+                      <h6>⚡ Bulk Order Processing</h6>
+                    </div>
+                    <div className="card-body">
+                      <div className="row align-items-end">
+                        <div className="col-md-3">
+                          <label className="form-label">Max Sequence Orders to Try</label>
+                          <input
+                            type="number"
+                            className="form-control"
+                            value={bulkMaxSequences}
+                            onChange={(e) => setBulkMaxSequences(parseInt(e.target.value) || 50)}
+                            min="1"
+                            max="200"
+                            placeholder="50"
+                          />
+                          <small className="text-muted">How many sequence numbers to try downloading per case</small>
+                        </div>
+                        <div className="col-md-6">
+                          <div className="d-flex align-items-center gap-3">
+                            <div className="form-check">
+                              <input
+                                className="form-check-input"
+                                type="checkbox"
+                                id="selectAll"
+                                checked={selectedCases.size === filteredCases.length && filteredCases.length > 0}
+                                onChange={(e) => handleSelectAll(e.target.checked)}
+                              />
+                              <label className="form-check-label" htmlFor="selectAll">
+                                Select All ({selectedCases.size} selected)
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="col-md-3">
+                          <button
+                            className="btn btn-success w-100"
+                            onClick={handleBulkProcessOrders}
+                            disabled={bulkProcessing || selectedCases.size === 0}
+                          >
+                            {bulkProcessing ? '⏳ Processing...' : `🚀 Process ${selectedCases.size} Cases`}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bulk Results */}
+              {bulkResults && (
+                <div className="row mb-4">
+                  <div className="col-12">
+                    <div className="alert alert-info">
+                      <h6>📊 Bulk Processing Results</h6>
+                      <div className="row">
+                        <div className="col-md-3">
+                          <strong>Successful:</strong> {bulkResults.successful || 0}
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Failed:</strong> {bulkResults.failed || 0}
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Total Processed:</strong> {(bulkResults.successful || 0) + (bulkResults.failed || 0)}
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Max Sequences Used:</strong> {bulkMaxSequences}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Error Display */}
               {error && (
                 <div className="alert alert-danger">
@@ -272,6 +412,14 @@ const OrderManagement = () => {
                     <table className="table table-hover">
                       <thead className="table-light sticky-top">
                         <tr>
+                          <th style={{width: '50px'}}>
+                            <input
+                              type="checkbox"
+                              className="form-check-input"
+                              checked={selectedCases.size === filteredCases.length && filteredCases.length > 0}
+                              onChange={(e) => handleSelectAll(e.target.checked)}
+                            />
+                          </th>
                           <th>Case Reference</th>
                           <th>Board Date</th>
                           <th>AGP</th>
@@ -285,6 +433,14 @@ const OrderManagement = () => {
                             key={caseItem.id} 
                             className={selectedCase?.id === caseItem.id ? 'table-active' : ''}
                           >
+                            <td>
+                              <input
+                                type="checkbox"
+                                className="form-check-input"
+                                checked={selectedCases.has(caseItem.id)}
+                                onChange={(e) => handleBulkCaseSelection(caseItem.id, e.target.checked)}
+                              />
+                            </td>
                             <td>
                               <strong>{caseItem.case_ref}</strong>
                               <br />

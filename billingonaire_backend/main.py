@@ -362,11 +362,13 @@ async def process_order_queue_worker(worker_id: int):
             # Set timeout to 5 minutes (300 seconds) to prevent hanging
             try:
                 loop = asyncio.get_event_loop()
+                max_sequences = case_info.get("max_sequences", 50)  # Get max_sequences from case_info, default to 50
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
                         get_auto_order_manager()._process_single_case,
                         case_info,
+                        max_sequences,  # Pass max_sequences parameter
                     ),
                     timeout=300.0,  # 5 minutes timeout per case
                 )
@@ -1872,17 +1874,18 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
 
 @app.post("/auto-orders/bulk-process", tags=["Auto Order Management"])
 async def bulk_process_orders(request: Request, current_user=Depends(get_current_user)):
-    """Bulk process specific cases by IDs"""
+    """Bulk process specific cases by IDs with configurable max sequences"""
     try:
         body = await request.json()
         case_ids = body.get("case_ids", [])
+        max_sequences = body.get("max_sequences", 50)
 
         if not case_ids:
             return JSONResponse(
                 status_code=400, content={"error": "No case IDs provided"}
             )
 
-        result = get_auto_order_manager().bulk_process_orders(case_ids)
+        result = get_auto_order_manager().bulk_process_orders(case_ids, max_sequences)
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -2145,7 +2148,8 @@ async def admin_bulk_order_processing(
     {
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
         "limit": 100,  // Maximum cases to process
-        "days_back": 30  // Only process cases from last N days (optional)
+        "days_back": 30,  // Only process cases from last N days (optional)
+        "max_sequences": 50  // Maximum sequence numbers to try per case (optional, default: 50)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
@@ -2159,6 +2163,7 @@ async def admin_bulk_order_processing(
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
+        max_sequences = body.get("max_sequences", 50)
 
         # Build query
         query = db.collection("daily-boards")
@@ -2190,6 +2195,7 @@ async def admin_bulk_order_processing(
                     "case_ref": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
                     "board_date": case_data.get("board_date"),
                     "current_status": case_status,
+                    "max_sequences": max_sequences,  # Add max_sequences to case info
                 }
                 case_list.append(case_info)
 
