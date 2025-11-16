@@ -142,6 +142,20 @@ const Table = () => {
 
   // AG Grid column definitions
   const columnDefs = [
+    {
+      headerName: '',
+      field: 'checkbox',
+      checkboxSelection: true,
+      headerCheckboxSelection: true,
+      width: 50,
+      pinned: 'left',
+      lockPinned: true,
+      suppressMenu: true,
+      filter: false,
+      sortable: false,
+      editable: false,
+      resizable: false
+    },
     { 
       headerName: 'Board Date', 
       field: 'board_date', 
