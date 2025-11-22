@@ -539,6 +539,153 @@ class UserManager:
 
         return (best_match, best_score)
 
+    def match_user_name_to_all_agps(
+        self, user_name: str, agp_names_in_data: List[str], threshold: float = 0.50
+    ) -> List[tuple]:
+        """
+        Enhanced fuzzy matching to find ALL AGP names that match user name above threshold
+        Returns list of (agp_name, confidence_score) tuples sorted by confidence (highest first)
+        
+        This is more efficient than match_user_name_to_agp when you need all matches,
+        not just the best one.
+        """
+        import re
+        from difflib import SequenceMatcher
+
+        if not agp_names_in_data:
+            return []
+
+        # Normalize and extract words from user name
+        user_name_normalized = user_name.lower().strip()
+        user_words = re.findall(r"\b\w+\b", user_name_normalized)
+
+        if not user_words:
+            return []
+
+        # Generate all possible initial combinations for the user name
+        user_initials = [word[0] for word in user_words]
+
+        all_matches = []
+
+        logging.info(
+            f"🔍 Fuzzy matching '{user_name}' against {len(agp_names_in_data)} AGP names (threshold: {threshold:.0%})"
+        )
+        logging.info(f"   User words: {user_words}, User initials: {user_initials}")
+
+        for agp_name in agp_names_in_data:
+            if not agp_name:
+                continue
+
+            agp_normalized = agp_name.lower().strip()
+            # Remove common titles and punctuation
+            agp_normalized = re.sub(
+                r"\b(shri|smt|ms|mr|mrs|dr|adv|advocate|agp|addl|gp)\b",
+                "",
+                agp_normalized,
+            )
+            agp_normalized = re.sub(r"[.,*#\-/]", " ", agp_normalized)
+            agp_words = [w for w in re.findall(r"\b\w+\b", agp_normalized) if w]
+
+            if not agp_words:
+                continue
+
+            # Calculate multiple similarity metrics
+            scores = []
+
+            # 1. Last name matching (with fuzzy tolerance for spelling variations and compound names)
+            if len(user_words) > 0 and len(agp_words) > 0:
+                agp_last = agp_words[-1]
+                last_name_score = 0.0
+
+                # Check AGP last name against ALL user name words (handles compound last names like "Joshi Deshpande")
+                for user_word in user_words:
+                    if user_word == agp_last:
+                        last_name_score = 1.0
+                        break
+                    elif user_word in agp_last or agp_last in user_word:
+                        last_name_score = max(last_name_score, 0.8)
+                    else:
+                        # Check for close spelling variations (e.g., Pabale vs Pable)
+                        word_similarity = SequenceMatcher(
+                            None, user_word, agp_last
+                        ).ratio()
+                        if word_similarity >= 0.75:  # 75% similar
+                            last_name_score = max(
+                                last_name_score, word_similarity * 0.9
+                            )
+
+                # If no decent last name match found, skip this AGP
+                if last_name_score < 0.60:  # Slightly lenient for spelling variations
+                    continue
+
+                scores.append(("last_name", last_name_score, 0.35))
+
+            # 2. Check if AGP name contains user's initials pattern
+            agp_initials = []
+            for word in agp_words:
+                if len(word) == 1 or (len(word) == 2 and word[1] == "."):
+                    agp_initials.append(word[0])
+
+            if agp_initials and user_initials:
+                # Check if user initials match AGP initials in sequence
+                initials_match = 0.0
+                if len(agp_initials) <= len(user_initials):
+                    # Check if AGP initials are a subset of user initials in order
+                    matches = sum(
+                        1
+                        for i, agp_init in enumerate(agp_initials)
+                        if i < len(user_initials) and agp_init == user_initials[i]
+                    )
+                    if matches > 0:
+                        initials_match = matches / len(user_initials)
+                scores.append(("initials", initials_match, 0.25))
+
+            # 3. Check for full word matches (e.g., "Pooja" in full, not just "P")
+            full_word_matches = 0
+            for user_word in user_words:
+                for agp_word in agp_words:
+                    if len(user_word) > 1 and len(agp_word) > 1:  # Both are full words
+                        if user_word == agp_word:
+                            full_word_matches += 1
+                        elif user_word in agp_word or agp_word in user_word:
+                            full_word_matches += 0.5
+
+            if len(user_words) > 0:
+                full_word_score = min(full_word_matches / len(user_words), 1.0)
+                scores.append(("full_words", full_word_score, 0.25))
+
+            # 4. Overall sequence similarity
+            seq_score = SequenceMatcher(
+                None, user_name_normalized, agp_normalized
+            ).ratio()
+            scores.append(("sequence", seq_score, 0.15))
+
+            # Calculate weighted combined score
+            combined_score = sum(score * weight for _, score, weight in scores)
+
+            # Add to results if above threshold
+            if combined_score >= threshold:
+                all_matches.append((agp_name, combined_score))
+
+        # Sort by confidence (highest first)
+        all_matches.sort(key=lambda x: x[1], reverse=True)
+
+        if all_matches:
+            logging.info(
+                f"✅ Found {len(all_matches)} AGP names matching above {threshold:.0%} threshold"
+            )
+            # Log top 5 for debugging
+            for agp, score in all_matches[:5]:
+                logging.info(f"   '{agp}' - {score:.2%}")
+            if len(all_matches) > 5:
+                logging.info(f"   ... and {len(all_matches) - 5} more")
+        else:
+            logging.warning(
+                f"⚠️ No AGP names found matching '{user_name}' above {threshold:.0%} threshold"
+            )
+
+        return all_matches
+
     def get_available_roles(self) -> Dict[str, str]:
         """Get available user roles with their display names"""
         return self.role_display_names

@@ -2727,34 +2727,32 @@ async def generate_bill_data(
             logging.info(f"📝 Sample AGP names (last 10): {agp_names_list[-10:]}")
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
-            matched_agp, confidence = get_user_manager().match_user_name_to_agp(
-                user_name, list(unique_agp_names)
+            # Changed: Instead of finding only the BEST match, find ALL AGP names that match with >= 50% confidence
+            user_manager = get_user_manager()
+            threshold = 0.50
+            
+            # Find ALL matching AGP names with scores >= 50% in one efficient pass
+            all_matching_agps = user_manager.match_user_name_to_all_agps(
+                user_name, list(unique_agp_names), threshold=threshold
             )
-
-            logging.info(
-                f"🤖 Enhanced Fuzzy Matching: '{user_name}' → '{matched_agp}' (confidence: {confidence:.2%})"
-            )
-
-            if (
-                matched_agp and confidence >= 0.50
-            ):  # Lowered threshold to 50% for initial-based matching
-                # Step 3: Find ALL similar AGP name variants (handle formatting inconsistencies)
-                # Normalize the matched AGP name for comparison
-                from UserMatterMatcher import UserMatterMatcher
-
-                matcher = UserMatterMatcher()
-                matched_normalized = matcher.normalize_name(matched_agp)
-
-                # Collect cases from all variants that normalize to the same name
+            
+            if all_matching_agps:
+                # Step 3: Collect cases from ALL matching AGP names
                 matched_cases = []
                 matched_variants = []
-                for agp_variant, variant_cases in cases_by_agp.items():
-                    if matcher.normalize_name(agp_variant) == matched_normalized:
+                for agp_variant, confidence in all_matching_agps:
+                    if agp_variant in cases_by_agp:
+                        variant_cases = cases_by_agp[agp_variant]
                         matched_cases.extend(variant_cases)
                         matched_variants.append(agp_variant)
+                        logging.info(f"   📁 '{agp_variant}' ({confidence:.0%}): {len(variant_cases)} cases")
+
+                # Use the best match for display purposes
+                matched_agp = all_matching_agps[0][0] if all_matching_agps else None
+                confidence = all_matching_agps[0][1] if all_matching_agps else 0.0
 
                 logging.info(
-                    f"📊 Found {len(matched_variants)} AGP variants for '{matched_agp}': {matched_variants[:5]}..."
+                    f"📊 Collected {len(matched_variants)} AGP variants matching '{user_name}'"
                 )
                 logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
 
