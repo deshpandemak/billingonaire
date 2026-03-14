@@ -6,6 +6,7 @@ This module provides machine learning capabilities for analyzing court order doc
 1. Classification of orders as ADJOURNED, HEARD & ADJOURNED, or DISPOSED OFF
 2. Entity extraction for petitioners, respondents, AGP names, and dates
 3. Integration with existing ML-enhanced parser infrastructure
+4. Optional LLM-based extraction via Ollama for richer unstructured-text parsing
 
 Author: Billingonaire Legal Billing System
 Date: September 2025
@@ -28,6 +29,22 @@ from firebase_admin import firestore
 
 # Import existing ML parser for base functionality
 from ml_enhanced_parser import MLEnhancedParser
+
+# Import LLM Extractor (optional – gracefully disabled when Ollama is absent)
+try:
+    from llm_extractor import LLMExtractor
+
+    LLM_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    try:
+        from .llm_extractor import LLMExtractor
+
+        LLM_EXTRACTOR_AVAILABLE = True
+    except ImportError:
+        LLM_EXTRACTOR_AVAILABLE = False
+        logging.warning(
+            "LLM Extractor not available in order_analyzer - continuing without LLM"
+        )
 
 
 @dataclass
@@ -63,6 +80,15 @@ class OrderDocumentAnalyzer:
         """Initialize Order Document Analyzer"""
         self.db = firestore.client()
         self.ml_parser = MLEnhancedParser()
+
+        # Initialize LLM Extractor if available
+        self.llm_extractor = None
+        if LLM_EXTRACTOR_AVAILABLE:
+            try:
+                self.llm_extractor = LLMExtractor()
+                logging.info("LLM Extractor initialised in OrderDocumentAnalyzer")
+            except Exception as exc:
+                logging.warning("Could not initialise LLM Extractor: %s", exc)
 
         # Order classification patterns
         self.order_patterns = self._create_order_patterns()
@@ -290,6 +316,22 @@ class OrderDocumentAnalyzer:
             document_structure, text, order_date
         )
 
+        # 5. Optionally enrich with local LLM when Ollama is running
+        if self.llm_extractor and self.llm_extractor.is_available():
+            try:
+                llm_data = self.llm_extractor.extract_order_data(text)
+                order_date, order_category, category_confidence, cases = (
+                    self._merge_llm_order_data(
+                        llm_data,
+                        order_date,
+                        order_category,
+                        category_confidence,
+                        cases,
+                    )
+                )
+            except Exception as exc:
+                logging.warning("LLM order enrichment failed: %s", exc)
+
         result = OrderAnalysisResult(
             order_category=order_category,
             category_confidence=category_confidence,
@@ -302,6 +344,102 @@ class OrderDocumentAnalyzer:
             f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}"
         )
         return result
+
+    def _merge_llm_order_data(
+        self,
+        llm_data: Dict[str, Any],
+        order_date: Optional[str],
+        order_category: str,
+        category_confidence: float,
+        cases: List[CaseInfo],
+    ) -> Tuple[Optional[str], str, float, List[CaseInfo]]:
+        """
+        Merge LLM extraction results with pattern-based results.
+
+        LLM results fill in missing values; they do not overwrite high-confidence
+        pattern-based classifications.
+        """
+        if not isinstance(llm_data, dict):
+            return order_date, order_category, category_confidence, cases
+
+        # Use LLM order date only when pattern-based extraction found nothing
+        if not order_date and llm_data.get("order_date"):
+            order_date = llm_data["order_date"]
+            logging.info("LLM supplied order date: %s", order_date)
+
+        # Use LLM category only when confidence is low
+        if category_confidence < 0.5 and llm_data.get("order_category"):
+            llm_cat = llm_data["order_category"]
+            if llm_cat in ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
+                order_category = llm_cat
+                category_confidence = 0.7  # Moderate confidence from LLM
+                logging.info("LLM supplied order category: %s", order_category)
+
+        # Enrich existing CaseInfo objects with LLM-extracted parties/govt_pleader
+        llm_cases = llm_data.get("cases", [])
+        if llm_cases and cases:
+            # Build a lookup from case_number -> LLM case entry
+            llm_by_ref: Dict[str, Dict] = {}
+            for lc in llm_cases:
+                cn = str(lc.get("case_number", "")).strip()
+                if cn:
+                    llm_by_ref[cn] = lc
+
+            for i, ci in enumerate(cases):
+                case_ref = f"{ci.case_type}/{ci.case_number}/{ci.case_year}"
+                lc = llm_by_ref.get(case_ref)
+                if not lc:
+                    continue
+                # Collect all updated fields first, then build one new CaseInfo
+                petitioner = (
+                    ci.petitioner or lc.get("petitioner_name", "") or ci.petitioner
+                )
+                respondent = (
+                    ci.respondent or lc.get("respondent_name", "") or ci.respondent
+                )
+                govt_pleader = (
+                    ci.government_pleader
+                    if ci.government_pleader
+                    else ([lc["govt_pleader"]] if lc.get("govt_pleader") else [])
+                )
+                if (
+                    petitioner != ci.petitioner
+                    or respondent != ci.respondent
+                    or govt_pleader != ci.government_pleader
+                ):
+                    cases[i] = CaseInfo(
+                        case_type=ci.case_type,
+                        case_number=ci.case_number,
+                        case_year=ci.case_year,
+                        petitioner=petitioner,
+                        respondent=respondent,
+                        government_pleader=govt_pleader,
+                    )
+        elif llm_cases and not cases:
+            # No pattern-based cases – use LLM cases as-is
+            for lc in llm_cases:
+                cn = str(lc.get("case_number", ""))
+                parts = cn.split("/")
+                if len(parts) == 3:
+                    try:
+                        case_no = int(parts[1])
+                        case_year = int(parts[2])
+                    except ValueError:
+                        continue
+                    cases.append(
+                        CaseInfo(
+                            case_type=parts[0],
+                            case_number=case_no,
+                            case_year=case_year,
+                            petitioner=lc.get("petitioner_name", ""),
+                            respondent=lc.get("respondent_name", ""),
+                            government_pleader=(
+                                [lc["govt_pleader"]] if lc.get("govt_pleader") else []
+                            ),
+                        )
+                    )
+
+        return order_date, order_category, category_confidence, cases
 
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""
@@ -443,7 +581,9 @@ class OrderDocumentAnalyzer:
         ):
             confidence = min(confidence * 1.2, 1.0)
 
-        logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})")
+        logging.info(
+            f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})"
+        )
         return best_category, confidence
 
     def _parse_document_structure(self, text: str) -> Dict[str, Any]:
@@ -1545,7 +1685,9 @@ class OrderDocumentAnalyzer:
         # Simpler, more robust pattern that handles both "a/w" and "with"
         # Match format: "Title Name, Role (a/w|with) Title Name, Role for Respondent"
         logging.info("      🔍 Testing Pattern 1 for AGP/GP extraction...")
-        logging.info(f"      📄 Text snippet being searched (100 chars): '{text[:100]}'")
+        logging.info(
+            f"      📄 Text snippet being searched (100 chars): '{text[:100]}'"
+        )
 
         # Ultra-simplified pattern - titles may or may not have periods, names can have spaces and periods
         # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent"
@@ -1934,7 +2076,9 @@ class OrderDocumentAnalyzer:
     ) -> List[Dict[str, Any]]:
         """Extract AGP names using enhanced patterns and existing ML results"""
         agp_names = []
-        logging.info(f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)")
+        logging.info(
+            f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)"
+        )
 
         # Use existing ML parser results
         ml_count = 0
