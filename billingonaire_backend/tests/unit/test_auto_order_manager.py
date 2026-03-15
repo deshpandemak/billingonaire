@@ -16,11 +16,14 @@ def mock_firestore():
 @pytest.fixture
 def auto_order_manager(mock_firestore):
     """Create AutoOrderManager instance with mocked dependencies"""
-    with patch(
-        "billingonaire_backend.AutoOrderManager.OrderDocumentAnalyzer"
-    ) as mock_analyzer, patch(
-        "billingonaire_backend.AutoOrderManager.BombayHighCourtScraper"
-    ) as mock_scraper:
+    with (
+        patch(
+            "billingonaire_backend.AutoOrderManager.OrderDocumentAnalyzer"
+        ) as mock_analyzer,
+        patch(
+            "billingonaire_backend.AutoOrderManager.BombayHighCourtScraper"
+        ) as mock_scraper,
+    ):
         manager = AutoOrderManager()
         manager.order_analyzer = mock_analyzer.return_value
         manager.court_scraper = mock_scraper.return_value
@@ -29,9 +32,11 @@ def auto_order_manager(mock_firestore):
 
 def test_auto_order_manager_initialization():
     """Test that AutoOrderManager initializes correctly"""
-    with patch("billingonaire_backend.AutoOrderManager.firestore"), patch(
-        "billingonaire_backend.AutoOrderManager.OrderDocumentAnalyzer"
-    ), patch("billingonaire_backend.AutoOrderManager.BombayHighCourtScraper"):
+    with (
+        patch("billingonaire_backend.AutoOrderManager.firestore"),
+        patch("billingonaire_backend.AutoOrderManager.OrderDocumentAnalyzer"),
+        patch("billingonaire_backend.AutoOrderManager.BombayHighCourtScraper"),
+    ):
         manager = AutoOrderManager()
         assert manager is not None
         assert manager.boards_collection == "daily-boards"

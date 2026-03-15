@@ -545,7 +545,7 @@ class UserManager:
         """
         Enhanced fuzzy matching to find ALL AGP names that match user name above threshold
         Returns list of (agp_name, confidence_score) tuples sorted by confidence (highest first)
-        
+
         This is more efficient than match_user_name_to_agp when you need all matches,
         not just the best one.
         """

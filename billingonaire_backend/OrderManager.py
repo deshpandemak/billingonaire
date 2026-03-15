@@ -277,9 +277,9 @@ class OrderManager:
             case_data["order_info"] = order_info
 
             # Format case reference
-            case_data[
-                "case_ref"
-            ] = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+            case_data["case_ref"] = (
+                f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+            )
 
             return case_data
 
