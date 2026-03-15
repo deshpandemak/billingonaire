@@ -14,14 +14,14 @@ import {
   ArcElement,
 } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
-import { 
-  ComposedChart, 
-  Bar as RechartsBar, 
-  Line as RechartsLine, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
+import {
+  ComposedChart,
+  Bar as RechartsBar,
+  Line as RechartsLine,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
   Legend as RechartsLegend,
   ResponsiveContainer,
   PieChart,
@@ -201,9 +201,9 @@ const Dashboard = () => {
         }));
       } catch (e) {
         console.error(`Failed to fetch ${endpoint.key} AGP distribution:`, e);
-        setAnalyticsError(prev => ({ 
-          ...prev, 
-          [endpoint.key]: `Failed to load ${endpoint.key} distribution` 
+        setAnalyticsError(prev => ({
+          ...prev,
+          [endpoint.key]: `Failed to load ${endpoint.key} distribution`
         }));
         setAgpDistribution(prev => ({
           ...prev,
@@ -360,14 +360,14 @@ const Dashboard = () => {
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
-            <RechartsTooltip 
+            <RechartsTooltip
               formatter={(value, name, props) => [
                 `${value} matters (${props.payload.percentage}%)`,
                 'Cases'
               ]}
               labelFormatter={(label) => `AGP: ${label}`}
             />
-            <RechartsLegend 
+            <RechartsLegend
               formatter={(value) => value.length > 20 ? value.substring(0, 20) + '...' : value}
             />
           </PieChart>
@@ -395,26 +395,26 @@ const Dashboard = () => {
             <div className="d-flex flex-wrap gap-3 mb-4">
               <div className="form-group" style={{ minWidth: '150px' }}>
                 <label className="form-label">Start Date</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   className="form-control"
-                  value={dateRange.start} 
-                  onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))} 
+                  value={dateRange.start}
+                  onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))}
                   placeholder="Defaults to 5 days ago"
                 />
               </div>
               <div className="form-group" style={{ minWidth: '150px' }}>
                 <label className="form-label">End Date</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   className="form-control"
-                  value={dateRange.end} 
-                  onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))} 
+                  value={dateRange.end}
+                  onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))}
                   placeholder="Defaults to today"
                 />
               </div>
               <div className="form-group d-flex align-items-end">
-                <button 
+                <button
                   className="btn-professional btn-primary"
                   onClick={fetchMattersByDateRange}
                 >
@@ -422,7 +422,7 @@ const Dashboard = () => {
                 </button>
               </div>
             </div>
-            
+
             {analyticsLoading.matters ? (
               <div className="text-center p-4">
                 <div className="loading-text">
@@ -468,15 +468,15 @@ const Dashboard = () => {
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={mattersByDateRange.data}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis 
-                        dataKey="date" 
+                      <XAxis
+                        dataKey="date"
                         tick={{ fontSize: 12 }}
                         angle={-45}
                         textAnchor="end"
                         height={80}
                       />
                       <YAxis />
-                      <RechartsTooltip 
+                      <RechartsTooltip
                         formatter={(value, name) => [
                           name === 'total_matters' ? `${value} matters` : `${value} avg`,
                           name === 'total_matters' ? 'Total Matters' : 'Average'
@@ -484,16 +484,16 @@ const Dashboard = () => {
                         labelFormatter={(label) => `Date: ${label}`}
                       />
                       <RechartsLegend />
-                      <RechartsBar 
-                        dataKey="total_matters" 
-                        fill="#3b82f6" 
+                      <RechartsBar
+                        dataKey="total_matters"
+                        fill="#3b82f6"
                         name="Total Matters"
                         opacity={0.8}
                       />
-                      <RechartsLine 
-                        type="monotone" 
-                        dataKey="average" 
-                        stroke="#ef4444" 
+                      <RechartsLine
+                        type="monotone"
+                        dataKey="average"
+                        stroke="#ef4444"
                         strokeWidth={3}
                         name="Daily Average"
                         dot={{ fill: '#ef4444', strokeWidth: 2, r: 4 }}
@@ -520,16 +520,16 @@ const Dashboard = () => {
                   <div className="d-flex flex-wrap gap-3 mb-4">
                     <div className="form-group" style={{ minWidth: '200px' }}>
                       <label className="form-label">AGP Name (Optional)</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="form-control"
                         placeholder="Enter AGP name to filter"
-                        value={agpName} 
-                        onChange={e => setAgpName(e.target.value)} 
+                        value={agpName}
+                        onChange={e => setAgpName(e.target.value)}
                       />
                     </div>
                     <div className="form-group d-flex align-items-end">
-                      <button 
+                      <button
                         className="btn-professional btn-primary"
                         onClick={fetchAgpStats}
                       >
@@ -537,7 +537,7 @@ const Dashboard = () => {
                       </button>
                     </div>
                   </div>
-                  
+
                   {agpLoading ? (
                     <div className="text-center p-4">
                       <div className="loading-text">
@@ -559,17 +559,17 @@ const Dashboard = () => {
                   ) : (
                     <>
                       {/* Scrollable Table Container */}
-                      <div style={{ 
-                        maxHeight: '400px', 
-                        overflowY: 'auto', 
+                      <div style={{
+                        maxHeight: '400px',
+                        overflowY: 'auto',
                         border: '1px solid var(--gray-200)',
                         borderRadius: 'var(--radius-md)',
                         backgroundColor: 'var(--gray-25)'
                       }}>
                         <table className="table-professional" style={{ margin: 0 }}>
-                          <thead style={{ 
-                            position: 'sticky', 
-                            top: 0, 
+                          <thead style={{
+                            position: 'sticky',
+                            top: 0,
                             backgroundColor: 'var(--gray-50)',
                             zIndex: 10
                           }}>
@@ -588,11 +588,11 @@ const Dashboard = () => {
                           </tbody>
                         </table>
                       </div>
-                      
+
                       {/* Pagination Controls */}
-                      <div style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
                         alignItems: 'center',
                         marginTop: 'var(--spacing-md)',
                         padding: 'var(--spacing-sm)',
@@ -603,7 +603,7 @@ const Dashboard = () => {
                           Showing {agpCurrentPage * ITEMS_PER_PAGE + 1} - {Math.min((agpCurrentPage + 1) * ITEMS_PER_PAGE, agpStats.length)} of {agpStats.length}
                         </span>
                         <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
-                          <button 
+                          <button
                             className="btn-professional btn-secondary"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             onClick={() => setAgpCurrentPage(Math.max(0, agpCurrentPage - 1))}
@@ -614,7 +614,7 @@ const Dashboard = () => {
                           <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
                             Page {agpCurrentPage + 1} of {getTotalPages(agpStats.length)}
                           </span>
-                          <button 
+                          <button
                             className="btn-professional btn-secondary"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             onClick={() => setAgpCurrentPage(Math.min(getTotalPages(agpStats.length) - 1, agpCurrentPage + 1))}
@@ -648,8 +648,8 @@ const Dashboard = () => {
                     </div>
                   ) : (
                     <div style={{ height: '400px', position: 'relative' }}>
-                      <Doughnut 
-                        data={agpDoughnutData} 
+                      <Doughnut
+                        data={agpDoughnutData}
                         options={{
                           responsive: true,
                           maintainAspectRatio: false,
@@ -681,7 +681,7 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
-            
+
             {/* AGP Bar Chart */}
             {!agpLoading && agpStats.length > 0 && (
               <div className="card-professional">
@@ -709,17 +709,17 @@ const Dashboard = () => {
                   <div className="d-flex flex-wrap gap-3 mb-4">
                     <div className="form-group" style={{ minWidth: '150px' }}>
                       <label className="form-label">Year</label>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         className="form-control"
-                        value={year} 
-                        onChange={e => setYear(e.target.value)} 
-                        min="2000" 
-                        max={new Date().getFullYear()} 
+                        value={year}
+                        onChange={e => setYear(e.target.value)}
+                        min="2000"
+                        max={new Date().getFullYear()}
                       />
                     </div>
                     <div className="form-group d-flex align-items-end">
-                      <button 
+                      <button
                         className="btn-professional btn-primary"
                         onClick={fetchMonthlyAvg}
                       >
@@ -727,7 +727,7 @@ const Dashboard = () => {
                       </button>
                     </div>
                   </div>
-                  
+
                   {monthlyLoading ? (
                     <div className="text-center p-4">
                       <div className="loading-text">
@@ -749,17 +749,17 @@ const Dashboard = () => {
                   ) : (
                     <>
                       {/* Scrollable Table Container */}
-                      <div style={{ 
-                        maxHeight: '400px', 
-                        overflowY: 'auto', 
+                      <div style={{
+                        maxHeight: '400px',
+                        overflowY: 'auto',
                         border: '1px solid var(--gray-200)',
                         borderRadius: 'var(--radius-md)',
                         backgroundColor: 'var(--gray-25)'
                       }}>
                         <table className="table-professional" style={{ margin: 0 }}>
-                          <thead style={{ 
-                            position: 'sticky', 
-                            top: 0, 
+                          <thead style={{
+                            position: 'sticky',
+                            top: 0,
                             backgroundColor: 'var(--gray-50)',
                             zIndex: 10
                           }}>
@@ -778,11 +778,11 @@ const Dashboard = () => {
                           </tbody>
                         </table>
                       </div>
-                      
+
                       {/* Pagination Controls */}
-                      <div style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
                         alignItems: 'center',
                         marginTop: 'var(--spacing-md)',
                         padding: 'var(--spacing-sm)',
@@ -793,7 +793,7 @@ const Dashboard = () => {
                           Showing {monthlyCurrentPage * ITEMS_PER_PAGE + 1} - {Math.min((monthlyCurrentPage + 1) * ITEMS_PER_PAGE, monthlyAvg.length)} of {monthlyAvg.length}
                         </span>
                         <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
-                          <button 
+                          <button
                             className="btn-professional btn-secondary"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             onClick={() => setMonthlyCurrentPage(Math.max(0, monthlyCurrentPage - 1))}
@@ -804,7 +804,7 @@ const Dashboard = () => {
                           <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
                             Page {monthlyCurrentPage + 1} of {getTotalPages(monthlyAvg.length)}
                           </span>
-                          <button 
+                          <button
                             className="btn-professional btn-secondary"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             onClick={() => setMonthlyCurrentPage(Math.min(getTotalPages(monthlyAvg.length) - 1, monthlyCurrentPage + 1))}
@@ -838,8 +838,8 @@ const Dashboard = () => {
                     </div>
                   ) : (
                     <div style={{ height: '400px', position: 'relative' }}>
-                      <Bar 
-                        data={monthlyChartData} 
+                      <Bar
+                        data={monthlyChartData}
                         options={{
                           ...chartOptions,
                           plugins: {

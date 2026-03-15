@@ -6,7 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const AdminOrderManagement = () => {
     const [currentUser, setCurrentUser] = useState(null);
-    
+
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(user => {
             setCurrentUser(user);
@@ -44,13 +44,13 @@ const AdminOrderManagement = () => {
         try {
             setLoading(true);
             const idToken = await currentUser.getIdToken();
-            
+
             const response = await fetch(`${API_URL}/admin/order-status-overview`, {
                 headers: {
                     'Authorization': `Bearer ${idToken}`
                 }
             });
-            
+
             const data = await response.json();
             if (data.success) {
                 setOverview(data);
@@ -67,13 +67,13 @@ const AdminOrderManagement = () => {
         if (!currentUser) return;
         try {
             const idToken = await currentUser.getIdToken();
-            
+
             const response = await fetch(`${API_URL}/queue/status`, {
                 headers: {
                     'Authorization': `Bearer ${idToken}`
                 }
             });
-            
+
             const data = await response.json();
             setQueueStatus(data);
         } catch (error) {
@@ -83,14 +83,14 @@ const AdminOrderManagement = () => {
 
     useEffect(() => {
         if (!currentUser) return;
-        
+
         loadOverview();
         loadQueueStatus();
-        
+
         const interval = setInterval(() => {
             loadQueueStatus();
         }, 5000);
-        
+
         return () => clearInterval(interval);
     }, [currentUser, loadOverview, loadQueueStatus]);
 
@@ -102,18 +102,18 @@ const AdminOrderManagement = () => {
         try {
             setProcessing(true);
             setMessage(null);
-            
+
             const idToken = await currentUser.getIdToken();
-            
+
             const response = await fetch(`${API_URL}/auto-orders/rebuild-search-index?limit=500`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`
                 }
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 setMessage({
                     type: 'success',
@@ -141,9 +141,9 @@ const AdminOrderManagement = () => {
         try {
             setProcessing(true);
             setMessage(null);
-            
+
             const idToken = await currentUser.getIdToken();
-            
+
             const response = await fetch(`${API_URL}/admin/bulk-order-processing`, {
                 method: 'POST',
                 headers: {
@@ -157,15 +157,15 @@ const AdminOrderManagement = () => {
                     max_sequences: maxSequences
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 setMessage({
                     type: 'success',
                     text: `${data.message}. Processing ${data.cases_queued} cases in background.`
                 });
-                
+
                 // Update queue status immediately with response data
                 if (data.queue_size !== undefined) {
                     setQueueStatus({
@@ -175,7 +175,7 @@ const AdminOrderManagement = () => {
                         message: `Queue has ${data.queue_size} pending cases`
                     });
                 }
-                
+
                 // Reload data after 2 seconds
                 setTimeout(() => {
                     loadOverview();
@@ -270,7 +270,7 @@ const AdminOrderManagement = () => {
                                             <small className="text-muted">Pending Processing</small>
                                         </Col>
                                     </Row>
-                                    
+
                                     <Table striped bordered hover className="mb-0">
                                         <thead>
                                             <tr>
@@ -293,8 +293,8 @@ const AdminOrderManagement = () => {
                                                     <td>{count.toLocaleString()}</td>
                                                     <td>{getStatusPercentage(status)}%</td>
                                                     <td>
-                                                        <ProgressBar 
-                                                            now={getStatusPercentage(status)} 
+                                                        <ProgressBar
+                                                            now={getStatusPercentage(status)}
                                                             variant={statusVariants[status]}
                                                             style={{height: '20px'}}
                                                         />
@@ -461,8 +461,8 @@ const AdminOrderManagement = () => {
                                 <Row className="mt-3">
                                     <Col>
                                         <Alert variant="info" className="mb-0">
-                                            <strong>How it works:</strong> Bulk processing adds cases to an asynchronous background queue. 
-                                            Cases will be processed automatically in the background. The queue status updates every 5 seconds. 
+                                            <strong>How it works:</strong> Bulk processing adds cases to an asynchronous background queue.
+                                            Cases will be processed automatically in the background. The queue status updates every 5 seconds.
                                             Refresh the overview to see updated statistics after processing completes.
                                         </Alert>
                                     </Col>

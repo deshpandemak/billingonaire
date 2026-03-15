@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> OrderManagement.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/359</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/359</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -942,7 +942,7 @@
 <span class="cstat-no" title="statement not covered" >      });</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >      const result = await authenticatedFetchJSON(`/orders/cases-without-orders?${params}`);</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      if (result.error) {</span>
 <span class="cstat-no" title="statement not covered" >        setError(result.error);</span>
 <span class="cstat-no" title="statement not covered" >      } else {</span>
@@ -951,7 +951,7 @@
 <span class="cstat-no" title="statement not covered" >        } else {</span>
 <span class="cstat-no" title="statement not covered" >          setCasesWithoutOrders(prev =&gt; [...prev, ...(result.cases || [])]);</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setPagination(prev =&gt; ({</span>
 <span class="cstat-no" title="statement not covered" >          ...prev,</span>
 <span class="cstat-no" title="statement not covered" >          offset: offset,</span>
@@ -1035,7 +1035,7 @@
 <span class="cstat-no" title="statement not covered" >      });</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >      const result = await authenticatedFetchJSON(`/court/case-details?${params}`);</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      if (result.status === 'captcha_required') {</span>
         // Mark as failed and provide court website link
 <span class="cstat-no" title="statement not covered" >        setSelectedCase(caseItem);</span>
@@ -1098,7 +1098,7 @@
 <span class="cstat-no" title="statement not covered" >              &lt;p className="text-muted mb-0"&gt;Manage cases without linked court orders&lt;/p&gt;</span>
 <span class="cstat-no" title="statement not covered" >            &lt;/div&gt;</span>
 <span class="cstat-no" title="statement not covered" >            &lt;div className="card-body"&gt;</span>
-              
+
               {/* Filters */}
 <span class="cstat-no" title="statement not covered" >              &lt;div className="row mb-4"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                &lt;div className="col-md-3"&gt;</span>
@@ -1348,4 +1348,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

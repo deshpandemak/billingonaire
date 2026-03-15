@@ -10,7 +10,7 @@ CD Pipeline - Deploy to Production
 Update testing dependencies to ensure consistency #15
 Annotations
 1 error
-Run All Tests 
+Run All Tests
 /
  Backend Tests
 failed 1 minute ago in 53s
@@ -36,7 +36,7 @@ FAILED tests/unit/test_order_analyzer.py::TestOrderDocumentAnalyzer::test_extrac
 FAILED tests/unit/test_order_analyzer.py::TestTableExtraction::test_extract_case_table - AttributeError: 'OrderDocumentAnalyzer' object has no attribute 'extract_tables'
 FAILED tests/unit/test_order_manager.py::TestOrderManager::test_get_cases_without_orders - AssertionError: assert (False or {'cases': [], 'total_returned': 0, 'total_processed': 0, 'has_more': False, 'offset': 0} == []
  +  where False = isinstance({'cases': [], 'total_returned': 0, 'total_processed': 0, 'has_more': False, 'offset': 0}, list)
-  
+
   Full diff:
   - []
   + {

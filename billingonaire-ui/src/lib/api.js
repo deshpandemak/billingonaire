@@ -17,7 +17,7 @@ export const authenticatedFetch = async (url, options = {}) => {
   try {
     const user = auth.currentUser;
     console.log('🔐 authenticatedFetch: Current user:', user ? user.email : 'NOT LOGGED IN');
-    
+
     if (!user) {
       console.error('❌ authenticatedFetch: No authenticated user found');
       throw new Error('User not authenticated');
@@ -27,13 +27,13 @@ export const authenticatedFetch = async (url, options = {}) => {
     console.log('🎫 authenticatedFetch: Getting Firebase ID token...');
     const idToken = await user.getIdToken();
     console.log('✅ authenticatedFetch: Token obtained (length:', idToken?.length, ')');
-    
+
     // Set up headers with authentication
     const headers = {
       'Authorization': `Bearer ${idToken}`,
       ...options.headers
     };
-    
+
     // Only set Content-Type for non-FormData requests
     if (!(options.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json';
@@ -43,14 +43,14 @@ export const authenticatedFetch = async (url, options = {}) => {
     const fullUrl = `${API_BASE_URL}${url}`;
     console.log('📡 authenticatedFetch: Making request to:', fullUrl);
     console.log('📡 authenticatedFetch: Method:', options.method || 'GET');
-    
+
     const response = await fetch(fullUrl, {
       ...options,
       headers
     });
 
     console.log('📥 authenticatedFetch: Response status:', response.status, response.statusText);
-    
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error('❌ authenticatedFetch: API error response:', errorText);

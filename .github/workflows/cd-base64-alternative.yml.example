@@ -6,7 +6,7 @@
           SA_KEY_B64: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
         run: |
           echo "$SA_KEY_B64" | base64 --decode > /tmp/sa-key.json
-          
+
           # Validate the decoded JSON
           python3 - <<'EOF'
           import json, sys

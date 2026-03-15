@@ -4,16 +4,16 @@
   --primary-color: #1e3a8a; /* Deep Blue */
   --primary-light: #3b82f6; /* Blue */
   --primary-dark: #1e40af; /* Darker Blue */
-  
+
   /* Secondary Colors */
   --secondary-color: #059669; /* Green */
   --secondary-light: #10b981;
   --secondary-dark: #047857;
-  
+
   /* Accent Colors */
   --accent-gold: #f59e0b; /* Gold accent */
   --accent-gold-light: #fbbf24;
-  
+
   /* Neutral Colors */
   --white: #ffffff;
   --gray-50: #f9fafb;
@@ -26,11 +26,11 @@
   --gray-700: #374151;
   --gray-800: #1f2937;
   --gray-900: #111827;
-  
+
   /* Typography */
   --font-family-primary: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
   --font-family-heading: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
-  
+
   /* Spacing */
   --spacing-xs: 0.25rem;
   --spacing-sm: 0.5rem;
@@ -38,13 +38,13 @@
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
   --spacing-2xl: 3rem;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  
+
   /* Border Radius */
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
@@ -488,19 +488,19 @@ h6 { font-size: 1rem; }
   .hero-title {
     font-size: 2rem;
   }
-  
+
   .hero-subtitle {
     font-size: 1rem;
   }
-  
+
   .features-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .dashboard-container {
     padding: var(--spacing-md);
   }
-  
+
   .login-container {
     padding: var(--spacing-md);
   }

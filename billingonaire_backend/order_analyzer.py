@@ -11,7 +11,9 @@ Author: Billingonaire Legal Billing System
 Date: September 2025
 """
 
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +24,8 @@ try:
     import pdfplumber
 except ImportError:
     pdfplumber = None
+
+import requests
 
 # Firebase imports
 from firebase_admin import firestore
@@ -51,6 +55,7 @@ class OrderAnalysisResult:
     order_date: Optional[str]  # Specific date of the order
     cases: List[CaseInfo]  # Multiple cases can be clubbed together
     order_text: str
+    analysis_metadata: Dict[str, Any]
 
 
 class OrderDocumentAnalyzer:
@@ -63,6 +68,31 @@ class OrderDocumentAnalyzer:
         """Initialize Order Document Analyzer"""
         self.db = firestore.client()
         self.ml_parser = MLEnhancedParser()
+
+        # Optional confidence-gated LLM fallback controls.
+        self.enable_llm_fallback = (
+            os.getenv("ORDER_ENABLE_LLM_FALLBACK", "false").strip().lower() == "true"
+        )
+        self.llm_provider = os.getenv("ORDER_LLM_PROVIDER", "ollama").strip().lower()
+        self.llm_model = os.getenv("ORDER_LLM_MODEL", "llama3.1:8b").strip()
+        self.ollama_base_url = os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        ).rstrip("/")
+        self.ollama_timeout_seconds = int(os.getenv("ORDER_LLM_TIMEOUT_SECONDS", "60"))
+        self.min_extraction_quality = float(
+            os.getenv("ORDER_LLM_FALLBACK_MIN_QUALITY", "0.70")
+        )
+        self.min_category_confidence = float(
+            os.getenv("ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE", "0.70")
+        )
+        self.min_cases_count = int(os.getenv("ORDER_LLM_FALLBACK_MIN_CASES", "1"))
+
+        self.fallback_metrics = {
+            "total_documents": 0,
+            "fallback_triggered": 0,
+            "fallback_succeeded": 0,
+            "fallback_failed": 0,
+        }
 
         # Order classification patterns
         self.order_patterns = self._create_order_patterns()
@@ -296,12 +326,217 @@ class OrderDocumentAnalyzer:
             order_date=order_date,
             cases=cases,
             order_text=text,
+            analysis_metadata={
+                "llm_fallback_enabled": self.enable_llm_fallback,
+                "used_llm_fallback": False,
+                "fallback_reason": [],
+                "fallback_provider": self.llm_provider,
+                "fallback_model": self.llm_model,
+                "primary_category_confidence": category_confidence,
+                "extraction_quality_score": extraction_result.quality_score,
+                "extraction_confidence": extraction_result.confidence,
+            },
+        )
+
+        result = self._apply_confidence_gated_fallback(
+            result=result,
+            extraction_result=extraction_result,
+            text=text,
         )
 
         logging.info(
             f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}"
         )
         return result
+
+    def get_fallback_metrics(self) -> Dict[str, int]:
+        """Return cumulative LLM fallback metrics for observability."""
+        return dict(self.fallback_metrics)
+
+    def _apply_confidence_gated_fallback(
+        self,
+        result: OrderAnalysisResult,
+        extraction_result,
+        text: str,
+    ) -> OrderAnalysisResult:
+        self.fallback_metrics["total_documents"] += 1
+
+        should_fallback, reasons = self._should_trigger_llm_fallback(
+            result=result,
+            extraction_result=extraction_result,
+        )
+        result.analysis_metadata["fallback_reason"] = reasons
+
+        if not should_fallback:
+            return result
+
+        self.fallback_metrics["fallback_triggered"] += 1
+
+        llm_result = self._run_ollama_fallback(text)
+        if not llm_result:
+            self.fallback_metrics["fallback_failed"] += 1
+            return result
+
+        parsed_cases = self._parse_llm_cases(llm_result.get("cases", []))
+        if not parsed_cases:
+            self.fallback_metrics["fallback_failed"] += 1
+            return result
+
+        llm_category = llm_result.get("order_category") or result.order_category
+        llm_order_date = llm_result.get("order_date") or result.order_date
+        llm_confidence = self._safe_float(
+            llm_result.get("category_confidence"), result.category_confidence
+        )
+
+        self.fallback_metrics["fallback_succeeded"] += 1
+        return OrderAnalysisResult(
+            order_category=str(llm_category),
+            category_confidence=llm_confidence,
+            order_date=str(llm_order_date) if llm_order_date else None,
+            cases=parsed_cases,
+            order_text=result.order_text,
+            analysis_metadata={
+                **result.analysis_metadata,
+                "used_llm_fallback": True,
+                "fallback_status": "success",
+                "fallback_response_confidence": llm_confidence,
+            },
+        )
+
+    def _should_trigger_llm_fallback(
+        self,
+        result: OrderAnalysisResult,
+        extraction_result,
+    ) -> Tuple[bool, List[str]]:
+        reasons: List[str] = []
+
+        if not self.enable_llm_fallback:
+            return False, reasons
+
+        if self.llm_provider != "ollama":
+            reasons.append("unsupported_llm_provider")
+            return False, reasons
+
+        if extraction_result.quality_score < self.min_extraction_quality:
+            reasons.append("low_extraction_quality")
+        if result.category_confidence < self.min_category_confidence:
+            reasons.append("low_category_confidence")
+        if len(result.cases) < self.min_cases_count:
+            reasons.append("insufficient_case_extraction")
+        if not result.order_date:
+            reasons.append("missing_order_date")
+
+        return len(reasons) > 0, reasons
+
+    def _run_ollama_fallback(self, text: str) -> Optional[Dict[str, Any]]:
+        """Run optional local Ollama fallback for low-confidence documents."""
+        try:
+            prompt = (
+                "Extract structured court order data as strict JSON with keys: "
+                "order_category, category_confidence, order_date, cases. "
+                "Each item in cases must contain case_type, case_number, case_year, petitioner, respondent, government_pleader. "
+                "Only output JSON."
+            )
+            response = requests.post(
+                f"{self.ollama_base_url}/api/generate",
+                json={
+                    "model": self.llm_model,
+                    "prompt": f"{prompt}\n\n{text[:12000]}",
+                    "stream": False,
+                    "format": "json",
+                },
+                timeout=self.ollama_timeout_seconds,
+            )
+            if response.status_code != 200:
+                logging.warning(f"Ollama fallback returned HTTP {response.status_code}")
+                return None
+
+            payload = response.json()
+            raw_response = payload.get("response")
+            if isinstance(raw_response, dict):
+                return raw_response
+            if not isinstance(raw_response, str) or not raw_response.strip():
+                return None
+
+            return self._extract_json_object(raw_response)
+        except Exception as e:
+            logging.warning(f"Ollama fallback failed: {e}")
+            return None
+
+    def _extract_json_object(self, text: str) -> Optional[Dict[str, Any]]:
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+
+        try:
+            return json.loads(text[start : end + 1])
+        except Exception:
+            return None
+
+    def _parse_llm_cases(self, cases_payload: Any) -> List[CaseInfo]:
+        if not isinstance(cases_payload, list):
+            return []
+
+        parsed_cases: List[CaseInfo] = []
+        for case_item in cases_payload:
+            if not isinstance(case_item, dict):
+                continue
+
+            case_type = str(case_item.get("case_type", "")).strip().upper()
+            case_number = self._safe_int(case_item.get("case_number"))
+            case_year = self._safe_int(case_item.get("case_year"))
+            petitioner = str(case_item.get("petitioner", "")).strip()
+            respondent = str(case_item.get("respondent", "")).strip()
+            government_pleader = case_item.get("government_pleader") or []
+            if isinstance(government_pleader, str):
+                government_pleader = [government_pleader]
+            if not isinstance(government_pleader, list):
+                government_pleader = []
+
+            if not case_type or case_number is None or case_year is None:
+                continue
+
+            parsed_cases.append(
+                CaseInfo(
+                    case_type=case_type,
+                    case_number=case_number,
+                    case_year=case_year,
+                    petitioner=petitioner,
+                    respondent=respondent,
+                    government_pleader=[
+                        str(x).strip() for x in government_pleader if x
+                    ],
+                )
+            )
+
+        return parsed_cases
+
+    def _safe_int(self, value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            return int(str(value).strip())
+        except Exception:
+            return None
+
+    def _safe_float(self, value: Any, default_value: float) -> float:
+        try:
+            if value is None:
+                return default_value
+            parsed = float(value)
+            if parsed < 0:
+                return 0.0
+            if parsed > 1:
+                return 1.0
+            return parsed
+        except Exception:
+            return default_value
 
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""

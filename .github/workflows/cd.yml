@@ -17,13 +17,13 @@ jobs:
   test:
     name: Run All Tests
     uses: ./.github/workflows/ci.yml
-  
+
   deploy-backend:
     name: Deploy Backend to Cloud Run
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main'
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,48 +33,48 @@ jobs:
         run: |
           python3 - <<'EOF'
           import os, sys, json
-          
+
           sa_key = os.environ.get('SA_KEY', '').strip()
-          
+
           # Check if secret exists
           if not sa_key:
               print('❌ ERROR: GCLOUD_SERVICE_ACCOUNT_KEY secret is empty or not set')
               sys.exit(1)
-          
+
           # Check if it starts with HTML
           if sa_key.startswith('<!') or sa_key.startswith('<html'):
               print('❌ ERROR: Secret contains HTML instead of JSON')
               print('   The secret appears to be an HTML page (starts with "<!doctype" or "<html>")')
               print('   Please re-create the secret with the actual JSON service account key')
               sys.exit(2)
-          
+
           # Check if it starts with JSON
           if not sa_key.startswith('{'):
               print('❌ ERROR: Secret does not start with "{" - not valid JSON format')
               print('   First 50 chars:', sa_key[:50] if len(sa_key) > 50 else sa_key)
               print('   Hint: If base64-encoded, decode it first or use credentials_file instead')
               sys.exit(3)
-          
+
           # Try parsing as JSON
           try:
               parsed = json.loads(sa_key)
           except json.JSONDecodeError as e:
               print(f'❌ ERROR: Secret is not valid JSON: {e}')
               sys.exit(4)
-          
+
           # Verify it's a service account key
           if parsed.get('type') != 'service_account':
               print('❌ ERROR: JSON parsed but "type" field is not "service_account"')
               print(f'   Found type: {parsed.get("type")}')
               sys.exit(5)
-          
+
           # Check required fields
           required_fields = ['project_id', 'private_key_id', 'private_key', 'client_email']
           missing = [f for f in required_fields if f not in parsed]
           if missing:
               print(f'❌ ERROR: Service account JSON missing required fields: {missing}')
               sys.exit(6)
-          
+
           print('✅ Service account secret format is valid')
           print(f'   Project: {parsed.get("project_id")}')
           print(f'   Email: {parsed.get("client_email")}')
@@ -94,7 +94,7 @@ jobs:
       - name: Configure Docker for GCR
         run: |
           gcloud auth configure-docker
-          
+
       - name: Set project configuration
         run: |
           gcloud config set project ${{ env.GCP_PROJECT_ID }}
@@ -104,11 +104,11 @@ jobs:
         run: |
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
-      
+
       - name: Verify Service Account Permissions
         run: |
           echo "🔍 Verifying service account permissions..."
-          
+
           # Check if service account exists
           if gcloud iam service-accounts describe firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com >/dev/null 2>&1; then
             echo "✅ Service account exists"
@@ -116,29 +116,29 @@ jobs:
             echo "❌ Service account not found"
             exit 1
           fi
-          
+
           # List current IAM roles for the service account
           echo "📋 Current IAM roles for service account:"
           gcloud projects get-iam-policy ${{ env.GCP_PROJECT_ID }} \
             --flatten="bindings[].members" \
             --format="table(bindings.role)" \
             --filter="bindings.members:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
-          
+
           echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
-      
+
       - name: Build and Deploy to Cloud Run
         run: |
           echo "🚀 Building and deploying backend to Google Cloud Run..."
-          
+
           cd billingonaire_backend
-          
+
           # Build container image using Cloud Build with commit SHA tag
           # This prevents reusing stale 'latest' images and ensures fresh builds
           echo "🔨 Building Docker image with tag: ${{ github.sha }}"
           gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} .
-          
+
           echo "🚀 Deploying to Cloud Run..."
-          
+
           # Deploy with Application Default Credentials (service account)
           # Using commit SHA tag ensures we deploy exactly what was built
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
@@ -153,7 +153,7 @@ jobs:
             --min-instances=1 \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
             --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}"
-      
+
       - name: Verify Deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.CLOUD_RUN_SERVICE }} \
@@ -169,22 +169,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main'
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: billingonaire-ui/package-lock.json
-      
+
       - name: Install dependencies
         run: |
           cd billingonaire-ui
           npm ci
-      
+
       - name: Build production bundle
         run: |
           cd billingonaire-ui
@@ -192,7 +192,7 @@ jobs:
         env:
           NODE_ENV: production
           VITE_API_URL: https://billingonaire-backend-819125105651.asia-south1.run.app
-      
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -200,7 +200,7 @@ jobs:
           firebaseServiceAccount: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
           channelId: live
           projectId: ${{ env.GCP_PROJECT_ID }}
-      
+
       - name: Verify Frontend Deployment
         run: |
           echo "⏳ Waiting for deployment to be ready..."
@@ -214,12 +214,12 @@ jobs:
     if: github.ref == 'refs/heads/main' && success()
     permissions:
       contents: write
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Generate Release Notes
         id: release_notes
         run: |
@@ -232,7 +232,7 @@ jobs:
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-      
+
       - name: Create Release
         uses: actions/create-release@v1
         env:
@@ -243,11 +243,11 @@ jobs:
           body: |
             ## Changes
             ${{ steps.release_notes.outputs.notes }}
-            
+
             ## Deployments
             - Backend: https://billingonaire-backend-819125105651.asia-south1.run.app
             - Frontend: https://billingonaire.web.app
-            
+
             ## Deployment Status
             ✅ Backend deployed to Cloud Run
             ✅ Frontend deployed to Firebase Hosting

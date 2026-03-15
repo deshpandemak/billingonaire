@@ -1133,6 +1133,15 @@ async def get_case_orders(
     """
     try:
         case_orders = get_court_scraper().get_case_orders(case_ref, date, bench)
+        if isinstance(case_orders, dict):
+            response_payload = {
+                "case_ref": case_ref,
+                "date": date,
+                "orders": case_orders.get("court_orders", []),
+            }
+            response_payload.update(case_orders)
+            return JSONResponse(content=response_payload)
+
         return JSONResponse(
             content={"case_ref": case_ref, "date": date, "orders": case_orders}
         )

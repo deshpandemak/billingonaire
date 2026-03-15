@@ -7,7 +7,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0, // Reduced retries for faster CI
   workers: process.env.CI ? 2 : undefined, // Increased workers for CI
   reporter: process.env.CI ? 'github' : 'html', // GitHub reporter for CI
-  
+
   use: {
     baseURL: 'http://localhost:5000',
     trace: 'on-first-retry',

@@ -70,7 +70,7 @@ Billingonaire features a modern web application architecture with a React fronte
 - **Bug Fix**: Fixed IA(ST) case parsing by moving (ST) suffix stripping before regex parsing
 
 ### Production Deployment Status
-**Last Deployed**: October 31, 2025  
+**Last Deployed**: October 31, 2025
 **Production URLs**:
 - Frontend: https://billingonaire.web.app
 - Backend: https://billingonaire-backend-819125105651.asia-south1.run.app

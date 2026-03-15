@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> Upload.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/237</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/237</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -674,7 +674,7 @@
 <span class="cstat-no" title="statement not covered" >    setProgress({});</span>
 <span class="cstat-no" title="statement not covered" >    setFileResults({});</span>
 <span class="cstat-no" title="statement not covered" >    setSuccessMessage('');</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    const files = fileInput.current.files;</span>
 <span class="cstat-no" title="statement not covered" >    if (!files.length) {</span>
 <span class="cstat-no" title="statement not covered" >      setError('Please select at least one file.');</span>
@@ -688,18 +688,18 @@
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >          const formData = new FormData();</span>
 <span class="cstat-no" title="statement not covered" >          formData.append('files', file);</span>
-          
+
           // Get authentication token
 <span class="cstat-no" title="statement not covered" >          const user = auth.currentUser;</span>
 <span class="cstat-no" title="statement not covered" >          if (!user) {</span>
 <span class="cstat-no" title="statement not covered" >            throw new Error('User not authenticated');</span>
 <span class="cstat-no" title="statement not covered" >          }</span>
 <span class="cstat-no" title="statement not covered" >          const idToken = await user.getIdToken(true); // Force refresh token</span>
-          
+
           // Create custom upload with progress tracking
 <span class="cstat-no" title="statement not covered" >          const uploadPromise = new Promise((resolve, reject) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >            const xhr = new XMLHttpRequest();</span>
-            
+
             // Set up progress tracking
 <span class="cstat-no" title="statement not covered" >            xhr.upload.onprogress = (event) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >              if (event.lengthComputable) {</span>
@@ -707,7 +707,7 @@
 <span class="cstat-no" title="statement not covered" >                setProgress((prev) =&gt; ({ ...prev, [file.name]: percent }));</span>
 <span class="cstat-no" title="statement not covered" >              }</span>
 <span class="cstat-no" title="statement not covered" >            };</span>
-            
+
             // Handle response
 <span class="cstat-no" title="statement not covered" >            xhr.onload = () =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >              if (xhr.status &gt;= 200 &amp;&amp; xhr.status &lt; 300) {</span>
@@ -716,20 +716,20 @@
 <span class="cstat-no" title="statement not covered" >                reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));</span>
 <span class="cstat-no" title="statement not covered" >              }</span>
 <span class="cstat-no" title="statement not covered" >            };</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            xhr.onerror = () =&gt; reject(new Error('Network error during upload'));</span>
-            
+
             // Configure request
 <span class="cstat-no" title="statement not covered" >            const API_BASE_URL = import.meta.env.PROD </span>
 <span class="cstat-no" title="statement not covered" >              ? "https://asia-south1-billingonaire.cloudfunctions.net/billingonaire-backend"</span>
 <span class="cstat-no" title="statement not covered" >              : "/api";</span>
 <span class="cstat-no" title="statement not covered" >            xhr.open('POST', `${API_BASE_URL}/upload-pdf`, true);</span>
 <span class="cstat-no" title="statement not covered" >            xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);</span>
-            
+
             // Send the file
 <span class="cstat-no" title="statement not covered" >            xhr.send(formData);</span>
 <span class="cstat-no" title="statement not covered" >          });</span>
-          
+
 <span class="cstat-no" title="statement not covered" >          const result = await uploadPromise;</span>
 <span class="cstat-no" title="statement not covered" >          const fileResult = result.results?.[0] || result || {};</span>
 <span class="cstat-no" title="statement not covered" >          setFileResults((prev) =&gt; ({ </span>
@@ -739,7 +739,7 @@
 <span class="cstat-no" title="statement not covered" >              success: true</span>
 <span class="cstat-no" title="statement not covered" >            }</span>
 <span class="cstat-no" title="statement not covered" >          }));</span>
-          
+
 <span class="cstat-no" title="statement not covered" >        } catch (e) {</span>
 <span class="cstat-no" title="statement not covered" >          console.error(`Error uploading ${file.name}:`, e);</span>
 <span class="cstat-no" title="statement not covered" >          setFileResults((prev) =&gt; ({ </span>
@@ -751,7 +751,7 @@
 <span class="cstat-no" title="statement not covered" >          }));</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      setSuccessMessage('Upload process completed!');</span>
 <span class="cstat-no" title="statement not covered" >    } catch (e) {</span>
 <span class="cstat-no" title="statement not covered" >      setError(`Upload failed: ${e.message}`);</span>
@@ -776,7 +776,7 @@
           Upload daily board PDF files to extract case information and AGP assignments
 <span class="cstat-no" title="statement not covered" >        &lt;/p&gt;</span>
 <span class="cstat-no" title="statement not covered" >      &lt;/div&gt;</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      &lt;div className="dashboard-section"&gt;</span>
 <span class="cstat-no" title="statement not covered" >        &lt;div className="card-professional"&gt;</span>
 <span class="cstat-no" title="statement not covered" >          &lt;div className="card-header"&gt;</span>
@@ -820,13 +820,13 @@
 <span class="cstat-no" title="statement not covered" >                      &lt;/div&gt;</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;/div&gt;</span>
                   )}
-                  
+
 <span class="cstat-no" title="statement not covered" >                  {error &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;div className="alert-error"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                      &lt;strong&gt;Error:&lt;/strong&gt; {error}</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;/div&gt;</span>
                   )}
-                  
+
 <span class="cstat-no" title="statement not covered" >                  &lt;button </span>
 <span class="cstat-no" title="statement not covered" >                    type="submit" </span>
 <span class="cstat-no" title="statement not covered" >                    className="btn-professional btn-primary"</span>
@@ -851,10 +851,10 @@
 <span class="cstat-no" title="statement not covered" >                    {selectedFiles.map((file) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >                      const percent = progress[file.name] || 0;</span>
 <span class="cstat-no" title="statement not covered" >                      const result = fileResults[file.name] || {};</span>
-                      
+
 <span class="cstat-no" title="statement not covered" >                      let statusText = '';</span>
 <span class="cstat-no" title="statement not covered" >                      let statusColor = 'var(--gray-600)';</span>
-                      
+
 <span class="cstat-no" title="statement not covered" >                      if (result.error) {</span>
 <span class="cstat-no" title="statement not covered" >                        statusText = `Error: ${result.error}`;</span>
 <span class="cstat-no" title="statement not covered" >                        statusColor = '#dc2626';</span>
@@ -870,7 +870,7 @@
 <span class="cstat-no" title="statement not covered" >                      } else {</span>
 <span class="cstat-no" title="statement not covered" >                        statusText = 'Waiting...';</span>
 <span class="cstat-no" title="statement not covered" >                      }</span>
-                      
+
 <span class="cstat-no" title="statement not covered" >                      return (</span>
 <span class="cstat-no" title="statement not covered" >                        &lt;div key={file.name} style={{ marginBottom: 'var(--spacing-lg)', padding: 'var(--spacing-md)', backgroundColor: 'var(--gray-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-200)' }}&gt;</span>
 <span class="cstat-no" title="statement not covered" >                          &lt;div style={{ display: 'flex', alignItems: 'center', marginBottom: 'var(--spacing-sm)' }}&gt;</span>
@@ -907,7 +907,7 @@
 <span class="cstat-no" title="statement not covered" >                    })}</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;/div&gt;</span>
                 )}
-                
+
 <span class="cstat-no" title="statement not covered" >                {successMessage &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div className="alert-success"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;strong&gt;Success:&lt;/strong&gt; {successMessage}</span>
@@ -946,4 +946,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

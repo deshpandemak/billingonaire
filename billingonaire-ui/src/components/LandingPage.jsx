@@ -18,16 +18,16 @@ const LandingPage = () => {
                 Streamline your court matter tracking, AGP assignments, and billing generation with our comprehensive legal practice management system.
               </p>
               <div className="d-flex gap-3 flex-wrap">
-                <Button 
-                  as={Link} 
-                  to="/login" 
+                <Button
+                  as={Link}
+                  to="/login"
                   className="btn-professional btn-primary btn-lg"
                   style={{ minWidth: '150px' }}
                 >
                   Get Started
                 </Button>
-                <Button 
-                  variant="outline-light" 
+                <Button
+                  variant="outline-light"
                   size="lg"
                   className="btn-professional btn-outline"
                   style={{ minWidth: '150px' }}
@@ -38,7 +38,7 @@ const LandingPage = () => {
             </Col>
             <Col lg={6} className="text-center">
               <div className="hero-illustration">
-                <div 
+                <div
                   style={{
                     width: '100%',
                     height: '300px',
@@ -152,9 +152,9 @@ const LandingPage = () => {
                   <p style={{ fontSize: '1.125rem', color: 'var(--gray-600)', marginBottom: '2rem' }}>
                     Join legal professionals who trust Billingonaire for their court matter management and billing needs.
                   </p>
-                  <Button 
-                    as={Link} 
-                    to="/login" 
+                  <Button
+                    as={Link}
+                    to="/login"
                     className="btn-professional btn-primary btn-lg"
                     style={{ minWidth: '200px', padding: '0.75rem 2rem' }}
                   >

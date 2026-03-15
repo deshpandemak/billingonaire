@@ -39,7 +39,7 @@ const OrderManagement = () => {
       });
 
       const result = await authenticatedFetchJSON(`/orders/cases-without-orders?${params}`);
-      
+
       if (result.error) {
         setError(result.error);
       } else {
@@ -48,7 +48,7 @@ const OrderManagement = () => {
         } else {
           setCasesWithoutOrders(prev => [...prev, ...(result.cases || [])]);
         }
-        
+
         setPagination(prev => ({
           ...prev,
           offset: offset,
@@ -132,7 +132,7 @@ const OrderManagement = () => {
       });
 
       const result = await authenticatedFetchJSON(`/court/case-details?${params}`);
-      
+
       if (result.status === 'captcha_required') {
         // Mark as failed and provide court website link
         setSelectedCase(caseItem);
@@ -251,7 +251,7 @@ const OrderManagement = () => {
               <p className="text-muted mb-0">Manage cases without linked court orders</p>
             </div>
             <div className="card-body">
-              
+
               {/* Filters */}
               <div className="row mb-4">
                 <div className="col-md-3">
@@ -429,8 +429,8 @@ const OrderManagement = () => {
                       </thead>
                       <tbody>
                         {filteredCases.map((caseItem, _index) => (
-                          <tr 
-                            key={caseItem.id} 
+                          <tr
+                            key={caseItem.id}
                             className={selectedCase?.id === caseItem.id ? 'table-active' : ''}
                           >
                             <td>

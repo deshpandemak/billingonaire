@@ -10,18 +10,18 @@ const UserProfile = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  
+
   // Form states
   const [profileForm, setProfileForm] = useState({
     role: 'user',
     full_name: ''
   });
-  
+
   const [passwordForm, setPasswordForm] = useState({
     new_password: '',
     confirm_password: ''
   });
-  
+
   const [showPasswordForm, setShowPasswordForm] = useState(false);
 
   useEffect(() => {
@@ -43,21 +43,21 @@ const UserProfile = () => {
         setError('Please log in to view your profile');
         return;
       }
-      
+
       console.log('📡 UserProfile: Loading profile for user:', auth.currentUser.email);
       const profileData = await authenticatedFetchJSON('/user/profile');
       console.log('✅ UserProfile: Profile loaded successfully:', profileData);
-      
+
       setProfile(profileData);
       setError(''); // Clear any previous errors
-      
+
       setProfileForm({
         role: profileData.role || 'user',
         full_name: profileData.full_name || ''
       });
     } catch (error) {
       console.error('❌ UserProfile: Error loading profile:', error);
-      
+
       // Provide more specific error messages
       if (error.message.includes('User not authenticated')) {
         setError('Please log in to view your profile');
@@ -83,7 +83,7 @@ const UserProfile = () => {
         method: 'POST',
         body: JSON.stringify(profileForm)
       });
-      
+
       setProfile(updatedProfile);
       setSuccessMessage('Profile updated successfully!');
     } catch (error) {
@@ -112,7 +112,7 @@ const UserProfile = () => {
         method: 'POST',
         body: JSON.stringify({ new_password: passwordForm.new_password })
       });
-      
+
       setSuccessMessage('Password changed successfully!');
       setPasswordForm({ new_password: '', confirm_password: '' });
       setShowPasswordForm(false);
@@ -234,7 +234,7 @@ const UserProfile = () => {
                 <p style={{ color: 'var(--gray-600)', marginBottom: 'var(--spacing-lg)' }}>
                   Change your account password for enhanced security.
                 </p>
-                <button 
+                <button
                   className="btn-professional btn-secondary"
                   onClick={() => setShowPasswordForm(true)}
                 >
@@ -273,8 +273,8 @@ const UserProfile = () => {
                   <button type="submit" className="btn-professional btn-primary">
                     Change Password
                   </button>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="btn-professional btn-secondary"
                     onClick={() => {
                       setShowPasswordForm(false);
@@ -298,27 +298,27 @@ const UserProfile = () => {
             <div className="card-body">
               <div className="profile-status">
                 <div className="status-item">
-                  <strong>Role:</strong> 
+                  <strong>Role:</strong>
                   <span className={`role-badge ${profile.role}`}>
                     {profile.role === 'admin' ? 'Administrator' : 'AGP User'}
                   </span>
                 </div>
-                
+
                 {profile.role === 'agp' && profile.agp_name && (
                   <div className="status-item">
-                    <strong>AGP Assignment:</strong> 
+                    <strong>AGP Assignment:</strong>
                     <span>{profile.agp_name}</span>
                   </div>
                 )}
-                
+
                 <div className="status-item">
-                  <strong>Account Status:</strong> 
+                  <strong>Account Status:</strong>
                   <span className="status-active">Active</span>
                 </div>
-                
+
                 {profile.created_at && (
                   <div className="status-item">
-                    <strong>Member Since:</strong> 
+                    <strong>Member Since:</strong>
                     <span>{new Date(profile.created_at).toLocaleDateString()}</span>
                   </div>
                 )}

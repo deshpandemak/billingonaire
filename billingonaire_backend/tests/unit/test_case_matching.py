@@ -66,22 +66,22 @@ class TestCaseMatching:
         order_text = """
         BOMBAY HIGH COURT
         Order Date: 15/01/2025
-        
+
         WP/11347/2024
         Petitioner: ABC Ltd.
         Respondent: State of Maharashtra
         AGP: Mr. Sharma
-        
+
         WP/11348/2024
         Petitioner: XYZ Corp
         Respondent: Collector, Mumbai
         AGP: Mrs. Gupta
-        
+
         WP/11349/2024
         Petitioner: DEF Inc.
         Respondent: BMC
         AGP: Mr. Sharma
-        
+
         Order: All matters adjourned to 15/02/2025
         """
 

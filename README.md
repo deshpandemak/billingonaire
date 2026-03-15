@@ -98,6 +98,16 @@ This script:
 - `GCLOUD_SERVICE_ACCOUNT_KEY`: Google Cloud service account credentials
 - `FIREBASE_TOKEN`: Firebase deployment token
 
+## 🔄 Release Process
+
+- CI validation workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- CD deployment workflow: [.github/workflows/cd.yml](.github/workflows/cd.yml)
+- Full deploy script: [firebase/deploy-all.sh](firebase/deploy-all.sh)
+- Backend deploy script: [firebase/backend-cloudrun-deploy.sh](firebase/backend-cloudrun-deploy.sh)
+- Optional Ollama deploy scripts:
+	- GKE (preferred): [firebase/ollama-gke-deploy.sh](firebase/ollama-gke-deploy.sh)
+	- Cloud Run (alternate): [firebase/ollama-cloudrun-deploy.sh](firebase/ollama-cloudrun-deploy.sh)
+
 ## 🧪 Testing
 
 ### Backend Tests
@@ -113,6 +123,20 @@ pytest tests/
 cd billingonaire-ui
 npm run test:unit
 ```
+
+## ✅ Pre-Commit Checks (Recommended)
+
+To catch linting and type issues before push, enable repository hooks:
+
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
+This runs repository checks aligned with CI, including:
+- Backend: black, isort, flake8, mypy
+- Frontend: eslint (src)
 
 ## 🔑 Key Features
 
@@ -134,4 +158,5 @@ npm run test:unit
 
 ## 📝 Documentation
 
-For detailed project architecture and recent changes, see `replit.md`.
+- SDLC workflow and deployment/verification governance: [.github/SDLC_SPEC.md](.github/SDLC_SPEC.md)
+- Detailed project architecture and recent changes: [replit.md](replit.md)

@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> UserProfile.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/256</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/256</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -695,18 +695,18 @@
 <span class="cstat-no" title="statement not covered" >  const [loading, setLoading] = useState(true);</span>
 <span class="cstat-no" title="statement not covered" >  const [error, setError] = useState('');</span>
 <span class="cstat-no" title="statement not covered" >  const [successMessage, setSuccessMessage] = useState('');</span>
-  
+
   // Form states
 <span class="cstat-no" title="statement not covered" >  const [profileForm, setProfileForm] = useState({</span>
 <span class="cstat-no" title="statement not covered" >    role: 'user',</span>
 <span class="cstat-no" title="statement not covered" >    full_name: ''</span>
 <span class="cstat-no" title="statement not covered" >  });</span>
-  
+
 <span class="cstat-no" title="statement not covered" >  const [passwordForm, setPasswordForm] = useState({</span>
 <span class="cstat-no" title="statement not covered" >    new_password: '',</span>
 <span class="cstat-no" title="statement not covered" >    confirm_password: ''</span>
 <span class="cstat-no" title="statement not covered" >  });</span>
-  
+
 <span class="cstat-no" title="statement not covered" >  const [showPasswordForm, setShowPasswordForm] = useState(false);</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >  useEffect(() =&gt; {</span>
@@ -724,7 +724,7 @@
 <span class="cstat-no" title="statement not covered" >    try {</span>
 <span class="cstat-no" title="statement not covered" >      const profileData = await authenticatedFetchJSON('/user/profile');</span>
 <span class="cstat-no" title="statement not covered" >      setProfile(profileData);</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      setProfileForm({</span>
 <span class="cstat-no" title="statement not covered" >        role: profileData.role || 'user',</span>
 <span class="cstat-no" title="statement not covered" >        full_name: profileData.full_name || ''</span>
@@ -745,7 +745,7 @@
 <span class="cstat-no" title="statement not covered" >        method: 'POST',</span>
 <span class="cstat-no" title="statement not covered" >        body: JSON.stringify(profileForm)</span>
 <span class="cstat-no" title="statement not covered" >      });</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      setProfile(updatedProfile);</span>
 <span class="cstat-no" title="statement not covered" >      setSuccessMessage('Profile updated successfully!');</span>
 <span class="cstat-no" title="statement not covered" >    } catch (error) {</span>
@@ -774,7 +774,7 @@
 <span class="cstat-no" title="statement not covered" >        method: 'POST',</span>
 <span class="cstat-no" title="statement not covered" >        body: JSON.stringify({ new_password: passwordForm.new_password })</span>
 <span class="cstat-no" title="statement not covered" >      });</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      setSuccessMessage('Password changed successfully!');</span>
 <span class="cstat-no" title="statement not covered" >      setPasswordForm({ new_password: '', confirm_password: '' });</span>
 <span class="cstat-no" title="statement not covered" >      setShowPasswordForm(false);</span>
@@ -965,19 +965,19 @@
 <span class="cstat-no" title="statement not covered" >                    {profile.role === 'admin' ? 'Administrator' : 'AGP User'}</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;/span&gt;</span>
 <span class="cstat-no" title="statement not covered" >                &lt;/div&gt;</span>
-                
+
 <span class="cstat-no" title="statement not covered" >                {profile.role === 'agp' &amp;&amp; profile.agp_name &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div className="status-item"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;strong&gt;AGP Assignment:&lt;/strong&gt; </span>
 <span class="cstat-no" title="statement not covered" >                    &lt;span&gt;{profile.agp_name}&lt;/span&gt;</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;/div&gt;</span>
                 )}
-                
+
 <span class="cstat-no" title="statement not covered" >                &lt;div className="status-item"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;strong&gt;Account Status:&lt;/strong&gt; </span>
 <span class="cstat-no" title="statement not covered" >                  &lt;span className="status-active"&gt;Active&lt;/span&gt;</span>
 <span class="cstat-no" title="statement not covered" >                &lt;/div&gt;</span>
-                
+
 <span class="cstat-no" title="statement not covered" >                {profile.created_at &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div className="status-item"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;strong&gt;Member Since:&lt;/strong&gt; </span>
@@ -1012,4 +1012,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

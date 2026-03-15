@@ -898,6 +898,19 @@ class AutoOrderManager:
 
             order_filename = f"{case_ref.replace('/', '-')}-{date_str}.pdf"
 
+            # First attempt structured scraper workflow once per case.
+            if sequence_number == 1:
+                structured_result = self._download_order_via_scraper(
+                    case_ref=case_ref,
+                    board_date=board_date,
+                    order_filename=order_filename,
+                )
+                if structured_result.get("success"):
+                    return structured_result
+                logging.info(
+                    f"Structured order lookup unavailable for {case_ref}: {structured_result.get('error')}"
+                )
+
             # Check if case type is supported
             if case_type not in self.casetype_dict:
                 return {
@@ -934,6 +947,88 @@ class AutoOrderManager:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _download_order_via_scraper(
+        self, case_ref: str, board_date: Optional[str], order_filename: str
+    ) -> Dict:
+        """Use structured scraper output to fetch exact order URL before brute-force sequence attempts."""
+        try:
+            response = self.court_scraper.get_case_orders(
+                case_ref=case_ref,
+                date=board_date,
+                bench="mumbai",
+            )
+
+            if not isinstance(response, dict):
+                return {
+                    "success": False,
+                    "error": "Structured scraper returned non-dict response",
+                }
+
+            if response.get("status") != "found":
+                return {
+                    "success": False,
+                    "error": response.get(
+                        "message", "No orders found from structured scraper"
+                    ),
+                }
+
+            court_orders = response.get("court_orders") or []
+            if not court_orders:
+                return {
+                    "success": False,
+                    "error": "Structured scraper returned no court orders",
+                }
+
+            order_entry = next(
+                (
+                    order
+                    for order in court_orders
+                    if isinstance(order, dict) and order.get("download_url")
+                ),
+                None,
+            )
+            if not order_entry:
+                return {
+                    "success": False,
+                    "error": "Structured scraper response missing order download URL",
+                }
+
+            download_url = order_entry["download_url"]
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            download_response = requests.get(download_url, headers=headers, timeout=30)
+
+            content_type = download_response.headers.get("Content-Type", "")
+            pdf_bytes = download_response.content or b""
+            is_pdf = "application/pdf" in content_type.lower() or pdf_bytes.startswith(
+                b"%PDF"
+            )
+
+            if download_response.status_code != 200 or not is_pdf:
+                return {
+                    "success": False,
+                    "error": (
+                        "Structured scraper provided non-PDF/invalid URL "
+                        f"(HTTP {download_response.status_code}, Content-Type {content_type})"
+                    ),
+                }
+
+            return {
+                "success": True,
+                "order_link": download_url,
+                "pdf_content": pdf_bytes,
+                "filename": order_filename,
+                "source": "firecrawl_structured",
+                "listing_date": order_entry.get("listing_date"),
+                "order_description": order_entry.get("order_description"),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Structured scraper lookup failed: {str(e)}",
+            }
 
     def _download_pdf_bombay_hc_simple(
         self,
@@ -1074,6 +1169,15 @@ class AutoOrderManager:
             analysis_result = self.order_analyzer.analyze_order_document(
                 temp_filename, pdf_content
             )
+            analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
+            analyzer_fallback_metrics = {}
+            if hasattr(self.order_analyzer, "get_fallback_metrics"):
+                try:
+                    analyzer_fallback_metrics = (
+                        self.order_analyzer.get_fallback_metrics() or {}
+                    )
+                except Exception:
+                    analyzer_fallback_metrics = {}
 
             # Validate the extracted order date against expected board date
             date_validation = self._validate_order_date(
@@ -1142,6 +1246,8 @@ class AutoOrderManager:
                 "order_analysis_timestamp": datetime.now().isoformat(),
                 "order_analysis_completed": True,
                 "order_last_updated": datetime.now().isoformat(),
+                "order_analysis_metadata": analysis_metadata,
+                "order_analyzer_fallback_metrics": analyzer_fallback_metrics,
                 # Order status tracking
                 "order_status": "analysed",
                 "order_status_updated_at": datetime.now().isoformat(),
@@ -1185,6 +1291,8 @@ class AutoOrderManager:
                                 "order_analysis_timestamp": datetime.now().isoformat(),
                                 "order_analysis_completed": True,
                                 "order_last_updated": datetime.now().isoformat(),
+                                "order_analysis_metadata": analysis_metadata,
+                                "order_analyzer_fallback_metrics": analyzer_fallback_metrics,
                                 "order_status": "analysed",
                                 "order_status_updated_at": datetime.now().isoformat(),
                             }

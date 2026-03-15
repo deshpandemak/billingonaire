@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> AdminOrderManagement.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/350</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/350</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -875,7 +875,7 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >const AdminOrderManagement = () =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >    const [currentUser, setCurrentUser] = useState(null);</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    useEffect(() =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        const unsubscribe = auth.onAuthStateChanged(user =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >            setCurrentUser(user);</span>
@@ -912,13 +912,13 @@
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >            setLoading(true);</span>
 <span class="cstat-no" title="statement not covered" >            const idToken = await currentUser.getIdToken();</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const response = await fetch(`${API_URL}/admin/order-status-overview`, {</span>
 <span class="cstat-no" title="statement not covered" >                headers: {</span>
 <span class="cstat-no" title="statement not covered" >                    'Authorization': `Bearer ${idToken}`</span>
 <span class="cstat-no" title="statement not covered" >                }</span>
 <span class="cstat-no" title="statement not covered" >            });</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const data = await response.json();</span>
 <span class="cstat-no" title="statement not covered" >            if (data.success) {</span>
 <span class="cstat-no" title="statement not covered" >                setOverview(data);</span>
@@ -935,13 +935,13 @@
 <span class="cstat-no" title="statement not covered" >        if (!currentUser) return;</span>
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >            const idToken = await currentUser.getIdToken();</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const response = await fetch(`${API_URL}/queue/status`, {</span>
 <span class="cstat-no" title="statement not covered" >                headers: {</span>
 <span class="cstat-no" title="statement not covered" >                    'Authorization': `Bearer ${idToken}`</span>
 <span class="cstat-no" title="statement not covered" >                }</span>
 <span class="cstat-no" title="statement not covered" >            });</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const data = await response.json();</span>
 <span class="cstat-no" title="statement not covered" >            setQueueStatus(data);</span>
 <span class="cstat-no" title="statement not covered" >        } catch (error) {</span>
@@ -951,14 +951,14 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    useEffect(() =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        if (!currentUser) return;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        loadOverview();</span>
 <span class="cstat-no" title="statement not covered" >        loadQueueStatus();</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        const interval = setInterval(() =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >            loadQueueStatus();</span>
 <span class="cstat-no" title="statement not covered" >        }, 5000);</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        return () =&gt; clearInterval(interval);</span>
 <span class="cstat-no" title="statement not covered" >    }, [currentUser, loadOverview, loadQueueStatus]);</span>
 &nbsp;
@@ -966,9 +966,9 @@
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >            setProcessing(true);</span>
 <span class="cstat-no" title="statement not covered" >            setMessage(null);</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const idToken = await currentUser.getIdToken();</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const response = await fetch(`${API_URL}/admin/bulk-order-processing`, {</span>
 <span class="cstat-no" title="statement not covered" >                method: 'POST',</span>
 <span class="cstat-no" title="statement not covered" >                headers: {</span>
@@ -981,15 +981,15 @@
 <span class="cstat-no" title="statement not covered" >                    days_back: daysBack</span>
 <span class="cstat-no" title="statement not covered" >                })</span>
 <span class="cstat-no" title="statement not covered" >            });</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const data = await response.json();</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            if (data.success) {</span>
 <span class="cstat-no" title="statement not covered" >                setMessage({</span>
 <span class="cstat-no" title="statement not covered" >                    type: 'success',</span>
 <span class="cstat-no" title="statement not covered" >                    text: `${data.message}. Processing ${data.cases_queued} cases in background.`</span>
 <span class="cstat-no" title="statement not covered" >                });</span>
-                
+
                 // Update queue status immediately with response data
 <span class="cstat-no" title="statement not covered" >                if (data.queue_size !== undefined) {</span>
 <span class="cstat-no" title="statement not covered" >                    setQueueStatus({</span>
@@ -999,7 +999,7 @@
 <span class="cstat-no" title="statement not covered" >                        message: `Queue has ${data.queue_size} pending cases`</span>
 <span class="cstat-no" title="statement not covered" >                    });</span>
 <span class="cstat-no" title="statement not covered" >                }</span>
-                
+
                 // Reload data after 2 seconds
 <span class="cstat-no" title="statement not covered" >                setTimeout(() =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >                    loadOverview();</span>
@@ -1094,7 +1094,7 @@
 <span class="cstat-no" title="statement not covered" >                                            &lt;small className="text-muted"&gt;Pending Processing&lt;/small&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;/Col&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                    &lt;/Row&gt;</span>
-                                    
+
 <span class="cstat-no" title="statement not covered" >                                    &lt;Table striped bordered hover className="mb-0"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;thead&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                            &lt;tr&gt;</span>
@@ -1254,7 +1254,7 @@
 <span class="cstat-no" title="statement not covered" >                                    &lt;Col&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;Alert variant="info" className="mb-0"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                            &lt;strong&gt;How it works:&lt;/strong&gt; Bulk processing adds cases to an asynchronous background queue. </span>
-                                            Cases will be processed automatically in the background. The queue status updates every 5 seconds. 
+                                            Cases will be processed automatically in the background. The queue status updates every 5 seconds.
                                             Refresh the overview to see updated statistics after processing completes.
 <span class="cstat-no" title="statement not covered" >                                        &lt;/Alert&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                    &lt;/Col&gt;</span>
@@ -1288,4 +1288,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

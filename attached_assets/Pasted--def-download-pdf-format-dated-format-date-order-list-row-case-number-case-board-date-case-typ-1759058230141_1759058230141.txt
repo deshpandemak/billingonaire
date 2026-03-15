@@ -8,15 +8,15 @@ def download_pdf(format_dated, format_date, order_list, row, case_number, case_b
         count = count + 1
         query_fmt = None
         if case_type in casetype_dict.keys():
-            query_fmt = query.format(case_type = casetype_dict[case_type], 
-                                        case_number = case_number, 
-                                        year = year, seq = str(seq_no), 
+            query_fmt = query.format(case_type = casetype_dict[case_type],
+                                        case_number = case_number,
+                                        year = year, seq = str(seq_no),
                                         current_time = current_time,
                                         stamp_no = 'F' if search_stamp_no else '')
         else:
             print('No config found for Case type ' + case_type)
             break
-            
+
         seq_no = seq_no + 1
         query_utf_8 = query_fmt.encode('utf-8')
         encoded_query = base64.b64encode(query_utf_8)
@@ -46,17 +46,17 @@ def download_pdf(format_dated, format_date, order_list, row, case_number, case_b
                                 for sub in date_replace_pattern:
                                     date_formatted = date_formatted.replace(sub, '')
                                 date_formatted = date_formatted.replace(' ', '')
-                                
+
                                 if 'AUGUST' in date_formatted.upper():
                                     date_formatted = date_formatted
                                 elif 'AUGU' in date_formatted.upper():
                                     date_formatted = date_formatted.upper().replace('AUGU', 'AUGUST')
-                                
+
                                 try:
                                     order_date = None
                                     for format in date_pattern_fmts:
                                         order_date = datetime.strptime(date_formatted, format)
-                                        
+
                                         if order_date == case_board_date:
                                             order_found = True
                                         break

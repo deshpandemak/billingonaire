@@ -1,7 +1,23 @@
+import sys
+import types
 from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
+# Test-only fallback to avoid spaCy import-time crashes in environments where
+# spaCy and pydantic versions are temporarily incompatible.
+if "spacy" not in sys.modules:
+    spacy_stub = types.ModuleType("spacy")
+    spacy_matcher_stub = types.ModuleType("spacy.matcher")
+
+    class Matcher:  # pragma: no cover - test import shim only
+        pass
+
+    spacy_matcher_stub.Matcher = Matcher
+    spacy_stub.matcher = spacy_matcher_stub
+    sys.modules["spacy"] = spacy_stub
+    sys.modules["spacy.matcher"] = spacy_matcher_stub
 
 from billingonaire_backend.AutoOrderManager import AutoOrderManager
 
@@ -361,3 +377,68 @@ def test_process_single_case_analysis_exception_keeps_order(auto_order_manager):
     if update_call_args:
         update_data = update_call_args[0][0]
         assert update_data.get("order_status") == "order_analysis_failed"
+
+
+def test_download_order_for_case_prefers_structured_scraper(auto_order_manager):
+    case_data = {
+        "case_ref": "WP/123/2024",
+        "board_date": "2024-01-15",
+    }
+
+    auto_order_manager.court_scraper.get_case_orders.return_value = {
+        "status": "found",
+        "court_orders": [
+            {
+                "listing_date": "15/01/2024",
+                "download_url": "https://example.com/order-structured.pdf",
+                "order_description": "Order/Judg-1",
+            }
+        ],
+    }
+
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock(
+        return_value={"success": False, "error": "should not be called"}
+    )
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"Content-Type": "application/pdf"}
+        response.content = b"%PDF-1.4 test"
+        mock_get.return_value = response
+
+        result = auto_order_manager._download_order_for_case(
+            case_data, sequence_number=1
+        )
+
+    assert result["success"] is True
+    assert result["source"] == "firecrawl_structured"
+    assert result["order_link"] == "https://example.com/order-structured.pdf"
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
+
+
+def test_download_order_for_case_falls_back_to_legacy_sequence(auto_order_manager):
+    case_data = {
+        "case_ref": "WP/124/2024",
+        "board_date": "2024-01-16",
+    }
+
+    auto_order_manager.court_scraper.get_case_orders.return_value = {
+        "status": "captcha_required",
+        "court_orders": [],
+    }
+
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock(
+        return_value={
+            "success": True,
+            "download_url": "https://example.com/order-legacy.pdf",
+            "pdf_content": b"%PDF-1.4 legacy",
+        }
+    )
+
+    result = auto_order_manager._download_order_for_case(case_data, sequence_number=1)
+
+    assert result["success"] is True
+    assert result["source"] == "bombay_hc_api"
+    assert result["order_link"] == "https://example.com/order-legacy.pdf"
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_called_once()

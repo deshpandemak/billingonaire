@@ -27,20 +27,20 @@ const Layout = ({ children }) => {
       if (user) {
         try {
           console.log('🔐 Layout: User authenticated, fetching profile for:', user.email);
-          
+
           // Get Firebase ID token
           const idToken = await user.getIdToken();
           console.log('✅ Layout: Firebase ID token obtained, length:', idToken?.length || 0);
-          
+
           // Get user profile to check role
           const response = await fetch(getApiUrl('/user/profile'), {
             headers: {
               'Authorization': `Bearer ${idToken}`
             }
           });
-          
+
           console.log('📡 Layout: Profile fetch response status:', response.status);
-          
+
           if (response.ok) {
             const profile = await response.json();
             console.log('✅ Layout: User profile loaded:', profile);
@@ -105,9 +105,9 @@ const Layout = ({ children }) => {
             <Navbar.Toggle aria-controls="landing-navbar-nav" />
             <Navbar.Collapse id="landing-navbar-nav">
               <Nav className="ms-auto">
-                <Button 
-                  as={Link} 
-                  to="/login" 
+                <Button
+                  as={Link}
+                  to="/login"
                   className="btn-professional btn-primary"
                 >
                   Sign In
@@ -134,22 +134,22 @@ const Layout = ({ children }) => {
               <Navbar.Toggle aria-controls="main-navbar-nav" />
               <Navbar.Collapse id="main-navbar-nav">
                 <Nav className="me-auto">
-                  <Nav.Link 
-                    as={Link} 
+                  <Nav.Link
+                    as={Link}
                     to="/dashboard"
                     className={location.pathname === '/dashboard' ? 'active' : ''}
                   >
                     Dashboard
                   </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
+                  <Nav.Link
+                    as={Link}
                     to="/upload"
                     className={location.pathname === '/upload' ? 'active' : ''}
                   >
                     Upload Files
                   </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
+                  <Nav.Link
+                    as={Link}
                     to="/table"
                     className={location.pathname === '/table' || location.pathname === '/order-center' ? 'active' : ''}
                   >
@@ -157,15 +157,15 @@ const Layout = ({ children }) => {
                   </Nav.Link>
                   {userProfile?.role === 'admin' && (
                     <>
-                      <Nav.Link 
-                        as={Link} 
+                      <Nav.Link
+                        as={Link}
                         to="/admin/users"
                         className={location.pathname === '/admin/users' ? 'active' : ''}
                       >
                         User Management
                       </Nav.Link>
-                      <Nav.Link 
-                        as={Link} 
+                      <Nav.Link
+                        as={Link}
                         to="/admin/orders"
                         className={location.pathname === '/admin/orders' ? 'active' : ''}
                       >
@@ -173,15 +173,15 @@ const Layout = ({ children }) => {
                       </Nav.Link>
                     </>
                   )}
-                  <Nav.Link 
-                    as={Link} 
+                  <Nav.Link
+                    as={Link}
                     to="/bills"
                     className={location.pathname === '/bills' ? 'active' : ''}
                   >
                     📊 Bill Generation
                   </Nav.Link>
-                  <Nav.Link 
-                    as={Link} 
+                  <Nav.Link
+                    as={Link}
                     to="/profile"
                     className={location.pathname === '/profile' ? 'active' : ''}
                   >
@@ -192,7 +192,7 @@ const Layout = ({ children }) => {
                   <span style={{ color: 'var(--gray-600)', fontSize: '0.875rem' }}>
                     {user.email}
                   </span>
-                  <Button 
+                  <Button
                     className="btn-professional btn-secondary"
                     onClick={handleLogout}
                   >
@@ -211,18 +211,18 @@ const Layout = ({ children }) => {
       </main>
 
       {/* Footer */}
-      <footer style={{ 
-        backgroundColor: 'var(--white)', 
+      <footer style={{
+        backgroundColor: 'var(--white)',
         borderTop: '1px solid var(--gray-200)',
         padding: '1.5rem 0',
         marginTop: 'auto'
       }}>
         <Container>
           <div className="text-center">
-            <p style={{ 
-              color: 'var(--gray-600)', 
-              margin: 0, 
-              fontSize: '0.875rem' 
+            <p style={{
+              color: 'var(--gray-600)',
+              margin: 0,
+              fontSize: '0.875rem'
             }}>
               &copy; {new Date().getFullYear()} Billingonaire. Professional Legal Practice Management.
             </p>

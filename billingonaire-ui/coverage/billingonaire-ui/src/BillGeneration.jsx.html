@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> BillGeneration.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/646</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/646</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -1649,7 +1649,7 @@
 <span class="cstat-no" title="statement not covered" >        const today = new Date();</span>
 <span class="cstat-no" title="statement not covered" >        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);</span>
 <span class="cstat-no" title="statement not covered" >        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setDateRange({</span>
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(startOfMonth),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(endOfMonth)</span>
@@ -1693,7 +1693,7 @@
 <span class="cstat-no" title="statement not covered" >    const getDatePresets = () =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        const today = new Date();</span>
 <span class="cstat-no" title="statement not covered" >        const presets = {};</span>
-        
+
         // This Week
 <span class="cstat-no" title="statement not covered" >        const startOfWeek = new Date(today);</span>
 <span class="cstat-no" title="statement not covered" >        startOfWeek.setDate(today.getDate() - today.getDay());</span>
@@ -1703,7 +1703,7 @@
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(startOfWeek),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(endOfWeek)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
-        
+
         // Last Week
 <span class="cstat-no" title="statement not covered" >        const lastWeekStart = new Date(startOfWeek);</span>
 <span class="cstat-no" title="statement not covered" >        lastWeekStart.setDate(startOfWeek.getDate() - 7);</span>
@@ -1713,7 +1713,7 @@
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(lastWeekStart),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(lastWeekEnd)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
-        
+
         // This Month
 <span class="cstat-no" title="statement not covered" >        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);</span>
 <span class="cstat-no" title="statement not covered" >        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);</span>
@@ -1721,7 +1721,7 @@
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(startOfMonth),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(endOfMonth)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
-        
+
         // Last Month
 <span class="cstat-no" title="statement not covered" >        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);</span>
 <span class="cstat-no" title="statement not covered" >        const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);</span>
@@ -1729,7 +1729,7 @@
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(lastMonth),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(lastMonthEnd)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
-        
+
         // This Quarter
 <span class="cstat-no" title="statement not covered" >        const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);</span>
 <span class="cstat-no" title="statement not covered" >        const quarterEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);</span>
@@ -1737,7 +1737,7 @@
 <span class="cstat-no" title="statement not covered" >            startDate: formatDateSafe(quarterStart),</span>
 <span class="cstat-no" title="statement not covered" >            endDate: formatDateSafe(quarterEnd)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        return presets;</span>
 <span class="cstat-no" title="statement not covered" >    };</span>
 &nbsp;
@@ -1761,24 +1761,24 @@
             // Status updates for user feedback
 <span class="cstat-no" title="statement not covered" >            setProcessingProgress(20);</span>
 <span class="cstat-no" title="statement not covered" >            setProcessingStatus('Fetching case data...');</span>
-            
+
             // Build query with optional user_name parameter for admin
 <span class="cstat-no" title="statement not covered" >            let queryUrl = `/bills/generate?start_date=${dateRange.startDate}&amp;end_date=${dateRange.endDate}`;</span>
 <span class="cstat-no" title="statement not covered" >            if (isAdmin &amp;&amp; selectedUser) {</span>
 <span class="cstat-no" title="statement not covered" >                queryUrl += `&amp;user_name=${encodeURIComponent(selectedUser)}`;</span>
 <span class="cstat-no" title="statement not covered" >            }</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            const response = await authenticatedFetchJSON(queryUrl);</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            setProcessingProgress(60);</span>
 <span class="cstat-no" title="statement not covered" >            setProcessingStatus('Processing entries...');</span>
-            
+
             // Brief delay to show status transition
 <span class="cstat-no" title="statement not covered" >            await new Promise(resolve =&gt; setTimeout(resolve, 300));</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            setProcessingProgress(100);</span>
 <span class="cstat-no" title="statement not covered" >            setProcessingStatus('Bill generation complete!');</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            setBillData(response);</span>
 <span class="cstat-no" title="statement not covered" >        } catch (err) {</span>
 <span class="cstat-no" title="statement not covered" >            setError(err.message || 'Failed to generate bill data');</span>
@@ -1809,20 +1809,20 @@
 <span class="cstat-no" title="statement not covered" >            results: getResultFromFee(feeAmount)</span>
 <span class="cstat-no" title="statement not covered" >        };</span>
 <span class="cstat-no" title="statement not covered" >        updatedEntries[editingRow] = updatedEntry;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setBillData(prev =&gt; ({</span>
 <span class="cstat-no" title="statement not covered" >            ...prev,</span>
 <span class="cstat-no" title="statement not covered" >            bill_entries: updatedEntries,</span>
 <span class="cstat-no" title="statement not covered" >            total_fees: updatedEntries.reduce((sum, entry) =&gt; sum + Number(entry.fees_rs || 0), 0)</span>
 <span class="cstat-no" title="statement not covered" >        }));</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setEditingRow(null);</span>
 <span class="cstat-no" title="statement not covered" >        setTempEditData({});</span>
 <span class="cstat-no" title="statement not covered" >    };</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    const deleteRow = (index) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        const updatedEntries = billData.bill_entries.filter((_, i) =&gt; i !== index);</span>
-        
+
         // Clear selection for deleted row and adjust indices
 <span class="cstat-no" title="statement not covered" >        const newSelected = new Set();</span>
 <span class="cstat-no" title="statement not covered" >        selectedRows.forEach(selectedIndex =&gt; {</span>
@@ -1833,7 +1833,7 @@
 <span class="cstat-no" title="statement not covered" >            }</span>
 <span class="cstat-no" title="statement not covered" >        });</span>
 <span class="cstat-no" title="statement not covered" >        setSelectedRows(newSelected);</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setBillData(prev =&gt; ({</span>
 <span class="cstat-no" title="statement not covered" >            ...prev,</span>
 <span class="cstat-no" title="statement not covered" >            bill_entries: updatedEntries,</span>
@@ -1884,11 +1884,11 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    const applyBulkFeeUpdate = () =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        if (!bulkFeeValue || selectedRows.size === 0) return;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        const updatedEntries = [...billData.bill_entries];</span>
 <span class="cstat-no" title="statement not covered" >        const feeAmount = Number(bulkFeeValue) || 0;</span>
 <span class="cstat-no" title="statement not covered" >        const resultText = getResultFromFee(feeAmount);</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        selectedRows.forEach(index =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >            updatedEntries[index] = {</span>
 <span class="cstat-no" title="statement not covered" >                ...updatedEntries[index],</span>
@@ -1896,13 +1896,13 @@
 <span class="cstat-no" title="statement not covered" >                results: resultText</span>
 <span class="cstat-no" title="statement not covered" >            };</span>
 <span class="cstat-no" title="statement not covered" >        });</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setBillData(prev =&gt; ({</span>
 <span class="cstat-no" title="statement not covered" >            ...prev,</span>
 <span class="cstat-no" title="statement not covered" >            bill_entries: updatedEntries,</span>
 <span class="cstat-no" title="statement not covered" >            total_fees: updatedEntries.reduce((sum, entry) =&gt; sum + Number(entry.fees_rs || 0), 0)</span>
 <span class="cstat-no" title="statement not covered" >        }));</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        setSelectedRows(new Set());</span>
 <span class="cstat-no" title="statement not covered" >        setBulkFeeValue('');</span>
 <span class="cstat-no" title="statement not covered" >        setBulkEditMode(false);</span>
@@ -1910,10 +1910,10 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    const exportMultipleFormats = async () =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >        if (!billData?.bill_entries?.length) return;</span>
-        
+
         // Export CSV
 <span class="cstat-no" title="statement not covered" >        exportToExcel();</span>
-        
+
         // Also trigger backend Excel export if available
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >            const response = await authenticatedFetchJSON(`/bills/export/excel?start_date=${dateRange.startDate}&amp;end_date=${dateRange.endDate}`);</span>
@@ -1968,7 +1968,7 @@
         // Create CSV content with proper escaping
 <span class="cstat-no" title="statement not covered" >        const headers = ['DATE', 'CASE DETAIL', 'PARTIES NAME', 'RESULTS', 'FEES (RS.)'];</span>
 <span class="cstat-no" title="statement not covered" >        const totalFees = billData.bill_entries.reduce((sum, entry) =&gt; sum + Number(entry.fees_rs || 0), 0);</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        const csvContent = [</span>
 <span class="cstat-no" title="statement not covered" >            headers.map(escapeCSVField).join(','),</span>
 <span class="cstat-no" title="statement not covered" >            ...billData.bill_entries.map(entry =&gt; [</span>
@@ -2416,4 +2416,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

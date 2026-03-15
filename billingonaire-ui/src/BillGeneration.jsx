@@ -31,7 +31,7 @@ const BillGeneration = () => {
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        
+
         setDateRange({
             startDate: formatDateSafe(startOfMonth),
             endDate: formatDateSafe(endOfMonth)
@@ -58,7 +58,7 @@ const BillGeneration = () => {
     const checkAdminAndFetchUsers = async () => {
         try {
             console.log('🔍 Attempting to fetch active users from /admin/active-users...');
-            
+
             // Ensure Firebase auth token is ready
             const currentUser = auth.currentUser;
             if (!currentUser) {
@@ -67,11 +67,11 @@ const BillGeneration = () => {
                 setUserList([]);
                 return;
             }
-            
+
             // Verify we can get an ID token
             const token = await currentUser.getIdToken();
             console.log('✅ Firebase ID token obtained, length:', token?.length || 0);
-            
+
             // Fetch active user names list (will work only if user is admin)
             const response = await authenticatedFetchJSON('/admin/active-users');
             console.log('✅ Admin active users response:', response);
@@ -109,7 +109,7 @@ const BillGeneration = () => {
     const getDatePresets = () => {
         const today = new Date();
         const presets = {};
-        
+
         // This Week
         const startOfWeek = new Date(today);
         startOfWeek.setDate(today.getDate() - today.getDay());
@@ -119,7 +119,7 @@ const BillGeneration = () => {
             startDate: formatDateSafe(startOfWeek),
             endDate: formatDateSafe(endOfWeek)
         };
-        
+
         // Last Week
         const lastWeekStart = new Date(startOfWeek);
         lastWeekStart.setDate(startOfWeek.getDate() - 7);
@@ -129,7 +129,7 @@ const BillGeneration = () => {
             startDate: formatDateSafe(lastWeekStart),
             endDate: formatDateSafe(lastWeekEnd)
         };
-        
+
         // This Month
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -137,7 +137,7 @@ const BillGeneration = () => {
             startDate: formatDateSafe(startOfMonth),
             endDate: formatDateSafe(endOfMonth)
         };
-        
+
         // Last Month
         const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
         const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
@@ -145,7 +145,7 @@ const BillGeneration = () => {
             startDate: formatDateSafe(lastMonth),
             endDate: formatDateSafe(lastMonthEnd)
         };
-        
+
         // This Quarter
         const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
         const quarterEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);
@@ -153,7 +153,7 @@ const BillGeneration = () => {
             startDate: formatDateSafe(quarterStart),
             endDate: formatDateSafe(quarterEnd)
         };
-        
+
         return presets;
     };
 
@@ -177,24 +177,24 @@ const BillGeneration = () => {
             // Status updates for user feedback
             setProcessingProgress(20);
             setProcessingStatus('Fetching case data...');
-            
+
             // Build query with optional user_name parameter for admin
             let queryUrl = `/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
             if (isAdmin && selectedUser) {
                 queryUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
-            
+
             const response = await authenticatedFetchJSON(queryUrl);
-            
+
             setProcessingProgress(60);
             setProcessingStatus('Processing entries...');
-            
+
             // Brief delay to show status transition
             await new Promise(resolve => setTimeout(resolve, 300));
-            
+
             setProcessingProgress(100);
             setProcessingStatus('Bill generation complete!');
-            
+
             setBillData(response);
         } catch (err) {
             // Gracefully handle "No matching AGP" errors by showing empty bill
@@ -239,20 +239,20 @@ const BillGeneration = () => {
             results: getResultFromFee(feeAmount)
         };
         updatedEntries[editingRow] = updatedEntry;
-        
+
         setBillData(prev => ({
             ...prev,
             bill_entries: updatedEntries,
             total_fees: updatedEntries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0)
         }));
-        
+
         setEditingRow(null);
         setTempEditData({});
     };
 
     const deleteRow = (index) => {
         const updatedEntries = billData.bill_entries.filter((_, i) => i !== index);
-        
+
         // Clear selection for deleted row and adjust indices
         const newSelected = new Set();
         selectedRows.forEach(selectedIndex => {
@@ -263,7 +263,7 @@ const BillGeneration = () => {
             }
         });
         setSelectedRows(newSelected);
-        
+
         setBillData(prev => ({
             ...prev,
             bill_entries: updatedEntries,
@@ -317,11 +317,11 @@ const BillGeneration = () => {
 
     const applyBulkFeeUpdate = () => {
         if (!bulkFeeValue || selectedRows.size === 0) return;
-        
+
         const updatedEntries = [...billData.bill_entries];
         const feeAmount = Number(bulkFeeValue) || 0;
         const resultText = getResultFromFee(feeAmount);
-        
+
         selectedRows.forEach(index => {
             updatedEntries[index] = {
                 ...updatedEntries[index],
@@ -329,13 +329,13 @@ const BillGeneration = () => {
                 results: resultText
             };
         });
-        
+
         setBillData(prev => ({
             ...prev,
             bill_entries: updatedEntries,
             total_fees: updatedEntries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0)
         }));
-        
+
         setSelectedRows(new Set());
         setBulkFeeValue('');
         setBulkEditMode(false);
@@ -343,33 +343,33 @@ const BillGeneration = () => {
 
     const exportMultipleFormats = async () => {
         if (!billData?.bill_entries?.length) return;
-        
+
         // Trigger backend Excel export (proper AGP format)
         try {
             // Build URL with parameters
             let excelUrl = `/bills/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
-            
+
             // Add user_name parameter if admin selected a user
             if (selectedUser) {
                 excelUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
-            
+
             // Get auth token from Firebase
             const currentUser = auth.currentUser;
             if (!currentUser) {
                 alert('Please log in to export bills');
                 return;
             }
-            
+
             const token = await currentUser.getIdToken();
-            
+
             // Download Excel file using fetch with auth
             const response = await fetch(`/api${excelUrl}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
             });
-            
+
             if (response.ok) {
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
@@ -419,7 +419,7 @@ const BillGeneration = () => {
 💰 Total Fees: ₹${response.total_fees.toLocaleString()}
 📊 Total Entries: ${response.total_entries}
             `.trim();
-            
+
             alert(successMessage);
             setShowSaveModal(false);
         } catch (err) {
@@ -445,7 +445,7 @@ const BillGeneration = () => {
         // Create CSV content with proper escaping (matching Excel format)
         const headers = ['SR. NO.', 'DATE', 'CASE TYPE', 'CASE NO', 'CASE YEAR', 'RESULTS', 'PARTIES NAME', 'FEES (RS.)'];
         const totalFees = billData.bill_entries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0);
-        
+
         const csvContent = [
             headers.map(escapeCSVField).join(','),
             ...billData.bill_entries.map((entry, index) => [
@@ -579,8 +579,8 @@ const BillGeneration = () => {
 
                             <Row className="mb-4">
                                 <Col md={3} className="d-flex align-items-end">
-                                    <Button 
-                                        variant="success" 
+                                    <Button
+                                        variant="success"
                                         onClick={generateBillData}
                                         disabled={loading}
                                         className="w-100"
@@ -619,12 +619,12 @@ const BillGeneration = () => {
                                             <span className="badge bg-primary">{processingProgress}%</span>
                                         </div>
                                         <div className="progress">
-                                            <div 
-                                                className="progress-bar" 
-                                                role="progressbar" 
+                                            <div
+                                                className="progress-bar"
+                                                role="progressbar"
                                                 style={{width: `${processingProgress}%`}}
-                                                aria-valuenow={processingProgress} 
-                                                aria-valuemin="0" 
+                                                aria-valuenow={processingProgress}
+                                                aria-valuemin="0"
                                                 aria-valuemax="100"
                                             ></div>
                                         </div>
@@ -642,7 +642,7 @@ const BillGeneration = () => {
                                         <div>
                                             <h5>Bill Entries</h5>
                                             <p className="text-muted mb-0">
-                                                Total Entries: {billData.total_entries} | 
+                                                Total Entries: {billData.total_entries} |
                                                 Total Fees: ₹{billData.total_fees?.toLocaleString() || 0}
                                             </p>
                                         </div>
@@ -697,9 +697,9 @@ const BillGeneration = () => {
                                                         </Form.Group>
                                                     </Col>
                                                     <Col md={4}>
-                                                        <Button 
-                                                            variant="warning" 
-                                                            size="sm" 
+                                                        <Button
+                                                            variant="warning"
+                                                            size="sm"
                                                             onClick={applyBulkFeeUpdate}
                                                             disabled={!bulkFeeValue || selectedRows.size === 0}
                                                             className="w-100"
@@ -825,7 +825,7 @@ const BillGeneration = () => {
                                                                     onChange={(e) => {
                                                                         const fee = parseInt(e.target.value);
                                                                         setTempEditData({
-                                                                            ...tempEditData, 
+                                                                            ...tempEditData,
                                                                             fees_rs: fee,
                                                                             results: getResultFromFee(fee)
                                                                         });

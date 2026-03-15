@@ -10,7 +10,7 @@ Billingonaire is a professional legal billing management system designed for the
 - **Frontend**: React 19 + Vite + React Bootstrap
 - **Database**: Firebase Firestore
 - **Authentication**: Firebase Auth
-- **Deployment**: 
+- **Deployment**:
   - Backend: Google Cloud Run
   - Frontend: Firebase Hosting
 - **CI/CD**: GitHub Actions

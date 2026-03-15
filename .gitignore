@@ -16,3 +16,5 @@ firebase/firebasetoken
 *.json
 billingonaire_backend/.coverage
 .venv-1
+billingonaire-ui/.svelte-kit
+billingonaire-ui/dist

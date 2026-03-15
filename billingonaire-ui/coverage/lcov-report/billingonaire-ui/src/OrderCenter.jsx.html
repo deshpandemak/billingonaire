@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> OrderCenter.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/915</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/915</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -2143,19 +2143,19 @@
 <span class="cstat-no" title="statement not covered" >    const [loading, setLoading] = useState(false);</span>
 <span class="cstat-no" title="statement not covered" >    const [error, setError] = useState('');</span>
 <span class="cstat-no" title="statement not covered" >    const [success, setSuccess] = useState('');</span>
-    
+
     // Overview Data
 <span class="cstat-no" title="statement not covered" >    const [overviewStats, setOverviewStats] = useState(null);</span>
 <span class="cstat-no" title="statement not covered" >    const [queueStatus, setQueueStatus] = useState(null);</span>
 <span class="cstat-no" title="statement not covered" >    const [recentActivity, setRecentActivity] = useState([]);</span>
-    
+
     // Manual Management Data
 <span class="cstat-no" title="statement not covered" >    const [casesWithoutOrders, setCasesWithoutOrders] = useState([]);</span>
 <span class="cstat-no" title="statement not covered" >    const [_selectedCase, setSelectedCase] = useState(null);</span>
 <span class="cstat-no" title="statement not covered" >    const [_orderStatus, _setOrderStatus] = useState('not_present');</span>
 <span class="cstat-no" title="statement not covered" >    const [_orderLink, _setOrderLink] = useState('');</span>
 <span class="cstat-no" title="statement not covered" >    const [_orderText, _setOrderText] = useState('');</span>
-    
+
     // Auto Processing Data
 <span class="cstat-no" title="statement not covered" >    const [autoProcessing, setAutoProcessing] = useState(false);</span>
 <span class="cstat-no" title="statement not covered" >    const [processResults, setProcessResults] = useState(null);</span>
@@ -2177,7 +2177,7 @@
 <span class="cstat-no" title="statement not covered" >        order_category: '',</span>
 <span class="cstat-no" title="statement not covered" >        limit: 100</span>
 <span class="cstat-no" title="statement not covered" >    });</span>
-    
+
     // Analysis Data
 <span class="cstat-no" title="statement not covered" >    const [analysisHistory, setAnalysisHistory] = useState([]);</span>
 <span class="cstat-no" title="statement not covered" >    const [analysisStats, setAnalysisStats] = useState(null);</span>
@@ -2214,7 +2214,7 @@
 <span class="cstat-no" title="statement not covered" >                authenticatedFetchJSON('/orders/queue-status').catch(() =&gt; ({ active: false, pending: 0 })),</span>
 <span class="cstat-no" title="statement not covered" >                authenticatedFetchJSON('/orders/recent-activity?limit=10').catch(() =&gt; [])</span>
 <span class="cstat-no" title="statement not covered" >            ]);</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            setOverviewStats(stats);</span>
 <span class="cstat-no" title="statement not covered" >            setQueueStatus(queue);</span>
 <span class="cstat-no" title="statement not covered" >            setRecentActivity(activity);</span>
@@ -2250,7 +2250,7 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >        try {</span>
 <span class="cstat-no" title="statement not covered" >            const params = new URLSearchParams();</span>
-            
+
 <span class="cstat-no" title="statement not covered" >            if (searchFilters.petitioner_search) params.append('petitioner_search', searchFilters.petitioner_search);</span>
 <span class="cstat-no" title="statement not covered" >            if (searchFilters.respondent_search) params.append('respondent_search', searchFilters.respondent_search);</span>
 <span class="cstat-no" title="statement not covered" >            if (searchFilters.case_type) params.append('case_type', searchFilters.case_type);</span>
@@ -2317,13 +2317,13 @@
 <span class="cstat-no" title="statement not covered" >            const result = await response.json();</span>
 <span class="cstat-no" title="statement not covered" >            setAnalysisResult(result);</span>
 <span class="cstat-no" title="statement not covered" >            setSuccess(`Successfully analyzed ${result.filename}`);</span>
-            
+
             // Refresh history and stats
 <span class="cstat-no" title="statement not covered" >            loadAnalysisData();</span>
-            
+
             // Switch to results tab
 <span class="cstat-no" title="statement not covered" >            setAnalysisTab('results');</span>
-            
+
 <span class="cstat-no" title="statement not covered" >        } catch (e) {</span>
 <span class="cstat-no" title="statement not covered" >            setError(`Analysis failed: ${e.message}`);</span>
 <span class="cstat-no" title="statement not covered" >        } finally {</span>
@@ -2439,7 +2439,7 @@
                                     )}
 <span class="cstat-no" title="statement not covered" >                                &lt;/Button&gt;</span>
 <span class="cstat-no" title="statement not covered" >                            &lt;/div&gt;</span>
-                            
+
 <span class="cstat-no" title="statement not covered" >                            {processResults &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                                &lt;Alert variant="info" className="mb-0"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                    &lt;strong&gt;Last Processing Result:&lt;/strong&gt;</span>
@@ -2831,7 +2831,7 @@
                                         Upload a court order PDF for AI-powered analysis and categorization
 <span class="cstat-no" title="statement not covered" >                                    &lt;/Form.Text&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                &lt;/Form.Group&gt;</span>
-                                
+
 <span class="cstat-no" title="statement not covered" >                                {selectedFile &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                                    &lt;Alert variant="info"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;strong&gt;Selected file:&lt;/strong&gt; {selectedFile.name}</span>
@@ -3124,14 +3124,14 @@
 <span class="cstat-no" title="statement not covered" >                                        &lt;/Nav.Link&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                    &lt;/Nav.Item&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                &lt;/Nav&gt;</span>
-                                
+
 <span class="cstat-no" title="statement not covered" >                                &lt;div className="p-4"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                    {error &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;Alert variant="danger" dismissible onClose={() =&gt; setError('')}&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                            {error}</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;/Alert&gt;</span>
                                     )}
-                                    
+
 <span class="cstat-no" title="statement not covered" >                                    {success &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                                        &lt;Alert variant="success" dismissible onClose={() =&gt; setSuccess('')}&gt;</span>
 <span class="cstat-no" title="statement not covered" >                                            {success}</span>
@@ -3184,4 +3184,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

@@ -15,7 +15,7 @@ const Login = () => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
+
     try {
       await signInWithEmailAndPassword(auth, email, password);
       navigate('/dashboard');
@@ -33,7 +33,7 @@ const Login = () => {
           <h1 className="login-title">Welcome Back</h1>
           <p className="login-subtitle">Sign in to your Billingonaire account</p>
         </div>
-        
+
         <form className="login-form" onSubmit={handleLogin}>
           <div className="form-group">
             <label className="form-label" htmlFor="email">
@@ -51,7 +51,7 @@ const Login = () => {
               disabled={loading}
             />
           </div>
-          
+
           <div className="form-group">
             <label className="form-label" htmlFor="password">
               Password
@@ -67,15 +67,15 @@ const Login = () => {
               disabled={loading}
             />
           </div>
-          
+
           {error && (
             <div className="alert-error">
               <strong>Error:</strong> {error}
             </div>
           )}
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             className="btn-professional btn-primary w-100"
             disabled={loading}
             style={{ width: '100%', marginBottom: '1rem' }}
@@ -89,12 +89,12 @@ const Login = () => {
               'Sign In'
             )}
           </button>
-          
+
           <div className="text-center" style={{ marginTop: '1.5rem' }}>
-            <Link 
-              to="/" 
-              style={{ 
-                color: 'var(--gray-600)', 
+            <Link
+              to="/"
+              style={{
+                color: 'var(--gray-600)',
                 textDecoration: 'none',
                 fontSize: '0.875rem'
               }}

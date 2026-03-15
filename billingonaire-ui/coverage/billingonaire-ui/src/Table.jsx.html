@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> Table.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/853</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/853</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -2093,10 +2093,10 @@
 <span class="cstat-no" title="statement not covered" >    const today = new Date();</span>
 <span class="cstat-no" title="statement not covered" >    const threeMonthsAgo = new Date();</span>
 <span class="cstat-no" title="statement not covered" >    threeMonthsAgo.setMonth(today.getMonth() - 3);</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    const endDate = today.toISOString().split('T')[0];</span>
 <span class="cstat-no" title="statement not covered" >    const startDate = threeMonthsAgo.toISOString().split('T')[0];</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    const initialCriteria = { </span>
 <span class="cstat-no" title="statement not covered" >      startDate, </span>
 <span class="cstat-no" title="statement not covered" >      endDate, </span>
@@ -2108,7 +2108,7 @@
 <span class="cstat-no" title="statement not covered" >      orderStatus: '',</span>
 <span class="cstat-no" title="statement not covered" >      orderCategory: ''</span>
 <span class="cstat-no" title="statement not covered" >    };</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    setSearchCriteria(initialCriteria);</span>
 <span class="cstat-no" title="statement not covered" >    setAppliedCriteria(initialCriteria);</span>
 <span class="cstat-no" title="statement not covered" >    fetchData(initialCriteria);</span>
@@ -2123,10 +2123,10 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    setIsSearching(true);</span>
 <span class="cstat-no" title="statement not covered" >    setSearchError('');</span>
-    
+
     // Store the criteria that are actually being applied
 <span class="cstat-no" title="statement not covered" >    setAppliedCriteria({ ...criteria });</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    try {</span>
 <span class="cstat-no" title="statement not covered" >      const result = await authenticatedFetchJSON('/get-data', {</span>
 <span class="cstat-no" title="statement not covered" >        method: 'POST',</span>
@@ -2227,7 +2227,7 @@
 <span class="cstat-no" title="statement not covered" >            if (names.length &gt; 0) return names.join(', ');</span>
 <span class="cstat-no" title="statement not covered" >          }</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
         // Fallback to order_petitioners (ML extracted from order text)
 <span class="cstat-no" title="statement not covered" >        if (params.data?.order_petitioners &amp;&amp; Array.isArray(params.data.order_petitioners)) {</span>
 <span class="cstat-no" title="statement not covered" >          const petitioners = params.data.order_petitioners;</span>
@@ -2239,7 +2239,7 @@
 <span class="cstat-no" title="statement not covered" >            if (names.length &gt; 0) return names.join(', ');</span>
 <span class="cstat-no" title="statement not covered" >          }</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        return '';</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
 <span class="cstat-no" title="statement not covered" >    },</span>
@@ -2262,7 +2262,7 @@
 <span class="cstat-no" title="statement not covered" >            if (names.length &gt; 0) return names.join(', ');</span>
 <span class="cstat-no" title="statement not covered" >          }</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
         // Fallback to order_respondents (ML extracted from order text)
 <span class="cstat-no" title="statement not covered" >        if (params.data?.order_respondents &amp;&amp; Array.isArray(params.data.order_respondents)) {</span>
 <span class="cstat-no" title="statement not covered" >          const respondents = params.data.order_respondents;</span>
@@ -2274,7 +2274,7 @@
 <span class="cstat-no" title="statement not covered" >            if (names.length &gt; 0) return names.join(', ');</span>
 <span class="cstat-no" title="statement not covered" >          }</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        return '';</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
 <span class="cstat-no" title="statement not covered" >    },</span>
@@ -2288,17 +2288,17 @@
 <span class="cstat-no" title="statement not covered" >      valueGetter: params =&gt; {</span>
         // Show all AGP names from board data
 <span class="cstat-no" title="statement not covered" >        const agpNames = [];</span>
-        
+
         // Primary AGP
 <span class="cstat-no" title="statement not covered" >        if (params.data?.respondent_lawyer) {</span>
 <span class="cstat-no" title="statement not covered" >          agpNames.push(params.data.respondent_lawyer);</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
         // Additional AGPs
 <span class="cstat-no" title="statement not covered" >        if (params.data?.additional_respondent_lawyers) {</span>
 <span class="cstat-no" title="statement not covered" >          agpNames.push(params.data.additional_respondent_lawyers);</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        return agpNames.filter(n =&gt; n).join(', ');</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
 <span class="cstat-no" title="statement not covered" >    },</span>
@@ -2346,7 +2346,7 @@
 <span class="cstat-no" title="statement not covered" >  const CourtOrderRenderer = (props) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >    const { data, value } = props;</span>
 <span class="cstat-no" title="statement not covered" >    const orderLink = data?.order_link;</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    if (orderLink) {</span>
 <span class="cstat-no" title="statement not covered" >      return (</span>
 <span class="cstat-no" title="statement not covered" >        &lt;div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}&gt;</span>
@@ -2367,7 +2367,7 @@
 <span class="cstat-no" title="statement not covered" >        &lt;/div&gt;</span>
       );
 <span class="cstat-no" title="statement not covered" >    }</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    return &lt;span&gt;{value || '-'}&lt;/span&gt;;</span>
 <span class="cstat-no" title="statement not covered" >  };</span>
 &nbsp;
@@ -2378,7 +2378,7 @@
 <span class="cstat-no" title="statement not covered" >    const caseId = data?.id;</span>
 <span class="cstat-no" title="statement not covered" >    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;</span>
 <span class="cstat-no" title="statement not covered" >    const isProcessing = processingOrders.has(caseId);</span>
-    
+
     // Define status display properties
 <span class="cstat-no" title="statement not covered" >    const statusConfig = {</span>
 <span class="cstat-no" title="statement not covered" >      'not_linked': { label: 'Not Linked', color: '#6c757d' },</span>
@@ -2387,9 +2387,9 @@
 <span class="cstat-no" title="statement not covered" >      'order_failed': { label: 'Order Failed', color: '#dc3545' },</span>
 <span class="cstat-no" title="statement not covered" >      'order_analysis_failed': { label: 'Analysis Failed', color: '#ffc107' }</span>
 <span class="cstat-no" title="statement not covered" >    };</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    const config = statusConfig[orderStatus] || statusConfig['not_linked'];</span>
-    
+
     // For order_linked status, show analyze button
 <span class="cstat-no" title="statement not covered" >    if (orderStatus === 'order_linked') {</span>
 <span class="cstat-no" title="statement not covered" >      return (</span>
@@ -2406,7 +2406,7 @@
 <span class="cstat-no" title="statement not covered" >        &lt;/div&gt;</span>
       );
 <span class="cstat-no" title="statement not covered" >    }</span>
-    
+
 <span class="cstat-no" title="statement not covered" >    return &lt;span className="badge" style={{ backgroundColor: config.color, color: 'white' }}&gt;{config.label}&lt;/span&gt;;</span>
 <span class="cstat-no" title="statement not covered" >  };</span>
 &nbsp;
@@ -2430,18 +2430,18 @@
         // Download successful and we have the order link
 <span class="cstat-no" title="statement not covered" >        const hasAnalysis = response.analysis_success;</span>
 <span class="cstat-no" title="statement not covered" >        const category = response.analysis_data?.order_category;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        let message = `✅ Order downloaded successfully for ${caseRef}!\n\n`;</span>
 <span class="cstat-no" title="statement not covered" >        message += `📄 Order Link: ${response.order_link}\n`;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        if (hasAnalysis &amp;&amp; category) {</span>
 <span class="cstat-no" title="statement not covered" >          message += `\n🤖 Analysis Complete:\n`;</span>
 <span class="cstat-no" title="statement not covered" >          message += `Category: ${category}\n`;</span>
 <span class="cstat-no" title="statement not covered" >          message += `Confidence: ${(response.analysis_data?.order_category_confidence || 0) * 100}%`;</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        alert(message);</span>
-        
+
         // Refresh the data to show updated order status
 <span class="cstat-no" title="statement not covered" >        await fetchData();</span>
 <span class="cstat-no" title="statement not covered" >      } else if (response.error) {</span>
@@ -2475,9 +2475,9 @@
 <span class="cstat-no" title="statement not covered" >        const date = response.data?.order_date;</span>
 <span class="cstat-no" title="statement not covered" >        const petitioners = response.data?.order_petitioners;</span>
 <span class="cstat-no" title="statement not covered" >        const respondents = response.data?.order_respondents;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        if (category) {</span>
 <span class="cstat-no" title="statement not covered" >          message += `📊 Category: ${category}\n`;</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
@@ -2490,9 +2490,9 @@
 <span class="cstat-no" title="statement not covered" >        if (respondents &amp;&amp; respondents.length &gt; 0) {</span>
 <span class="cstat-no" title="statement not covered" >          message += `👥 Respondents: ${respondents.length} found\n`;</span>
 <span class="cstat-no" title="statement not covered" >        }</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        alert(message);</span>
-        
+
         // Refresh the data to show analysis results
 <span class="cstat-no" title="statement not covered" >        await fetchData();</span>
 <span class="cstat-no" title="statement not covered" >      } else {</span>
@@ -2531,10 +2531,10 @@
 <span class="cstat-no" title="statement not covered" >    for (const row of selectedRows) {</span>
 <span class="cstat-no" title="statement not covered" >      const caseId = row.id;</span>
 <span class="cstat-no" title="statement not covered" >      const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      try {</span>
 <span class="cstat-no" title="statement not covered" >        setProcessingOrders(prev =&gt; new Set(prev).add(caseId));</span>
-        
+
 <span class="cstat-no" title="statement not covered" >        const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {</span>
 <span class="cstat-no" title="statement not covered" >          method: 'POST',</span>
 <span class="cstat-no" title="statement not covered" >          headers: { 'Content-Type': 'application/json' },</span>
@@ -2564,7 +2564,7 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    alert(`✅ Batch download complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);</span>
 <span class="cstat-no" title="statement not covered" >    await fetchData();</span>
-    
+
     // Clear selection
 <span class="cstat-no" title="statement not covered" >    if (gridApi) {</span>
 <span class="cstat-no" title="statement not covered" >      gridApi.deselectAll();</span>
@@ -2586,7 +2586,7 @@
 <span class="cstat-no" title="statement not covered" >    for (const row of selectedRows) {</span>
 <span class="cstat-no" title="statement not covered" >      const caseId = row.id;</span>
 <span class="cstat-no" title="statement not covered" >      const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      try {</span>
 <span class="cstat-no" title="statement not covered" >        await authenticatedFetchJSON(`/delete_case/${caseId}`, {</span>
 <span class="cstat-no" title="statement not covered" >          method: 'DELETE'</span>
@@ -2600,7 +2600,7 @@
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    alert(`✅ Batch delete complete!\n\nDeleted: ${successCount}\nFailed: ${failCount}`);</span>
 <span class="cstat-no" title="statement not covered" >    await fetchData();</span>
-    
+
     // Clear selection
 <span class="cstat-no" title="statement not covered" >    if (gridApi) {</span>
 <span class="cstat-no" title="statement not covered" >      gridApi.deselectAll();</span>
@@ -2789,7 +2789,7 @@
                     Clear
 <span class="cstat-no" title="statement not covered" >                  &lt;/button&gt;</span>
 <span class="cstat-no" title="statement not covered" >                &lt;/div&gt;</span>
-                
+
                 {/* Progress Bar */}
 <span class="cstat-no" title="statement not covered" >                {isSearching &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div style={{ marginTop: 'var(--spacing-md)' }}&gt;</span>
@@ -2817,7 +2817,7 @@
 <span class="cstat-no" title="statement not covered" >                    &lt;/p&gt;</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;/div&gt;</span>
                 )}
-                
+
                 {/* Error Message */}
 <span class="cstat-no" title="statement not covered" >                {searchError &amp;&amp; (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div style={{</span>
@@ -2926,7 +2926,7 @@
 <span class="cstat-no" title="statement not covered" >              &lt;/button&gt;</span>
 <span class="cstat-no" title="statement not covered" >            &lt;/div&gt;</span>
 <span class="cstat-no" title="statement not covered" >          &lt;/div&gt;</span>
-          
+
           {/* Batch Operations Toolbar */}
 <span class="cstat-no" title="statement not covered" >          &lt;div style={{ </span>
 <span class="cstat-no" title="statement not covered" >            padding: 'var(--spacing-md)',</span>
@@ -3052,4 +3052,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

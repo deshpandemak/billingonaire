@@ -49,22 +49,22 @@ const Table = () => {
     const today = new Date();
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(today.getMonth() - 3);
-    
+
     const endDate = today.toISOString().split('T')[0];
     const startDate = threeMonthsAgo.toISOString().split('T')[0];
-    
-    const initialCriteria = { 
-      startDate, 
-      endDate, 
-      advocateName: '', 
-      caseNumber: '', 
-      caseType: '', 
-      caseYear: '', 
+
+    const initialCriteria = {
+      startDate,
+      endDate,
+      advocateName: '',
+      caseNumber: '',
+      caseType: '',
+      caseYear: '',
       caseStage: '',
       orderStatus: '',
       orderCategory: ''
     };
-    
+
     setSearchCriteria(initialCriteria);
     setAppliedCriteria(initialCriteria);
     fetchData(initialCriteria);
@@ -79,10 +79,10 @@ const Table = () => {
 
     setIsSearching(true);
     setSearchError('');
-    
+
     // Store the criteria that are actually being applied
     setAppliedCriteria({ ...criteria });
-    
+
     try {
       const result = await authenticatedFetchJSON('/get-data', {
         method: 'POST',
@@ -156,18 +156,18 @@ const Table = () => {
       editable: false,
       resizable: false
     },
-    { 
-      headerName: 'Board Date', 
-      field: 'board_date', 
-      sortable: true, 
+    {
+      headerName: 'Board Date',
+      field: 'board_date',
+      sortable: true,
       filter: 'agDateColumnFilter',
       editable: true,
       width: 150
     },
-    { 
-      headerName: 'Case Number', 
-      field: 'case_number', 
-      sortable: true, 
+    {
+      headerName: 'Case Number',
+      field: 'case_number',
+      sortable: true,
       filter: 'agTextColumnFilter',
       editable: false,
       width: 180,
@@ -178,10 +178,10 @@ const Table = () => {
         return `${caseType}/${caseNo}/${caseYear}`;
       }
     },
-    { 
-      headerName: 'Petitioner', 
-      field: 'petitioner_name', 
-      sortable: true, 
+    {
+      headerName: 'Petitioner',
+      field: 'petitioner_name',
+      sortable: true,
       filter: 'agTextColumnFilter',
       editable: true,
       width: 250,
@@ -190,10 +190,10 @@ const Table = () => {
         return params.data?.order_petitioner || '-';
       }
     },
-    { 
-      headerName: 'Respondent', 
-      field: 'respondent_name', 
-      sortable: true, 
+    {
+      headerName: 'Respondent',
+      field: 'respondent_name',
+      sortable: true,
       filter: 'agTextColumnFilter',
       editable: true,
       width: 250,
@@ -202,27 +202,27 @@ const Table = () => {
         return params.data?.order_respondent || '-';
       }
     },
-    { 
-      headerName: 'AGP Name', 
-      field: 'agp_name', 
-      sortable: true, 
+    {
+      headerName: 'AGP Name',
+      field: 'agp_name',
+      sortable: true,
       filter: 'agTextColumnFilter',
       editable: true,
       width: 250,
       valueGetter: params => {
         // Show all AGP names from board data and order data
         const agpNames = [];
-        
+
         // Primary AGP from board
         if (params.data?.respondent_lawyer) {
           agpNames.push(params.data.respondent_lawyer);
         }
-        
+
         // Additional AGPs from board (now an array)
         if (params.data?.additional_respondent_lawyers && Array.isArray(params.data.additional_respondent_lawyers)) {
           agpNames.push(...params.data.additional_respondent_lawyers);
         }
-        
+
         // Government pleaders from order analysis (simplified structure)
         if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
           const firstCase = params.data.order_cases[0];
@@ -230,14 +230,14 @@ const Table = () => {
             agpNames.push(...firstCase.government_pleader);
           }
         }
-        
+
         return agpNames.filter(n => n).join(', ');
       }
     },
-    { 
-      headerName: 'Court Order', 
-      field: 'court_order', 
-      sortable: true, 
+    {
+      headerName: 'Court Order',
+      field: 'court_order',
+      sortable: true,
       filter: 'agTextColumnFilter',
       editable: true,
       width: 200,
@@ -249,19 +249,19 @@ const Table = () => {
         return null;
       }
     },
-    { 
-      headerName: 'Order Status', 
-      field: 'order_status', 
-      sortable: true, 
+    {
+      headerName: 'Order Status',
+      field: 'order_status',
+      sortable: true,
       filter: false,
       width: 130,
       flex: 0,
       cellRenderer: 'orderStatusRenderer'
     },
-    { 
-      headerName: 'Order Analysis', 
-      field: 'order_category', 
-      sortable: true, 
+    {
+      headerName: 'Order Analysis',
+      field: 'order_category',
+      sortable: true,
       filter: 'agTextColumnFilter',
       width: 150,
       flex: 0,
@@ -278,16 +278,16 @@ const Table = () => {
   const CourtOrderRenderer = (props) => {
     const { data, value } = props;
     const orderLink = data?.order_link;
-    
+
     if (orderLink) {
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <a 
-            href={orderLink} 
-            target="_blank" 
+          <a
+            href={orderLink}
+            target="_blank"
             rel="noopener noreferrer"
-            style={{ 
-              color: 'var(--primary-color)', 
+            style={{
+              color: 'var(--primary-color)',
               textDecoration: 'none',
               fontWeight: 500
             }}
@@ -299,7 +299,7 @@ const Table = () => {
         </div>
       );
     }
-    
+
     return <span>{value || '-'}</span>;
   };
 
@@ -310,7 +310,7 @@ const Table = () => {
     const caseId = data?.id;
     const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
     const isProcessing = processingOrders.has(caseId);
-    
+
     // Define status display properties
     const statusConfig = {
       'not_linked': { label: 'Not Linked', color: '#6c757d' },
@@ -319,15 +319,15 @@ const Table = () => {
       'order_failed': { label: 'Order Failed', color: '#dc3545' },
       'order_analysis_failed': { label: 'Analysis Failed', color: '#ffc107' }
     };
-    
+
     const config = statusConfig[orderStatus] || statusConfig['not_linked'];
-    
+
     // For order_linked status, show analyze button
     if (orderStatus === 'order_linked') {
       return (
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>
-          <button 
+          <button
             className="btn btn-sm btn-warning"
             onClick={() => handleAnalyzeOrder(caseId, caseRef)}
             disabled={isProcessing}
@@ -338,7 +338,7 @@ const Table = () => {
         </div>
       );
     }
-    
+
     return <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>;
   };
 
@@ -363,18 +363,18 @@ const Table = () => {
         // Download successful and we have the order link
         const hasAnalysis = response.analysis_success;
         const category = response.analysis_data?.order_category;
-        
+
         let message = `✅ Order downloaded successfully for ${caseRef}!\n\n`;
         message += `📄 Order Link: ${response.order_link}\n`;
-        
+
         if (hasAnalysis && category) {
           message += `\n🤖 Analysis Complete:\n`;
           message += `Category: ${category}\n`;
           message += `Confidence: ${(response.analysis_data?.order_category_confidence || 0) * 100}%`;
         }
-        
+
         alert(message);
-        
+
         // Refresh the data to show updated order status
         await fetchData();
       } else if (response.error) {
@@ -407,9 +407,9 @@ const Table = () => {
         const category = response.data?.order_category;
         const date = response.data?.order_date;
         const cases = response.data?.order_cases;
-        
+
         let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;
-        
+
         if (category) {
           message += `📊 Category: ${category}\n`;
         }
@@ -427,9 +427,9 @@ const Table = () => {
             }
           });
         }
-        
+
         alert(message);
-        
+
         // Refresh the data to show analysis results
         await fetchData();
       } else {
@@ -468,10 +468,10 @@ const Table = () => {
     for (const row of selectedRows) {
       const caseId = row.id;
       const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
-      
+
       try {
         setProcessingOrders(prev => new Set(prev).add(caseId));
-        
+
         const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -502,7 +502,7 @@ const Table = () => {
 
     alert(`✅ Batch download complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);
     await fetchData();
-    
+
     // Clear selection
     if (gridApi) {
       gridApi.deselectAll();
@@ -524,7 +524,7 @@ const Table = () => {
     for (const row of selectedRows) {
       const caseId = row.id;
       const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
-      
+
       try {
         await authenticatedFetchJSON(`/delete_case/${caseId}`, {
           method: 'DELETE'
@@ -538,7 +538,7 @@ const Table = () => {
 
     alert(`✅ Batch delete complete!\n\nDeleted: ${successCount}\nFailed: ${failCount}`);
     await fetchData();
-    
+
     // Clear selection
     if (gridApi) {
       gridApi.deselectAll();
@@ -564,7 +564,7 @@ const Table = () => {
         <div className="card-professional" style={{ marginBottom: 'var(--spacing-xl)' }}>
           <div className="card-header">
             <h2 className="section-title">📋 Search Criteria</h2>
-            <button 
+            <button
               className="btn-professional btn-secondary"
               onClick={() => setSearchOpen(!searchOpen)}
               style={{ fontSize: '0.875rem' }}
@@ -574,9 +574,9 @@ const Table = () => {
           </div>
           {searchOpen && (
             <div className="card-body">
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
                 gap: 'var(--spacing-lg)',
                 marginBottom: 'var(--spacing-lg)'
               }}>
@@ -684,11 +684,11 @@ const Table = () => {
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
-                  <button 
+                  <button
                     className="btn-professional btn-primary"
                     onClick={() => fetchData()}
                     disabled={isSearching}
-                    style={{ 
+                    style={{
                       flex: 1,
                       opacity: isSearching ? 0.7 : 1,
                       cursor: isSearching ? 'not-allowed' : 'pointer'
@@ -703,7 +703,7 @@ const Table = () => {
                       '🔍 Search Cases'
                     )}
                   </button>
-                  <button 
+                  <button
                     className="btn-professional btn-secondary"
                     disabled={isSearching}
                     onClick={() => {
@@ -727,7 +727,7 @@ const Table = () => {
                     Clear
                   </button>
                 </div>
-                
+
                 {/* Progress Bar */}
                 {isSearching && (
                   <div style={{ marginTop: 'var(--spacing-md)' }}>
@@ -745,17 +745,17 @@ const Table = () => {
                         animation: 'progress-slide 2s ease-in-out infinite'
                       }}></div>
                     </div>
-                    <p style={{ 
-                      marginTop: '8px', 
-                      fontSize: '0.875rem', 
-                      color: 'var(--gray-600)', 
-                      textAlign: 'center' 
+                    <p style={{
+                      marginTop: '8px',
+                      fontSize: '0.875rem',
+                      color: 'var(--gray-600)',
+                      textAlign: 'center'
                     }}>
                       Searching through case database... Please wait
                     </p>
                   </div>
                 )}
-                
+
                 {/* Error Message */}
                 {searchError && (
                   <div style={{
@@ -841,21 +841,21 @@ const Table = () => {
           <div className="card-header">
             <h2 className="section-title">📊 Case Data ({data.length} records)</h2>
             <div style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
-              <button 
+              <button
                 className="btn-professional btn-success"
                 onClick={addRow}
                 style={{ fontSize: '0.875rem' }}
               >
                 + Add Row
               </button>
-              <button 
+              <button
                 className="btn-professional btn-primary"
                 onClick={saveData}
                 style={{ fontSize: '0.875rem' }}
               >
                 💾 Save Changes
               </button>
-              <button 
+              <button
                 className="btn-professional btn-secondary"
                 onClick={cancelEdit}
                 style={{ fontSize: '0.875rem' }}
@@ -864,9 +864,9 @@ const Table = () => {
               </button>
             </div>
           </div>
-          
+
           {/* Batch Operations Toolbar */}
-          <div style={{ 
+          <div style={{
             padding: 'var(--spacing-md)',
             backgroundColor: 'var(--gray-50)',
             borderBottom: '1px solid var(--gray-200)',
@@ -875,8 +875,8 @@ const Table = () => {
             gap: 'var(--spacing-md)',
             flexWrap: 'wrap'
           }}>
-            <span style={{ 
-              fontSize: '0.875rem', 
+            <span style={{
+              fontSize: '0.875rem',
               color: 'var(--gray-700)',
               fontWeight: 500
             }}>
@@ -884,10 +884,10 @@ const Table = () => {
             </span>
             <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginLeft: 'auto', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <label 
-                  htmlFor="maxSequencesInput" 
-                  style={{ 
-                    fontSize: '0.875rem', 
+                <label
+                  htmlFor="maxSequencesInput"
+                  style={{
+                    fontSize: '0.875rem',
                     color: 'var(--gray-700)',
                     whiteSpace: 'nowrap'
                   }}
@@ -917,11 +917,11 @@ const Table = () => {
                   title="Number of sequence numbers to try when downloading orders (1-100)"
                 />
               </div>
-              <button 
+              <button
                 className="btn-professional btn-primary"
                 onClick={handleBatchDownload}
                 disabled={selectedRows.length === 0}
-                style={{ 
+                style={{
                   fontSize: '0.875rem',
                   opacity: selectedRows.length === 0 ? 0.5 : 1,
                   cursor: selectedRows.length === 0 ? 'not-allowed' : 'pointer'
@@ -929,11 +929,11 @@ const Table = () => {
               >
                 📥 Download Selected Orders
               </button>
-              <button 
+              <button
                 className="btn-professional"
                 onClick={handleBatchDelete}
                 disabled={selectedRows.length === 0}
-                style={{ 
+                style={{
                   fontSize: '0.875rem',
                   backgroundColor: 'var(--error-color)',
                   color: 'white',
@@ -946,10 +946,10 @@ const Table = () => {
             </div>
           </div>
           <div className="card-body" style={{ padding: 0 }}>
-            <div 
+            <div
               className="ag-theme-alpine"
-              style={{ 
-                height: '600px', 
+              style={{
+                height: '600px',
                 width: '100%',
                 '--ag-font-family': 'var(--font-main)',
                 '--ag-font-size': '14px',
@@ -991,7 +991,7 @@ const Table = () => {
                   const rowIndex = params.rowIndex;
                   const field = params.colDef.field;
                   const newValue = params.newValue;
-                  setEditedData(prev => prev.map((row, index) => 
+                  setEditedData(prev => prev.map((row, index) =>
                     index === rowIndex ? { ...row, [field]: newValue } : row
                   ));
                 }}

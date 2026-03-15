@@ -33,7 +33,7 @@ const Upload = () => {
     setProgress({});
     setFileResults({});
     setSuccessMessage('');
-    
+
     const files = fileInput.current.files;
     if (!files.length) {
       setError('Please select at least one file.');
@@ -47,18 +47,18 @@ const Upload = () => {
         try {
           const formData = new FormData();
           formData.append('files', file);
-          
+
           // Get authentication token
           const user = auth.currentUser;
           if (!user) {
             throw new Error('User not authenticated');
           }
           const idToken = await user.getIdToken(true); // Force refresh token
-          
+
           // Create custom upload with progress tracking
           const uploadPromise = new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            
+
             // Set up progress tracking
             xhr.upload.onprogress = (event) => {
               if (event.lengthComputable) {
@@ -66,7 +66,7 @@ const Upload = () => {
                 setProgress((prev) => ({ ...prev, [file.name]: percent }));
               }
             };
-            
+
             // Handle response
             xhr.onload = () => {
               if (xhr.status >= 200 && xhr.status < 300) {
@@ -75,43 +75,43 @@ const Upload = () => {
                 reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
               }
             };
-            
+
             xhr.onerror = () => reject(new Error('Network error during upload'));
-            
+
             // Configure request
-            const API_BASE_URL = import.meta.env.VITE_API_URL || 
-              (import.meta.env.PROD 
+            const API_BASE_URL = import.meta.env.VITE_API_URL ||
+              (import.meta.env.PROD
                 ? "https://billingonaire-backend-819125105651.asia-south1.run.app"
                 : "/api");
             xhr.open('POST', `${API_BASE_URL}/upload-pdf`, true);
             xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
-            
+
             // Send the file
             xhr.send(formData);
           });
-          
+
           const result = await uploadPromise;
           const fileResult = result.results?.[0] || result || {};
-          setFileResults((prev) => ({ 
-            ...prev, 
+          setFileResults((prev) => ({
+            ...prev,
             [file.name]: {
               ...fileResult,
               success: true
             }
           }));
-          
+
         } catch (e) {
           console.error(`Error uploading ${file.name}:`, e);
-          setFileResults((prev) => ({ 
-            ...prev, 
-            [file.name]: { 
+          setFileResults((prev) => ({
+            ...prev,
+            [file.name]: {
               error: e.message,
               success: false
             }
           }));
         }
       }
-      
+
       setSuccessMessage('Upload process completed!');
     } catch (e) {
       setError(`Upload failed: ${e.message}`);
@@ -136,7 +136,7 @@ const Upload = () => {
           Upload daily board PDF files to extract case information and AGP assignments
         </p>
       </div>
-      
+
       <div className="dashboard-section">
         <div className="card-professional">
           <div className="card-header">
@@ -180,15 +180,15 @@ const Upload = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   {error && (
                     <div className="alert-error">
                       <strong>Error:</strong> {error}
                     </div>
                   )}
-                  
-                  <button 
-                    type="submit" 
+
+                  <button
+                    type="submit"
                     className="btn-professional btn-primary"
                     disabled={isUploading || selectedFiles.length === 0}
                     style={{ width: '100%', marginBottom: 'var(--spacing-lg)' }}
@@ -211,10 +211,10 @@ const Upload = () => {
                     {selectedFiles.map((file) => {
                       const percent = progress[file.name] || 0;
                       const result = fileResults[file.name] || {};
-                      
+
                       let statusText = '';
                       let statusColor = 'var(--gray-600)';
-                      
+
                       if (result.error) {
                         statusText = `Error: ${result.error}`;
                         statusColor = '#dc2626';
@@ -230,7 +230,7 @@ const Upload = () => {
                       } else {
                         statusText = 'Waiting...';
                       }
-                      
+
                       return (
                         <div key={file.name} style={{ marginBottom: 'var(--spacing-lg)', padding: 'var(--spacing-md)', backgroundColor: 'var(--gray-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-200)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 'var(--spacing-sm)' }}>
@@ -244,10 +244,10 @@ const Upload = () => {
                                   {statusText}
                                 </span>
                               </div>
-                              <div style={{ 
-                                width: '100%', 
-                                height: '8px', 
-                                backgroundColor: 'var(--gray-200)', 
+                              <div style={{
+                                width: '100%',
+                                height: '8px',
+                                backgroundColor: 'var(--gray-200)',
                                 borderRadius: '4px',
                                 marginTop: 'var(--spacing-sm)',
                                 overflow: 'hidden'
@@ -267,7 +267,7 @@ const Upload = () => {
                     })}
                   </div>
                 )}
-                
+
                 {successMessage && (
                   <div className="alert-success">
                     <strong>Success:</strong> {successMessage}

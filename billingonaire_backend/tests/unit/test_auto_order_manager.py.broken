@@ -243,4 +243,3 @@ class TestParseCaseReference:
     def test_parse_invalid_case_reference(self, auto_order_manager):
         """Test parsing invalid case reference"""
         result = auto_order_manager._parse_case_reference("INVALID")
-

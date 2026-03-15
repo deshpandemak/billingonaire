@@ -15,41 +15,41 @@
         }
     </style>
 </head>
-    
+
 <body>
 <div class='wrapper'>
     <div class='pad1'>
         <h1><a href="../../index.html">All files</a> / <a href="index.html">billingonaire-ui/src</a> AdminUserManagement.jsx</h1>
         <div class='clearfix'>
-            
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
                 <span class='fraction'>0/662</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
                 <span class='fraction'>0/1</span>
             </div>
-        
-            
+
+
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
                 <span class='fraction'>0/662</span>
             </div>
-        
-            
+
+
         </div>
         <p class="quiet">
             Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
@@ -1692,14 +1692,14 @@
 <span class="cstat-no" title="statement not covered" >      const profileData = await authenticatedFetchJSON('/user/profile');</span>
 <span class="cstat-no" title="statement not covered" >      console.log('Profile data received:', profileData);</span>
 <span class="cstat-no" title="statement not covered" >      setProfile(profileData);</span>
-      
+
       // Check if user is admin
 <span class="cstat-no" title="statement not covered" >      if (profileData.role !== 'admin') {</span>
 <span class="cstat-no" title="statement not covered" >        console.log('User is not admin, role:', profileData.role);</span>
 <span class="cstat-no" title="statement not covered" >        setError('Access denied. Administrator privileges required.');</span>
 <span class="cstat-no" title="statement not covered" >        return;</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      console.log('User confirmed as admin, proceeding to load users');</span>
 <span class="cstat-no" title="statement not covered" >    } catch (error) {</span>
 <span class="cstat-no" title="statement not covered" >      console.error('Error loading profile:', error);</span>
@@ -1712,12 +1712,12 @@
 <span class="cstat-no" title="statement not covered" >      setError('');</span>
 <span class="cstat-no" title="statement not covered" >      const queryParams = roleFilter ? `?role_filter=${roleFilter}` : '';</span>
 <span class="cstat-no" title="statement not covered" >      console.log('Loading users with query:', `/admin/users${queryParams}`);</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      const usersData = await authenticatedFetchJSON(`/admin/users${queryParams}`);</span>
 <span class="cstat-no" title="statement not covered" >      console.log('Users data received:', usersData);</span>
 <span class="cstat-no" title="statement not covered" >      console.log('Users data type:', typeof usersData);</span>
 <span class="cstat-no" title="statement not covered" >      console.log('Users data length:', Array.isArray(usersData) ? usersData.length : 'Not an array');</span>
-      
+
       // Ensure usersData is an array
 <span class="cstat-no" title="statement not covered" >      if (Array.isArray(usersData)) {</span>
 <span class="cstat-no" title="statement not covered" >        setUsers(usersData);</span>
@@ -1769,13 +1769,13 @@
 <span class="cstat-no" title="statement not covered" >      setSyncLoading(true);</span>
 <span class="cstat-no" title="statement not covered" >      setError('');</span>
 <span class="cstat-no" title="statement not covered" >      setSuccessMessage('');</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      const result = await authenticatedFetchJSON('/admin/sync-firebase-users', {</span>
 <span class="cstat-no" title="statement not covered" >        method: 'POST'</span>
 <span class="cstat-no" title="statement not covered" >      });</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      console.log('Sync result:', result);</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      if (result.synced_count &gt; 0) {</span>
 <span class="cstat-no" title="statement not covered" >        setSuccessMessage(`Successfully synced ${result.synced_count} Firebase users to the system.`);</span>
 <span class="cstat-no" title="statement not covered" >        await loadUsers(); // Refresh the user list</span>
@@ -1783,12 +1783,12 @@
 <span class="cstat-no" title="statement not covered" >      } else {</span>
 <span class="cstat-no" title="statement not covered" >        setSuccessMessage('No new users found to sync. All Firebase users are already in the system.');</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
-      
+
 <span class="cstat-no" title="statement not covered" >      if (result.errors &amp;&amp; result.errors.length &gt; 0) {</span>
 <span class="cstat-no" title="statement not covered" >        console.warn('Sync errors:', result.errors);</span>
 <span class="cstat-no" title="statement not covered" >        setError(`Some users had errors: ${result.errors.join(', ')}`);</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
-      
+
 <span class="cstat-no" title="statement not covered" >    } catch (error) {</span>
 <span class="cstat-no" title="statement not covered" >      console.error('Error syncing Firebase users:', error);</span>
 <span class="cstat-no" title="statement not covered" >      setError(`Failed to sync Firebase users: ${error.message}`);</span>
@@ -2318,10 +2318,10 @@
 <span class="cstat-no" title="statement not covered" >              &lt;/div&gt;</span>
 <span class="cstat-no" title="statement not covered" >              &lt;div className="modal-body"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                &lt;p className="text-muted mb-3"&gt;</span>
-                  These users exist in Firebase Authentication but don't have profiles in the system yet. 
+                  These users exist in Firebase Authentication but don't have profiles in the system yet.
                   Click "Sync Firebase Users" to import them.
 <span class="cstat-no" title="statement not covered" >                &lt;/p&gt;</span>
-                
+
 <span class="cstat-no" title="statement not covered" >                {unsyncedUsers.length === 0 ? (</span>
 <span class="cstat-no" title="statement not covered" >                  &lt;div className="alert alert-success"&gt;</span>
 <span class="cstat-no" title="statement not covered" >                    &lt;h6&gt;✅ All Firebase users are synced!&lt;/h6&gt;</span>
@@ -2425,4 +2425,3 @@
         <script src="../../block-navigation.js"></script>
     </body>
 </html>
-    

@@ -1,4 +1,4 @@
- 
+
 var addSorting = (function() {
     'use strict';
     var cols,

@@ -43,14 +43,14 @@ const AdminUserManagement = () => {
       const profileData = await authenticatedFetchJSON('/user/profile');
       console.log('Profile data received:', profileData);
       setProfile(profileData);
-      
+
       // Check if user is admin
       if (profileData.role !== 'admin') {
         console.log('User is not admin, role:', profileData.role);
         setError('Access denied. Administrator privileges required.');
         return;
       }
-      
+
       console.log('User confirmed as admin, proceeding to load users');
     } catch (error) {
       console.error('Error loading profile:', error);
@@ -63,12 +63,12 @@ const AdminUserManagement = () => {
       setError('');
       const queryParams = roleFilter ? `?role_filter=${roleFilter}` : '';
       console.log('Loading users with query:', `/admin/users${queryParams}`);
-      
+
       const usersData = await authenticatedFetchJSON(`/admin/users${queryParams}`);
       console.log('Users data received:', usersData);
       console.log('Users data type:', typeof usersData);
       console.log('Users data length:', Array.isArray(usersData) ? usersData.length : 'Not an array');
-      
+
       // Ensure usersData is an array
       if (Array.isArray(usersData)) {
         setUsers(usersData);
@@ -120,13 +120,13 @@ const AdminUserManagement = () => {
       setSyncLoading(true);
       setError('');
       setSuccessMessage('');
-      
+
       const result = await authenticatedFetchJSON('/admin/sync-firebase-users', {
         method: 'POST'
       });
-      
+
       console.log('Sync result:', result);
-      
+
       if (result.synced_count > 0) {
         setSuccessMessage(`Successfully synced ${result.synced_count} Firebase users to the system.`);
         await loadUsers(); // Refresh the user list
@@ -134,12 +134,12 @@ const AdminUserManagement = () => {
       } else {
         setSuccessMessage('No new users found to sync. All Firebase users are already in the system.');
       }
-      
+
       if (result.errors && result.errors.length > 0) {
         console.warn('Sync errors:', result.errors);
         setError(`Some users had errors: ${result.errors.join(', ')}`);
       }
-      
+
     } catch (error) {
       console.error('Error syncing Firebase users:', error);
       setError(`Failed to sync Firebase users: ${error.message}`);
@@ -325,7 +325,7 @@ const AdminUserManagement = () => {
               <div className="row align-items-end">
                 <div className="col-md-4">
                   <label className="form-label">Filter by Role</label>
-                  <select 
+                  <select
                     className="form-control"
                     value={roleFilter}
                     onChange={(e) => {
@@ -343,13 +343,13 @@ const AdminUserManagement = () => {
                   </select>
                 </div>
                 <div className="col-md-8">
-                  <button 
+                  <button
                     className="btn btn-primary me-2"
                     onClick={loadUsers}
                   >
                     🔄 Refresh
                   </button>
-                  <button 
+                  <button
                     className="btn btn-info me-2"
                     onClick={handleSyncFirebaseUsers}
                     disabled={syncLoading}
@@ -364,14 +364,14 @@ const AdminUserManagement = () => {
                     )}
                   </button>
                   {unsyncedUsers.length > 0 && (
-                    <button 
+                    <button
                       className="btn btn-warning me-2"
                       onClick={() => setShowUnsyncedModal(true)}
                     >
                       ⚠️ View Unsynced ({unsyncedUsers.length})
                     </button>
                   )}
-                  <button 
+                  <button
                     className="btn btn-success"
                     onClick={() => setShowCreateModal(true)}
                   >
@@ -445,7 +445,7 @@ const AdminUserManagement = () => {
                             </span>
                           </td>
                           <td>
-                            <button 
+                            <button
                               className="btn btn-sm btn-outline-primary"
                               onClick={() => handleEditUser(user)}
                             >
@@ -470,8 +470,8 @@ const AdminUserManagement = () => {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Create New User</h5>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn-close"
                   onClick={() => setShowCreateModal(false)}
                 ></button>
@@ -552,15 +552,15 @@ const AdminUserManagement = () => {
                 </form>
               </div>
               <div className="modal-footer">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-secondary"
                   onClick={() => setShowCreateModal(false)}
                 >
                   Cancel
                 </button>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-success"
                   onClick={handleCreateUser}
                   disabled={!createForm.email.trim()}
@@ -580,8 +580,8 @@ const AdminUserManagement = () => {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Edit User: {selectedUser.email}</h5>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn-close"
                   onClick={() => setShowEditModal(false)}
                 ></button>
@@ -657,15 +657,15 @@ const AdminUserManagement = () => {
                 </form>
               </div>
               <div className="modal-footer">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-secondary"
                   onClick={() => setShowEditModal(false)}
                 >
                   Cancel
                 </button>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-primary"
                   onClick={handleSaveUser}
                 >
@@ -684,18 +684,18 @@ const AdminUserManagement = () => {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">🔄 Unsynced Firebase Users</h5>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn-close"
                   onClick={() => setShowUnsyncedModal(false)}
                 ></button>
               </div>
               <div className="modal-body">
                 <p className="text-muted mb-3">
-                  These users exist in Firebase Authentication but don't have profiles in the system yet. 
+                  These users exist in Firebase Authentication but don't have profiles in the system yet.
                   Click "Sync Firebase Users" to import them.
                 </p>
-                
+
                 {unsyncedUsers.length === 0 ? (
                   <div className="alert alert-success">
                     <h6>✅ All Firebase users are synced!</h6>
@@ -751,16 +751,16 @@ const AdminUserManagement = () => {
                 )}
               </div>
               <div className="modal-footer">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-secondary"
                   onClick={() => setShowUnsyncedModal(false)}
                 >
                   Close
                 </button>
                 {unsyncedUsers.length > 0 && (
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="btn btn-primary"
                     onClick={() => {
                       setShowUnsyncedModal(false);
