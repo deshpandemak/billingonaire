@@ -4,6 +4,11 @@ from typing import Dict, List
 
 from firebase_admin import firestore
 
+try:
+    from case_data_store import CaseDataStore
+except ImportError:
+    from .case_data_store import CaseDataStore
+
 
 class OrderManager:
     """
@@ -15,8 +20,29 @@ class OrderManager:
 
     def __init__(self):
         self.db = firestore.client()
-        # Order status is now stored in daily-boards collection
         self.boards_collection = "daily-boards"
+        self.case_store = CaseDataStore(self.db)
+
+    def _case_ref_from_board(self, case_data: Dict) -> str:
+        return self.case_store.build_case_ref(
+            case_data.get("case_type"),
+            case_data.get("case_no"),
+            case_data.get("case_year"),
+        )
+
+    def _latest_order_from_case(self, case_ref: str) -> Dict:
+        case_detail = self.case_store.get_case_details(case_ref) or {}
+        orders = case_detail.get("orders") or []
+        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        return {
+            "case_detail": case_detail,
+            "latest_order": latest_order,
+            "status": case_detail.get("latest_order_status")
+            or latest_order.get("order_status")
+            or "not_linked",
+            "order_link": case_detail.get("latest_order_link")
+            or latest_order.get("order_link"),
+        }
 
     def get_cases_without_orders(self, limit: int = 100, offset: int = 0) -> Dict:
         """
@@ -46,22 +72,16 @@ class OrderManager:
                 total_processed += 1
                 case_data = doc.to_dict()
                 case_id = doc.id
+                case_ref = self._case_ref_from_board(case_data)
+                latest = self._latest_order_from_case(case_ref)
 
-                # Check if order is already downloaded and linked in case document
-                order_downloaded = case_data.get("order_downloaded", False)
-
-                # Get order status from daily-boards document (consolidated structure)
-                order_status = case_data.get("order_status", "not_linked")
-
-                # Only include cases that need order linking (no download flag AND no linked status)
-                if not order_downloaded and order_status in [
+                # Only include cases that need order linking/retry.
+                order_status = latest["status"]
+                if order_status in [
                     "not_linked",
                     "order_failed",
                     "order_analysis_failed",
                 ]:
-                    # Format case reference for court lookup
-                    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-
                     # Convert Firebase datetime to string for JSON serialization
                     board_date = case_data.get("board_date")
                     if hasattr(board_date, "strftime"):
@@ -78,11 +98,13 @@ class OrderManager:
                         "case_year": case_data.get("case_year"),
                         "petitioner_lawyer": case_data.get("petitioner_lawyer"),
                         "respondent_lawyer": case_data.get("respondent_lawyer"),
-                        "order_petitioner": case_data.get("order_petitioner", ""),
-                        "order_respondent": case_data.get("order_respondent", ""),
+                        "order_petitioner": latest["case_detail"].get("petitioner", ""),
+                        "order_respondent": latest["case_detail"].get("respondent", ""),
                         "file_name": case_data.get("file_name"),
                         "order_status": order_status,
-                        "order_notes": case_data.get("order_notes", ""),
+                        "order_notes": (latest["latest_order"] or {}).get(
+                            "order_notes", ""
+                        ),
                     }
                     cases_without_orders.append(case_info)
 
@@ -115,27 +137,31 @@ class OrderManager:
             Result of the operation
         """
         try:
-            # Prepare order data for daily-boards collection
-            order_update = {
-                "order_status": order_data.get("status", "linked"),
-                "order_link": order_data.get("order_link"),
-                "order_text": order_data.get("order_text"),
-                "order_fetch_date": datetime.now().isoformat(),
-                "order_court_bench": order_data.get("court_bench", "mumbai"),
-                "order_notes": order_data.get("notes", ""),
-                "order_created_at": datetime.now().isoformat(),
-                "order_updated_at": datetime.now().isoformat(),
-            }
+            board_doc = (
+                self.db.collection(self.boards_collection).document(case_id).get()
+            )
+            if not board_doc.exists:
+                return {"error": "Case not found", "case_id": case_id}
 
-            # Update the daily-boards document directly
-            self.db.collection(self.boards_collection).document(case_id).update(
-                order_update
+            board_data = board_doc.to_dict() or {}
+            case_ref = self._case_ref_from_board(board_data)
+            status = order_data.get("status", "linked")
+            self.case_store.append_case_order(
+                case_ref,
+                {
+                    "order_status": status,
+                    "order_link": order_data.get("order_link"),
+                    "order_text": order_data.get("order_text"),
+                    "order_fetch_date": datetime.now().isoformat(),
+                    "order_court_bench": order_data.get("court_bench", "mumbai"),
+                    "order_notes": order_data.get("notes", ""),
+                },
             )
 
             return {
                 "success": True,
                 "case_id": case_id,
-                "status": order_update["order_status"],
+                "status": status,
             }
 
         except Exception as e:
@@ -156,14 +182,21 @@ class OrderManager:
             Result of the operation
         """
         try:
-            update_data = {
-                "order_status": status,
-                "order_notes": notes,
-                "order_updated_at": datetime.now().isoformat(),
-            }
+            board_doc = (
+                self.db.collection(self.boards_collection).document(case_id).get()
+            )
+            if not board_doc.exists:
+                return {"error": "Case not found", "case_id": case_id}
 
-            self.db.collection(self.boards_collection).document(case_id).update(
-                update_data
+            board_data = board_doc.to_dict() or {}
+            case_ref = self._case_ref_from_board(board_data)
+            self.case_store.append_case_order(
+                case_ref,
+                {
+                    "order_status": status,
+                    "order_notes": notes,
+                    "order_updated_at": datetime.now().isoformat(),
+                },
             )
 
             return {"success": True, "case_id": case_id, "new_status": status}
@@ -173,62 +206,66 @@ class OrderManager:
             return {"error": str(e), "case_id": case_id}
 
     def get_order_details(self, case_id: str) -> Dict:
-        """Get order details for a specific case from daily-boards collection"""
+        """Get order details for a specific case from case-details collection"""
         try:
-            # Get order details from daily-boards document
             board_doc = (
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
 
-            if board_doc.exists:
-                board_data = board_doc.to_dict()
-
-                # Extract order-related fields and map to expected format
-                order_details = {
-                    "case_id": case_id,
-                    "status": board_data.get("order_status", "not_linked"),
-                    "order_link": board_data.get("order_link"),
-                    "order_text": board_data.get("order_text"),
-                    "fetch_date": board_data.get("order_fetch_date"),
-                    "court_bench": board_data.get("order_court_bench", "mumbai"),
-                    "notes": board_data.get("order_notes", ""),
-                    "created_at": board_data.get("order_created_at"),
-                    "updated_at": board_data.get("order_updated_at"),
-                }
-                return order_details
-            else:
+            if not board_doc.exists:
                 return {"status": "not_linked", "case_id": case_id}
+
+            board_data = board_doc.to_dict() or {}
+            case_ref = self._case_ref_from_board(board_data)
+            latest = self._latest_order_from_case(case_ref)
+            latest_order = latest["latest_order"] or {}
+            return {
+                "case_id": case_id,
+                "status": latest["status"],
+                "order_link": latest["order_link"],
+                "order_text": latest_order.get("order_text"),
+                "fetch_date": latest_order.get("order_fetch_date"),
+                "court_bench": latest_order.get("order_court_bench", "mumbai"),
+                "notes": latest_order.get("order_notes", ""),
+                "created_at": latest_order.get("created_at"),
+                "updated_at": latest_order.get("updated_at"),
+            }
 
         except Exception as e:
             logging.error(f"Error fetching order details for case {case_id}: {e}")
             return {"error": str(e), "case_id": case_id}
 
     def get_orders_by_status(self, status: str, limit: int = 100) -> List[Dict]:
-        """Get all orders with a specific status from daily-boards collection"""
+        """Get all orders with a specific status from case-details collection"""
         try:
             query = (
-                self.db.collection(self.boards_collection)
-                .where("order_status", "==", status)
+                self.db.collection("case-details")
+                .where("latest_order_status", "==", status)
                 .limit(limit)
                 .stream()
             )
 
             orders = []
             for doc in query:
-                board_data = doc.to_dict()
+                case_data = doc.to_dict() or {}
+                latest_order = {}
+                case_orders = case_data.get("orders") or []
+                if case_orders and isinstance(case_orders[-1], dict):
+                    latest_order = case_orders[-1]
 
-                # Extract order-related fields and format like the old case-orders structure
                 order_data = {
                     "id": doc.id,
                     "case_id": doc.id,
-                    "status": board_data.get("order_status", "not_linked"),
-                    "order_link": board_data.get("order_link"),
-                    "order_text": board_data.get("order_text"),
-                    "fetch_date": board_data.get("order_fetch_date"),
-                    "court_bench": board_data.get("order_court_bench", "mumbai"),
-                    "notes": board_data.get("order_notes", ""),
-                    "created_at": board_data.get("order_created_at"),
-                    "updated_at": board_data.get("order_updated_at"),
+                    "case_ref": case_data.get("case_ref"),
+                    "status": case_data.get("latest_order_status", "not_linked"),
+                    "order_link": case_data.get("latest_order_link")
+                    or latest_order.get("order_link"),
+                    "order_text": latest_order.get("order_text"),
+                    "fetch_date": latest_order.get("order_fetch_date"),
+                    "court_bench": latest_order.get("order_court_bench", "mumbai"),
+                    "notes": latest_order.get("order_notes", ""),
+                    "created_at": latest_order.get("created_at"),
+                    "updated_at": latest_order.get("updated_at"),
                 }
                 orders.append(order_data)
 
@@ -250,6 +287,8 @@ class OrderManager:
 
             case_data = case_doc.to_dict()
             case_data["id"] = case_id
+            case_ref = self._case_ref_from_board(case_data)
+            case_data["case_ref"] = case_ref
 
             # Convert Firebase datetime to string for JSON serialization
             board_date = case_data.get("board_date")
@@ -260,14 +299,19 @@ class OrderManager:
                     :10
                 ]  # Get just date part
 
-            # Get order information
-            order_info = self.get_order_details(case_id)
-            case_data["order_info"] = order_info
-
-            # Format case reference
-            case_data["case_ref"] = (
-                f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-            )
+            latest = self._latest_order_from_case(case_ref)
+            latest_order = latest["latest_order"] or {}
+            case_data["order_info"] = {
+                "case_id": case_id,
+                "status": latest["status"],
+                "order_link": latest["order_link"],
+                "order_text": latest_order.get("order_text"),
+                "fetch_date": latest_order.get("order_fetch_date"),
+                "court_bench": latest_order.get("order_court_bench", "mumbai"),
+                "notes": latest_order.get("order_notes", ""),
+                "created_at": latest_order.get("created_at"),
+                "updated_at": latest_order.get("updated_at"),
+            }
 
             return case_data
 

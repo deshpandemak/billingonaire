@@ -383,7 +383,6 @@ const Table = () => {
       if (response.success) {
         const category = response.data?.order_category;
         const date = response.data?.order_date;
-        const cases = response.data?.order_cases;
 
         let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;
 
@@ -392,17 +391,6 @@ const Table = () => {
         }
         if (date) {
           message += `📅 Order Date: ${date}\n`;
-        }
-        if (cases && cases.length > 0) {
-          message += `\n� Cases Found: ${cases.length}\n`;
-          cases.forEach((c, idx) => {
-            if (c.petitioner) {
-              message += `  Case ${idx + 1} - Petitioner: ${c.petitioner}\n`;
-            }
-            if (c.respondent) {
-              message += `  Case ${idx + 1} - Respondent: ${c.respondent}\n`;
-            }
-          });
         }
 
         alert(message);

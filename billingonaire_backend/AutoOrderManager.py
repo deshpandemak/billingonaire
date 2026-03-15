@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -205,24 +205,21 @@ class AutoOrderManager:
             for doc in query.stream():
                 case_data = doc.to_dict()
                 case_data["id"] = doc.id
+                case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+                case_data["case_ref"] = case_ref
 
-                # Check if case needs order processing - look for order analysis completion
-                order_analysis_completed = case_data.get(
-                    "order_analysis_completed", False
-                )
-                order_status = case_data.get("order_status", "not_linked")
+                order_context = self._get_case_order_context(case_ref)
+                order_status = order_context["order_status"]
+                case_data["order_status"] = order_status
+                case_data["order_link"] = order_context.get("order_link")
 
-                # Include cases that:
-                # 1. Don't have order analysis completed, OR
-                # 2. Have failed order status
-                if not order_analysis_completed or order_status in [
+                # Include cases that need linking or analysis/retry.
+                if order_status in [
                     "not_linked",
+                    "linked",
                     "order_failed",
                     "order_analysis_failed",
                 ]:
-                    # Format case reference
-                    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-                    case_data["case_ref"] = case_ref
                     cases.append(case_data)
 
                     if len(cases) >= limit:
@@ -234,6 +231,59 @@ class AutoOrderManager:
             logging.error(f"Error getting filtered matters: {e}")
             return []
 
+    def _get_case_order_context(self, case_ref: str) -> Dict:
+        case_detail = self.case_store.get_case_details(case_ref) or {}
+        orders = case_detail.get("orders") or []
+        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        return {
+            "case_detail": case_detail,
+            "latest_order": latest_order,
+            "order_status": case_detail.get("latest_order_status")
+            or latest_order.get("order_status")
+            or "not_linked",
+            "order_link": case_detail.get("latest_order_link")
+            or latest_order.get("order_link"),
+        }
+
+    def _record_case_order_status(
+        self, case_ref: str, status: str, reason: Optional[str] = None
+    ) -> None:
+        payload = {
+            "order_status": status,
+            "order_status_updated_at": datetime.now().isoformat(),
+        }
+        if reason:
+            payload["order_failure_reason"] = reason
+        self.case_store.append_case_order(case_ref, payload)
+        mapped_lifecycle = self.case_store.map_legacy_order_status(status)
+        if mapped_lifecycle:
+            self.case_store.transition_lifecycle(
+                case_ref,
+                mapped_lifecycle,
+                reason=reason,
+                metadata={"source": "auto_order_manager", "order_status": status},
+                event_type="order_status_synced",
+            )
+
+    @staticmethod
+    def _parse_board_date(value: Optional[str]) -> Optional[date]:
+        if value is None:
+            return None
+        if hasattr(value, "date"):
+            try:
+                return value.date()
+            except Exception:
+                return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if "T" in raw:
+            raw = raw.split("T", 1)[0]
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
     def _process_single_case(self, case_data: Dict, max_sequences: int = None) -> Dict:
         """Process a single case with retry logic - try up to N sequence numbers
 
@@ -243,10 +293,13 @@ class AutoOrderManager:
         """
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
-        order_status = case_data.get("order_status", "not_linked")
+        order_context = self._get_case_order_context(case_ref)
+        order_status = order_context["order_status"]
+        case_data["order_status"] = order_status
+        case_data["order_link"] = order_context.get("order_link")
 
         # Check if case has existing order link
-        has_existing_order_link = case_data.get("order_link") is not None
+        has_existing_order_link = bool(case_data.get("order_link"))
 
         result = {
             "case_id": case_id,
@@ -259,6 +312,29 @@ class AutoOrderManager:
             "retry_attempts": [],
             "has_existing_order": has_existing_order_link,
         }
+
+        board_date_value = self._parse_board_date(case_data.get("board_date"))
+        if board_date_value and board_date_value > datetime.now().date():
+            reason = f"Order fetch is not due yet for board date {board_date_value.isoformat()}"
+            self.case_store.transition_lifecycle(
+                case_ref,
+                "fetch_not_due",
+                reason=reason,
+                metadata={
+                    "source": "auto_order_manager",
+                    "board_date": board_date_value.isoformat(),
+                },
+                event_type="fetch_not_due",
+            )
+            result["error"] = reason
+            return result
+
+        self.case_store.transition_lifecycle(
+            case_ref,
+            "fetch_in_progress",
+            metadata={"source": "auto_order_manager"},
+            event_type="fetch_started",
+        )
 
         # If case has status "linked", skip download and analyze existing order
         if order_status == "linked" and has_existing_order_link:
@@ -402,14 +478,10 @@ class AutoOrderManager:
 
                             # Update status to order_analysis_failed
                             try:
-                                self.db.collection(self.boards_collection).document(
-                                    case_id
-                                ).update(
-                                    {
-                                        "order_status": "order_analysis_failed",
-                                        "order_status_updated_at": datetime.now().isoformat(),
-                                        "order_failure_reason": result["error"],
-                                    }
+                                self._record_case_order_status(
+                                    case_ref,
+                                    "order_analysis_failed",
+                                    result["error"],
                                 )
                             except Exception as status_error:
                                 logging.error(
@@ -436,10 +508,14 @@ class AutoOrderManager:
 
                         # Step 7: Link order to additional cases found in the order (multi-case linking)
                         try:
+                            link_analysis_data = dict(result["analysis_data"] or {})
+                            link_analysis_data["order_cases"] = analysis_result.get(
+                                "cases", []
+                            )
                             linked_cases = self._link_order_to_additional_cases(
                                 case_id,
                                 case_ref,
-                                analysis_result["data"],
+                                link_analysis_data,
                                 order_info,
                                 case_data.get("board_date"),
                             )
@@ -472,14 +548,10 @@ class AutoOrderManager:
 
                         # Update status to order_analysis_failed
                         try:
-                            self.db.collection(self.boards_collection).document(
-                                case_id
-                            ).update(
-                                {
-                                    "order_status": "order_analysis_failed",
-                                    "order_status_updated_at": datetime.now().isoformat(),
-                                    "order_failure_reason": result["error"],
-                                }
+                            self._record_case_order_status(
+                                case_ref,
+                                "order_analysis_failed",
+                                result["error"],
                             )
                         except Exception as status_error:
                             logging.error(
@@ -510,12 +582,8 @@ class AutoOrderManager:
 
             # Set order_failed status after all attempts exhausted
             try:
-                self.db.collection(self.boards_collection).document(case_id).update(
-                    {
-                        "order_status": "order_failed",
-                        "order_status_updated_at": datetime.now().isoformat(),
-                        "order_failure_reason": result["error"],
-                    }
+                self._record_case_order_status(
+                    case_ref, "order_failed", result["error"]
                 )
             except Exception as status_error:
                 logging.error(
@@ -616,10 +684,12 @@ class AutoOrderManager:
 
                 # Link order to additional cases found in the order (multi-case linking)
                 try:
+                    link_analysis_data = dict(result["analysis_data"] or {})
+                    link_analysis_data["order_cases"] = analysis_result.get("cases", [])
                     linked_cases = self._link_order_to_additional_cases(
                         case_id,
                         case_ref,
-                        analysis_result["data"],
+                        link_analysis_data,
                         {"order_link": order_link, "pdf_content": pdf_content},
                         case_data.get("board_date"),
                     )
@@ -642,12 +712,10 @@ class AutoOrderManager:
 
                 # Update status to order_analysis_failed
                 try:
-                    self.db.collection(self.boards_collection).document(case_id).update(
-                        {
-                            "order_status": "order_analysis_failed",
-                            "order_status_updated_at": datetime.now().isoformat(),
-                            "order_failure_reason": result["error"],
-                        }
+                    self._record_case_order_status(
+                        case_ref,
+                        "order_analysis_failed",
+                        result["error"],
                     )
                 except Exception as status_error:
                     logging.error(
@@ -663,12 +731,8 @@ class AutoOrderManager:
 
             # Update status to order_analysis_failed
             try:
-                self.db.collection(self.boards_collection).document(case_id).update(
-                    {
-                        "order_status": "order_analysis_failed",
-                        "order_status_updated_at": datetime.now().isoformat(),
-                        "order_failure_reason": error_msg,
-                    }
+                self._record_case_order_status(
+                    case_ref, "order_analysis_failed", error_msg
                 )
             except Exception as status_error:
                 logging.error(
@@ -695,13 +759,7 @@ class AutoOrderManager:
 
         try:
             # Reset status to not_linked to trigger fresh download
-            self.db.collection(self.boards_collection).document(case_id).update(
-                {
-                    "order_status": "not_linked",
-                    "order_status_updated_at": datetime.now().isoformat(),
-                    "order_link_invalidation_reason": reason,
-                }
-            )
+            self._record_case_order_status(case_ref, "not_linked", reason)
 
             # Remove linked status from case_data to prevent infinite loop
             case_data_fresh = case_data.copy()
@@ -770,10 +828,14 @@ class AutoOrderManager:
 
                             # Link to additional cases
                             try:
+                                link_analysis_data = dict(result["analysis_data"] or {})
+                                link_analysis_data["order_cases"] = analysis_result.get(
+                                    "cases", []
+                                )
                                 linked_cases = self._link_order_to_additional_cases(
                                     case_id,
                                     case_ref,
-                                    analysis_result["data"],
+                                    link_analysis_data,
                                     download_result,
                                     case_data.get("board_date"),
                                 )
@@ -812,13 +874,7 @@ class AutoOrderManager:
             result["error"] = error_msg
 
             # Update status to order_failed
-            self.db.collection(self.boards_collection).document(case_id).update(
-                {
-                    "order_status": "order_failed",
-                    "order_status_updated_at": datetime.now().isoformat(),
-                    "order_failure_reason": error_msg,
-                }
-            )
+            self._record_case_order_status(case_ref, "order_failed", error_msg)
 
             return result
 
@@ -829,12 +885,8 @@ class AutoOrderManager:
 
             # Update to order_analysis_failed
             try:
-                self.db.collection(self.boards_collection).document(case_id).update(
-                    {
-                        "order_status": "order_analysis_failed",
-                        "order_status_updated_at": datetime.now().isoformat(),
-                        "order_failure_reason": error_msg,
-                    }
+                self._record_case_order_status(
+                    case_ref, "order_analysis_failed", error_msg
                 )
             except Exception as status_error:
                 logging.error(f"Failed to update status: {status_error}")
@@ -1157,10 +1209,7 @@ class AutoOrderManager:
         expected_board_date: str,
         order_link: Optional[str] = None,
     ) -> Dict:
-        """
-        Analyze the downloaded order using order_analyzer and validate date
-        Store analysis results directly in daily-boards collection
-        """
+        """Analyze a downloaded order and persist the event in case-details."""
         try:
             # Create temporary filename for analysis
             temp_filename = f"{case_ref.replace('/', '-')}.pdf"
@@ -1228,37 +1277,31 @@ class AutoOrderManager:
                     "government_pleader": [],
                 }
 
-            # Create FLATTENED order analysis data (no order_cases array)
+            # Build case-specific order analysis payload.
             order_analysis = {
-                # Order analysis results
                 "order_category": analysis_result.order_category,
                 "order_category_confidence": analysis_result.category_confidence,
                 "order_date": analysis_result.order_date,
-                # FLATTENED case data for THIS case only (not an array)
                 "order_petitioner": this_case_data.get("petitioner", ""),
                 "order_respondent": this_case_data.get("respondent", ""),
                 "government_pleader": this_case_data.get("government_pleader", []),
-                # Date validation
                 "order_date_validation": date_validation,
-                # Order link
                 "order_link": order_link,
-                # Analysis metadata
                 "order_analysis_timestamp": datetime.now().isoformat(),
-                "order_analysis_completed": True,
                 "order_last_updated": datetime.now().isoformat(),
                 "order_analysis_metadata": analysis_metadata,
                 "order_analyzer_fallback_metrics": analyzer_fallback_metrics,
-                # Order status tracking
                 "order_status": "analysed",
                 "order_status_updated_at": datetime.now().isoformat(),
             }
 
-            # Update the daily-boards document directly with FLATTENED order analysis
-            self.db.collection(self.boards_collection).document(case_id).update(
-                order_analysis
-            )
-
             try:
+                self.case_store.transition_lifecycle(
+                    case_ref,
+                    "analysis_in_progress",
+                    metadata={"source": "auto_order_manager", "case_id": case_id},
+                    event_type="analysis_started",
+                )
                 self.case_store.append_case_order(
                     case_ref,
                     {
@@ -1285,104 +1328,53 @@ class AutoOrderManager:
                         ),
                     },
                 )
+                self.case_store.transition_lifecycle(
+                    case_ref,
+                    "analysed",
+                    metadata={
+                        "source": "auto_order_manager",
+                        "case_id": case_id,
+                        "order_category": order_analysis.get("order_category"),
+                    },
+                    event_type="analysis_succeeded",
+                )
             except Exception as case_sync_error:
                 logging.warning(
                     f"Failed to sync normalized order history for {case_ref}: {case_sync_error}"
                 )
 
-            # If there are additional cases in this order, update their daily-boards too
+            # Also persist for additional cases extracted from the same order.
             if additional_cases:
                 logging.info(
-                    f"Found {len(additional_cases)} additional cases in order for {case_ref}, updating their boards"
+                    f"Found {len(additional_cases)} additional cases in order for {case_ref}, syncing case-details"
                 )
                 for add_case in additional_cases:
                     try:
                         add_case_ref = f"{add_case.get('case_type')}/{add_case.get('case_number')}/{add_case.get('case_year')}"
-                        add_case_id = f"{expected_board_date.replace('-', '')}-{add_case_ref.replace('/', '-')}"
-
-                        # Check if this case exists in daily-boards
-                        add_board_doc = (
-                            self.db.collection(self.boards_collection)
-                            .document(add_case_id)
-                            .get()
-                        )
-                        if add_board_doc.exists:
-                            # Update with FLATTENED data for this specific case
-                            add_case_order_data = {
+                        self.case_store.append_case_order(
+                            add_case_ref,
+                            {
+                                "order_link": order_link,
+                                "order_status": "analysed",
                                 "order_category": analysis_result.order_category,
-                                "order_category_confidence": analysis_result.category_confidence,
                                 "order_date": analysis_result.order_date,
-                                "order_petitioner": add_case.get("petitioner", ""),
-                                "order_respondent": add_case.get("respondent", ""),
+                                "order_category_confidence": analysis_result.category_confidence,
+                                "petitioner": add_case.get("petitioner", ""),
+                                "respondent": add_case.get("respondent", ""),
                                 "government_pleader": add_case.get(
                                     "government_pleader", []
                                 ),
-                                "order_date_validation": date_validation,
-                                "order_link": order_link,
                                 "order_analysis_timestamp": datetime.now().isoformat(),
-                                "order_analysis_completed": True,
-                                "order_last_updated": datetime.now().isoformat(),
                                 "order_analysis_metadata": analysis_metadata,
-                                "order_analyzer_fallback_metrics": analyzer_fallback_metrics,
-                                "order_status": "analysed",
-                                "order_status_updated_at": datetime.now().isoformat(),
-                            }
-                            self.db.collection(self.boards_collection).document(
-                                add_case_id
-                            ).update(add_case_order_data)
-                            try:
-                                self.case_store.append_case_order(
-                                    add_case_ref,
-                                    {
-                                        "order_link": add_case_order_data.get(
-                                            "order_link"
-                                        ),
-                                        "order_status": add_case_order_data.get(
-                                            "order_status"
-                                        ),
-                                        "order_category": add_case_order_data.get(
-                                            "order_category"
-                                        ),
-                                        "order_date": add_case_order_data.get(
-                                            "order_date"
-                                        ),
-                                        "order_category_confidence": add_case_order_data.get(
-                                            "order_category_confidence"
-                                        ),
-                                        "petitioner": add_case_order_data.get(
-                                            "order_petitioner"
-                                        ),
-                                        "respondent": add_case_order_data.get(
-                                            "order_respondent"
-                                        ),
-                                        "government_pleader": add_case_order_data.get(
-                                            "government_pleader", []
-                                        ),
-                                        "order_analysis_timestamp": add_case_order_data.get(
-                                            "order_analysis_timestamp"
-                                        ),
-                                        "order_analysis_metadata": add_case_order_data.get(
-                                            "order_analysis_metadata", {}
-                                        ),
-                                        "order_date_validation": add_case_order_data.get(
-                                            "order_date_validation", {}
-                                        ),
-                                    },
-                                )
-                            except Exception as case_sync_error:
-                                logging.warning(
-                                    f"  ⚠️  Failed normalized sync for additional case {add_case_ref}: {case_sync_error}"
-                                )
-                            logging.info(
-                                f"  ✅ Updated order analysis for additional case: {add_case_ref}"
-                            )
-                        else:
-                            logging.info(
-                                f"  ⏭️  Skipping {add_case_ref} - not found in daily-boards for date {expected_board_date}"
-                            )
+                                "order_date_validation": date_validation,
+                            },
+                        )
+                        logging.info(
+                            f"  ✅ Synced order analysis for additional case: {add_case_ref}"
+                        )
                     except Exception as e:
                         logging.warning(
-                            f"  ❌ Failed to update additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}"
+                            f"  ❌ Failed to sync additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}"
                         )
 
             # Prepare full analysis data for response
@@ -1390,22 +1382,20 @@ class AutoOrderManager:
                 "case_id": case_id,
                 "case_ref": case_ref,
                 **order_analysis,
-                "order_cases": cases_as_dicts,
                 "additional_cases_updated": len(additional_cases),
             }
 
-            return {"success": True, "data": full_analysis_data}
+            return {
+                "success": True,
+                "data": full_analysis_data,
+                "cases": cases_as_dicts,
+            }
 
         except Exception as e:
             logging.error(f"Error analyzing order for case {case_id}: {e}")
-            # Set order_analysis_failed status
             try:
-                self.db.collection(self.boards_collection).document(case_id).update(
-                    {
-                        "order_status": "order_analysis_failed",
-                        "order_status_updated_at": datetime.now().isoformat(),
-                        "order_analysis_error": str(e),
-                    }
+                self._record_case_order_status(
+                    case_ref, "order_analysis_failed", str(e)
                 )
             except Exception as update_error:
                 logging.error(
@@ -1501,23 +1491,12 @@ class AutoOrderManager:
     def _create_search_index_entry(
         self, case_id: str, case_data: Dict, analysis_data: Dict
     ) -> None:
-        """Create optimized search index entry for fast searching from consolidated daily-boards data"""
+        """Create optimized search index entry using board data + case analysis."""
         try:
-            # Get the complete board document with analysis data
-            board_doc = (
-                self.db.collection(self.boards_collection).document(case_id).get()
-            )
-            if not board_doc.exists:
-                logging.error(f"Board document not found for case {case_id}")
-                return
-
-            board_data = board_doc.to_dict()
-
-            # Extract data with consistent field names (now flattened, not arrays)
-            petitioner = board_data.get("order_petitioner", "")
-            respondent = board_data.get("order_respondent", "")
-            agp_names = board_data.get("government_pleader", [])
-            key_phrases = board_data.get("order_key_phrases", [])
+            petitioner = analysis_data.get("order_petitioner", "")
+            respondent = analysis_data.get("order_respondent", "")
+            agp_names = analysis_data.get("government_pleader", [])
+            key_phrases = analysis_data.get("order_key_phrases", [])
 
             # Convert to strings (now simple since they're already strings, not arrays)
             petitioner_text = str(petitioner).strip() if petitioner else ""
@@ -1530,39 +1509,38 @@ class AutoOrderManager:
             # Create search-optimized document
             search_doc = {
                 "case_id": case_id,
-                "case_ref": f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
-                "case_type": board_data.get("case_type"),
-                "case_number": board_data.get("case_no"),
-                "case_year": board_data.get("case_year"),
-                "board_date": board_data.get("board_date"),
+                "case_ref": f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}",
+                "case_type": case_data.get("case_type"),
+                "case_number": case_data.get("case_no"),
+                "case_year": case_data.get("case_year"),
+                "board_date": case_data.get("board_date"),
                 # Board data
-                "petitioner_lawyer": board_data.get("petitioner_lawyer"),
-                "respondent_lawyer": board_data.get("respondent_lawyer"),
-                "serial_number": board_data.get("serial_number"),
+                "petitioner_lawyer": case_data.get("petitioner_lawyer"),
+                "respondent_lawyer": case_data.get("respondent_lawyer"),
+                "serial_number": case_data.get("serial_number"),
                 # Parties information from order analysis (now flattened strings, not arrays)
                 "petitioner": petitioner_text,  # Single string for UI display
                 "respondent": respondent_text,  # Single string for UI display
                 "petitioner_text": petitioner_text.lower(),  # For text search
                 "respondent_text": respondent_text.lower(),  # For text search
                 # Order information with consistent field names
-                "order_category": board_data.get("order_category"),
-                "order_date": board_data.get("order_date"),
-                "order_category_confidence": board_data.get(
+                "order_category": analysis_data.get("order_category"),
+                "order_date": analysis_data.get("order_date"),
+                "order_category_confidence": analysis_data.get(
                     "order_category_confidence"
                 ),
                 "agp_names": agp_name_strings,
                 "key_phrases": key_phrases if isinstance(key_phrases, list) else [],
                 # Date validation status
-                "date_validation_valid": board_data.get(
+                "date_validation_valid": analysis_data.get(
                     "order_date_validation", {}
                 ).get("valid", False),
                 # Links
-                "order_link": board_data.get("order_link"),
+                "order_link": analysis_data.get("order_link"),
                 # Analysis metadata
-                "order_analysis_completed": board_data.get(
-                    "order_analysis_completed", False
+                "order_analysis_timestamp": analysis_data.get(
+                    "order_analysis_timestamp"
                 ),
-                "order_analysis_timestamp": board_data.get("order_analysis_timestamp"),
                 # Timestamps
                 "created_at": datetime.now().isoformat(),
                 "last_updated": datetime.now().isoformat(),
@@ -1577,50 +1555,43 @@ class AutoOrderManager:
             logging.error(f"Error creating search index for case {case_id}: {e}")
 
     def _create_order_link(self, case_id: str, order_info: Dict) -> None:
-        """Create order link in the database - consolidated in daily-boards collection"""
+        """Create order link in case-details for the board case."""
         try:
-            # Update the daily-boards case document with order information
-            case_update = {
-                "order_downloaded": True,
-                "order_link": order_info.get("order_link"),
-                "order_filename": order_info.get("filename"),
-                "order_source": order_info.get("source", "auto"),
-                "order_downloaded_at": datetime.now().isoformat(),
-                "order_status": "linked",
-                "order_fetch_date": datetime.now().isoformat(),
-                "order_created_at": datetime.now().isoformat(),
-                "order_updated_at": datetime.now().isoformat(),
-            }
-
-            self.db.collection(self.boards_collection).document(case_id).update(
-                case_update
+            board_doc = (
+                self.db.collection(self.boards_collection).document(case_id).get()
             )
-            logging.info(f"Order link created in daily-boards for {case_id}")
+            if not board_doc.exists:
+                logging.error(f"Board document not found for {case_id}")
+                return
 
-            try:
-                board_doc = (
-                    self.db.collection(self.boards_collection).document(case_id).get()
-                )
-                board_data = board_doc.to_dict() if board_doc.exists else {}
-                case_ref = self.case_store.build_case_ref(
-                    board_data.get("case_type"),
-                    board_data.get("case_no"),
-                    board_data.get("case_year"),
-                )
-                self.case_store.append_case_order(
-                    case_ref,
-                    {
-                        "order_status": "linked",
-                        "order_link": order_info.get("order_link"),
-                        "order_filename": order_info.get("filename"),
-                        "order_source": order_info.get("source", "auto"),
-                        "order_fetch_date": case_update.get("order_fetch_date"),
-                    },
-                )
-            except Exception as case_sync_error:
-                logging.warning(
-                    f"Case order history sync failed for {case_id}: {case_sync_error}"
-                )
+            board_data = board_doc.to_dict() or {}
+            case_ref = self.case_store.build_case_ref(
+                board_data.get("case_type"),
+                board_data.get("case_no"),
+                board_data.get("case_year"),
+            )
+
+            self.case_store.append_case_order(
+                case_ref,
+                {
+                    "order_status": "linked",
+                    "order_link": order_info.get("order_link"),
+                    "order_filename": order_info.get("filename"),
+                    "order_source": order_info.get("source", "auto"),
+                    "order_fetch_date": datetime.now().isoformat(),
+                },
+            )
+            self.case_store.transition_lifecycle(
+                case_ref,
+                "fetch_succeeded",
+                metadata={
+                    "source": "auto_order_manager",
+                    "case_id": case_id,
+                    "order_link": order_info.get("order_link"),
+                },
+                event_type="fetch_succeeded",
+            )
+            logging.info(f"Order link created in case-details for {case_ref}")
 
         except Exception as e:
             logging.error(f"Error creating order link for case {case_id}: {e}")
@@ -1685,15 +1656,8 @@ class AutoOrderManager:
                         continue
 
                     # Check if this case already has an order linked
-                    existing_case_doc = (
-                        self.db.collection(self.boards_collection)
-                        .document(matching_case_id)
-                        .get()
-                    )
-                    existing_order = (
-                        existing_case_doc.to_dict().get("order_status", "not_linked")
-                        if existing_case_doc.exists
-                        else "not_linked"
+                    existing_order = self._get_case_order_context(case_ref).get(
+                        "order_status", "not_linked"
                     )
                     if existing_order in {"linked", "analysed", "manually_uploaded"}:
                         logging.info(
@@ -1709,36 +1673,26 @@ class AutoOrderManager:
                         analysis_data, case_info, order_info.get("order_link")
                     )
 
-                    # Update daily-boards with analysis for this case
-                    self.db.collection(self.boards_collection).document(
-                        matching_case_id
-                    ).update(case_specific_analysis)
-
-                    try:
-                        self.case_store.append_case_order(
-                            case_ref,
-                            {
-                                "order_link": case_specific_analysis.get("order_link"),
-                                "order_status": "analysed",
-                                "order_category": case_specific_analysis.get(
-                                    "order_category"
-                                ),
-                                "order_date": case_specific_analysis.get("order_date"),
-                                "order_category_confidence": case_specific_analysis.get(
-                                    "order_category_confidence"
-                                ),
-                                "order_analysis_timestamp": case_specific_analysis.get(
-                                    "order_analysis_timestamp"
-                                ),
-                                "order_date_validation": case_specific_analysis.get(
-                                    "order_date_validation", {}
-                                ),
-                            },
-                        )
-                    except Exception as case_sync_error:
-                        logging.warning(
-                            f"Failed normalized sync for linked case {case_ref}: {case_sync_error}"
-                        )
+                    self.case_store.append_case_order(
+                        case_ref,
+                        {
+                            "order_link": case_specific_analysis.get("order_link"),
+                            "order_status": "analysed",
+                            "order_category": case_specific_analysis.get(
+                                "order_category"
+                            ),
+                            "order_date": case_specific_analysis.get("order_date"),
+                            "order_category_confidence": case_specific_analysis.get(
+                                "order_category_confidence"
+                            ),
+                            "order_analysis_timestamp": case_specific_analysis.get(
+                                "order_analysis_timestamp"
+                            ),
+                            "order_date_validation": case_specific_analysis.get(
+                                "order_date_validation", {}
+                            ),
+                        },
+                    )
 
                     # Create search index for this case
                     case_data_for_search = (
@@ -1822,7 +1776,6 @@ class AutoOrderManager:
             "order_status": "analysed",
             # Analysis metadata
             "order_analysis_timestamp": datetime.now().isoformat(),
-            "order_analysis_completed": True,
             "order_last_updated": datetime.now().isoformat(),
         }
 

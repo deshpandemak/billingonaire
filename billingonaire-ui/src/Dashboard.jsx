@@ -40,6 +40,10 @@ ChartJS.register(
 );
 
 const Dashboard = () => {
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear();
+  const currentQuarter = Math.floor(currentDate.getMonth() / 3) + 1;
+
   const [agpStats, setAgpStats] = useState([]);
   const [monthlyAvg, setMonthlyAvg] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear().toString());
@@ -63,6 +67,45 @@ const Dashboard = () => {
     start: '',
     end: ''
   });
+
+  const [boardSummary, setBoardSummary] = useState({ rows: [], summary: {}, filters: {} });
+  const [boardSummaryLoading, setBoardSummaryLoading] = useState(true);
+  const [boardSummaryError, setBoardSummaryError] = useState('');
+  const [boardCurrentPage, setBoardCurrentPage] = useState(0);
+
+  const [boardFilterType, setBoardFilterType] = useState('quarter');
+  const [boardYear, setBoardYear] = useState(currentYear.toString());
+  const [boardQuarter, setBoardQuarter] = useState(currentQuarter.toString());
+  const [boardDateRange, setBoardDateRange] = useState({ start: '', end: '' });
+  const [boardLimit, setBoardLimit] = useState(180);
+
+  const [selectedBoardDates, setSelectedBoardDates] = useState([]);
+  const [selectedDistribution, setSelectedDistribution] = useState({
+    distribution: [],
+    total_cases: 0,
+    selected_dates: [],
+    board_breakdown: []
+  });
+  const [selectedDistributionLoading, setSelectedDistributionLoading] = useState(false);
+  const [selectedDistributionError, setSelectedDistributionError] = useState('');
+  const [selectedDateCases, setSelectedDateCases] = useState([]);
+  const [selectedDateCasesLoading, setSelectedDateCasesLoading] = useState(false);
+  const [selectedDateCasesError, setSelectedDateCasesError] = useState('');
+  const [selectedCaseRefs, setSelectedCaseRefs] = useState([]);
+
+  const [queueStatus, setQueueStatus] = useState({
+    fetch_queue_size: 0,
+    analysis_queue_size: 0,
+    fetch_processing_active: false,
+    analysis_processing_active: false,
+    status: 'inactive',
+    message: ''
+  });
+  const [queueStatusLoading, setQueueStatusLoading] = useState(true);
+  const [queueStatusError, setQueueStatusError] = useState('');
+  const [jobActionLoading, setJobActionLoading] = useState('');
+  const [jobActionMessage, setJobActionMessage] = useState('');
+  const [jobActionError, setJobActionError] = useState('');
 
   const fetchAgpStats = useCallback(async () => {
     setAgpLoading(true);
@@ -121,6 +164,214 @@ const Dashboard = () => {
     }
   }, [dateRange.start, dateRange.end]);
 
+  const fetchBoardDateSummary = useCallback(async () => {
+    setBoardSummaryLoading(true);
+    setBoardSummaryError('');
+
+    const params = new URLSearchParams();
+    params.set('limit', String(boardLimit || 180));
+
+    if (boardFilterType === 'quarter') {
+      if (boardYear) {
+        params.set('year', boardYear);
+      }
+      if (boardQuarter) {
+        params.set('quarter', boardQuarter);
+      }
+    } else if (boardFilterType === 'year') {
+      if (boardYear) {
+        params.set('year', boardYear);
+      }
+    } else {
+      if (boardDateRange.start) {
+        params.set('start_date', boardDateRange.start);
+      }
+      if (boardDateRange.end) {
+        params.set('end_date', boardDateRange.end);
+      }
+    }
+
+    const url = `/dashboard/board-date-summary?${params.toString()}`;
+
+    try {
+      const data = await authenticatedFetchJSON(url);
+      setBoardSummary(data);
+      setBoardCurrentPage(0);
+
+      const dateSet = new Set((data.rows || []).map(row => row.board_date));
+      setSelectedBoardDates(prev => prev.filter(date => dateSet.has(date)));
+    } catch (e) {
+      console.error('Failed to fetch board date summary:', e);
+      setBoardSummaryError('Failed to load board date summary');
+      setBoardSummary({ rows: [], summary: {}, filters: {} });
+      setSelectedBoardDates([]);
+    } finally {
+      setBoardSummaryLoading(false);
+    }
+  }, [boardDateRange.end, boardDateRange.start, boardFilterType, boardLimit, boardQuarter, boardYear]);
+
+  const fetchSelectedBoardDistribution = useCallback(async () => {
+    if (!selectedBoardDates.length) {
+      setSelectedDistributionError('Select at least one board date first');
+      return;
+    }
+
+    setSelectedDistributionLoading(true);
+    setSelectedDistributionError('');
+
+    const params = new URLSearchParams();
+    selectedBoardDates.forEach(date => params.append('board_dates', date));
+
+    try {
+      const data = await authenticatedFetchJSON(`/dashboard/board-date-agp-distribution?${params.toString()}`);
+      setSelectedDistribution(data);
+    } catch (e) {
+      console.error('Failed to fetch selected board distribution:', e);
+      setSelectedDistributionError('Failed to load AGP distribution for selected board dates');
+      setSelectedDistribution({ distribution: [], total_cases: 0, selected_dates: [], board_breakdown: [] });
+    } finally {
+      setSelectedDistributionLoading(false);
+    }
+  }, [selectedBoardDates]);
+
+  const fetchSelectedDateCases = useCallback(async () => {
+    if (!selectedBoardDates.length) {
+      setSelectedDateCases([]);
+      setSelectedCaseRefs([]);
+      return;
+    }
+
+    setSelectedDateCasesLoading(true);
+    setSelectedDateCasesError('');
+
+    const params = new URLSearchParams();
+    selectedBoardDates.forEach(date => params.append('board_dates', date));
+    params.set('limit', '2000');
+
+    try {
+      const data = await authenticatedFetchJSON(`/dashboard/board-date-cases?${params.toString()}`);
+      const cases = data.cases || [];
+      setSelectedDateCases(cases);
+
+      const caseRefSet = new Set(cases.map(item => item.case_ref));
+      setSelectedCaseRefs(prev => prev.filter(ref => caseRefSet.has(ref)));
+    } catch (e) {
+      console.error('Failed to fetch selected date cases:', e);
+      setSelectedDateCasesError('Failed to load case list for selected dates');
+      setSelectedDateCases([]);
+      setSelectedCaseRefs([]);
+    } finally {
+      setSelectedDateCasesLoading(false);
+    }
+  }, [selectedBoardDates]);
+
+  const fetchQueueStatus = useCallback(async () => {
+    setQueueStatusLoading(true);
+    setQueueStatusError('');
+    try {
+      const data = await authenticatedFetchJSON('/queue/status');
+      setQueueStatus(data || {});
+    } catch (e) {
+      console.error('Failed to fetch queue status:', e);
+      setQueueStatusError('Unable to fetch queue status right now');
+    } finally {
+      setQueueStatusLoading(false);
+    }
+  }, []);
+
+  const queueFetchJobs = useCallback(async () => {
+    setJobActionLoading('fetch');
+    setJobActionError('');
+    setJobActionMessage('');
+
+    try {
+      const filters = {};
+
+      if (boardFilterType === 'quarter' || boardFilterType === 'year') {
+        if (boardYear) {
+          filters.case_year = boardYear;
+        }
+      }
+
+      if (boardFilterType === 'date_range') {
+        if (boardDateRange.start) {
+          filters.date_from = boardDateRange.start;
+        }
+        if (boardDateRange.end) {
+          filters.date_to = boardDateRange.end;
+        }
+      }
+
+      const result = await authenticatedFetchJSON('/jobs/fetch-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          filters,
+          board_dates: selectedBoardDates,
+          case_refs: selectedCaseRefs,
+          limit: Math.min(Number(boardLimit) || 100, 300),
+          max_sequences: 50
+        })
+      });
+
+      setJobActionMessage(
+        `Queued fetch jobs: ${result.queued || 0}, skipped not due: ${result.skipped_not_due || 0}${selectedCaseRefs.length ? `, selected cases: ${selectedCaseRefs.length}` : selectedBoardDates.length ? `, selected dates: ${selectedBoardDates.length}` : ''}`
+      );
+      await fetchQueueStatus();
+    } catch (e) {
+      console.error('Failed to queue fetch jobs:', e);
+      setJobActionError('Failed to queue fetch jobs. Admin access may be required.');
+    } finally {
+      setJobActionLoading('');
+    }
+  }, [boardDateRange.end, boardDateRange.start, boardFilterType, boardLimit, boardYear, fetchQueueStatus, selectedBoardDates, selectedCaseRefs]);
+
+  const queueAnalyzeJobs = useCallback(async () => {
+    setJobActionLoading('analysis');
+    setJobActionError('');
+    setJobActionMessage('');
+
+    try {
+      const result = await authenticatedFetchJSON('/jobs/analyze-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          board_dates: selectedBoardDates,
+          case_refs: selectedCaseRefs,
+          limit: Math.min(Number(boardLimit) || 100, 300)
+        })
+      });
+
+      setJobActionMessage(
+        `Queued analysis jobs: ${result.queued || 0}, skipped: ${result.skipped || 0}${selectedCaseRefs.length ? `, selected cases: ${selectedCaseRefs.length}` : selectedBoardDates.length ? `, selected dates: ${selectedBoardDates.length}` : ''}`
+      );
+      await fetchQueueStatus();
+    } catch (e) {
+      console.error('Failed to queue analysis jobs:', e);
+      setJobActionError('Failed to queue analysis jobs. Admin access may be required.');
+    } finally {
+      setJobActionLoading('');
+    }
+  }, [boardLimit, fetchQueueStatus, selectedBoardDates, selectedCaseRefs]);
+
+  const restartWorkers = useCallback(async () => {
+    setJobActionLoading('restart');
+    setJobActionError('');
+    setJobActionMessage('');
+
+    try {
+      const result = await authenticatedFetchJSON('/queue/restart', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      setJobActionMessage(result.message || 'Background workers restarted');
+      await fetchQueueStatus();
+    } catch (e) {
+      console.error('Failed to restart workers:', e);
+      setJobActionError('Failed to restart workers. Admin access may be required.');
+    } finally {
+      setJobActionLoading('');
+    }
+  }, [fetchQueueStatus]);
+
   useEffect(() => {
     fetchAgpStats();
   }, [fetchAgpStats]);
@@ -134,6 +385,22 @@ const Dashboard = () => {
     fetchMattersByDateRange();
   }, [fetchMattersByDateRange]);
 
+  useEffect(() => {
+    fetchBoardDateSummary();
+  }, [fetchBoardDateSummary]);
+
+  useEffect(() => {
+    fetchSelectedDateCases();
+  }, [fetchSelectedDateCases]);
+
+  useEffect(() => {
+    fetchQueueStatus();
+    const interval = window.setInterval(() => {
+      fetchQueueStatus();
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [fetchQueueStatus]);
+
   // Helper function for pagination
   const getPaginatedData = (data, currentPage) => {
     const startIndex = currentPage * ITEMS_PER_PAGE;
@@ -143,6 +410,51 @@ const Dashboard = () => {
 
   const getTotalPages = (dataLength) => {
     return Math.ceil(dataLength / ITEMS_PER_PAGE);
+  };
+
+  const toggleBoardDateSelection = (boardDate) => {
+    setSelectedBoardDates((prev) => {
+      if (prev.includes(boardDate)) {
+        return prev.filter(d => d !== boardDate);
+      }
+      return [...prev, boardDate];
+    });
+  };
+
+  const selectAllBoardDatesOnPage = () => {
+    const pageRows = getPaginatedData(boardSummary.rows || [], boardCurrentPage);
+    const pageDates = pageRows.map(row => row.board_date);
+    setSelectedBoardDates((prev) => {
+      const merged = new Set(prev);
+      pageDates.forEach(date => merged.add(date));
+      return Array.from(merged);
+    });
+  };
+
+  const clearBoardDateSelection = () => {
+    setSelectedBoardDates([]);
+    setSelectedDistribution({ distribution: [], total_cases: 0, selected_dates: [], board_breakdown: [] });
+    setSelectedDistributionError('');
+    setSelectedDateCases([]);
+    setSelectedCaseRefs([]);
+    setSelectedDateCasesError('');
+  };
+
+  const toggleCaseSelection = (caseRef) => {
+    setSelectedCaseRefs((prev) => {
+      if (prev.includes(caseRef)) {
+        return prev.filter(ref => ref !== caseRef);
+      }
+      return [...prev, caseRef];
+    });
+  };
+
+  const selectAllCasesForSelectedDates = () => {
+    setSelectedCaseRefs((selectedDateCases || []).map(item => item.case_ref));
+  };
+
+  const clearCaseSelection = () => {
+    setSelectedCaseRefs([]);
   };
 
   // Chart configurations
@@ -222,6 +534,19 @@ const Dashboard = () => {
     ],
   };
 
+  const selectedDistributionChartData = {
+    labels: (selectedDistribution.distribution || []).slice(0, 12).map(item => item.agp_name),
+    datasets: [
+      {
+        label: 'Assigned Matters',
+        data: (selectedDistribution.distribution || []).slice(0, 12).map(item => item.matters),
+        backgroundColor: 'rgba(37, 99, 235, 0.75)',
+        borderColor: 'rgba(29, 78, 216, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
 
   return (
     <div className="dashboard-container">
@@ -230,6 +555,490 @@ const Dashboard = () => {
         <p className="dashboard-subtitle">
           Monitor your court matters, AGP statistics, and practice performance
         </p>
+      </div>
+
+      <div className="dashboard-section">
+        <div className="card-professional">
+          <div className="card-header">
+            <h2 className="section-title">Queue Operations and Job Controls</h2>
+          </div>
+          <div className="card-body">
+            {queueStatusLoading ? (
+              <div className="text-center p-3">
+                <div className="loading-text">
+                  <span className="loading"></span>
+                  Refreshing queue status...
+                </div>
+              </div>
+            ) : queueStatusError ? (
+              <div className="text-center p-3">
+                <p style={{ color: 'var(--error-color)' }}>{queueStatusError}</p>
+                <button className="btn-professional btn-primary" onClick={fetchQueueStatus}>
+                  Retry Queue Status
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="row mb-4">
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: 'var(--primary-color)' }}>{queueStatus.fetch_queue_size || 0}</h4>
+                      <p>Fetch Queue</p>
+                    </div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: 'var(--secondary-color)' }}>{queueStatus.analysis_queue_size || 0}</h4>
+                      <p>Analysis Queue</p>
+                    </div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: queueStatus.fetch_processing_active ? 'var(--success-color)' : 'var(--gray-500)' }}>
+                        {queueStatus.fetch_processing_active ? 'ON' : 'OFF'}
+                      </h4>
+                      <p>Fetch Workers</p>
+                    </div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: queueStatus.analysis_processing_active ? 'var(--success-color)' : 'var(--gray-500)' }}>
+                        {queueStatus.analysis_processing_active ? 'ON' : 'OFF'}
+                      </h4>
+                      <p>Analysis Workers</p>
+                    </div>
+                  </div>
+                </div>
+
+                <p style={{ marginBottom: 'var(--spacing-md)', color: 'var(--gray-600)' }}>
+                  {queueStatus.message || 'Queue status available'}
+                </p>
+
+                <div className="d-flex flex-wrap gap-2 mb-2">
+                  <button
+                    className="btn-professional btn-primary"
+                    onClick={queueFetchJobs}
+                    disabled={jobActionLoading === 'fetch'}
+                  >
+                    {jobActionLoading === 'fetch' ? 'Queueing Fetch...' : 'Queue Fetch Jobs'}
+                  </button>
+                  <button
+                    className="btn-professional btn-primary"
+                    onClick={queueAnalyzeJobs}
+                    disabled={jobActionLoading === 'analysis'}
+                  >
+                    {jobActionLoading === 'analysis' ? 'Queueing Analysis...' : 'Queue Analysis Jobs'}
+                  </button>
+                  <button
+                    className="btn-professional btn-secondary"
+                    onClick={restartWorkers}
+                    disabled={jobActionLoading === 'restart'}
+                  >
+                    {jobActionLoading === 'restart' ? 'Restarting...' : 'Restart Workers'}
+                  </button>
+                  <button className="btn-professional btn-secondary" onClick={fetchQueueStatus}>
+                    Refresh Queue Status
+                  </button>
+                </div>
+
+                <p style={{ color: 'var(--gray-600)', marginBottom: 'var(--spacing-sm)' }}>
+                  {selectedCaseRefs.length
+                    ? `Queue actions will target selected cases (${selectedCaseRefs.length}).`
+                    : selectedBoardDates.length
+                    ? `Queue actions will target selected board dates (${selectedBoardDates.length}).`
+                    : 'Queue actions currently target the active dashboard filters.'}
+                </p>
+
+                {jobActionMessage && (
+                  <p style={{ color: 'var(--success-color)', marginTop: 'var(--spacing-sm)' }}>{jobActionMessage}</p>
+                )}
+                {jobActionError && (
+                  <p style={{ color: 'var(--error-color)', marginTop: 'var(--spacing-sm)' }}>{jobActionError}</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="dashboard-section">
+        <div className="card-professional">
+          <div className="card-header">
+            <h2 className="section-title">Board Upload Inventory and Pleader Allocation</h2>
+          </div>
+          <div className="card-body">
+            <div className="d-flex flex-wrap gap-3 mb-4" style={{ alignItems: 'end' }}>
+              <div className="form-group" style={{ minWidth: '180px' }}>
+                <label className="form-label">Filter Type</label>
+                <select
+                  className="form-control"
+                  value={boardFilterType}
+                  onChange={(e) => setBoardFilterType(e.target.value)}
+                >
+                  <option value="quarter">Year and Quarter</option>
+                  <option value="year">Year</option>
+                  <option value="date_range">Date Range</option>
+                </select>
+              </div>
+
+              {(boardFilterType === 'quarter' || boardFilterType === 'year') && (
+                <div className="form-group" style={{ minWidth: '120px' }}>
+                  <label className="form-label">Year</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={boardYear}
+                    min="2000"
+                    max={currentYear + 5}
+                    onChange={(e) => setBoardYear(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {boardFilterType === 'quarter' && (
+                <div className="form-group" style={{ minWidth: '120px' }}>
+                  <label className="form-label">Quarter</label>
+                  <select
+                    className="form-control"
+                    value={boardQuarter}
+                    onChange={(e) => setBoardQuarter(e.target.value)}
+                  >
+                    <option value="1">Q1</option>
+                    <option value="2">Q2</option>
+                    <option value="3">Q3</option>
+                    <option value="4">Q4</option>
+                  </select>
+                </div>
+              )}
+
+              {boardFilterType === 'date_range' && (
+                <>
+                  <div className="form-group" style={{ minWidth: '160px' }}>
+                    <label className="form-label">Start Date</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={boardDateRange.start}
+                      onChange={(e) => setBoardDateRange(prev => ({ ...prev, start: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ minWidth: '160px' }}>
+                    <label className="form-label">End Date</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={boardDateRange.end}
+                      onChange={(e) => setBoardDateRange(prev => ({ ...prev, end: e.target.value }))}
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="form-group" style={{ minWidth: '120px' }}>
+                <label className="form-label">Rows</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  value={boardLimit}
+                  min="20"
+                  max="1000"
+                  onChange={(e) => setBoardLimit(Number(e.target.value || 180))}
+                />
+              </div>
+
+              <div className="form-group">
+                <button className="btn-professional btn-primary" onClick={fetchBoardDateSummary}>
+                  Apply Filters
+                </button>
+              </div>
+            </div>
+
+            {boardSummaryLoading ? (
+              <div className="text-center p-4">
+                <div className="loading-text">
+                  <span className="loading"></span>
+                  Loading board date summary...
+                </div>
+              </div>
+            ) : boardSummaryError ? (
+              <div className="text-center p-4">
+                <p style={{ color: 'var(--error-color)' }}>{boardSummaryError}</p>
+                <button className="btn-professional btn-primary" onClick={fetchBoardDateSummary}>
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="row mb-4">
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: 'var(--primary-color)' }}>{boardSummary.summary.total_board_dates || 0}</h4>
+                      <p>Board Dates</p>
+                    </div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: 'var(--secondary-color)' }}>{boardSummary.summary.total_cases || 0}</h4>
+                      <p>Total Cases</p>
+                    </div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="stat-card">
+                      <h4 style={{ color: 'var(--accent-color)' }}>{selectedBoardDates.length}</h4>
+                      <p>Selected Dates</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="d-flex flex-wrap gap-2 mb-3">
+                  <button className="btn-professional btn-secondary" onClick={selectAllBoardDatesOnPage}>
+                    Select All on Page
+                  </button>
+                  <button className="btn-professional btn-secondary" onClick={clearBoardDateSelection}>
+                    Clear Selection
+                  </button>
+                  <button
+                    className="btn-professional btn-primary"
+                    onClick={fetchSelectedBoardDistribution}
+                    disabled={!selectedBoardDates.length || selectedDistributionLoading}
+                  >
+                    {selectedDistributionLoading ? 'Analyzing...' : 'Analyze Selected Dates'}
+                  </button>
+                </div>
+
+                <div style={{
+                  maxHeight: '420px',
+                  overflowY: 'auto',
+                  border: '1px solid var(--gray-200)',
+                  borderRadius: 'var(--radius-md)'
+                }}>
+                  <table className="table-professional" style={{ margin: 0 }}>
+                    <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--gray-50)', zIndex: 10 }}>
+                      <tr>
+                        <th>Select</th>
+                        <th>Board Date</th>
+                        <th>Cases on Board</th>
+                        <th>Distinct Respondent Lawyers</th>
+                        <th>Distinct Petitioner Lawyers</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getPaginatedData(boardSummary.rows || [], boardCurrentPage).map((row) => {
+                        const isSelected = selectedBoardDates.includes(row.board_date);
+                        return (
+                          <tr
+                            key={row.board_date}
+                            onClick={() => toggleBoardDateSelection(row.board_date)}
+                            style={{ cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.08)' : 'transparent' }}
+                          >
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleBoardDateSelection(row.board_date)}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </td>
+                            <td><strong>{row.board_date}</strong></td>
+                            <td>{row.cases_count}</td>
+                            <td>{row.unique_respondent_lawyers}</td>
+                            <td>{row.unique_petitioner_lawyers}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {(boardSummary.rows || []).length > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginTop: 'var(--spacing-md)',
+                    padding: 'var(--spacing-sm)',
+                    backgroundColor: 'var(--gray-50)',
+                    borderRadius: 'var(--radius-sm)'
+                  }}>
+                    <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)' }}>
+                      Showing {boardCurrentPage * ITEMS_PER_PAGE + 1} - {Math.min((boardCurrentPage + 1) * ITEMS_PER_PAGE, (boardSummary.rows || []).length)} of {(boardSummary.rows || []).length}
+                    </span>
+                    <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
+                      <button
+                        className="btn-professional btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                        onClick={() => setBoardCurrentPage(Math.max(0, boardCurrentPage - 1))}
+                        disabled={boardCurrentPage === 0}
+                      >
+                        ← Previous
+                      </button>
+                      <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
+                        Page {boardCurrentPage + 1} of {getTotalPages((boardSummary.rows || []).length)}
+                      </span>
+                      <button
+                        className="btn-professional btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                        onClick={() => setBoardCurrentPage(Math.min(getTotalPages((boardSummary.rows || []).length) - 1, boardCurrentPage + 1))}
+                        disabled={boardCurrentPage >= getTotalPages((boardSummary.rows || []).length) - 1}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {selectedDistributionError && (
+                  <div className="mt-3">
+                    <p style={{ color: 'var(--error-color)' }}>{selectedDistributionError}</p>
+                  </div>
+                )}
+
+                {(selectedDistribution.distribution || []).length > 0 && (
+                  <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-xl)' }}>
+                      <div className="card-professional">
+                        <div className="card-header">
+                          <h2 className="section-title">AGP Allocation for Selected Dates</h2>
+                        </div>
+                        <div className="card-body">
+                          <p style={{ marginBottom: 'var(--spacing-sm)', color: 'var(--gray-600)' }}>
+                            Selected dates: {(selectedDistribution.selected_dates || []).length} | Total selected cases: {selectedDistribution.total_cases || 0}
+                          </p>
+                          <div style={{ height: '360px', position: 'relative' }}>
+                            <Bar
+                              data={selectedDistributionChartData}
+                              options={{
+                                ...chartOptions,
+                                indexAxis: 'y',
+                                plugins: {
+                                  ...chartOptions.plugins,
+                                  tooltip: {
+                                    callbacks: {
+                                      label: function(context) {
+                                        return `${context.label}: ${context.parsed.x} matters`;
+                                      }
+                                    }
+                                  }
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="card-professional">
+                        <div className="card-header">
+                          <h2 className="section-title">AGP Allocation Table</h2>
+                        </div>
+                        <div className="card-body">
+                          <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                            <table className="table-professional">
+                              <thead>
+                                <tr>
+                                  <th>Government Pleader</th>
+                                  <th>Assigned Cases</th>
+                                  <th>Share</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(selectedDistribution.distribution || []).map((row) => (
+                                  <tr key={row.agp_name}>
+                                    <td>{row.agp_name}</td>
+                                    <td><strong>{row.matters}</strong></td>
+                                    <td>{row.percentage}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                  <div className="card-professional">
+                    <div className="card-header">
+                      <h2 className="section-title">Cases for Selected Board Dates</h2>
+                    </div>
+                    <div className="card-body">
+                      {selectedDateCasesLoading ? (
+                        <div className="text-center p-3">
+                          <div className="loading-text">
+                            <span className="loading"></span>
+                            Loading cases...
+                          </div>
+                        </div>
+                      ) : selectedDateCasesError ? (
+                        <div className="text-center p-3">
+                          <p style={{ color: 'var(--error-color)' }}>{selectedDateCasesError}</p>
+                        </div>
+                      ) : !selectedBoardDates.length ? (
+                        <p style={{ color: 'var(--gray-600)' }}>
+                          Select one or more board dates to see case-level details.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="d-flex flex-wrap gap-2 mb-2">
+                            <button className="btn-professional btn-secondary" onClick={selectAllCasesForSelectedDates}>
+                              Select All Cases
+                            </button>
+                            <button className="btn-professional btn-secondary" onClick={clearCaseSelection}>
+                              Clear Case Selection
+                            </button>
+                            <p style={{ color: 'var(--gray-600)', margin: 0, alignSelf: 'center' }}>
+                              Total cases: {selectedDateCases.length} | Selected: {selectedCaseRefs.length}
+                            </p>
+                          </div>
+
+                          <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
+                            <table className="table-professional" style={{ margin: 0 }}>
+                              <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--gray-50)', zIndex: 10 }}>
+                                <tr>
+                                  <th>Select</th>
+                                  <th>Board Date</th>
+                                  <th>Case Ref</th>
+                                  <th>Respondent Lawyer</th>
+                                  <th>Petitioner Lawyer</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedDateCases.map((item) => {
+                                  const isSelected = selectedCaseRefs.includes(item.case_ref);
+                                  return (
+                                    <tr
+                                      key={`${item.case_id}-${item.case_ref}`}
+                                      onClick={() => toggleCaseSelection(item.case_ref)}
+                                      style={{ cursor: 'pointer', backgroundColor: isSelected ? 'rgba(16, 185, 129, 0.08)' : 'transparent' }}
+                                    >
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => toggleCaseSelection(item.case_ref)}
+                                          onClick={(e) => e.stopPropagation()}
+                                        />
+                                      </td>
+                                      <td>{item.board_date}</td>
+                                      <td><strong>{item.case_ref}</strong></td>
+                                      <td>{item.respondent_lawyer || '-'}</td>
+                                      <td>{item.petitioner_lawyer || '-'}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* NEW ANALYTICS SECTION - Total Matters by Date Range with Average */}

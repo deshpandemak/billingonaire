@@ -725,10 +725,6 @@ class Board:
                     row.get("case_type"), row.get("case_no"), row.get("case_year")
                 )
 
-                # Set initial order status
-                row["order_status"] = "not_linked"
-                row["order_status_updated_at"] = datetime.now().isoformat()
-
                 doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
 
@@ -757,6 +753,19 @@ class Board:
         case_details_by_ref = self.case_store.get_case_details_map(case_refs)
 
         for record in records:
+            record["order_link"] = None
+            record["order_status"] = "not_linked"
+            record["order_category"] = None
+            record["order_date"] = None
+            record["order_petitioner"] = None
+            record["order_respondent"] = None
+            record["government_pleader"] = []
+            record["assigned_government_pleaders"] = []
+            record["order_history"] = []
+            record["lifecycle_status"] = "board_ingested"
+            record["lifecycle_status_updated_at"] = None
+            record["lifecycle_timeline"] = []
+
             case_ref = record.get("case_ref")
             case_detail = case_details_by_ref.get(case_ref)
             if not case_detail:
@@ -786,6 +795,13 @@ class Board:
                 "assigned_government_pleaders", []
             )
             record["order_history"] = orders
+            record["lifecycle_status"] = (
+                case_detail.get("lifecycle_status") or "board_ingested"
+            )
+            record["lifecycle_status_updated_at"] = case_detail.get(
+                "lifecycle_status_updated_at"
+            )
+            record["lifecycle_timeline"] = case_detail.get("lifecycle_events") or []
 
         return records
 
@@ -908,44 +924,14 @@ class Board:
                 query = query.where("case_year", "==", case_year)
 
             # Apply order status filter
-            # Note: Firestore requires composite indexes for order_status + board_date
-            # To avoid index requirements, apply client-side when date filters present
             order_status = search_criteria.get("orderStatus") or search_criteria.get(
                 "order_status"
             )
-            has_date_filter = start_date or end_date
-            if order_status:
-                if not has_date_filter:
-                    # Safe to use server-side filter when no date filter
-                    logging.info(
-                        f"FILTERING BY ORDER STATUS (server-side): {order_status} (field: order_status)"
-                    )
-                    query = query.where("order_status", "==", order_status)
-                else:
-                    # Will filter client-side to avoid index requirement
-                    logging.info(
-                        "ORDER STATUS FILTER: Will apply client-side due to "
-                        "Firestore index limitations (field: order_status)"
-                    )
 
             # Apply order category filter (from ML analysis)
-            # Same index limitation applies for order_category + board_date
             order_category = search_criteria.get(
                 "orderCategory"
             ) or search_criteria.get("order_category")
-            if order_category:
-                if not has_date_filter:
-                    # Safe to use server-side filter when no date filter
-                    logging.info(
-                        f"FILTERING BY ORDER CATEGORY (server-side): {order_category} (field: order_category)"
-                    )
-                    query = query.where("order_category", "==", order_category)
-                else:
-                    # Will filter client-side to avoid index requirement
-                    logging.info(
-                        "ORDER CATEGORY FILTER: Will apply client-side due to "
-                        "Firestore index limitations (field: order_category)"
-                    )
 
             docs = query.stream()
             data = []
@@ -953,8 +939,8 @@ class Board:
 
             # Check which filters need to be applied client-side (when date filters present)
             apply_advocate_filter_client_side = advocate_name and has_date_filter
-            apply_order_status_filter_client_side = order_status and has_date_filter
-            apply_order_category_filter_client_side = order_category and has_date_filter
+            apply_order_status_filter_client_side = False
+            apply_order_category_filter_client_side = False
 
             for doc in docs:
                 doc_data = doc.to_dict()
@@ -963,18 +949,6 @@ class Board:
                 if apply_advocate_filter_client_side:
                     respondent_lawyer = doc_data.get("respondent_lawyer", "").lower()
                     if advocate_name.lower() not in respondent_lawyer:
-                        continue  # Skip this document
-
-                # Apply client-side order status filter if needed
-                if apply_order_status_filter_client_side:
-                    doc_order_status = doc_data.get("order_status", "")
-                    if doc_order_status != order_status:
-                        continue  # Skip this document
-
-                # Apply client-side order category filter if needed
-                if apply_order_category_filter_client_side:
-                    doc_order_category = doc_data.get("order_category", "")
-                    if doc_order_category != order_category:
                         continue  # Skip this document
 
                 # Add document ID for reference
@@ -990,10 +964,6 @@ class Board:
                     doc_data["board_date"], "strftime"
                 ):
                     doc_data["board_date"] = doc_data["board_date"].strftime("%Y-%m-%d")
-
-                # Include order status fields for UI (these are already in the document from order processing)
-                # Fields: order_downloaded, order_link, order_filename, order_analysis_completed, order_category
-                # If not present, they will be None/undefined in the response
 
                 data.append(doc_data)
 
@@ -1017,7 +987,24 @@ class Board:
 
             if not data:
                 logging.warning("No records matched search criteria")
-            return self._hydrate_with_case_details(data)
+
+            hydrated_data = self._hydrate_with_case_details(data)
+
+            if order_status:
+                hydrated_data = [
+                    row
+                    for row in hydrated_data
+                    if row.get("order_status", "not_linked") == order_status
+                ]
+
+            if order_category:
+                hydrated_data = [
+                    row
+                    for row in hydrated_data
+                    if row.get("order_category") == order_category
+                ]
+
+            return hydrated_data
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")
             logging.error("Stack trace:", exc_info=True)

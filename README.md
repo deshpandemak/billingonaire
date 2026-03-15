@@ -141,7 +141,8 @@ This runs repository checks aligned with CI, including:
 ## 🔑 Key Features
 
 - **PDF Processing**: Automated parsing of daily court board files
-- **Order Management**: Download and analysis of court orders with ML
+- **Asynchronous Workflow**: Board ingestion, order fetch, and order analysis run as separate stages
+- **Order Management**: Retry-aware download and analysis of court orders with ML
 - **Bill Generation**: Professional AGP-compliant Excel bill export
 - **Analytics Dashboard**: Weekly status, AGP statistics, monthly averages
 - **Role-Based Access**: Admin and user permissions
@@ -159,5 +160,5 @@ This runs repository checks aligned with CI, including:
 ## 📝 Documentation
 
 - SDLC workflow and deployment/verification governance: [.github/SDLC_SPEC.md](.github/SDLC_SPEC.md)
-- Runtime board/order pipeline and fallback workflow: [docs/CURRENT_WORKFLOW.md](docs/CURRENT_WORKFLOW.md)
+- Runtime asynchronous board/case/order workflow and rollout plan: [docs/CURRENT_WORKFLOW.md](docs/CURRENT_WORKFLOW.md)
 - Detailed project architecture and recent changes: [replit.md](replit.md)

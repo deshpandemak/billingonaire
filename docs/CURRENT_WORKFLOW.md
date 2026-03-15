@@ -1,370 +1,339 @@
-# Current Runtime Workflow (Fresh Start Model)
+# Runtime Workflow (Asynchronous Reality Model)
 
-This document describes the active, non-legacy workflow for board ingestion, order retrieval, and order analysis.
+This document describes the target workflow aligned to real court operations:
 
-## 1. Data Model
+1. Board data arrives first.
+2. Case details become richer over time.
+3. Order links are often unavailable for future dates and many same-day matters.
+4. Order analysis happens only after an order document is fetchable.
 
-Primary collections used by runtime code:
+The system must therefore be stage-based, asynchronous, and transparent to users about data readiness.
 
-- `daily-boards`: board rows and operational order status for each board listing.
-- `case-details`: normalized per-case master record and order history.
-- `board-assignments`: board-date assignment snapshots keyed by board document id.
-- `order-search-index`: search-optimized projection for order lookup screens.
+## 1. High-Level Principles
 
-The active status flow is:
+- Separate concerns by domain:
+1. Board Data: what is listed on board for a date.
+2. Case Data: canonical case identity and accumulated party metadata.
+3. Order Analysis: derived interpretation of fetched order documents.
 
-- `not_linked` -> `linked` -> `analysed`
-- failure states: `order_failed`, `order_analysis_failed`
+- Never block board ingestion waiting for orders.
+- Treat order fetch and order analysis as independent async jobs.
+- Expose readiness and failure states explicitly in API and UI.
 
-`order_linked` is no longer part of the active status model.
+## 2. Data Domains and Ownership
 
-## 2. Board Ingestion Workflow
+### 2.1 daily-boards (Board Data Only)
 
-Entry point: `Board.readFile()` and `Board.saveData()`.
+Purpose:
+- Immutable or lightly mutable board snapshot rows.
 
-### Parsing strategy and fallbacks
+Contains:
+- Board fields only, such as board_date, case_ref, serial_number, petitioner_lawyer, respondent_lawyer.
 
-1. Read PDF pages.
-2. Prefer ML-enhanced parser when available.
-3. Fallback to standard regex/text parsing when ML parsing is unavailable or fails.
-4. Optional LLM enrichment can run when the local LLM extractor is available.
+Does not contain:
+- Order status, order link, analysis category, or analysis confidence.
 
-### Persistence
+### 2.2 case-details (Case Canonical Record)
 
-For each parsed row:
+Purpose:
+- Single source of truth for case identity, latest state, and order lifecycle events.
 
-1. Write the board row to `daily-boards`.
-2. Upsert normalized case data into `case-details` and `board-assignments` via `CaseDataStore.upsert_from_board_entry()`.
+Contains:
+- Case identity fields and enriched party fields.
+- Latest rollups for order lifecycle.
+- Ordered event history for fetch and analysis attempts.
 
-If normalized upsert fails, save operation now fails (no silent compatibility fallback path).
+### 2.3 order-search-index (Derived Read Model)
 
-## 3. Board Read Workflow
+Purpose:
+- Fast UI search/filter across analyzed outcomes.
 
-Entry point: `Board.getData()`.
+Contains:
+- Flattened searchable attributes derived from case-details and board context.
 
-1. Query `daily-boards` with date/case/AGP filters.
-2. Hydrate each result from `case-details` using case reference.
-3. Use latest normalized order event (`latest_*` and `orders`) as source of truth for order fields returned to UI.
+## 3. Asynchronous Stage Model
 
-Hydrated fields include:
+Status model in case-details latest rollup:
 
-- `order_link`, `order_status`, `order_category`, `order_date`
-- `order_petitioner`, `order_respondent`, `government_pleader`
-- `assigned_government_pleaders`, `order_history`
+- board_ingested
+- fetch_not_due
+- fetch_queued
+- fetch_in_progress
+- fetch_succeeded
+- fetch_failed_retryable
+- fetch_failed_terminal
+- analysis_queued
+- analysis_in_progress
+- analysed
+- analysis_failed_retryable
+- analysis_failed_terminal
+- manual_review_required
 
-## 4. Automated Order Retrieval Workflow
+Notes:
+- This status model replaces overloaded linked and analysed-only semantics.
+- Existing statuses can be mapped during rollout, then removed.
 
-Entry point: `AutoOrderManager.get_orders_for_cases()` / `bulk_process_orders()`.
+## 4. Time and Availability Rules
 
-### Candidate selection
+Order fetch eligibility rules:
 
-- Pull candidates from `daily-boards`.
-- Process cases that are not fully analyzed or are in failure states.
+1. board_date greater than today: do not fetch, mark fetch_not_due with next_eligible_at.
+2. board_date equals today: fetch allowed, but often delayed; retry policy should be conservative.
+3. board_date less than today: fetch allowed with normal retry cadence.
 
-### Download strategy and fallbacks
+Operational behavior:
 
-For each case (`_process_single_case`):
+- Future boards should display as onboarded, waiting for due date.
+- Backdated boards should enter fetch queue according to policy.
 
-1. If status is `linked` and an order link exists:
-   - Re-download and analyze existing link (`_analyze_existing_order`).
-   - If link is invalid, fallback to fresh download.
-2. Fresh download path:
-   - First attempt structured scraper (`BombayHighCourtScraper`) once.
-   - If unavailable/unsuccessful, fallback to legacy Bombay HC sequence retries.
-3. For each successful PDF candidate:
-   - quick date validation against board date.
-   - accept first date-valid order.
+## 5. Backend Changes (Complete)
 
-### Post-download actions
+### 5.1 Domain-Service Split
 
-1. Set `linked` status and order metadata on `daily-boards`.
-2. Append order event to `case-details.orders`.
-3. Run full order analysis.
-4. On success, mark `analysed`, update search index, and try multi-case linking.
-5. On analysis failure, mark `order_analysis_failed`.
-6. If no candidate succeeds across retries, mark `order_failed`.
+Create or refactor service layers:
 
-## 5. Order Analysis Workflow
+1. BoardIngestionService:
+- Parse and persist only board rows and board-assignment snapshots.
+- Upsert baseline case record if absent.
 
-Entry point: `OrderDocumentAnalyzer.analyze_order_document()` via `AutoOrderManager._analyze_order_with_date_validation()`.
+2. CaseLifecycleService:
+- Own state transitions and state validation.
+- Enforce valid transitions and terminal states.
 
-### Analysis layers and fallbacks
+3. OrderFetchService:
+- Own court fetch strategy and retries.
+- Emit fetch events into case-details.
 
-1. Base extraction/classification via ML/rule pipeline.
-2. Optional LLM-assisted enrichment when local LLM extractor is available.
-3. Internal confidence-gated fallback merges to improve weak or missing fields.
+4. OrderAnalysisService:
+- Analyze fetched PDF payloads.
+- Emit analysis events and update latest rollup.
 
-### Persistence targets
+### 5.2 Job Queue Separation
 
-- Flattened order fields on `daily-boards` for operational UI.
-- Append/update normalized order event in `case-details`.
-- Search projection in `order-search-index`.
+Use two async queues:
 
-## 6. Multi-Case Linking Workflow
+1. order-fetch-jobs
+2. order-analysis-jobs
 
-When analysis reveals multiple cases in one order:
+Each job includes:
+- case_ref
+- board_date
+- job_type
+- priority
+- attempt_count
+- next_run_at
+- correlation_id
 
-1. Resolve sibling case ids for same board date.
-2. Skip cases already in `linked`/`analysed`/`manually_uploaded` states.
-3. Reuse primary order link and persist case-specific flattened analysis.
-4. Append sibling case order events to `case-details`.
+### 5.3 Event Schema in case-details
 
-## 7. Admin Bulk Workflow
+Recommended event object fields:
 
-Entry points:
+- event_type: fetch_attempt, fetch_success, fetch_failure, analysis_attempt, analysis_success, analysis_failure, manual_override
+- event_at
+- source
+- status
+- reason_code
+- reason_detail
+- artifacts: order_link, order_hash, model_version, confidence, etc.
 
-- `/admin/order-status-overview`
-- `/admin/bulk-order-processing`
+### 5.4 API Response Contract
 
-These now operate on active statuses (`not_linked`, `linked`, `analysed`, `order_failed`, `order_analysis_failed`) and queue eligible cases for async order processing.
+For board list endpoints return three sections per row:
 
-## 8. Manual Order Management Workflow
+- board:
+1. board_date, serial_number, lawyers, file_name
 
-Entry points:
+- case:
+1. case_ref, petitioner, respondent, government_pleader, last_enriched_at
 
-- `/orders/link`
-- `/orders/update-status`
-- `/orders/by-status`
-- `/orders/case-details/{case_id}`
+- order:
+1. lifecycle_status
+2. next_action
+3. next_eligible_at
+4. last_attempt_at
+5. retry_count
+6. order_link
+7. analysis_summary: category, confidence, order_date, validation
 
-### Manual link flow
+Do not return legacy combined payload keys from old analyzed-orders style records.
 
-1. A user/admin stores an order link directly against a `daily-boards` case.
-2. If the provided link resolves to a PDF, the backend immediately attempts analysis.
-3. Successful analysis updates:
-   - flattened order fields on `daily-boards`
-   - normalized order history in `case-details`
-   - `order-search-index`
-4. If download or analysis fails, the link can still remain stored, but the case is marked with the relevant failure state.
+### 5.5 Retry and Scheduling Policy
 
-### Manual status flow
+Fetch retry profile:
 
-Manual status updates should use the active status set only:
+1. Same day: exponential backoff with caps.
+2. Back date up to N days: moderate retry window.
+3. Very old matters: low-frequency retry or manual-review bucket.
 
-- `not_linked`
-- `linked`
-- `analysed`
-- `order_failed`
-- `order_analysis_failed`
-- `manually_uploaded`
+Analysis retry profile:
 
-## 9. Search and Index Workflow
+1. Retry for parser/network/model transient errors.
+2. Route low-confidence ambiguous outputs to manual_review_required.
 
-Entry points:
+## 6. Frontend Changes (Complete)
 
-- `AutoOrderManager._create_search_index_entry()`
-- `/orders/search`
-- `/auto-orders/rebuild-search-index`
+### 6.1 UX by Stage
 
-### Index source
+Board table should show clear stage chips:
 
-The search index is derived from the flattened `daily-boards` representation after analysis.
+- Board Uploaded
+- Awaiting Fetch Window
+- Fetch Queued
+- Fetch In Progress
+- Fetched, Awaiting Analysis
+- Analysed
+- Needs Review
+- Failed with Retry ETA
 
-### Rebuild behavior
+### 6.2 User Actions
 
-Rebuild scans analyzed cases and recreates search-friendly projections, primarily for:
+Per row actions:
 
-- petitioner/respondent lookup
-- AGP name search
-- order category and date filters
+1. Queue Fetch Now (if eligible)
+2. Retry Fetch
+3. Upload Manual Order
+4. Queue Analysis
+5. Mark for Review
+6. View Event Timeline
 
-The index is derivative data and can be regenerated from operational collections.
+### 6.3 Visibility and Trust
 
-## 10. Field Dictionary (Firestore Schema Reference)
+Add timeline drawer with:
 
-This section documents the active field-level schema used by runtime code.
+- fetch attempts with timestamps
+- analysis attempts with model version and confidence
+- error reason codes
+- next scheduled retry
 
-### 10.1 `daily-boards` (Operational Board Row Store)
+### 6.4 Filters and Bulk Controls
 
-Document id pattern:
+Add filters:
 
-- `{board_date}-{case_type}-{case_no}-{case_year}`
+- board date range
+- lifecycle_status
+- due today / future / overdue
+- confidence band
+- needs review
 
-Core board fields:
+Add bulk actions:
 
-- `file_name`: string
-- `board_date`: timestamp/date string
-- `case_type`: string
-- `case_no`: string/number
-- `case_year`: string/number
-- `serial_number`: string/number
-- `case_ref`: string (`TYPE/NO/YEAR`)
-- `petitioner_lawyer`: string
-- `respondent_lawyer`: string
-- `additional_cases`: string[]
-- `additional_respondent_lawyers`: string[]
+- queue eligible fetches
+- queue analysis for fetched items
+- assign to review queue
 
-Order tracking fields:
+## 7. Order Analysis Quality Improvements
 
-- `order_status`: one of `not_linked`, `linked`, `analysed`, `order_failed`, `order_analysis_failed`, `manually_uploaded`
-- `order_status_updated_at`: ISO datetime
-- `order_downloaded`: boolean
-- `order_link`: string|null
-- `order_filename`: string|null
-- `order_source`: string|null
-- `order_fetch_date`: ISO datetime|null
-- `order_downloaded_at`: ISO datetime|null
-- `order_created_at`: ISO datetime|null
-- `order_updated_at`: ISO datetime|null
+Current pain point:
+- Misclassification among DISPOSED_OFF, ADJOURNED, and HEARD_AND_ADJOURNED.
 
-Analysis fields (set after successful analysis):
+### 7.1 Hierarchical Classification
 
-- `order_analysis_completed`: boolean
-- `order_analysis_timestamp`: ISO datetime
-- `order_last_updated`: ISO datetime
-- `order_category`: string
-- `order_category_confidence`: number
-- `order_date`: `YYYY-MM-DD`|null
-- `order_petitioner`: string
-- `order_respondent`: string
-- `government_pleader`: string[]
-- `order_date_validation`: object
-- `order_analysis_metadata`: object
-- `order_analyzer_fallback_metrics`: object
+Switch to two-step model:
 
-Failure fields:
+1. Step A: terminal vs non-terminal disposition.
+2. Step B: if non-terminal, classify ADJOURNED vs HEARD_AND_ADJOURNED.
 
-- `order_failure_reason`: string|null
-- `order_analysis_error`: string|null
+### 7.2 Rule-Augmented Signals
 
-### 10.2 `case-details` (Normalized Case Master + Order History)
+Add deterministic signal extraction before final label:
 
-Document id pattern:
+- disposal cues: disposed of, petition stands disposed, rule made absolute, dismissed as withdrawn, finally disposed
+- hearing cues: heard learned counsel, heard finally, arguments heard
+- adjournment cues: stand over, adjourned to, list on
 
-- `case_ref` with `/` replaced by `-`
+Use weighted voting between model score and rule score.
 
-Identity fields:
+### 7.3 Confidence and Human Review
 
-- `case_ref`: string (`TYPE/NO/YEAR`)
-- `case_type`: string
-- `case_no`: string/number
-- `case_year`: string/number
+Introduce confidence thresholds:
 
-Case-level normalized fields:
+1. confidence greater than or equal to 0.80: auto-accept.
+2. 0.55 to 0.79: accept with warning flag.
+3. below 0.55 or conflicting rules: manual_review_required.
 
-- `petitioner`: string
-- `respondent`: string
-- `government_pleader`: string[]
-- `assigned_government_pleaders`: string[]
-- `latest_board_date`: `YYYY-MM-DD`|null
-- `board_assignment_ids`: string[]
+### 7.4 Evaluation Harness
 
-Latest-order rollups:
+Create golden dataset and track per-class metrics:
 
-- `latest_order_link`: string|null
-- `latest_order_date`: `YYYY-MM-DD`|null
-- `latest_order_status`: string|null
-- `latest_order_category`: string|null
+- precision/recall/F1 for DISPOSED_OFF, ADJOURNED, HEARD_AND_ADJOURNED
+- confusion matrix trend by release
+- false-terminal rate as key risk metric
 
-Order history array:
+## 8. Endpoint Adjustments (Implemented)
 
-- `orders`: array of order event objects (capped to last 100)
+Implemented endpoints:
 
-Typical order event fields:
+1. POST /jobs/fetch-orders
+- queue fetch jobs for eligible cases.
 
-- `order_link`: string|null
-- `order_status`: string|null
-- `order_category`: string|null
-- `order_date`: `YYYY-MM-DD`|null
-- `board_date`: `YYYY-MM-DD`|null
-- `order_category_confidence`: number|null
-- `petitioner`: string|null
-- `respondent`: string|null
-- `government_pleader`: string[]|null
-- `order_filename`: string|null
-- `order_source`: string|null
-- `order_fetch_date`: ISO datetime|null
-- `order_analysis_timestamp`: ISO datetime|null
-- `order_analysis_metadata`: object|null
-- `order_date_validation`: object|null
-- `created_at`: ISO datetime
-- `updated_at`: ISO datetime
+2. POST /jobs/analyze-orders
+- queue analysis jobs for fetched orders.
 
-Timestamps:
+3. GET /cases/lifecycle
+- unified board + case + order response contract.
 
-- `created_at`: ISO datetime
-- `updated_at`: ISO datetime
+4. GET /cases/{case_ref}/timeline
+- full event timeline for transparency.
 
-### 10.3 `board-assignments` (Board-Day Snapshot Layer)
+5. POST /cases/{case_ref}/manual-review
+- move case to review workflow.
 
-Document id:
+6. POST /cases/{case_ref}/manual-override
+- store reviewed final outcome with audit metadata.
 
-- same as `daily-boards` document id
+Status notes:
 
-Fields:
+- Queue endpoints now run fetch and analysis as separate async stages.
+- Manual review and override endpoints write lifecycle events for auditability.
 
-- `board_doc_id`: string
-- `case_ref`: string
-- `board_date`: `YYYY-MM-DD`|null
-- `file_name`: string|null
-- `serial_number`: string/number|null
-- `assigned_government_pleaders`: string[]
-- `petitioner_lawyer`: string|null
-- `respondent_lawyer`: string|null
-- `updated_at`: ISO datetime
+## 9. Documentation and Contract Standards
 
-### 10.4 `order-search-index` (Derived Search Projection)
+All docs and API specs must consistently state:
 
-Document id:
+1. Board upload does not imply order availability.
+2. Future-dated board matters are expected to be fetch_not_due.
+3. Order analysis only runs after successful fetch.
+4. Low-confidence analysis may require manual review.
 
-- `case_id` from `daily-boards`
+## 10. Migration and Rollout Plan
 
-Identity fields:
+### Phase 1: Contract Stabilization
 
-- `case_id`: string
-- `case_ref`: string
-- `case_type`: string
-- `case_number`: string/number
-- `case_year`: string/number
-- `board_date`: timestamp/date string
+1. Stop producing any legacy analyzed-orders style payloads.
+2. Serve unified board + case + order sections from API.
+3. Keep compatibility adapter behind feature flag for one release only.
 
-Party/search fields:
+### Phase 2: Queue and Timeline
 
-- `petitioner`: string
-- `respondent`: string
-- `petitioner_text`: lowercase string for text search
-- `respondent_text`: lowercase string for text search
+1. Introduce explicit fetch and analysis queues.
+2. Persist event timeline records and expose in UI.
 
-Order/search fields:
+### Phase 3: Analysis Quality Upgrade
 
-- `order_category`: string|null
-- `order_date`: `YYYY-MM-DD`|null
-- `order_category_confidence`: number|null
-- `agp_names`: string[]
-- `key_phrases`: string[]
-- `order_link`: string|null
+1. Deploy hierarchical classifier and rule weighting.
+2. Add confidence thresholds and review queue.
+3. Publish quality dashboard.
 
-Analysis/quality fields:
+### Phase 4: Legacy Removal
 
-- `date_validation_valid`: boolean
-- `order_analysis_completed`: boolean
-- `order_analysis_timestamp`: ISO datetime|null
+1. Remove old status names and compatibility paths.
+2. Remove deprecated fields from all docs and endpoints.
 
-Timestamps:
+## 11. Operational SLOs
 
-- `created_at`: ISO datetime
-- `last_updated`: ISO datetime
+Track and alert on:
 
-### 10.5 Lifecycle Summary (Pre vs Post Analysis)
+1. time_to_first_fetch_attempt
+2. fetch_success_rate by board age bucket
+3. analysis_success_rate
+4. manual_review_rate
+5. false-terminal-classification rate
 
-Pre-analysis (after board ingestion):
+## 12. Quick Reality Checklist
 
-1. `daily-boards` row exists with `order_status = not_linked`.
-2. `case-details` exists/updated with normalized case fields and usually empty `orders`.
-3. `board-assignments` snapshot is written.
+The workflow is correct if all of the following are true:
 
-Linked (downloaded but not analyzed):
-
-1. `daily-boards` updated with `order_status = linked` and order link metadata.
-2. `case-details.orders` gets a linked event.
-
-Post-analysis success:
-
-1. `daily-boards` updated with flattened analysis fields and `order_status = analysed`.
-2. `case-details.orders` append/update; `latest_order_*` rollups refreshed.
-3. `order-search-index` created/updated for search.
-
-Failure states:
-
-1. `order_failed` when download retries are exhausted.
-2. `order_analysis_failed` when download succeeds but analysis fails.
+1. Uploading tomorrow board never triggers immediate failed fetch noise.
+2. Today and backdated rows show accurate asynchronous progression.
+3. Users always see what is missing, why it is missing, and what happens next.
+4. Classification outcomes have confidence and review path, not silent mislabels.

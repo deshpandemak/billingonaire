@@ -177,3 +177,78 @@ def test_get_case_details_map_returns_requested_refs():
     assert "WP/1/2025" in details_map
     assert "WP/2/2025" in details_map
     assert "WP/3/2025" not in details_map
+
+
+def test_transition_lifecycle_applies_valid_transition_and_records_event():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-11-2026").set(
+        {
+            "case_ref": "WP/11/2026",
+            "lifecycle_status": "board_ingested",
+            "lifecycle_events": [],
+        }
+    )
+
+    transition = store.transition_lifecycle(
+        "WP/11/2026",
+        "fetch_queued",
+        reason="Ready for fetch",
+        metadata={"source": "test"},
+        event_type="queue_fetch",
+    )
+
+    assert transition["applied"] is True
+    assert transition["from_status"] == "board_ingested"
+    assert transition["to_status"] == "fetch_queued"
+
+    updated_case = db.get_collection("case-details")["WP-11-2026"]
+    assert updated_case["lifecycle_status"] == "fetch_queued"
+    assert len(updated_case["lifecycle_events"]) == 1
+    assert updated_case["lifecycle_events"][0]["event_type"] == "queue_fetch"
+    assert updated_case["lifecycle_events"][0]["status"] == "fetch_queued"
+
+
+def test_transition_lifecycle_rejects_invalid_transition_without_force():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-12-2026").set(
+        {
+            "case_ref": "WP/12/2026",
+            "lifecycle_status": "board_ingested",
+            "lifecycle_events": [],
+        }
+    )
+
+    transition = store.transition_lifecycle("WP/12/2026", "analysed")
+
+    assert transition["applied"] is False
+    assert transition["reason"] == "invalid_transition"
+
+    unchanged_case = db.get_collection("case-details")["WP-12-2026"]
+    assert unchanged_case["lifecycle_status"] == "board_ingested"
+    assert unchanged_case["lifecycle_events"] == []
+
+
+def test_get_case_timeline_respects_limit():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-13-2026").set(
+        {
+            "case_ref": "WP/13/2026",
+            "lifecycle_events": [
+                {"event_type": "e1", "status": "board_ingested"},
+                {"event_type": "e2", "status": "fetch_queued"},
+                {"event_type": "e3", "status": "fetch_in_progress"},
+            ],
+        }
+    )
+
+    timeline = store.get_case_timeline("WP/13/2026", limit=2)
+
+    assert len(timeline) == 2
+    assert timeline[0]["event_type"] == "e2"
+    assert timeline[1]["event_type"] == "e3"

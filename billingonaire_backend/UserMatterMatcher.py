@@ -11,6 +11,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from firebase_admin import firestore
 
+try:
+    from case_data_store import CaseDataStore
+except ImportError:
+    from .case_data_store import CaseDataStore
+
 
 @dataclass
 class UserRole:
@@ -31,7 +36,7 @@ class MatterMatch:
 
     case_id: str
     case_ref: str
-    match_source: str  # 'board_data', 'order_analysis'
+    match_source: str  # 'board_data', 'case_details'
     match_field: (
         str  # 'petitioner_lawyer', 'respondent_lawyer', 'government_pleader', etc.
     )
@@ -49,6 +54,7 @@ class UserMatterMatcher:
 
     def __init__(self):
         self.db = firestore.client()
+        self.case_store = CaseDataStore(self.db)
 
         # Government Pleader role patterns
         self.role_patterns = {
@@ -551,39 +557,38 @@ class UserMatterMatcher:
                             )
                         )
 
-                # Check order analysis fields if available
-                if doc_data.get("order_analysis_completed"):
-                    order_fields = {
-                        "government_pleader": doc_data.get("government_pleader", []),
-                        "order_petitioner": doc_data.get("order_petitioner", ""),
-                        "order_respondent": doc_data.get("order_respondent", ""),
-                    }
+                # Check normalized case-details fields when available.
+                case_details = self.case_store.get_case_details(case_ref) or {}
+                case_fields = {
+                    "government_pleader": case_details.get("government_pleader", []),
+                    "petitioner": case_details.get("petitioner", ""),
+                    "respondent": case_details.get("respondent", ""),
+                }
 
-                    for field_name, field_value in order_fields.items():
-                        if isinstance(field_value, list):
-                            text_to_search = " ".join(str(item) for item in field_value)
-                        else:
-                            text_to_search = str(field_value)
+                for field_name, field_value in case_fields.items():
+                    if isinstance(field_value, list):
+                        text_to_search = " ".join(str(item) for item in field_value)
+                    else:
+                        text_to_search = str(field_value)
 
-                        if text_to_search:
-                            text_matches = self.find_user_matches_in_text(
-                                text_to_search, user_role, field_name
-                            )
-                            for matched_text, confidence in text_matches:
-                                # Boost score for order analysis matches
-                                boosted_confidence = min(1.0, confidence + 0.05)
-                                matches.append(
-                                    MatterMatch(
-                                        case_id=case_id,
-                                        case_ref=case_ref,
-                                        match_source="order_analysis",
-                                        match_field=field_name,
-                                        matched_text=matched_text,
-                                        confidence_score=boosted_confidence,
-                                        role_type=user_role.role_type,
-                                        board_date=str(doc_data.get("board_date", "")),
-                                    )
+                    if text_to_search:
+                        text_matches = self.find_user_matches_in_text(
+                            text_to_search, user_role, field_name
+                        )
+                        for matched_text, confidence in text_matches:
+                            boosted_confidence = min(1.0, confidence + 0.05)
+                            matches.append(
+                                MatterMatch(
+                                    case_id=case_id,
+                                    case_ref=case_ref,
+                                    match_source="case_details",
+                                    match_field=field_name,
+                                    matched_text=matched_text,
+                                    confidence_score=boosted_confidence,
+                                    role_type=user_role.role_type,
+                                    board_date=str(doc_data.get("board_date", "")),
                                 )
+                            )
 
         except Exception as e:
             logging.error(f"Error finding user matters for {user_id}: {e}")
@@ -620,8 +625,8 @@ class UserMatterMatcher:
                 "board_data": len(
                     [m for m in matches if m.match_source == "board_data"]
                 ),
-                "order_analysis": len(
-                    [m for m in matches if m.match_source == "order_analysis"]
+                "case_details": len(
+                    [m for m in matches if m.match_source == "case_details"]
                 ),
             },
             "recent_matches": len(
@@ -696,41 +701,39 @@ class UserMatterMatcher:
                         )
                     )
 
-            # Search order analysis fields if available
-            if doc_data.get("order_analysis_completed"):
-                order_fields = {
-                    "government_pleader": doc_data.get("government_pleader"),
-                    "order_petitioner": doc_data.get("order_petitioner"),
-                    "order_respondent": doc_data.get("order_respondent"),
-                }
+            # Search normalized case-details fields.
+            case_details = self.case_store.get_case_details(case_ref) or {}
+            case_fields = {
+                "government_pleader": case_details.get("government_pleader", []),
+                "petitioner": case_details.get("petitioner", ""),
+                "respondent": case_details.get("respondent", ""),
+            }
 
-                for field_name, field_value in order_fields.items():
-                    if field_value:
-                        # Handle both list and string fields
-                        if isinstance(field_value, list):
-                            text_to_search = " ".join(str(item) for item in field_value)
-                        else:
-                            text_to_search = str(field_value)
+            for field_name, field_value in case_fields.items():
+                if field_value:
+                    if isinstance(field_value, list):
+                        text_to_search = " ".join(str(item) for item in field_value)
+                    else:
+                        text_to_search = str(field_value)
 
-                        if text_to_search:
-                            text_matches = self.find_user_matches_in_text(
-                                text_to_search, user_role, field_name
-                            )
-                            for matched_text, confidence in text_matches:
-                                # Boost score for order analysis matches
-                                boosted_confidence = min(1.0, confidence + 0.05)
-                                matches.append(
-                                    MatterMatch(
-                                        case_id=case_id,
-                                        case_ref=case_ref,
-                                        match_source="order_analysis",
-                                        match_field=field_name,
-                                        matched_text=matched_text,
-                                        confidence_score=boosted_confidence,
-                                        role_type=user_role.role_type,
-                                        board_date=str(doc_data.get("board_date", "")),
-                                    )
+                    if text_to_search:
+                        text_matches = self.find_user_matches_in_text(
+                            text_to_search, user_role, field_name
+                        )
+                        for matched_text, confidence in text_matches:
+                            boosted_confidence = min(1.0, confidence + 0.05)
+                            matches.append(
+                                MatterMatch(
+                                    case_id=case_id,
+                                    case_ref=case_ref,
+                                    match_source="case_details",
+                                    match_field=field_name,
+                                    matched_text=matched_text,
+                                    confidence_score=boosted_confidence,
+                                    role_type=user_role.role_type,
+                                    board_date=str(doc_data.get("board_date", "")),
                                 )
+                            )
 
             # Sort by confidence and remove duplicates
             matches.sort(key=lambda x: x.confidence_score, reverse=True)

@@ -175,13 +175,9 @@ def test_process_single_case_download_success_analysis_failure(auto_order_manage
         return_value=Mock(order_date="2024-01-20")
     )
 
-    # Mock database operations
-    mock_doc = Mock()
-    auto_order_manager.db = Mock()
-    auto_order_manager.db.collection().document().update = Mock()
-
     # Mock _create_order_link to succeed
     auto_order_manager._create_order_link = Mock()
+    auto_order_manager._record_case_order_status = Mock()
 
     # Execute
     result = auto_order_manager._process_single_case(case_data)
@@ -195,14 +191,12 @@ def test_process_single_case_download_success_analysis_failure(auto_order_manage
     # Verify order link was created despite analysis failure
     auto_order_manager._create_order_link.assert_called_once()
 
-    # Verify status was updated to order_analysis_failed
-    auto_order_manager.db.collection().document().update.assert_called()
-    update_call_args = auto_order_manager.db.collection().document().update.call_args
-    if update_call_args:
-        update_data = update_call_args[0][0]
-        assert (
-            update_data.get("order_status") == "order_analysis_failed"
-        ), "Status should be order_analysis_failed"
+    # Verify status was updated to order_analysis_failed in normalized store
+    auto_order_manager._record_case_order_status.assert_called_with(
+        case_ref,
+        "order_analysis_failed",
+        result["error"],
+    )
 
 
 def test_process_single_case_download_failure(auto_order_manager):
@@ -228,10 +222,8 @@ def test_process_single_case_download_failure(auto_order_manager):
 
     auto_order_manager._download_order_for_case = Mock(return_value=download_result)
 
-    # Mock database for final status update
-    mock_doc = Mock()
-    auto_order_manager.db = Mock()
-    auto_order_manager.db.collection().document().update = Mock()
+    # Mock normalized status persistence
+    auto_order_manager._record_case_order_status = Mock()
 
     # Execute with limited retries for faster test
     with patch.dict("os.environ", {"ORDER_MAX_SEQUENCE_RETRIES": "3"}):
@@ -244,13 +236,11 @@ def test_process_single_case_download_failure(auto_order_manager):
     assert len(result["retry_attempts"]) > 0
 
     # Verify final status update to order_failed
-    auto_order_manager.db.collection().document().update.assert_called()
-    update_call_args = auto_order_manager.db.collection().document().update.call_args
-    if update_call_args:
-        update_data = update_call_args[0][0]
-        assert (
-            update_data.get("order_status") == "order_failed"
-        ), "Status should be order_failed when download fails"
+    auto_order_manager._record_case_order_status.assert_called_with(
+        case_ref,
+        "order_failed",
+        result["error"],
+    )
 
 
 def test_process_single_case_date_mismatch_retries(auto_order_manager):
@@ -352,13 +342,9 @@ def test_process_single_case_analysis_exception_keeps_order(auto_order_manager):
         side_effect=Exception("Analysis crashed")
     )
 
-    # Mock database
-    mock_doc = Mock()
-    auto_order_manager.db = Mock()
-    auto_order_manager.db.collection().document().update = Mock()
-
     # Mock _create_order_link
     auto_order_manager._create_order_link = Mock()
+    auto_order_manager._record_case_order_status = Mock()
 
     # Execute
     result = auto_order_manager._process_single_case(case_data)
@@ -372,11 +358,11 @@ def test_process_single_case_analysis_exception_keeps_order(auto_order_manager):
     auto_order_manager._create_order_link.assert_called_once()
 
     # Verify status was updated to order_analysis_failed
-    auto_order_manager.db.collection().document().update.assert_called()
-    update_call_args = auto_order_manager.db.collection().document().update.call_args
-    if update_call_args:
-        update_data = update_call_args[0][0]
-        assert update_data.get("order_status") == "order_analysis_failed"
+    auto_order_manager._record_case_order_status.assert_called_with(
+        case_ref,
+        "order_analysis_failed",
+        result["error"],
+    )
 
 
 def test_download_order_for_case_prefers_structured_scraper(auto_order_manager):

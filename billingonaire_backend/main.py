@@ -224,6 +224,8 @@ def get_user_matter_matcher():
 # In-memory queue for async order processing
 order_processing_queue = Queue()
 processing_active = False
+analysis_processing_queue = Queue()
+analysis_processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
 try:
     MAX_WORKERS = max(1, int(os.environ.get("ORDER_PROCESSING_WORKERS", "3")))
@@ -509,6 +511,147 @@ async def ensure_background_processing_active():
         )
 
 
+def _run_case_analysis_job(case_info: Dict) -> Dict:
+    """Blocking analysis job used by async worker executor."""
+    manager = get_auto_order_manager()
+    case_ref = case_info.get("case_ref")
+    case_id = case_info.get("id")
+    board_date = case_info.get("board_date")
+
+    order_context = manager._get_case_order_context(case_ref)
+    order_link = order_context.get("order_link")
+
+    if not order_link:
+        manager.case_store.transition_lifecycle(
+            case_ref,
+            "analysis_failed_retryable",
+            reason="No order link available for analysis",
+            metadata={"source": "analysis_queue", "case_id": case_id},
+            event_type="analysis_queue_no_link",
+        )
+        return {
+            "case_ref": case_ref,
+            "analysis_success": False,
+            "error": "No order link available for analysis",
+        }
+
+    case_data = {
+        "id": case_id,
+        "case_ref": case_ref,
+        "order_link": order_link,
+        "board_date": board_date,
+        "order_status": "linked",
+    }
+    result_template = {
+        "case_id": case_id,
+        "case_ref": case_ref,
+        "download_success": True,
+        "analysis_success": False,
+        "order_link": order_link,
+        "analysis_data": None,
+        "error": None,
+        "retry_attempts": [],
+        "has_existing_order": True,
+    }
+    return manager._analyze_existing_order(case_data, result_template)
+
+
+async def process_analysis_queue_worker(worker_id: int):
+    """Background worker to process analysis queue."""
+    logging.info(f"🚀 Analysis queue worker {worker_id} started")
+
+    while True:
+        try:
+            case_info = await analysis_processing_queue.get()
+            case_ref = case_info.get("case_ref")
+            case_id = case_info.get("id")
+
+            logging.info(
+                f"[Analysis Worker {worker_id}] 🔎 Processing analysis for {case_ref}"
+            )
+
+            try:
+                get_auto_order_manager().case_store.transition_lifecycle(
+                    case_ref,
+                    "analysis_in_progress",
+                    metadata={"source": "analysis_queue", "case_id": case_id},
+                    event_type="analysis_queue_started",
+                )
+
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(executor, _run_case_analysis_job, case_info),
+                    timeout=300.0,
+                )
+
+                if result.get("analysis_success"):
+                    logging.info(
+                        f"[Analysis Worker {worker_id}] ✅ Analysis completed for {case_ref}"
+                    )
+                    try:
+                        await auto_map_case_to_users(case_id, case_info)
+                    except Exception as mapping_error:
+                        logging.error(
+                            f"Error mapping users after analysis for {case_ref}: {mapping_error}"
+                        )
+                else:
+                    error_msg = result.get("error") or "Analysis failed"
+                    get_auto_order_manager().case_store.transition_lifecycle(
+                        case_ref,
+                        "analysis_failed_retryable",
+                        reason=error_msg,
+                        metadata={"source": "analysis_queue", "case_id": case_id},
+                        event_type="analysis_queue_failed",
+                    )
+                    logging.warning(
+                        f"[Analysis Worker {worker_id}] ⚠️ Analysis failed for {case_ref}: {error_msg}"
+                    )
+
+            except asyncio.TimeoutError:
+                get_auto_order_manager().case_store.transition_lifecycle(
+                    case_ref,
+                    "analysis_failed_retryable",
+                    reason="Analysis worker timeout after 5 minutes",
+                    metadata={"source": "analysis_queue", "case_id": case_id},
+                    event_type="analysis_queue_timeout",
+                )
+                logging.error(
+                    f"[Analysis Worker {worker_id}] ❌ Timeout while analyzing {case_ref}"
+                )
+            except Exception as e:
+                get_auto_order_manager().case_store.transition_lifecycle(
+                    case_ref,
+                    "analysis_failed_retryable",
+                    reason=str(e),
+                    metadata={"source": "analysis_queue", "case_id": case_id},
+                    event_type="analysis_queue_exception",
+                )
+                logging.error(
+                    f"[Analysis Worker {worker_id}] ❌ Error analyzing {case_ref}: {e}"
+                )
+
+            analysis_processing_queue.task_done()
+
+        except Exception as e:
+            logging.error(f"Analysis queue worker error: {e}")
+            await asyncio.sleep(5)
+
+
+async def ensure_background_analysis_processing_active():
+    """Ensure background analysis processing is running."""
+    global analysis_processing_active
+
+    if not analysis_processing_active:
+        analysis_processing_active = True
+        for worker_id in range(MAX_WORKERS):
+            asyncio.create_task(process_analysis_queue_worker(worker_id))
+        logging.info(f"🚀 Started {MAX_WORKERS} background analysis worker(s)")
+    else:
+        logging.info(
+            f"✅ Background analysis processing already active with {MAX_WORKERS} workers"
+        )
+
+
 # Login/logout endpoints removed - using Firebase client-side authentication
 
 
@@ -622,6 +765,163 @@ async def get_data(
     except Exception as e:
         logging.error(f"Error in data retrieval: {str(e)}")
         raise HTTPException(status_code=500, detail="Error retrieving data")
+
+
+@app.get("/cases/lifecycle", tags=["Data Retrieval"])
+async def get_cases_lifecycle(
+    case_type: Optional[str] = Query(None),
+    case_number: Optional[str] = Query(None),
+    case_year: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    advocate_name: Optional[str] = Query(None),
+    order_status: Optional[str] = Query(None),
+    order_category: Optional[str] = Query(None),
+    lifecycle_status: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    timeline_limit: int = Query(5, ge=0, le=50),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Return unified board, case, order, and lifecycle sections for each matter."""
+    try:
+        board = Board()
+        search_criteria = {
+            "caseType": case_type,
+            "caseNumber": case_number,
+            "caseYear": case_year,
+            "startDate": start_date,
+            "endDate": end_date,
+            "advocateName": advocate_name,
+            "orderStatus": order_status,
+            "orderCategory": order_category,
+        }
+
+        uid = current_user_with_profile.get("uid")
+        agp_filter = get_user_manager().get_user_agp_filter(uid)
+        rows = board.getData(search_criteria, agp_filter)
+
+        case_store = get_auto_order_manager().case_store
+        items = []
+        for row in rows:
+            case_ref = row.get("case_ref")
+            if not case_ref:
+                case_ref = case_store.build_case_ref(
+                    row.get("case_type"), row.get("case_no"), row.get("case_year")
+                )
+
+            case_details = case_store.get_case_details(case_ref) or {}
+            resolved_lifecycle_status = (
+                case_details.get("lifecycle_status")
+                or case_store.map_legacy_order_status(
+                    case_details.get("latest_order_status") or row.get("order_status")
+                )
+                or "board_ingested"
+            )
+
+            if lifecycle_status and resolved_lifecycle_status != lifecycle_status:
+                continue
+
+            timeline = list(case_details.get("lifecycle_events") or [])
+            timeline_preview = timeline[-timeline_limit:] if timeline_limit else []
+
+            items.append(
+                {
+                    "board": {
+                        "id": row.get("id"),
+                        "board_date": row.get("board_date"),
+                        "serial_number": row.get("serial_number"),
+                        "file_name": row.get("file_name"),
+                        "petitioner_lawyer": row.get("petitioner_lawyer"),
+                        "respondent_lawyer": row.get("respondent_lawyer"),
+                    },
+                    "case": {
+                        "case_ref": case_ref,
+                        "case_type": row.get("case_type"),
+                        "case_no": row.get("case_no"),
+                        "case_year": row.get("case_year"),
+                        "petitioner": case_details.get("petitioner")
+                        or row.get("order_petitioner"),
+                        "respondent": case_details.get("respondent")
+                        or row.get("order_respondent"),
+                        "government_pleader": case_details.get("government_pleader")
+                        or row.get("government_pleader")
+                        or [],
+                    },
+                    "order": {
+                        "status": case_details.get("latest_order_status")
+                        or row.get("order_status")
+                        or "not_linked",
+                        "link": case_details.get("latest_order_link")
+                        or row.get("order_link"),
+                        "category": case_details.get("latest_order_category")
+                        or row.get("order_category"),
+                        "date": case_details.get("latest_order_date")
+                        or row.get("order_date"),
+                    },
+                    "lifecycle": {
+                        "status": resolved_lifecycle_status,
+                        "updated_at": case_details.get("lifecycle_status_updated_at")
+                        or row.get("lifecycle_status_updated_at"),
+                        "timeline_preview": timeline_preview,
+                        "event_count": len(timeline),
+                    },
+                }
+            )
+
+            if len(items) >= limit:
+                break
+
+        return {
+            "items": items,
+            "count": len(items),
+            "filters": {
+                "case_type": case_type,
+                "case_number": case_number,
+                "case_year": case_year,
+                "order_status": order_status,
+                "order_category": order_category,
+                "lifecycle_status": lifecycle_status,
+            },
+        }
+
+    except Exception as e:
+        logging.error(f"Error building lifecycle view: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving lifecycle data")
+
+
+@app.get("/cases/{case_ref:path}/timeline", tags=["Data Retrieval"])
+async def get_case_timeline(
+    case_ref: str,
+    limit: int = Query(50, ge=1, le=500),
+    current_user=Depends(get_current_user),
+):
+    """Return full lifecycle timeline for a case reference."""
+    try:
+        normalized_case_ref = str(case_ref or "").strip().upper()
+        if not normalized_case_ref:
+            raise HTTPException(status_code=400, detail="case_ref is required")
+
+        case_store = get_auto_order_manager().case_store
+        case_details = case_store.get_case_details(normalized_case_ref)
+        if not case_details:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        timeline = case_store.get_case_timeline(normalized_case_ref, limit)
+        return {
+            "case_ref": normalized_case_ref,
+            "lifecycle_status": case_details.get("lifecycle_status")
+            or case_store.map_legacy_order_status(
+                case_details.get("latest_order_status")
+            )
+            or "board_ingested",
+            "timeline": timeline,
+            "count": len(timeline),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching case timeline for {case_ref}: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving case timeline")
 
 
 @app.get("/debug/auth-test")
@@ -1002,6 +1302,64 @@ async def dashboard_agp_distribution_yearly(
     )  # This will raise 403 if invalid
 
     data = await get_dashboard_data().get_agp_distribution_yearly(agp_filter)
+    return JSONResponse(content=data)
+
+
+@app.get("/dashboard/board-date-summary")
+async def dashboard_board_date_summary(
+    start_date: str = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="End date (YYYY-MM-DD)"),
+    year: Optional[int] = Query(None, description="Year filter, e.g. 2026"),
+    quarter: Optional[int] = Query(None, description="Quarter filter (1-4)"),
+    limit: int = Query(180, ge=1, le=1000),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Get board-date summary with case counts and distinct pleader counts."""
+    uid = current_user_with_profile.get("uid")
+    agp_filter = get_user_manager().get_user_agp_filter(uid)
+
+    data = await get_dashboard_data().get_board_date_summary(
+        start_date=start_date,
+        end_date=end_date,
+        year=year,
+        quarter=quarter,
+        limit=limit,
+        agp_filter=agp_filter,
+    )
+    return JSONResponse(content=data)
+
+
+@app.get("/dashboard/board-date-agp-distribution")
+async def dashboard_board_date_agp_distribution(
+    board_dates: List[str] = Query(..., description="One or more board_date values"),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Get AGP-wise case distribution for selected board dates."""
+    uid = current_user_with_profile.get("uid")
+    agp_filter = get_user_manager().get_user_agp_filter(uid)
+
+    data = await get_dashboard_data().get_agp_distribution_for_board_dates(
+        board_dates=board_dates,
+        agp_filter=agp_filter,
+    )
+    return JSONResponse(content=data)
+
+
+@app.get("/dashboard/board-date-cases")
+async def dashboard_board_date_cases(
+    board_dates: List[str] = Query(..., description="One or more board_date values"),
+    limit: int = Query(2000, ge=1, le=5000),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Get case rows for selected board dates."""
+    uid = current_user_with_profile.get("uid")
+    agp_filter = get_user_manager().get_user_agp_filter(uid)
+
+    data = await get_dashboard_data().get_cases_for_board_dates(
+        board_dates=board_dates,
+        limit=limit,
+        agp_filter=agp_filter,
+    )
     return JSONResponse(content=data)
 
 
@@ -1429,47 +1787,62 @@ async def get_analysis_history(
     limit: int = Query(50, description="Maximum number of analyses to return"),
     current_user=Depends(get_current_user),
 ):
-    """Get history of order document analyses from consolidated daily-boards"""
+    """Get history of order document analyses from case-details."""
     try:
         db = firestore.client()
-
-        # Get cases with completed order analysis from daily-boards
-        analyses_ref = (
-            db.collection("daily-boards")
-            .where("order_analysis_completed", "==", True)
-            .order_by("order_analysis_timestamp", direction=firestore.Query.DESCENDING)
-            .limit(limit)
+        case_docs = (
+            db.collection("case-details")
+            .order_by("updated_at", direction=firestore.Query.DESCENDING)
+            .limit(limit * 3)
+            .stream()
         )
-        docs = analyses_ref.stream()
 
         analyses = []
-        for doc in docs:
-            board_data = doc.to_dict()
+        for doc in case_docs:
+            case_data = doc.to_dict() or {}
+            latest_status = case_data.get("latest_order_status")
+            if latest_status != "analysed":
+                continue
 
-            # Extract order analysis data from the board document - NEW SIMPLIFIED STRUCTURE
+            orders = case_data.get("orders") or []
+            latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+
+            board_date = case_data.get("latest_board_date")
+            board_row = None
+            if board_date:
+                board_row = (
+                    db.collection("daily-boards")
+                    .where("case_ref", "==", case_data.get("case_ref"))
+                    .where("board_date", "==", board_date)
+                    .limit(1)
+                    .get()
+                )
+            board_data = board_row[0].to_dict() if board_row else {}
+
             analysis_data = {
                 "id": doc.id,
                 "case_id": doc.id,
-                "case_ref": f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
-                "case_type": board_data.get("case_type"),
-                "case_no": board_data.get("case_no"),
-                "case_year": board_data.get("case_year"),
-                "board_date": board_data.get("board_date"),
+                "case_ref": case_data.get("case_ref"),
+                "case_type": case_data.get("case_type"),
+                "case_no": case_data.get("case_no"),
+                "case_year": case_data.get("case_year"),
+                "board_date": case_data.get("latest_board_date"),
                 "petitioner_lawyer": board_data.get("petitioner_lawyer"),
                 "respondent_lawyer": board_data.get("respondent_lawyer"),
-                # Order analysis results - simplified structure
-                "order_category": board_data.get("order_category"),
-                "category_confidence": board_data.get("order_category_confidence"),
-                "order_date": board_data.get("order_date"),
-                "order_cases": board_data.get(
-                    "order_cases", []
-                ),  # Simplified cases array
-                "date_validation": board_data.get("order_date_validation"),
-                "order_link": board_data.get("order_link"),
-                "analysis_timestamp": board_data.get("order_analysis_timestamp"),
+                "order_category": case_data.get("latest_order_category")
+                or latest_order.get("order_category"),
+                "category_confidence": latest_order.get("order_category_confidence"),
+                "order_date": case_data.get("latest_order_date")
+                or latest_order.get("order_date"),
+                "date_validation": latest_order.get("order_date_validation"),
+                "order_link": case_data.get("latest_order_link")
+                or latest_order.get("order_link"),
+                "analysis_timestamp": latest_order.get("order_analysis_timestamp"),
             }
 
             analyses.append(analysis_data)
+            if len(analyses) >= limit:
+                break
 
         return JSONResponse(
             content={
@@ -1491,32 +1864,33 @@ async def get_analysis_history(
 async def get_analysis_details(
     analysis_id: str, current_user=Depends(get_current_user)
 ):
-    """Get detailed analysis results for a specific case from daily-boards"""
+    """Get detailed analysis results for a specific case from case-details."""
     try:
         db = firestore.client()
 
-        # Get board document with analysis data
         doc_ref = db.collection("daily-boards").document(analysis_id)
         doc = doc_ref.get()
 
         if not doc.exists:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
 
-        board_data = doc.to_dict()
+        board_data = doc.to_dict() or {}
+        case_ref = f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}"
+        case_data = get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+        latest_status = case_data.get("latest_order_status", "not_linked")
+        orders = case_data.get("orders") or []
+        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
 
-        # Check if analysis is completed
-        if not board_data.get("order_analysis_completed", False):
+        if latest_status != "analysed":
             return JSONResponse(
                 status_code=404,
                 content={"error": "Order analysis not completed for this case"},
             )
 
-        # Combine board data with analysis data - SIMPLIFIED STRUCTURE
         analysis_data = {
             "id": doc.id,
             "case_id": doc.id,
-            "case_ref": f"{board_data.get('case_type', '')}/{board_data.get('case_no', '')}/{board_data.get('case_year', '')}",
-            # Original board data
+            "case_ref": case_ref,
             "case_type": board_data.get("case_type"),
             "case_no": board_data.get("case_no"),
             "case_year": board_data.get("case_year"),
@@ -1525,15 +1899,16 @@ async def get_analysis_details(
             "respondent_lawyer": board_data.get("respondent_lawyer"),
             "serial_number": board_data.get("serial_number"),
             "additional_cases": board_data.get("additional_cases"),
-            # Complete order analysis results - simplified structure
-            "order_category": board_data.get("order_category"),
-            "category_confidence": board_data.get("order_category_confidence"),
-            "order_date": board_data.get("order_date"),
-            "order_cases": board_data.get("order_cases", []),  # Simplified cases array
-            "date_validation": board_data.get("order_date_validation"),
-            "order_link": board_data.get("order_link"),
-            "analysis_timestamp": board_data.get("order_analysis_timestamp"),
-            "last_updated": board_data.get("order_last_updated"),
+            "order_category": case_data.get("latest_order_category")
+            or latest_order.get("order_category"),
+            "category_confidence": latest_order.get("order_category_confidence"),
+            "order_date": case_data.get("latest_order_date")
+            or latest_order.get("order_date"),
+            "date_validation": latest_order.get("order_date_validation"),
+            "order_link": case_data.get("latest_order_link")
+            or latest_order.get("order_link"),
+            "analysis_timestamp": latest_order.get("order_analysis_timestamp"),
+            "last_updated": latest_order.get("updated_at"),
         }
 
         return JSONResponse(content=analysis_data)
@@ -1548,13 +1923,12 @@ async def get_analysis_details(
 
 @app.get("/analysis-stats", tags=["Order Analysis"])
 async def get_analysis_statistics(current_user=Depends(get_current_user)):
-    """Get statistics about order document analyses from daily-boards"""
+    """Get statistics about order document analyses from case-details."""
     try:
         db = firestore.client()
 
-        # Get all cases with completed order analysis from daily-boards
-        analyses_ref = db.collection("daily-boards").where(
-            "order_analysis_completed", "==", True
+        analyses_ref = db.collection("case-details").where(
+            "latest_order_status", "==", "analysed"
         )
         docs = analyses_ref.stream()
 
@@ -1573,21 +1947,27 @@ async def get_analysis_statistics(current_user=Depends(get_current_user)):
         recent_cutoff = datetime.now().timestamp() - (30 * 24 * 60 * 60)  # 30 days ago
 
         for doc in docs:
-            data = doc.to_dict()
+            data = doc.to_dict() or {}
+            latest_order = {}
+            orders = data.get("orders") or []
+            if orders and isinstance(orders[-1], dict):
+                latest_order = orders[-1]
             stats["total_analyses"] += 1
 
             # Category distribution
-            category = data.get("order_category", "UNKNOWN")
+            category = data.get("latest_order_category") or latest_order.get(
+                "order_category", "UNKNOWN"
+            )
             if category in stats["category_distribution"]:
                 stats["category_distribution"][category] += 1
 
             # Confidence scores
-            confidence = data.get("order_category_confidence", 0)
+            confidence = latest_order.get("order_category_confidence", 0)
             if confidence > 0:
                 confidences.append(confidence)
 
             # Recent analyses - use order_analysis_timestamp
-            timestamp_str = data.get("order_analysis_timestamp", "")
+            timestamp_str = latest_order.get("order_analysis_timestamp", "")
             if timestamp_str:
                 try:
                     timestamp = datetime.fromisoformat(
@@ -1651,6 +2031,366 @@ async def auto_process_orders(request: Request, current_user=Depends(get_current
         logging.error(f"Error in auto-process-orders: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to process orders: {str(e)}"}
+        )
+
+
+@app.post("/jobs/fetch-orders", tags=["Auto Order Management"])
+async def queue_fetch_orders_jobs(
+    request: Request, current_user=Depends(require_admin_active)
+):
+    """Queue fetch jobs for eligible cases based on filters."""
+    try:
+        body = await request.json()
+        filters = body.get("filters", {})
+        board_dates = body.get("board_dates") or []
+        case_refs = body.get("case_refs") or []
+        limit = int(body.get("limit", 100))
+        max_sequences = int(body.get("max_sequences", 50))
+
+        if limit < 1 or limit > 1000:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "limit must be between 1 and 1000"},
+            )
+        if max_sequences < 1 or max_sequences > 100:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "max_sequences must be between 1 and 100"},
+            )
+
+        manager = get_auto_order_manager()
+        candidate_cases = manager._get_filtered_matters(filters, limit)
+        selected_case_refs = {
+            str(value or "").strip().upper()
+            for value in case_refs
+            if str(value or "").strip()
+        }
+
+        if selected_case_refs:
+            candidate_cases = [
+                case_data
+                for case_data in candidate_cases
+                if str(case_data.get("case_ref") or "").strip().upper()
+                in selected_case_refs
+            ]
+
+        selected_board_dates = {
+            str(value or "").strip()
+            for value in board_dates
+            if str(value or "").strip()
+        }
+        if selected_board_dates and not selected_case_refs:
+            candidate_cases = [
+                case_data
+                for case_data in candidate_cases
+                if (
+                    (
+                        manager._parse_board_date(case_data.get("board_date"))
+                        or datetime.min.date()
+                    ).isoformat()
+                    in selected_board_dates
+                )
+            ]
+
+        queued = 0
+        skipped_not_due = 0
+        queued_case_refs = []
+        today = datetime.now().date()
+
+        for case_data in candidate_cases:
+            board_date = manager._parse_board_date(case_data.get("board_date"))
+            case_ref = case_data.get("case_ref")
+            case_id = case_data.get("id")
+
+            if board_date and board_date > today:
+                skipped_not_due += 1
+                manager.case_store.transition_lifecycle(
+                    case_ref,
+                    "fetch_not_due",
+                    reason=(
+                        f"Order fetch is not due yet for board date {board_date.isoformat()}"
+                    ),
+                    metadata={"source": "jobs.fetch-orders", "case_id": case_id},
+                    event_type="fetch_job_not_due",
+                )
+                continue
+
+            manager.case_store.transition_lifecycle(
+                case_ref,
+                "fetch_queued",
+                metadata={"source": "jobs.fetch-orders", "case_id": case_id},
+                event_type="fetch_job_queued",
+            )
+
+            await order_processing_queue.put(
+                {
+                    "id": case_id,
+                    "case_ref": case_ref,
+                    "board_date": case_data.get("board_date"),
+                    "max_sequences": max_sequences,
+                }
+            )
+            queued += 1
+            queued_case_refs.append(case_ref)
+
+        await ensure_background_processing_active()
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "queued": queued,
+                "skipped_not_due": skipped_not_due,
+                "queue_size": order_processing_queue.qsize(),
+                "queued_case_refs": queued_case_refs,
+                "selected_board_dates": sorted(selected_board_dates),
+                "selected_case_refs": sorted(selected_case_refs),
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error queueing fetch jobs: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to queue fetch jobs: {str(e)}"},
+        )
+
+
+@app.post("/jobs/analyze-orders", tags=["Auto Order Management"])
+async def queue_analysis_jobs(
+    request: Request, current_user=Depends(require_admin_active)
+):
+    """Queue analysis jobs for cases that already have order links."""
+    try:
+        db = firestore.client()
+        body = await request.json()
+
+        limit = int(body.get("limit", 100))
+        days_back = body.get("days_back")
+        case_refs = body.get("case_refs") or []
+        board_dates = body.get("board_dates") or []
+
+        if limit < 1 or limit > 1000:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "limit must be between 1 and 1000"},
+            )
+
+        manager = get_auto_order_manager()
+        queued = 0
+        skipped = 0
+        queued_case_refs = []
+        selected_board_dates = {
+            str(value or "").strip()
+            for value in board_dates
+            if str(value or "").strip()
+        }
+
+        candidate_rows = []
+        if case_refs:
+            for case_ref in case_refs:
+                normalized_ref = str(case_ref or "").strip().upper()
+                if not normalized_ref:
+                    continue
+                parts = normalized_ref.split("/")
+                if len(parts) != 3:
+                    continue
+                query = (
+                    db.collection("daily-boards")
+                    .where("case_type", "==", parts[0])
+                    .where("case_no", "==", parts[1])
+                    .where("case_year", "==", parts[2])
+                    .limit(1)
+                )
+                rows = list(query.stream())
+                if rows:
+                    candidate_rows.append(rows[0])
+        else:
+            query = db.collection("daily-boards")
+            if days_back:
+                start_date = datetime.now() - timedelta(days=int(days_back))
+                start_datetime = datetime(
+                    start_date.year, start_date.month, start_date.day, 0, 0, 0
+                )
+                query = query.where("board_date", ">=", start_datetime)
+            candidate_rows = list(query.limit(limit * 4).stream())
+
+        for row in candidate_rows:
+            row_data = row.to_dict() or {}
+            board_date_obj = manager._parse_board_date(row_data.get("board_date"))
+            board_date_iso = board_date_obj.isoformat() if board_date_obj else None
+            if selected_board_dates and board_date_iso not in selected_board_dates:
+                continue
+
+            case_ref = manager.case_store.build_case_ref(
+                row_data.get("case_type"),
+                row_data.get("case_no"),
+                row_data.get("case_year"),
+            )
+            order_context = manager._get_case_order_context(case_ref)
+            order_link = order_context.get("order_link")
+
+            if not order_link:
+                skipped += 1
+                continue
+
+            manager.case_store.transition_lifecycle(
+                case_ref,
+                "analysis_queued",
+                metadata={"source": "jobs.analyze-orders", "case_id": row.id},
+                event_type="analysis_job_queued",
+            )
+            await analysis_processing_queue.put(
+                {
+                    "id": row.id,
+                    "case_ref": case_ref,
+                    "board_date": row_data.get("board_date"),
+                }
+            )
+            queued += 1
+            queued_case_refs.append(case_ref)
+
+            if queued >= limit:
+                break
+
+        await ensure_background_analysis_processing_active()
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "queued": queued,
+                "skipped": skipped,
+                "analysis_queue_size": analysis_processing_queue.qsize(),
+                "queued_case_refs": queued_case_refs,
+                "selected_board_dates": sorted(selected_board_dates),
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error queueing analysis jobs: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to queue analysis jobs: {str(e)}"},
+        )
+
+
+@app.post("/cases/{case_ref:path}/manual-review", tags=["Auto Order Management"])
+async def mark_case_for_manual_review(
+    case_ref: str,
+    request: Request,
+    current_user=Depends(require_active_user),
+):
+    """Move a case to manual review workflow with audit metadata."""
+    try:
+        body = await request.json()
+        normalized_case_ref = str(case_ref or "").strip().upper()
+        if not normalized_case_ref:
+            return JSONResponse(
+                status_code=400, content={"error": "case_ref is required"}
+            )
+
+        case_store = get_auto_order_manager().case_store
+        case_details = case_store.get_case_details(normalized_case_ref)
+        if not case_details:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        reason = body.get("reason") or "Marked for manual review"
+        notes = body.get("notes")
+        actor_uid = current_user.get("uid")
+
+        transition = case_store.transition_lifecycle(
+            normalized_case_ref,
+            "manual_review_required",
+            reason=reason,
+            metadata={
+                "source": "manual-review",
+                "actor_uid": actor_uid,
+                "notes": notes,
+            },
+            event_type="manual_review_marked",
+            force=True,
+        )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "case_ref": normalized_case_ref,
+                "transition": transition,
+                "lifecycle": case_store.build_lifecycle_summary(normalized_case_ref),
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error marking manual review for {case_ref}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to mark manual review: {str(e)}"},
+        )
+
+
+@app.post("/cases/{case_ref:path}/manual-override", tags=["Auto Order Management"])
+async def manual_override_case_outcome(
+    case_ref: str,
+    request: Request,
+    current_user=Depends(require_admin_active),
+):
+    """Apply a reviewed final outcome and move case lifecycle to analysed."""
+    try:
+        body = await request.json()
+        normalized_case_ref = str(case_ref or "").strip().upper()
+        if not normalized_case_ref:
+            return JSONResponse(
+                status_code=400, content={"error": "case_ref is required"}
+            )
+
+        case_store = get_auto_order_manager().case_store
+        case_details = case_store.get_case_details(normalized_case_ref)
+        if not case_details:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        order_category = body.get("order_category")
+        order_date = body.get("order_date")
+        notes = body.get("notes") or "Manual override applied"
+        actor_uid = current_user.get("uid")
+
+        latest_link = case_details.get("latest_order_link")
+        case_store.append_case_order(
+            normalized_case_ref,
+            {
+                "order_status": "analysed",
+                "order_category": order_category,
+                "order_date": order_date,
+                "order_link": latest_link,
+                "order_analysis_timestamp": datetime.now().isoformat(),
+                "order_manual_override": True,
+                "order_manual_override_notes": notes,
+                "order_manual_override_by": actor_uid,
+            },
+        )
+        transition = case_store.transition_lifecycle(
+            normalized_case_ref,
+            "analysed",
+            reason="Manual override completed",
+            metadata={
+                "source": "manual-override",
+                "actor_uid": actor_uid,
+                "notes": notes,
+                "order_category": order_category,
+                "order_date": order_date,
+            },
+            event_type="manual_override",
+            force=True,
+        )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "case_ref": normalized_case_ref,
+                "transition": transition,
+                "lifecycle": case_store.build_lifecycle_summary(normalized_case_ref),
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error applying manual override for {case_ref}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to apply manual override: {str(e)}"},
         )
 
 
@@ -1721,9 +2461,14 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
             return JSONResponse(status_code=404, content={"error": "Case not found"})
 
         case_data = case_doc.to_dict()
+        case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+        case_details = (
+            get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+        )
+        latest_status = case_details.get("latest_order_status", "not_linked")
+        latest_order_link = case_details.get("latest_order_link")
 
-        # Check if order is downloaded
-        if not case_data.get("order_link"):
+        if not latest_order_link:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -1732,17 +2477,21 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
             )
 
         # If already analyzed, return existing analysis
-        if case_data.get("order_analysis_completed"):
+        if latest_status == "analysed":
+            orders = case_details.get("orders") or []
+            latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
             return JSONResponse(
                 content={
                     "success": True,
                     "message": "Order already analyzed",
                     "data": {
-                        "order_category": case_data.get("order_category"),
-                        "order_date": case_data.get("order_date"),
-                        "order_petitioner": case_data.get("order_petitioner"),
-                        "order_respondent": case_data.get("order_respondent"),
-                        "government_pleader": case_data.get("government_pleader"),
+                        "order_category": case_details.get("latest_order_category")
+                        or latest_order.get("order_category"),
+                        "order_date": case_details.get("latest_order_date")
+                        or latest_order.get("order_date"),
+                        "order_petitioner": case_details.get("petitioner"),
+                        "order_respondent": case_details.get("respondent"),
+                        "government_pleader": case_details.get("government_pleader"),
                     },
                 }
             )
@@ -1752,7 +2501,7 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
         try:
             import requests
 
-            order_link = case_data.get("order_link")
+            order_link = latest_order_link
             logging.info(f"Downloading order from: {order_link}")
 
             try:
@@ -1775,7 +2524,6 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                     )
 
                     # Prepare case_data for fresh download (same as Download Order button)
-                    case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
                     case_data_with_refs = {
                         **case_data,
                         "id": case_id,
@@ -1812,7 +2560,6 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                         )
 
                 # Stored link is valid - proceed with analysis
-                case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
                 logging.info(f"Analyzing order for case: {case_ref}")
 
                 analysis_result = (
@@ -1824,7 +2571,8 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                         order_link,
                     )
                 )
-
+                if analysis_result.get("success") and analysis_result.get("data"):
+                    analysis_result["data"].pop("order_cases", None)
                 return JSONResponse(content=analysis_result)
 
             except requests.RequestException as req_error:
@@ -1833,7 +2581,6 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                     f"Network error accessing stored link: {req_error}. Attempting fresh download..."
                 )
 
-                case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
                 case_data_with_refs = {**case_data, "id": case_id, "case_ref": case_ref}
 
                 result = {
@@ -1940,19 +2687,15 @@ async def upload_manual_order(
         # Create a temporary order link (or upload to storage)
         order_link = f"manual_upload_{case_id}_{file.filename}"
 
-        # Update case document with manual order link and status
-        update_data = {
-            "order_downloaded": True,
-            "order_link": order_link,
-            "order_filename": file.filename,
-            "order_source": "manual_upload",
-            "order_downloaded_at": datetime.now().isoformat(),
-            "order_status": "linked",
-            "order_fetch_date": datetime.now().isoformat(),
-            "order_created_at": datetime.now().isoformat(),
-            "order_updated_at": datetime.now().isoformat(),
-        }
-        db.collection("daily-boards").document(case_id).update(update_data)
+        # Record manual link in case-details.
+        get_auto_order_manager()._create_order_link(
+            case_id,
+            {
+                "order_link": order_link,
+                "filename": file.filename,
+                "source": "manual_upload",
+            },
+        )
 
         # AUTOMATICALLY ANALYZE THE UPLOADED ORDER
         analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
@@ -2026,13 +2769,11 @@ async def scheduled_retry_orders(
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days_back)
 
-        # Query cases without orders from recent boards
         query = (
             db.collection("daily-boards")
             .where("board_date", ">=", start_date.strftime("%Y-%m-%d"))
             .where("board_date", "<=", end_date.strftime("%Y-%m-%d"))
-            .where("order_downloaded", "==", False)
-            .limit(limit)
+            .limit(limit * 3)
         )
 
         cases = query.get()
@@ -2040,12 +2781,22 @@ async def scheduled_retry_orders(
         case_list = []
         for case_doc in cases:
             case_data = case_doc.to_dict()
+            case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+            status = (
+                get_auto_order_manager()
+                ._get_case_order_context(case_ref)
+                .get("order_status", "not_linked")
+            )
+            if status not in {"not_linked", "order_failed", "order_analysis_failed"}:
+                continue
             case_info = {
                 "id": case_doc.id,
-                "case_ref": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                "case_ref": case_ref,
                 "board_date": case_data.get("board_date"),
             }
             case_list.append(case_info)
+            if len(case_list) >= limit:
+                break
 
         if not case_list:
             return JSONResponse(
@@ -2095,7 +2846,6 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
     try:
         db = firestore.client()
 
-        # Query all cases grouped by order_status
         cases = db.collection("daily-boards").stream()
 
         status_counts = {
@@ -2108,7 +2858,12 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
 
         for case_doc in cases:
             case_data = case_doc.to_dict()
-            status = case_data.get("order_status", "not_linked")
+            case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+            status = (
+                get_auto_order_manager()
+                ._get_case_order_context(case_ref)
+                .get("order_status", "not_linked")
+            )
 
             # Normalize: treat "unknown", empty, or missing status as "not_linked"
             if (
@@ -2182,13 +2937,18 @@ async def admin_bulk_order_processing(
             )
             query = query.where("board_date", ">=", start_datetime)
 
-        # Get all cases and filter by status (since Firestore doesn't support 'in' for all types)
+        # Get all cases and filter by status from case-details.
         all_cases = query.limit(limit * 3).stream()
 
         case_list = []
         for case_doc in all_cases:
             case_data = case_doc.to_dict()
-            case_status = case_data.get("order_status", "not_linked")
+            case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+            case_status = (
+                get_auto_order_manager()
+                ._get_case_order_context(case_ref)
+                .get("order_status", "not_linked")
+            )
 
             # Normalize: treat "unknown" or missing status as "not_linked"
             if case_status == "unknown" or case_status is None or case_status == "":
@@ -2197,7 +2957,7 @@ async def admin_bulk_order_processing(
             if case_status in order_statuses:
                 case_info = {
                     "id": case_doc.id,
-                    "case_ref": f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}",
+                    "case_ref": case_ref,
                     "board_date": case_data.get("board_date"),
                     "current_status": case_status,
                     "max_sequences": max_sequences,  # Add max_sequences to case info
@@ -2249,19 +3009,26 @@ async def admin_bulk_order_processing(
 # Queue Management Endpoints
 @app.get("/queue/status", tags=["Queue Management"])
 async def get_queue_status(current_user=Depends(get_current_user)):
-    """Get status of async order processing queue"""
+    """Get status of async fetch and analysis processing queues."""
     try:
         queue_size = order_processing_queue.qsize()
+        analysis_queue_size = analysis_processing_queue.qsize()
 
         return JSONResponse(
             content={
-                "queue_size": queue_size,
-                "processing_active": processing_active,
-                "status": "active" if processing_active else "inactive",
+                "fetch_queue_size": queue_size,
+                "analysis_queue_size": analysis_queue_size,
+                "fetch_processing_active": processing_active,
+                "analysis_processing_active": analysis_processing_active,
+                "status": (
+                    "active"
+                    if processing_active or analysis_processing_active
+                    else "inactive"
+                ),
                 "message": (
-                    f"Queue has {queue_size} pending cases"
-                    if queue_size > 0
-                    else "Queue is empty"
+                    f"Fetch queue: {queue_size}, Analysis queue: {analysis_queue_size}"
+                    if queue_size > 0 or analysis_queue_size > 0
+                    else "Both queues are empty"
                 ),
             }
         )
@@ -2275,18 +3042,21 @@ async def get_queue_status(current_user=Depends(get_current_user)):
 
 @app.post("/queue/restart", tags=["Queue Management"])
 async def restart_queue_processing(current_user=Depends(require_admin)):
-    """Restart the background order processing (admin only)"""
+    """Restart background fetch and analysis processing (admin only)."""
     try:
-        global processing_active
+        global processing_active, analysis_processing_active
         processing_active = False
+        analysis_processing_active = False
         await asyncio.sleep(1)  # Allow current processing to finish
         await ensure_background_processing_active()
+        await ensure_background_analysis_processing_active()
 
         return JSONResponse(
             content={
                 "success": True,
-                "message": "Background order processing restarted",
-                "processing_active": processing_active,
+                "message": "Background fetch and analysis processing restarted",
+                "fetch_processing_active": processing_active,
+                "analysis_processing_active": analysis_processing_active,
             }
         )
 
@@ -2511,10 +3281,20 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
         total_cases_docs = list(total_cases_query.stream())
         total_cases = len(total_cases_docs)
 
-        # Count cases with orders (orders collection exists)
-        orders_ref = db.collection("case-orders")
-        orders_docs = list(orders_ref.limit(10000).stream())
-        cases_with_orders = len(orders_docs)
+        case_docs = list(db.collection("case-details").limit(10000).stream())
+        cases_with_orders = 0
+        recent_successful = 0
+        recent_failed = 0
+
+        for doc in case_docs:
+            case_data = doc.to_dict() or {}
+            status = case_data.get("latest_order_status", "not_linked")
+            if status and status != "not_linked":
+                cases_with_orders += 1
+            if status == "analysed":
+                recent_successful += 1
+            if status in {"order_failed", "order_analysis_failed"}:
+                recent_failed += 1
 
         # Calculate cases without orders
         cases_without_orders = total_cases - cases_with_orders
@@ -2523,16 +3303,6 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
         analysis_completion_rate = round(
             (cases_with_orders / total_cases * 100) if total_cases > 0 else 0, 1
         )
-
-        # Get recent processing statistics
-        recent_successful = 0
-        recent_failed = 0
-
-        # Count recent successful analyses from board data with analysis results
-        for doc in total_cases_docs[:100]:  # Check recent 100 cases
-            case_data = doc.to_dict()
-            if case_data.get("order_analysis_result"):
-                recent_successful += 1
 
         return JSONResponse(
             content={
@@ -2560,11 +3330,17 @@ async def get_orders_queue_status(current_user=Depends(get_current_user)):
     try:
         # Get approximate queue size (this is in-memory, so basic check)
         pending_items = order_processing_queue.qsize() if order_processing_queue else 0
+        analysis_pending_items = (
+            analysis_processing_queue.qsize() if analysis_processing_queue else 0
+        )
 
         return JSONResponse(
             content={
-                "active": processing_active,
+                "active": processing_active or analysis_processing_active,
+                "fetch_active": processing_active,
+                "analysis_active": analysis_processing_active,
                 "pending": pending_items,
+                "analysis_pending": analysis_pending_items,
                 "last_checked": datetime.now().isoformat(),
             }
         )
@@ -3175,14 +3951,25 @@ async def get_my_bills(
 def calculate_case_fee(case_data: Dict) -> Dict:
     """Calculate fee and result based on order analysis"""
     try:
-        # Check if order analysis is available
-        if not case_data.get("order_analysis_completed"):
+        case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+        case_details = (
+            get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+        )
+        latest_status = case_details.get("latest_order_status", "not_linked")
+        if latest_status != "analysed":
             return {"result": "*ADJOURNED*", "fee": 1250}
 
-        # Get order analysis data - use correct field names from order_analyzer
-        order_category = case_data.get("order_category", "").upper()
-        order_text = case_data.get("order_text", "").lower()
-        order_disposal_reason = case_data.get("order_disposal_reason", "").lower()
+        orders = case_details.get("orders") or []
+        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        order_category = (
+            case_details.get("latest_order_category")
+            or latest_order.get("order_category")
+            or ""
+        ).upper()
+        order_text = str(latest_order.get("order_text") or "").lower()
+        order_disposal_reason = str(
+            latest_order.get("order_disposal_reason") or ""
+        ).lower()
 
         # Fee calculation logic based on order category and content
         # Check for disposal first (highest fee)
@@ -3222,21 +4009,16 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 def extract_parties_info(case_data: Dict) -> str:
     """Extract parties information from case data (format: Petitioner vs Respondent)"""
     try:
-        # Try to get from order analysis first (now flattened as strings)
-        if case_data.get("order_analysis_completed"):
-            petitioner = case_data.get("order_petitioner", "")
-            respondent = case_data.get("order_respondent", "")
-
-            if petitioner and respondent:
-                # Now stored as strings directly
-                petitioner_str = str(petitioner).strip()
-                respondent_str = str(respondent).strip()
-
-                if petitioner_str and respondent_str:
-                    return f"{petitioner_str} Versus {respondent_str}"
+        case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+        case_details = (
+            get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+        )
+        petitioner = str(case_details.get("petitioner") or "").strip()
+        respondent = str(case_details.get("respondent") or "").strip()
+        if petitioner and respondent:
+            return f"{petitioner} Versus {respondent}"
 
         # Fallback to case reference
-        case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
         return f"Matter in {case_ref}"
 
     except Exception as e:
@@ -3712,12 +4494,7 @@ async def rebuild_search_index(
     try:
         db = firestore.client()
 
-        # Get analyzed orders from daily-boards
-        query = (
-            db.collection("daily-boards")
-            .where("order_analysis_completed", "==", True)
-            .limit(limit)
-        )
+        query = db.collection("daily-boards").limit(limit * 3)
 
         docs = query.stream()
 
@@ -3728,12 +4505,47 @@ async def rebuild_search_index(
             try:
                 case_id = doc.id
                 case_data = doc.to_dict()
+                case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+                case_details = (
+                    get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+                )
+                if case_details.get("latest_order_status") != "analysed":
+                    continue
+                orders = case_details.get("orders") or []
+                latest_order = (
+                    orders[-1] if orders and isinstance(orders[-1], dict) else {}
+                )
 
                 # Rebuild search index entry
                 get_auto_order_manager()._create_search_index_entry(
-                    case_id, case_data, {}
+                    case_id,
+                    case_data,
+                    {
+                        "order_petitioner": case_details.get("petitioner"),
+                        "order_respondent": case_details.get("respondent"),
+                        "government_pleader": case_details.get(
+                            "government_pleader", []
+                        ),
+                        "order_category": case_details.get("latest_order_category")
+                        or latest_order.get("order_category"),
+                        "order_category_confidence": latest_order.get(
+                            "order_category_confidence"
+                        ),
+                        "order_date": case_details.get("latest_order_date")
+                        or latest_order.get("order_date"),
+                        "order_date_validation": latest_order.get(
+                            "order_date_validation", {}
+                        ),
+                        "order_link": case_details.get("latest_order_link")
+                        or latest_order.get("order_link"),
+                        "order_analysis_timestamp": latest_order.get(
+                            "order_analysis_timestamp"
+                        ),
+                    },
                 )
                 rebuilt_count += 1
+                if rebuilt_count >= limit:
+                    break
 
             except Exception as e:
                 logging.error(f"Error rebuilding search index for {doc.id}: {e}")
@@ -3767,17 +4579,17 @@ async def get_order_tabular_data(
     limit: int = Query(100, le=1000),
     current_user=Depends(get_current_user),
 ):
-    """Get structured tabular data from analyzed-orders collection with Order Date, Petitioner, Respondent, AGP/GP list, Category, and order links"""
+    """Get structured tabular data from order-search-index."""
     try:
         db = firestore.client()
-        query_ref = db.collection("analyzed-orders")
+        query_ref = db.collection("order-search-index")
 
         # Apply filters - only filter on indexed fields
         if order_category:
             query_ref = query_ref.where("order_category", "==", order_category)
         if date_validation_valid is not None:
             query_ref = query_ref.where(
-                "date_validation.valid", "==", date_validation_valid
+                "date_validation_valid", "==", date_validation_valid
             )
 
         # Execute query with limit
@@ -3785,71 +4597,42 @@ async def get_order_tabular_data(
 
         results = []
         for doc in docs:
-            data = doc.to_dict()
+            data = doc.to_dict() or {}
 
             # Apply text-based filters (post-query)
             if petitioner_search:
-                petitioners = data.get("petitioners", [])
-                if not any(
-                    petitioner_search.lower() in pet.lower() for pet in petitioners
-                ):
+                petitioner_text = str(data.get("petitioner") or "").lower()
+                if petitioner_search.lower() not in petitioner_text:
                     continue
 
             if respondent_search:
-                respondents = data.get("respondents", [])
-                if not any(
-                    respondent_search.lower() in resp.lower() for resp in respondents
-                ):
+                respondent_text = str(data.get("respondent") or "").lower()
+                if respondent_search.lower() not in respondent_text:
                     continue
 
             # Apply additional filters (post-query)
-            if case_type and data.get("case_ref", "").split("-")[0] != case_type:
+            if case_type and data.get("case_type") != case_type:
                 continue
-            if case_year and data.get("case_ref", "").split("-")[-1] != case_year:
+            if case_year and str(data.get("case_year")) != str(case_year):
                 continue
 
-            # Format result for frontend consumption with comprehensive tabular data
             result = {
                 "case_id": data.get("case_id"),
                 "case_ref": data.get("case_ref"),
-                "case_type": (
-                    data.get("case_ref", "").split("-")[0]
-                    if data.get("case_ref")
-                    else None
-                ),
-                "case_number": (
-                    data.get("case_ref", "").split("-")[1]
-                    if data.get("case_ref")
-                    and len(data.get("case_ref", "").split("-")) > 1
-                    else None
-                ),
-                "case_year": (
-                    data.get("case_ref", "").split("-")[-1]
-                    if data.get("case_ref")
-                    else None
-                ),
-                "board_date": data.get("expected_board_date"),
-                # Core tabular data from order_analyzer (exactly what user requested)
+                "case_type": data.get("case_type"),
+                "case_number": data.get("case_number"),
+                "case_year": data.get("case_year"),
+                "board_date": data.get("board_date"),
                 "order_date": data.get("order_date"),
                 "order_category": data.get("order_category"),
-                "category_confidence": data.get("category_confidence"),
-                # Parties (cleaned by order_analyzer)
-                "petitioners": data.get("petitioners", []),
-                "respondents": data.get("respondents", []),
-                # AGP/GP/State advocates list (cleaned by order_analyzer)
+                "category_confidence": data.get("order_category_confidence"),
+                "petitioner": data.get("petitioner", ""),
+                "respondent": data.get("respondent", ""),
                 "agp_names": data.get("agp_names", []),
-                # Complete structured tabular data from order_analyzer
-                "tabular_data": data.get("tabular_data", []),
-                # Additional details
-                "next_hearing_date": data.get("next_hearing_date"),
-                "disposal_reason": data.get("disposal_reason"),
                 "key_phrases": data.get("key_phrases", []),
-                # Date validation info
-                "date_validation": data.get("date_validation", {}),
-                # Order link (fetched and stored with analysis)
+                "date_validation": {"valid": data.get("date_validation_valid", False)},
                 "order_link": data.get("order_link"),
-                # Timestamps
-                "analysis_timestamp": data.get("analysis_timestamp"),
+                "analysis_timestamp": data.get("order_analysis_timestamp"),
                 "created_at": data.get("created_at"),
             }
 

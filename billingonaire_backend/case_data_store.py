@@ -8,6 +8,100 @@ from firebase_admin import firestore
 class CaseDataStore:
     """Maintains a normalized case master and board assignment documents."""
 
+    DEFAULT_LIFECYCLE_STATUS = "board_ingested"
+    MAX_LIFECYCLE_EVENTS = 200
+    LEGACY_STATUS_MAP = {
+        "not_linked": "fetch_queued",
+        "linked": "fetch_succeeded",
+        "order_failed": "fetch_failed_retryable",
+        "order_analysis_failed": "analysis_failed_retryable",
+        "analysed": "analysed",
+        "manually_uploaded": "fetch_succeeded",
+    }
+    ALLOWED_LIFECYCLE_TRANSITIONS = {
+        "board_ingested": {
+            "board_ingested",
+            "fetch_not_due",
+            "fetch_queued",
+            "fetch_in_progress",
+        },
+        "fetch_not_due": {"fetch_not_due", "fetch_queued", "fetch_in_progress"},
+        "fetch_queued": {
+            "fetch_queued",
+            "fetch_in_progress",
+            "fetch_failed_retryable",
+            "fetch_failed_terminal",
+            "fetch_succeeded",
+        },
+        "fetch_in_progress": {
+            "fetch_in_progress",
+            "fetch_succeeded",
+            "fetch_failed_retryable",
+            "fetch_failed_terminal",
+        },
+        "fetch_succeeded": {
+            "fetch_succeeded",
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysed",
+            "analysis_failed_retryable",
+            "analysis_failed_terminal",
+            "manual_review_required",
+        },
+        "fetch_failed_retryable": {
+            "fetch_failed_retryable",
+            "fetch_queued",
+            "fetch_in_progress",
+            "fetch_failed_terminal",
+            "manual_review_required",
+        },
+        "fetch_failed_terminal": {
+            "fetch_failed_terminal",
+            "manual_review_required",
+            "fetch_queued",
+        },
+        "analysis_queued": {
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysis_failed_retryable",
+            "analysis_failed_terminal",
+            "manual_review_required",
+            "analysed",
+        },
+        "analysis_in_progress": {
+            "analysis_in_progress",
+            "analysed",
+            "analysis_failed_retryable",
+            "analysis_failed_terminal",
+            "manual_review_required",
+        },
+        "analysed": {
+            "analysed",
+            "analysis_queued",
+            "analysis_in_progress",
+            "manual_review_required",
+        },
+        "analysis_failed_retryable": {
+            "analysis_failed_retryable",
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysis_failed_terminal",
+            "manual_review_required",
+        },
+        "analysis_failed_terminal": {
+            "analysis_failed_terminal",
+            "manual_review_required",
+            "analysis_queued",
+        },
+        "manual_review_required": {
+            "manual_review_required",
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysed",
+            "fetch_queued",
+        },
+    }
+
     def __init__(self, db: firestore.Client):
         self.db = db
         self.case_collection = "case-details"
@@ -58,6 +152,114 @@ class CaseDataStore:
         if isinstance(additional, list):
             names.extend(additional)
         return self._unique_names(names)
+
+    @classmethod
+    def map_legacy_order_status(cls, order_status: Optional[str]) -> Optional[str]:
+        if not order_status:
+            return None
+        return cls.LEGACY_STATUS_MAP.get(str(order_status).strip().lower())
+
+    def _current_lifecycle_status(self, case_detail: Dict) -> str:
+        explicit = case_detail.get("lifecycle_status")
+        if explicit:
+            return explicit
+        mapped = self.map_legacy_order_status(case_detail.get("latest_order_status"))
+        return mapped or self.DEFAULT_LIFECYCLE_STATUS
+
+    def _append_lifecycle_event(
+        self,
+        existing_events: List[Dict],
+        status: str,
+        event_type: str,
+        reason: Optional[str],
+        metadata: Optional[Dict],
+    ) -> List[Dict]:
+        event = {
+            "status": status,
+            "event_type": event_type,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if reason:
+            event["reason"] = reason
+        if metadata:
+            event["metadata"] = metadata
+
+        events = list(existing_events or [])
+        events.append(event)
+        if len(events) > self.MAX_LIFECYCLE_EVENTS:
+            events = events[-self.MAX_LIFECYCLE_EVENTS :]
+        return events
+
+    def transition_lifecycle(
+        self,
+        case_ref: str,
+        to_status: str,
+        reason: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        force: bool = False,
+        event_type: str = "status_transition",
+    ) -> Dict:
+        if not case_ref or not to_status:
+            return {"applied": False, "reason": "missing_case_or_status"}
+
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        snapshot = case_doc_ref.get()
+        existing = snapshot.to_dict() if snapshot.exists else {}
+
+        from_status = self._current_lifecycle_status(existing)
+        allowed_targets = self.ALLOWED_LIFECYCLE_TRANSITIONS.get(from_status, set())
+        can_transition = (
+            force or to_status == from_status or to_status in allowed_targets
+        )
+        if not can_transition:
+            logging.warning(
+                "Rejected lifecycle transition for %s: %s -> %s",
+                case_ref,
+                from_status,
+                to_status,
+            )
+            return {
+                "applied": False,
+                "reason": "invalid_transition",
+                "from_status": from_status,
+                "to_status": to_status,
+            }
+
+        lifecycle_events = self._append_lifecycle_event(
+            existing.get("lifecycle_events") or [],
+            to_status,
+            event_type,
+            reason,
+            metadata,
+        )
+        now = datetime.now().isoformat()
+        update_data = {
+            "case_ref": case_ref,
+            "lifecycle_status": to_status,
+            "lifecycle_status_updated_at": now,
+            "lifecycle_events": lifecycle_events,
+            "updated_at": now,
+        }
+        if reason:
+            update_data["lifecycle_status_reason"] = reason
+        if not snapshot.exists:
+            update_data["created_at"] = now
+
+        case_doc_ref.set(update_data, merge=True)
+        return {
+            "applied": True,
+            "from_status": from_status,
+            "to_status": to_status,
+        }
+
+    def get_case_timeline(self, case_ref: str, limit: int = 50) -> List[Dict]:
+        case_detail = self.get_case_details(case_ref) or {}
+        events = list(case_detail.get("lifecycle_events") or [])
+        if limit and limit > 0:
+            events = events[-limit:]
+        return events
 
     def upsert_from_board_entry(self, board_doc_id: str, row: Dict) -> str:
         """Persist board assignment and seed/update normalized case details."""
@@ -114,8 +316,30 @@ class CaseDataStore:
             "latest_board_date": board_date,
             "board_assignment_ids": board_ids,
             "orders": existing.get("orders") or [],
+            "lifecycle_status": self._current_lifecycle_status(existing),
             "updated_at": now,
         }
+
+        case_doc["lifecycle_events"] = existing.get("lifecycle_events") or []
+        if not case_doc["lifecycle_events"]:
+            case_doc["lifecycle_events"] = self._append_lifecycle_event(
+                [],
+                case_doc["lifecycle_status"],
+                "board_assignment_upserted",
+                None,
+                {"board_doc_id": board_doc_id, "board_date": board_date},
+            )
+        else:
+            case_doc["lifecycle_events"] = self._append_lifecycle_event(
+                case_doc["lifecycle_events"],
+                case_doc["lifecycle_status"],
+                "board_assignment_upserted",
+                None,
+                {"board_doc_id": board_doc_id, "board_date": board_date},
+            )
+        case_doc["lifecycle_status_updated_at"] = (
+            existing.get("lifecycle_status_updated_at") or now
+        )
 
         if not snapshot.exists:
             case_doc["created_at"] = now
@@ -236,3 +460,24 @@ class CaseDataStore:
         if not doc.exists:
             return None
         return doc.to_dict()
+
+    def build_lifecycle_summary(self, case_ref: str) -> Dict:
+        details = self.get_case_details(case_ref) or {}
+        orders = details.get("orders") or []
+        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        return {
+            "case_ref": case_ref,
+            "lifecycle_status": self._current_lifecycle_status(details),
+            "lifecycle_status_updated_at": details.get("lifecycle_status_updated_at"),
+            "latest_order_status": details.get("latest_order_status")
+            or latest_order.get("order_status")
+            or "not_linked",
+            "latest_order_link": details.get("latest_order_link")
+            or latest_order.get("order_link"),
+            "latest_order_date": details.get("latest_order_date")
+            or latest_order.get("order_date"),
+            "latest_order_category": details.get("latest_order_category")
+            or latest_order.get("order_category"),
+            "latest_board_date": details.get("latest_board_date"),
+            "event_count": len(details.get("lifecycle_events") or []),
+        }

@@ -3,6 +3,7 @@ import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
+from typing import List, Optional
 
 from fastapi import HTTPException
 from firebase_admin import firestore
@@ -387,4 +388,304 @@ class DashboardData:
             },
             "total_matters": total_matters,
             "distribution": distribution,
+        }
+
+    @staticmethod
+    def _parse_input_date(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid date '{value}'. Use YYYY-MM-DD"
+            )
+
+    @staticmethod
+    def _to_date_str(value) -> Optional[str]:
+        if value is None:
+            return None
+        if hasattr(value, "strftime"):
+            return value.strftime("%Y-%m-%d")
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if "T" in raw:
+            return raw.split("T", 1)[0]
+        return raw
+
+    @staticmethod
+    def _resolve_period_bounds(
+        start_date: Optional[str],
+        end_date: Optional[str],
+        year: Optional[int],
+        quarter: Optional[int],
+    ):
+        start_dt = DashboardData._parse_input_date(start_date)
+        end_dt = DashboardData._parse_input_date(end_date)
+
+        if quarter is not None and year is None:
+            raise HTTPException(
+                status_code=400, detail="year is required when quarter is provided"
+            )
+        if quarter is not None and quarter not in {1, 2, 3, 4}:
+            raise HTTPException(status_code=400, detail="quarter must be 1, 2, 3, or 4")
+
+        if year is not None:
+            if year < 1900 or year > datetime.now().year + 10:
+                raise HTTPException(status_code=400, detail="Invalid year range")
+
+            if quarter is None:
+                start_dt = datetime(year, 1, 1)
+                end_dt = datetime(year, 12, 31, 23, 59, 59)
+            else:
+                quarter_start_month = ((quarter - 1) * 3) + 1
+                start_dt = datetime(year, quarter_start_month, 1)
+                if quarter == 4:
+                    end_dt = datetime(year, 12, 31, 23, 59, 59)
+                else:
+                    end_dt = datetime(year, quarter_start_month + 3, 1) - timedelta(
+                        seconds=1
+                    )
+
+        if start_dt and not end_dt:
+            end_dt = start_dt.replace(hour=23, minute=59, second=59)
+        if end_dt and not start_dt:
+            start_dt = end_dt.replace(hour=0, minute=0, second=0)
+
+        if start_dt and end_dt and start_dt > end_dt:
+            raise HTTPException(
+                status_code=400,
+                detail="Start date must be less than or equal to end date",
+            )
+
+        return start_dt, end_dt
+
+    @staticmethod
+    def _matches_agp_filter(respondent_lawyer: str, agp_filter) -> bool:
+        if not agp_filter:
+            return True
+        candidate = str(respondent_lawyer or "").strip().lower()
+        if not candidate:
+            return False
+        if isinstance(agp_filter, list):
+            allowed = {str(v or "").strip().lower() for v in agp_filter if v}
+            return candidate in allowed
+        return candidate == str(agp_filter).strip().lower()
+
+    async def get_board_date_summary(
+        self,
+        start_date: str = None,
+        end_date: str = None,
+        year: int = None,
+        quarter: int = None,
+        limit: int = 180,
+        agp_filter=None,
+    ):
+        """Return board-date wise case counts and basic rollups for dashboard table."""
+        start_dt, end_dt = self._resolve_period_bounds(
+            start_date, end_date, year, quarter
+        )
+
+        if limit < 1 or limit > 1000:
+            raise HTTPException(
+                status_code=400, detail="limit must be between 1 and 1000"
+            )
+
+        query = self.db.collection("daily-boards")
+        if start_dt and end_dt:
+            query = query.where(filter=FieldFilter("board_date", ">=", start_dt))
+            query = query.where(filter=FieldFilter("board_date", "<=", end_dt))
+
+        docs = query.stream()
+        summary = {}
+        total_cases = 0
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            respondent_lawyer = data.get("respondent_lawyer")
+            if not self._matches_agp_filter(respondent_lawyer, agp_filter):
+                continue
+
+            date_str = self._to_date_str(data.get("board_date"))
+            if not date_str:
+                continue
+
+            row = summary.setdefault(
+                date_str,
+                {
+                    "board_date": date_str,
+                    "cases_count": 0,
+                    "unique_respondent_lawyers": set(),
+                    "unique_petitioner_lawyers": set(),
+                },
+            )
+            row["cases_count"] += 1
+            total_cases += 1
+
+            if respondent_lawyer:
+                row["unique_respondent_lawyers"].add(respondent_lawyer)
+
+            petitioner_lawyer = data.get("petitioner_lawyer")
+            if petitioner_lawyer:
+                row["unique_petitioner_lawyers"].add(petitioner_lawyer)
+
+        rows = []
+        for board_date in sorted(summary.keys(), reverse=True):
+            row = summary[board_date]
+            rows.append(
+                {
+                    "board_date": board_date,
+                    "cases_count": row["cases_count"],
+                    "unique_respondent_lawyers": len(row["unique_respondent_lawyers"]),
+                    "unique_petitioner_lawyers": len(row["unique_petitioner_lawyers"]),
+                }
+            )
+            if len(rows) >= limit:
+                break
+
+        return {
+            "rows": rows,
+            "summary": {
+                "total_board_dates": len(rows),
+                "total_cases": total_cases,
+            },
+            "filters": {
+                "start_date": start_dt.strftime("%Y-%m-%d") if start_dt else None,
+                "end_date": end_dt.strftime("%Y-%m-%d") if end_dt else None,
+                "year": year,
+                "quarter": quarter,
+                "limit": limit,
+            },
+        }
+
+    async def get_agp_distribution_for_board_dates(
+        self,
+        board_dates: List[str],
+        agp_filter=None,
+        use_fuzzy_matching: bool = True,
+    ):
+        """Return AGP-wise distribution for selected board dates."""
+        normalized_dates = [self._to_date_str(d) for d in (board_dates or [])]
+        selected_dates = sorted({d for d in normalized_dates if d})
+        if not selected_dates:
+            raise HTTPException(
+                status_code=400, detail="At least one board_date is required"
+            )
+        if len(selected_dates) > 180:
+            raise HTTPException(
+                status_code=400, detail="Select at most 180 board dates per request"
+            )
+
+        selected_dates_set = set(selected_dates)
+        docs = self.db.collection("daily-boards").stream()
+        agp_counts = defaultdict(int)
+        board_breakdown = defaultdict(int)
+        total_cases = 0
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            date_str = self._to_date_str(data.get("board_date"))
+            if date_str not in selected_dates_set:
+                continue
+
+            respondent_lawyer = data.get("respondent_lawyer")
+            if not self._matches_agp_filter(respondent_lawyer, agp_filter):
+                continue
+
+            board_breakdown[date_str] += 1
+            total_cases += 1
+            if respondent_lawyer:
+                agp_counts[respondent_lawyer] += 1
+
+        if use_fuzzy_matching and len(agp_counts) > 0:
+            agp_counts = self.group_similar_agp_names(agp_counts, threshold=0.85)
+
+        distribution = []
+        for agp_name, matters in sorted(agp_counts.items(), key=lambda x: -x[1]):
+            percentage = round((matters / total_cases) * 100, 2) if total_cases else 0
+            distribution.append(
+                {
+                    "agp_name": agp_name,
+                    "matters": matters,
+                    "percentage": percentage,
+                }
+            )
+
+        breakdown_rows = [
+            {"board_date": date_str, "cases_count": board_breakdown.get(date_str, 0)}
+            for date_str in selected_dates
+        ]
+
+        return {
+            "selected_dates": selected_dates,
+            "total_cases": total_cases,
+            "distribution": distribution,
+            "board_breakdown": breakdown_rows,
+        }
+
+    async def get_cases_for_board_dates(
+        self,
+        board_dates: List[str],
+        limit: int = 2000,
+        agp_filter=None,
+    ):
+        """Return case rows for selected board dates to drive case-level actions in UI."""
+        normalized_dates = [self._to_date_str(d) for d in (board_dates or [])]
+        selected_dates = sorted({d for d in normalized_dates if d})
+
+        if not selected_dates:
+            raise HTTPException(
+                status_code=400, detail="At least one board_date is required"
+            )
+        if limit < 1 or limit > 5000:
+            raise HTTPException(
+                status_code=400, detail="limit must be between 1 and 5000"
+            )
+
+        selected_dates_set = set(selected_dates)
+        docs = self.db.collection("daily-boards").stream()
+        cases = []
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            date_str = self._to_date_str(data.get("board_date"))
+            if date_str not in selected_dates_set:
+                continue
+
+            respondent_lawyer = data.get("respondent_lawyer")
+            if not self._matches_agp_filter(respondent_lawyer, agp_filter):
+                continue
+
+            case_type = str(data.get("case_type") or "").strip().upper()
+            case_no = str(data.get("case_no") or "").strip()
+            case_year = str(data.get("case_year") or "").strip()
+            case_ref = f"{case_type}/{case_no}/{case_year}"
+
+            cases.append(
+                {
+                    "case_id": doc.id,
+                    "case_ref": case_ref,
+                    "board_date": date_str,
+                    "case_type": case_type,
+                    "case_no": case_no,
+                    "case_year": case_year,
+                    "petitioner_lawyer": data.get("petitioner_lawyer"),
+                    "respondent_lawyer": respondent_lawyer,
+                    "serial_number": data.get("serial_number"),
+                }
+            )
+
+            if len(cases) >= limit:
+                break
+
+        cases.sort(
+            key=lambda item: (item.get("board_date"), item.get("serial_number") or "")
+        )
+
+        return {
+            "selected_dates": selected_dates,
+            "total_cases": len(cases),
+            "cases": cases,
+            "limit": limit,
         }
