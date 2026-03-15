@@ -350,14 +350,17 @@ class OrderDocumentAnalyzer:
         if self.llm_extractor and self.llm_extractor.is_available():
             try:
                 llm_data = self.llm_extractor.extract_order_data(text)
-                order_date, order_category, category_confidence, cases = (
-                    self._merge_llm_order_data(
-                        llm_data,
-                        order_date,
-                        order_category,
-                        category_confidence,
-                        cases,
-                    )
+                (
+                    order_date,
+                    order_category,
+                    category_confidence,
+                    cases,
+                ) = self._merge_llm_order_data(
+                    llm_data,
+                    order_date,
+                    order_category,
+                    category_confidence,
+                    cases,
                 )
             except Exception as exc:
                 logging.warning("LLM order enrichment failed: %s", exc)
