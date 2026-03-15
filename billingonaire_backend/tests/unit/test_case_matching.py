@@ -209,6 +209,7 @@ class TestCaseMatching:
             order_category="ADJOURNED",
             category_confidence=0.95,
             order_text="Test order",
+            analysis_metadata={"source": "unit_test"},
             cases=[  # ← Changed from order_cases to cases
                 CaseInfo(
                     case_type="WP",
