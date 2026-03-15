@@ -1441,6 +1441,108 @@ def get_order_manager():
     return order_manager
 
 
+def _normalize_iso_date(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if "T" in raw:
+        raw = raw.split("T", 1)[0]
+    return raw
+
+
+def _get_cached_case_details_payload(case_ref: str) -> Optional[Dict]:
+    normalized_case_ref = str(case_ref or "").strip().upper()
+    if not normalized_case_ref:
+        return None
+
+    case_details = (
+        get_auto_order_manager().case_store.get_case_details(normalized_case_ref) or {}
+    )
+    if not case_details:
+        return None
+
+    petitioner = str(case_details.get("petitioner") or "").strip()
+    respondent = str(case_details.get("respondent") or "").strip()
+    orders = case_details.get("orders") or []
+
+    if not petitioner and not respondent and not orders:
+        return None
+
+    return {
+        "status": "found",
+        "source": "case_store_cached",
+        "case_ref": normalized_case_ref,
+        "case_number": normalized_case_ref,
+        "petitioner": petitioner,
+        "respondent": respondent,
+        "latest_board_date": case_details.get("latest_board_date"),
+        "latest_order_link": case_details.get("latest_order_link"),
+        "orders_count": len(orders),
+    }
+
+
+def _get_cached_case_orders_payload(
+    case_ref: str, date: Optional[str]
+) -> Optional[Dict]:
+    normalized_case_ref = str(case_ref or "").strip().upper()
+    if not normalized_case_ref:
+        return None
+
+    case_details = (
+        get_auto_order_manager().case_store.get_case_details(normalized_case_ref) or {}
+    )
+    orders = case_details.get("orders") or []
+    if not isinstance(orders, list) or not orders:
+        return None
+
+    requested_date = _normalize_iso_date(date)
+    normalized_orders = []
+    for item in orders:
+        if not isinstance(item, dict):
+            continue
+
+        board_date = _normalize_iso_date(item.get("board_date"))
+        order_date = _normalize_iso_date(item.get("order_date"))
+        if requested_date and requested_date not in {board_date, order_date}:
+            continue
+
+        order_link = str(item.get("order_link") or "").strip()
+        if not order_link:
+            continue
+
+        normalized_orders.append(
+            {
+                "listing_date": board_date or order_date,
+                "download_url": order_link,
+                "order_description": item.get("order_filename")
+                or item.get("order_category")
+                or "Cached order",
+                "order_status": item.get("order_status"),
+                "order_source": item.get("order_source")
+                or item.get("cache_validation_source")
+                or "case_store_cached",
+            }
+        )
+
+    if not normalized_orders:
+        return None
+
+    return {
+        "status": "found",
+        "source": "case_store_cached",
+        "case_ref": normalized_case_ref,
+        "date": requested_date,
+        "case_details": {
+            "case_number": normalized_case_ref,
+            "petitioner_name": case_details.get("petitioner"),
+            "respondent_name": case_details.get("respondent"),
+        },
+        "court_orders": normalized_orders,
+    }
+
+
 @app.get("/court/case-details", tags=["Case Status"])
 async def get_case_details(
     case_ref: str = Query(..., description="Case reference like 'WP/294/2025'"),
@@ -1455,6 +1557,10 @@ async def get_case_details(
     Example: /court/case-details?case_ref=WP/294/2025&bench=mumbai
     """
     try:
+        cached_payload = _get_cached_case_details_payload(case_ref)
+        if cached_payload:
+            return JSONResponse(content=cached_payload)
+
         case_details = get_court_scraper().get_case_details(case_ref, bench)
         return JSONResponse(content=case_details)
     except Exception as e:
@@ -1483,6 +1589,16 @@ async def get_case_orders(
     Example: /court/case-orders?case_ref=WP/294/2025&date=2025-01-03
     """
     try:
+        cached_payload = _get_cached_case_orders_payload(case_ref, date)
+        if cached_payload:
+            response_payload = {
+                "case_ref": case_ref,
+                "date": date,
+                "orders": cached_payload.get("court_orders", []),
+            }
+            response_payload.update(cached_payload)
+            return JSONResponse(content=response_payload)
+
         case_orders = get_court_scraper().get_case_orders(case_ref, date, bench)
         if isinstance(case_orders, dict):
             response_payload = {
@@ -1523,7 +1639,9 @@ async def batch_case_lookup(
     try:
         results = []
         for case_ref in case_refs:
-            case_details = get_court_scraper().get_case_details(case_ref, bench)
+            case_details = _get_cached_case_details_payload(case_ref)
+            if not case_details:
+                case_details = get_court_scraper().get_case_details(case_ref, bench)
             results.append(
                 {
                     "case_ref": case_ref,
@@ -3007,17 +3125,70 @@ async def admin_bulk_order_processing(
 
 
 # Queue Management Endpoints
+def _get_distributed_queue_metrics(scan_limit: int = 10000) -> Dict:
+    """Approximate queue backlog from persisted lifecycle status across all instances."""
+    try:
+        db = firestore.client()
+        docs = list(db.collection("case-details").limit(scan_limit).stream())
+
+        fetch_pending_statuses = {
+            "fetch_queued",
+            "fetch_in_progress",
+            "fetch_failed_retryable",
+        }
+        analysis_pending_statuses = {
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysis_failed_retryable",
+        }
+
+        fetch_pending = 0
+        analysis_pending = 0
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            lifecycle_status = str(data.get("lifecycle_status") or "").strip()
+            if lifecycle_status in fetch_pending_statuses:
+                fetch_pending += 1
+            if lifecycle_status in analysis_pending_statuses:
+                analysis_pending += 1
+
+        return {
+            "fetch_pending_cases": fetch_pending,
+            "analysis_pending_cases": analysis_pending,
+            "scan_limit": scan_limit,
+            "sampled_case_count": len(docs),
+        }
+    except Exception as e:
+        logging.error(f"Error building distributed queue metrics: {e}")
+        return {
+            "fetch_pending_cases": 0,
+            "analysis_pending_cases": 0,
+            "scan_limit": scan_limit,
+            "sampled_case_count": 0,
+            "error": str(e),
+        }
+
+
 @app.get("/queue/status", tags=["Queue Management"])
 async def get_queue_status(current_user=Depends(get_current_user)):
     """Get status of async fetch and analysis processing queues."""
     try:
         queue_size = order_processing_queue.qsize()
         analysis_queue_size = analysis_processing_queue.qsize()
+        distributed_metrics = _get_distributed_queue_metrics()
 
         return JSONResponse(
             content={
                 "fetch_queue_size": queue_size,
                 "analysis_queue_size": analysis_queue_size,
+                "fetch_pending_cases": distributed_metrics.get(
+                    "fetch_pending_cases", 0
+                ),
+                "analysis_pending_cases": distributed_metrics.get(
+                    "analysis_pending_cases", 0
+                ),
+                "distributed_metrics": distributed_metrics,
                 "fetch_processing_active": processing_active,
                 "analysis_processing_active": analysis_processing_active,
                 "status": (
@@ -3028,7 +3199,12 @@ async def get_queue_status(current_user=Depends(get_current_user)):
                 "message": (
                     f"Fetch queue: {queue_size}, Analysis queue: {analysis_queue_size}"
                     if queue_size > 0 or analysis_queue_size > 0
-                    else "Both queues are empty"
+                    else (
+                        "Local queues are empty; check distributed pending counts for multi-instance deployments"
+                        if distributed_metrics.get("fetch_pending_cases", 0) > 0
+                        or distributed_metrics.get("analysis_pending_cases", 0) > 0
+                        else "Both queues are empty"
+                    )
                 ),
             }
         )
@@ -3333,6 +3509,7 @@ async def get_orders_queue_status(current_user=Depends(get_current_user)):
         analysis_pending_items = (
             analysis_processing_queue.qsize() if analysis_processing_queue else 0
         )
+        distributed_metrics = _get_distributed_queue_metrics()
 
         return JSONResponse(
             content={
@@ -3341,6 +3518,13 @@ async def get_orders_queue_status(current_user=Depends(get_current_user)):
                 "analysis_active": analysis_processing_active,
                 "pending": pending_items,
                 "analysis_pending": analysis_pending_items,
+                "fetch_pending_cases": distributed_metrics.get(
+                    "fetch_pending_cases", 0
+                ),
+                "analysis_pending_cases": distributed_metrics.get(
+                    "analysis_pending_cases", 0
+                ),
+                "distributed_metrics": distributed_metrics,
                 "last_checked": datetime.now().isoformat(),
             }
         )
