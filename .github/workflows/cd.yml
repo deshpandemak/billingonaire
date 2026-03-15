@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:  # Allow manual triggering
+    inputs:
+      deploy_ollama:
+        description: 'Deploy/update Ollama Cloud Run service before backend deploy'
+        required: false
+        default: 'false'
+      ollama_model:
+        description: 'Ollama model to preload when deploy_ollama=true'
+        required: false
+        default: 'llama3.1:8b'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -12,6 +21,9 @@ env:
   GCP_PROJECT_ID: 'billingonaire'
   GCP_REGION: 'asia-south1'
   CLOUD_RUN_SERVICE: 'billingonaire-backend'
+  OLLAMA_SERVICE: 'billingonaire-ollama'
+  OLLAMA_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.ollama_model || 'llama3.1:8b' }}
+  DEPLOY_OLLAMA: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ollama || 'false' }}
 
 jobs:
   test:
@@ -126,6 +138,61 @@ jobs:
 
           echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 
+      - name: Check existing Ollama service
+        id: ollama_check
+        run: |
+          OLLAMA_URL=""
+          SHOULD_DEPLOY="true"
+          HEALTHY="false"
+
+          if gcloud run services describe ${{ env.OLLAMA_SERVICE }} \
+            --region ${{ env.GCP_REGION }} >/dev/null 2>&1; then
+            OLLAMA_URL=$(gcloud run services describe ${{ env.OLLAMA_SERVICE }} \
+              --region ${{ env.GCP_REGION }} \
+              --format 'value(status.url)')
+
+            if curl -sSf "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
+              SHOULD_DEPLOY="false"
+              HEALTHY="true"
+              echo "OLLAMA_BASE_URL=$OLLAMA_URL" >> $GITHUB_ENV
+              echo "✅ Ollama already running and healthy: $OLLAMA_URL"
+            else
+              echo "⚠️ Ollama service exists but is not healthy; will redeploy"
+            fi
+          else
+            echo "ℹ️ Ollama service not found; will deploy"
+          fi
+
+          echo "should_deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          echo "healthy=$HEALTHY" >> $GITHUB_OUTPUT
+          echo "ollama_url=$OLLAMA_URL" >> $GITHUB_OUTPUT
+
+      - name: Deploy Ollama to Cloud Run (optional)
+        if: env.DEPLOY_OLLAMA == 'true' && steps.ollama_check.outputs.should_deploy == 'true'
+        env:
+          GCLOUD_SERVICE_ACCOUNT_KEY: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
+          OLLAMA_MODEL: ${{ env.OLLAMA_MODEL }}
+        run: |
+          chmod +x firebase/ollama-cloudrun-deploy.sh
+          ./firebase/ollama-cloudrun-deploy.sh
+
+      - name: Resolve Ollama service URL (optional)
+        run: |
+          OLLAMA_URL="${{ steps.ollama_check.outputs.ollama_url }}"
+          if [ -z "$OLLAMA_URL" ] && [ "${{ env.DEPLOY_OLLAMA }}" = "true" ] && [ "${{ steps.ollama_check.outputs.should_deploy }}" = "true" ]; then
+            OLLAMA_URL=$(gcloud run services describe ${{ env.OLLAMA_SERVICE }} \
+              --region ${{ env.GCP_REGION }} \
+              --format 'value(status.url)')
+          fi
+
+          if [ -n "$OLLAMA_URL" ]; then
+            echo "OLLAMA_BASE_URL=$OLLAMA_URL" >> $GITHUB_ENV
+            echo "✅ Ollama URL resolved: $OLLAMA_URL"
+          else
+            echo "OLLAMA_BASE_URL=" >> $GITHUB_ENV
+            echo "ℹ️ No healthy Ollama endpoint detected; backend will deploy without LLM fallback"
+          fi
+
       - name: Build and Deploy to Cloud Run
         run: |
           echo "🚀 Building and deploying backend to Google Cloud Run..."
@@ -138,6 +205,11 @@ jobs:
           gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} .
 
           echo "🚀 Deploying to Cloud Run..."
+
+          BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}"
+          if [ -n "$OLLAMA_BASE_URL" ]; then
+            BACKEND_ENV_VARS="$BACKEND_ENV_VARS,ORDER_ENABLE_LLM_FALLBACK=true,ORDER_LLM_PROVIDER=ollama,ORDER_LLM_MODEL=${{ env.OLLAMA_MODEL }},OLLAMA_BASE_URL=$OLLAMA_BASE_URL"
+          fi
 
           # Deploy with Application Default Credentials (service account)
           # Using commit SHA tag ensures we deploy exactly what was built
@@ -152,7 +224,7 @@ jobs:
             --max-instances=10 \
             --min-instances=1 \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-            --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}"
+            --set-env-vars="$BACKEND_ENV_VARS"
 
       - name: Verify Deployment
         run: |
