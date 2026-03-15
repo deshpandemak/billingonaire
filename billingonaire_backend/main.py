@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from Board import Board  # noqa: E402
 from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
+from llm_extractor import LLMExtractor, get_llm_extractor  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
 from UserManager import UserManager  # noqa: E402
 from UserMatterMatcher import UserRole  # noqa: E402
@@ -59,6 +60,10 @@ app = FastAPI(
         {
             "name": "User Matter Mapping",
             "description": "Link users to their legal matters using AI-powered name matching",
+        },
+        {
+            "name": "LLM",
+            "description": "Local open-source LLM configuration and status (powered by Ollama)",
         },
     ],
 )
@@ -3874,6 +3879,57 @@ async def get_order_tabular_data(
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get tabular data: {str(e)}"}
         )
+
+
+# ---------------------------------------------------------------------------
+# LLM endpoints (local open-source LLM via Ollama)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/llm/status", tags=["LLM"])
+async def llm_status():
+    """
+    Return the status of the local LLM integration.
+
+    Reports whether Ollama is reachable, which model is configured,
+    and which models are currently available on the local machine.
+    """
+    extractor = get_llm_extractor()
+    return JSONResponse(content=extractor.get_status())
+
+
+@app.post("/llm/configure", tags=["LLM"])
+async def llm_configure(
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+):
+    """
+    Reconfigure the local LLM model and/or Ollama base URL at runtime.
+
+    Pass ``model`` to switch to a different Ollama model (e.g. ``mistral``,
+    ``llama3.2``, ``gemma2``).  Pass ``base_url`` to point to a non-default
+    Ollama server (e.g. running on another host in the same network).
+
+    The change applies to all subsequent requests in this process.
+    """
+    import llm_extractor as _llm_mod
+
+    current = get_llm_extractor()
+    new_base_url = base_url or current.base_url
+    new_model = model or current.model
+
+    # Replace the module-level singleton so all code paths pick up the change
+    new_extractor = LLMExtractor(base_url=new_base_url, model=new_model)
+    _llm_mod._extractor_instance = new_extractor
+
+    return JSONResponse(
+        content={
+            "message": "LLM configuration updated",
+            "base_url": new_extractor.base_url,
+            "model": new_extractor.model,
+            "available": new_extractor.is_available(),
+        }
+    )
 
 
 # Cloud Run entry point - uvicorn will run the app directly
