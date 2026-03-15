@@ -159,4 +159,5 @@ This runs repository checks aligned with CI, including:
 ## 📝 Documentation
 
 - SDLC workflow and deployment/verification governance: [.github/SDLC_SPEC.md](.github/SDLC_SPEC.md)
+- Runtime board/order pipeline and fallback workflow: [docs/CURRENT_WORKFLOW.md](docs/CURRENT_WORKFLOW.md)
 - Detailed project architecture and recent changes: [replit.md](replit.md)

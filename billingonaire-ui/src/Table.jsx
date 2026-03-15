@@ -37,8 +37,6 @@ const Table = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
-  const [_selectedCaseId, setSelectedCaseId] = useState(null);
-  const [_showOrderDrawer, setShowOrderDrawer] = useState(false);
   const [processingOrders, setProcessingOrders] = useState(new Set());
   const [selectedRows, setSelectedRows] = useState([]);
   const [gridApi, setGridApi] = useState(null);
@@ -70,6 +68,37 @@ const Table = () => {
     fetchData(initialCriteria);
     // eslint-disable-next-line
   }, []);
+
+  const asArray = (value) => {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+  };
+
+  const getLatestOrder = (row) => {
+    const history = Array.isArray(row?.order_history) ? row.order_history : [];
+    if (history.length === 0) return {};
+    const latest = history[history.length - 1];
+    return latest && typeof latest === 'object' ? latest : {};
+  };
+
+  const normalizeCaseRecord = (row) => {
+    const latestOrder = getLatestOrder(row);
+    return {
+      ...row,
+      order_link: row?.order_link || latestOrder.order_link || null,
+      order_status: row?.order_status || latestOrder.order_status || 'not_linked',
+      order_category: row?.order_category || latestOrder.order_category || null,
+      order_date: row?.order_date || latestOrder.order_date || null,
+      order_petitioner: row?.order_petitioner || row?.petitioner || latestOrder.petitioner || null,
+      order_respondent: row?.order_respondent || row?.respondent || latestOrder.respondent || null,
+      government_pleader: [
+        ...asArray(row?.government_pleader),
+        ...asArray(row?.assigned_government_pleaders),
+        ...asArray(latestOrder.government_pleader)
+      ]
+    };
+  };
 
   const fetchData = async (criteria = searchCriteria) => {
     if (!criteria.startDate && !criteria.endDate && !criteria.advocateName && !criteria.caseNumber && !criteria.caseType && !criteria.caseYear && !criteria.caseStage && !criteria.orderStatus && !criteria.orderCategory) {
@@ -103,8 +132,11 @@ const Table = () => {
       console.log('📊 Data type:', typeof result, 'Length:', Array.isArray(result) ? result.length : 'Not array');
       console.log('📋 First 3 records:', Array.isArray(result) ? result.slice(0, 3) : result);
       console.log('🎯 Applied search criteria:', criteria);
-      setData(result);
-      setEditedData(JSON.parse(JSON.stringify(result)));
+      const normalizedResult = Array.isArray(result)
+        ? result.map((row) => normalizeCaseRecord(row))
+        : [];
+      setData(normalizedResult);
+      setEditedData(JSON.parse(JSON.stringify(normalizedResult)));
       console.log('✅ Data set to state. Current data length:', Array.isArray(result) ? result.length : 'Not array');
     } catch (e) {
       console.error('Search failed:', e);
@@ -134,10 +166,6 @@ const Table = () => {
 
   const addRow = () => {
     setEditedData((prev) => [...prev, {}]);
-  };
-
-  const _deleteRow = (index) => {
-    setEditedData((prev) => prev.filter((_, i) => i !== index));
   };
 
   // AG Grid column definitions
@@ -210,7 +238,7 @@ const Table = () => {
       editable: true,
       width: 250,
       valueGetter: params => {
-        // Show all AGP names from board data and order data
+        // Show all AGP names from board data and normalized order data
         const agpNames = [];
 
         // Primary AGP from board
@@ -223,15 +251,15 @@ const Table = () => {
           agpNames.push(...params.data.additional_respondent_lawyers);
         }
 
-        // Government pleaders from order analysis (simplified structure)
-        if (params.data?.order_cases && Array.isArray(params.data.order_cases) && params.data.order_cases.length > 0) {
-          const firstCase = params.data.order_cases[0];
-          if (firstCase.government_pleader && Array.isArray(firstCase.government_pleader)) {
-            agpNames.push(...firstCase.government_pleader);
-          }
+        // Government pleaders from order analysis and normalized history
+        if (params.data?.government_pleader && Array.isArray(params.data.government_pleader)) {
+          agpNames.push(...params.data.government_pleader);
+        }
+        if (params.data?.assigned_government_pleaders && Array.isArray(params.data.assigned_government_pleaders)) {
+          agpNames.push(...params.data.assigned_government_pleaders);
         }
 
-        return agpNames.filter(n => n).join(', ');
+        return [...new Set(agpNames.filter(n => n))].join(', ');
       }
     },
     {
@@ -314,7 +342,7 @@ const Table = () => {
     // Define status display properties
     const statusConfig = {
       'not_linked': { label: 'Not Linked', color: '#6c757d' },
-      'order_linked': { label: 'Order Linked', color: '#17a2b8' },
+      'linked': { label: 'Order Linked', color: '#17a2b8' },
       'analysed': { label: 'Analysed', color: '#28a745' },
       'order_failed': { label: 'Order Failed', color: '#dc3545' },
       'order_analysis_failed': { label: 'Analysis Failed', color: '#ffc107' }
@@ -322,8 +350,8 @@ const Table = () => {
 
     const config = statusConfig[orderStatus] || statusConfig['not_linked'];
 
-    // For order_linked status, show analyze button
-    if (orderStatus === 'order_linked') {
+    // For linked status, show analyze button
+    if (orderStatus === 'linked') {
       return (
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>
@@ -343,57 +371,6 @@ const Table = () => {
   };
 
   // Order management functions
-  const _handleDownloadOrder = async (caseId, caseRef, caseData) => {
-    setProcessingOrders(prev => new Set(prev).add(caseId));
-    try {
-      const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          case_id: caseId,
-          case_ref: caseRef,
-          board_date: caseData.board_date,
-          max_sequences: maxSequences
-        })
-      });
-
-      console.log('Download response:', response);
-
-      if (response.download_success && response.order_link) {
-        // Download successful and we have the order link
-        const hasAnalysis = response.analysis_success;
-        const category = response.analysis_data?.order_category;
-
-        let message = `✅ Order downloaded successfully for ${caseRef}!\n\n`;
-        message += `📄 Order Link: ${response.order_link}\n`;
-
-        if (hasAnalysis && category) {
-          message += `\n🤖 Analysis Complete:\n`;
-          message += `Category: ${category}\n`;
-          message += `Confidence: ${(response.analysis_data?.order_category_confidence || 0) * 100}%`;
-        }
-
-        alert(message);
-
-        // Refresh the data to show updated order status
-        await fetchData();
-      } else if (response.error) {
-        alert(`❌ Failed to download order for ${caseRef}:\n\n${response.error}`);
-      } else {
-        alert(`⚠️ Order processing incomplete for ${caseRef}\n\nPlease try again or check the logs.`);
-      }
-    } catch (error) {
-      console.error('Error downloading order:', error);
-      alert(`❌ Error downloading order for ${caseRef}:\n\n${error.message}`);
-    } finally {
-      setProcessingOrders(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(caseId);
-        return newSet;
-      });
-    }
-  };
-
   const handleAnalyzeOrder = async (caseId, caseRef) => {
     setProcessingOrders(prev => new Set(prev).add(caseId));
     try {
@@ -447,11 +424,6 @@ const Table = () => {
     }
   };
 
-  const _viewOrderDetails = (caseId) => {
-    setSelectedCaseId(caseId);
-    setShowOrderDrawer(true);
-  };
-
   // Batch operations for selected rows
   const handleBatchDownload = async () => {
     if (selectedRows.length === 0) {
@@ -501,42 +473,6 @@ const Table = () => {
     }
 
     alert(`✅ Batch download complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);
-    await fetchData();
-
-    // Clear selection
-    if (gridApi) {
-      gridApi.deselectAll();
-    }
-  };
-
-  const handleBatchDelete = async () => {
-    if (selectedRows.length === 0) {
-      alert('⚠️ Please select at least one row to delete.');
-      return;
-    }
-
-    const confirmMsg = `🗑️ Delete ${selectedRows.length} selected case(s)?\n\nThis action cannot be undone.`;
-    if (!window.confirm(confirmMsg)) return;
-
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const row of selectedRows) {
-      const caseId = row.id;
-      const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
-
-      try {
-        await authenticatedFetchJSON(`/delete_case/${caseId}`, {
-          method: 'DELETE'
-        });
-        successCount++;
-      } catch (error) {
-        console.error(`Error deleting case ${caseRef}:`, error);
-        failCount++;
-      }
-    }
-
-    alert(`✅ Batch delete complete!\n\nDeleted: ${successCount}\nFailed: ${failCount}`);
     await fetchData();
 
     // Clear selection
@@ -664,7 +600,7 @@ const Table = () => {
                   >
                     <option value="">All Cases</option>
                     <option value="not_linked">Not Linked</option>
-                    <option value="order_linked">Order Linked (Not Analysed)</option>
+                    <option value="linked">Order Linked (Not Analysed)</option>
                     <option value="analysed">Linked & Analysed</option>
                     <option value="order_failed">Order Failed</option>
                     <option value="order_analysis_failed">Analysis Failed</option>
@@ -823,7 +759,7 @@ const Table = () => {
                   <span className="badge bg-primary">
                     Order Status: {
                       appliedCriteria.orderStatus === 'not_linked' ? 'Not Linked' :
-                      appliedCriteria.orderStatus === 'order_linked' ? 'Order Linked (Not Analysed)' :
+                      appliedCriteria.orderStatus === 'linked' ? 'Order Linked (Not Analysed)' :
                       appliedCriteria.orderStatus === 'analysed' ? 'Linked & Analysed' :
                       appliedCriteria.orderStatus === 'order_failed' ? 'Order Failed' :
                       appliedCriteria.orderStatus === 'order_analysis_failed' ? 'Analysis Failed' :
@@ -928,20 +864,6 @@ const Table = () => {
                 }}
               >
                 📥 Download Selected Orders
-              </button>
-              <button
-                className="btn-professional"
-                onClick={handleBatchDelete}
-                disabled={selectedRows.length === 0}
-                style={{
-                  fontSize: '0.875rem',
-                  backgroundColor: 'var(--error-color)',
-                  color: 'white',
-                  opacity: selectedRows.length === 0 ? 0.5 : 1,
-                  cursor: selectedRows.length === 0 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                🗑️ Delete Selected
               </button>
             </div>
           </div>

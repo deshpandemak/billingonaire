@@ -8,7 +8,8 @@ from firebase_admin import firestore
 class OrderManager:
     """
     Manages court orders and their linking with case data
-    Tracks order states: not_present, linked, failed, manually_uploaded
+    Tracks order states: not_linked, linked, analysed, order_failed,
+    order_analysis_failed, manually_uploaded
     Order status information is now stored directly in daily-boards collection
     """
 
@@ -20,7 +21,7 @@ class OrderManager:
     def get_cases_without_orders(self, limit: int = 100, offset: int = 0) -> Dict:
         """
         Fetch cases from board data that don't have linked orders
-        Only includes cases with status 'not_present' or 'failed' for reprocessing
+        Only includes cases with active retry statuses for reprocessing
 
         Args:
             limit: Number of cases to return
@@ -50,10 +51,14 @@ class OrderManager:
                 order_downloaded = case_data.get("order_downloaded", False)
 
                 # Get order status from daily-boards document (consolidated structure)
-                order_status = case_data.get("order_status", "not_present")
+                order_status = case_data.get("order_status", "not_linked")
 
                 # Only include cases that need order linking (no download flag AND no linked status)
-                if not order_downloaded and order_status in ["not_present", "failed"]:
+                if not order_downloaded and order_status in [
+                    "not_linked",
+                    "order_failed",
+                    "order_analysis_failed",
+                ]:
                     # Format case reference for court lookup
                     case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
 
@@ -97,21 +102,6 @@ class OrderManager:
             logging.error(f"Error fetching cases without orders: {e}")
             return {"error": str(e), "cases": []}
 
-    def _check_order_exists(self, case_id: str) -> bool:
-        """Check if an order exists for this case in daily-boards collection"""
-        try:
-            board_doc = (
-                self.db.collection(self.boards_collection).document(case_id).get()
-            )
-            if board_doc.exists:
-                board_data = board_doc.to_dict()
-                order_status = board_data.get("order_status", "not_present")
-                return order_status != "not_present"
-            return False
-        except Exception as e:
-            logging.debug(f"Error checking order for case {case_id}: {e}")
-            return False
-
     def create_order_link(self, case_id: str, order_data: Dict) -> Dict:
         """
         Create or update an order link for a case
@@ -127,9 +117,7 @@ class OrderManager:
         try:
             # Prepare order data for daily-boards collection
             order_update = {
-                "order_status": order_data.get(
-                    "status", "linked"
-                ),  # linked, failed, manually_uploaded
+                "order_status": order_data.get("status", "linked"),
                 "order_link": order_data.get("order_link"),
                 "order_text": order_data.get("order_text"),
                 "order_fetch_date": datetime.now().isoformat(),
@@ -161,7 +149,7 @@ class OrderManager:
 
         Args:
             case_id: The board case document ID
-            status: New status (linked, failed, manually_uploaded, not_present)
+            status: New status (linked, analysed, order_failed, order_analysis_failed, manually_uploaded, not_linked)
             notes: Optional notes
 
         Returns:
@@ -198,7 +186,7 @@ class OrderManager:
                 # Extract order-related fields and map to expected format
                 order_details = {
                     "case_id": case_id,
-                    "status": board_data.get("order_status", "not_present"),
+                    "status": board_data.get("order_status", "not_linked"),
                     "order_link": board_data.get("order_link"),
                     "order_text": board_data.get("order_text"),
                     "fetch_date": board_data.get("order_fetch_date"),
@@ -209,7 +197,7 @@ class OrderManager:
                 }
                 return order_details
             else:
-                return {"status": "not_present", "case_id": case_id}
+                return {"status": "not_linked", "case_id": case_id}
 
         except Exception as e:
             logging.error(f"Error fetching order details for case {case_id}: {e}")
@@ -233,7 +221,7 @@ class OrderManager:
                 order_data = {
                     "id": doc.id,
                     "case_id": doc.id,
-                    "status": board_data.get("order_status", "not_present"),
+                    "status": board_data.get("order_status", "not_linked"),
                     "order_link": board_data.get("order_link"),
                     "order_text": board_data.get("order_text"),
                     "fetch_date": board_data.get("order_fetch_date"),

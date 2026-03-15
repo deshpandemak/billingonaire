@@ -2,12 +2,18 @@ import logging
 import re
 from collections import Counter
 from datetime import datetime
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 import pdfplumber
 from fastapi import HTTPException
 from firebase_admin import firestore
+
+try:
+    from case_data_store import CaseDataStore
+except ImportError:
+    from .case_data_store import CaseDataStore
 
 # Import ML Enhanced Parser
 try:
@@ -25,10 +31,27 @@ except ImportError:
             "ML Enhanced Parser not available - continuing with standard parsing"
         )
 
+# Import LLM Extractor (optional – gracefully disabled when Ollama is absent)
+try:
+    from llm_extractor import LLMExtractor
+
+    LLM_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    try:
+        from .llm_extractor import LLMExtractor
+
+        LLM_EXTRACTOR_AVAILABLE = True
+    except ImportError:
+        LLM_EXTRACTOR_AVAILABLE = False
+        logging.warning(
+            "LLM Extractor not available - continuing without LLM enhancements"
+        )
+
 
 class Board:
     def __init__(self):
         self.db = firestore.client()
+        self.case_store = CaseDataStore(self.db)
 
         # Initialize ML Enhanced Parser if available
         self.ml_parser = None
@@ -39,6 +62,16 @@ class Board:
             except Exception as e:
                 logging.warning(f"Could not initialize ML Enhanced Parser: {e}")
                 self.ml_parser = None
+
+        # Initialize LLM Extractor if available
+        self.llm_extractor = None
+        if LLM_EXTRACTOR_AVAILABLE:
+            try:
+                self.llm_extractor = LLMExtractor()
+                logging.info("LLM Extractor initialized successfully")
+            except Exception as e:
+                logging.warning(f"Could not initialize LLM Extractor: {e}")
+                self.llm_extractor = None
 
     def readFile(self, filename, file):
         logging.info(f"Reading file: {filename}")
@@ -57,6 +90,11 @@ class Board:
             df = self.read_board(filename, file)
             # Replace NaN and infinite values
             df = df.replace([np.nan, np.inf, -np.inf], None)
+
+            # Optionally enrich with LLM when Ollama is running locally
+            if self.llm_extractor and self.llm_extractor.is_available():
+                df = self._enrich_with_llm(df)
+
             return df
         except Exception as e:
             logging.error(f"Error reading file: {str(e)}")
@@ -431,6 +469,80 @@ class Board:
             "additional_respondent_lawyers": additional_respondent_lawyers,
         }
 
+    def _enrich_with_llm(self, df: "pd.DataFrame") -> "pd.DataFrame":
+        """
+        Use the local LLM to fill gaps in parsed board data.
+
+        For each row that is missing AGP names or petitioner lawyer information,
+        we ask the LLM to re-extract those fields from the raw court details text
+        that was stored in the ``respondent_lawyer`` / ``petitioner_lawyer`` columns.
+        The LLM result is merged in only when the base parser returned empty values,
+        so existing correct data is never overwritten.
+        """
+        if self.llm_extractor is None:
+            return df
+
+        try:
+            # Build a compact text representation of all rows for a single LLM call
+            rows_text_parts = []
+            for idx, row in df.iterrows():
+                case_ref = f"{row.get('case_type', '')}/{row.get('case_no', '')}/{row.get('case_year', '')}"
+                detail = " ".join(
+                    filter(
+                        None,
+                        [
+                            str(row.get("petitioner_lawyer", "") or ""),
+                            str(row.get("respondent_lawyer", "") or ""),
+                        ],
+                    )
+                )
+                rows_text_parts.append(
+                    f"Serial: {row.get('serial_number', '')}  Case: {case_ref}  Details: {detail}"
+                )
+
+            combined_text = "\n".join(rows_text_parts)
+            llm_result = self.llm_extractor.extract_board_data(combined_text)
+
+            entries = llm_result.get("entries", [])
+            if not entries:
+                return df
+
+            # Match LLM entries back to DataFrame rows by case number
+            llm_by_case: dict = {}
+            for entry in entries:
+                cn = str(entry.get("case_number", "")).strip()
+                if cn:
+                    llm_by_case[cn] = entry
+
+            for idx, row in df.iterrows():
+                case_ref = f"{row.get('case_type', '')}/{row.get('case_no', '')}/{row.get('case_year', '')}"
+                entry = llm_by_case.get(case_ref)
+                if not entry:
+                    continue
+
+                # Fill missing petitioner lawyer
+                if not row.get("petitioner_lawyer") and entry.get("petitioner_lawyer"):
+                    df.at[idx, "petitioner_lawyer"] = entry["petitioner_lawyer"]
+
+                # Attach LLM-extracted AGP names as a new column (non-destructive)
+                if entry.get("agp_names"):
+                    df.at[idx, "llm_agp_names"] = entry["agp_names"]
+
+                # Supplement associated cases
+                if entry.get("associated_cases"):
+                    existing = list(row.get("additional_cases") or [])
+                    new_cases = [
+                        c for c in entry["associated_cases"] if c and c not in existing
+                    ]
+                    if new_cases:
+                        df.at[idx, "additional_cases"] = existing + new_cases
+
+            logging.info("LLM board enrichment applied to %d entries", len(entries))
+        except Exception as exc:
+            logging.warning("LLM board enrichment failed: %s", exc)
+
+        return df
+
     def read_board(self, filename, file):
         logging.info("Reading board")
         try:
@@ -609,6 +721,9 @@ class Board:
                 formatted_date = row["board_date"]
                 row["board_date"] = datetime.strptime(row["board_date"], "%Y-%m-%d")
                 document_key = f"{formatted_date}-{row['case_type']}-{row['case_no']}-{row['case_year']}"
+                row["case_ref"] = self.case_store.build_case_ref(
+                    row.get("case_type"), row.get("case_no"), row.get("case_year")
+                )
 
                 # Set initial order status
                 row["order_status"] = "not_linked"
@@ -616,9 +731,63 @@ class Board:
 
                 doc_ref = self.db.collection("daily-boards").document(document_key)
                 doc_ref.set(row)
+
+                case_row = dict(row)
+                case_row["board_date"] = formatted_date
+                self.case_store.upsert_from_board_entry(document_key, case_row)
         except Exception as e:
             logging.error(f"Error saving data: {str(e)}")
             raise HTTPException(status_code=500, detail="Error saving data")
+
+    def _build_case_ref(self, record: Dict) -> str:
+        return self.case_store.build_case_ref(
+            record.get("case_type"), record.get("case_no"), record.get("case_year")
+        )
+
+    def _hydrate_with_case_details(self, records: List[Dict]) -> List[Dict]:
+        if not records:
+            return records
+
+        case_refs = []
+        for record in records:
+            case_ref = record.get("case_ref") or self._build_case_ref(record)
+            record["case_ref"] = case_ref
+            case_refs.append(case_ref)
+
+        case_details_by_ref = self.case_store.get_case_details_map(case_refs)
+
+        for record in records:
+            case_ref = record.get("case_ref")
+            case_detail = case_details_by_ref.get(case_ref)
+            if not case_detail:
+                continue
+
+            orders = case_detail.get("orders") or []
+            latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+
+            record["order_link"] = case_detail.get(
+                "latest_order_link"
+            ) or latest_order.get("order_link")
+            record["order_status"] = case_detail.get(
+                "latest_order_status"
+            ) or latest_order.get("order_status")
+            record["order_category"] = case_detail.get(
+                "latest_order_category"
+            ) or latest_order.get("order_category")
+            record["order_date"] = case_detail.get(
+                "latest_order_date"
+            ) or latest_order.get("order_date")
+
+            record["order_petitioner"] = case_detail.get("petitioner")
+            record["order_respondent"] = case_detail.get("respondent")
+            record["government_pleader"] = case_detail.get("government_pleader", [])
+
+            record["assigned_government_pleaders"] = case_detail.get(
+                "assigned_government_pleaders", []
+            )
+            record["order_history"] = orders
+
+        return records
 
     def getData(self, search_criteria, agp_filter=None):
         # SECURITY: Removed debug logging to prevent data leakage
@@ -848,7 +1017,7 @@ class Board:
 
             if not data:
                 logging.warning("No records matched search criteria")
-            return data
+            return self._hydrate_with_case_details(data)
         except Exception as e:
             logging.error(f"Error getting data: {str(e)}")
             logging.error("Stack trace:", exc_info=True)

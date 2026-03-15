@@ -52,7 +52,7 @@ def test_update_order_status(mock_firestore):
     from OrderManager import OrderManager
 
     om = OrderManager()
-    om.update_order_status("case_123", "order_linked")
+    om.update_order_status("case_123", "linked")
     assert mock_firestore.return_value.collection.called
 
 

@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
-import { Container } from 'react-bootstrap';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -13,7 +12,7 @@ import {
   Legend,
   ArcElement,
 } from 'chart.js';
-import { Bar, Line, Doughnut } from 'react-chartjs-2';
+import { Bar, Doughnut } from 'react-chartjs-2';
 import {
   ComposedChart,
   Bar as RechartsBar,
@@ -24,9 +23,6 @@ import {
   Tooltip as RechartsTooltip,
   Legend as RechartsLegend,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell
 } from 'recharts';
 import './styles/professional.css';
 
@@ -44,71 +40,30 @@ ChartJS.register(
 );
 
 const Dashboard = () => {
-  const [_weeklyStatus, setWeeklyStatus] = useState([]);
   const [agpStats, setAgpStats] = useState([]);
   const [monthlyAvg, setMonthlyAvg] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear().toString());
   const [agpName, setAgpName] = useState('');
-  const [weeklyRange, _setWeeklyRange] = useState({
-    start: '',
-    end: ''
-  });
-  const [_weeklyLoading, setWeeklyLoading] = useState(true);
   const [agpLoading, setAgpLoading] = useState(true);
   const [monthlyLoading, setMonthlyLoading] = useState(true);
-  const [_weeklyError, setWeeklyError] = useState('');
   const [agpError, setAgpError] = useState('');
   const [monthlyError, setMonthlyError] = useState('');
   const [agpCurrentPage, setAgpCurrentPage] = useState(0);
   const [monthlyCurrentPage, setMonthlyCurrentPage] = useState(0);
   const ITEMS_PER_PAGE = 20;
 
-  // New analytics state
   const [mattersByDateRange, setMattersByDateRange] = useState({ data: [], summary: {} });
-  const [_agpDistribution, setAgpDistribution] = useState({
-    weekly: { distribution: [], total_matters: 0, period_type: 'weekly' },
-    monthly: { distribution: [], total_matters: 0, period_type: 'monthly' },
-    yearly: { distribution: [], total_matters: 0, period_type: 'yearly' }
-  });
   const [analyticsLoading, setAnalyticsLoading] = useState({
-    matters: true,
-    weekly: true,
-    monthly: true,
-    yearly: true
+    matters: true
   });
   const [analyticsError, setAnalyticsError] = useState({
-    matters: '',
-    weekly: '',
-    monthly: '',
-    yearly: ''
+    matters: ''
   });
   const [dateRange, setDateRange] = useState({
     start: '',
     end: ''
   });
 
-  // Fetch weekly board status with independent loading
-  const fetchWeeklyStatus = useCallback(async () => {
-    setWeeklyLoading(true);
-    setWeeklyError('');
-    let url = `/dashboard/weekly-status`;
-    const params = [];
-    if (weeklyRange.start) params.push(`start_date=${weeklyRange.start}`);
-    if (weeklyRange.end) params.push(`end_date=${weeklyRange.end}`);
-    if (params.length) url += `?${params.join('&')}`;
-    try {
-      const data = await authenticatedFetchJSON(url);
-      setWeeklyStatus(data);
-    } catch (e) {
-      console.error('Failed to fetch weekly status:', e);
-      setWeeklyError('Failed to load weekly status');
-      setWeeklyStatus([]);
-    } finally {
-      setWeeklyLoading(false);
-    }
-  }, [weeklyRange.start, weeklyRange.end]);
-
-  // Fetch AGP wise data with independent loading
   const fetchAgpStats = useCallback(async () => {
     setAgpLoading(true);
     setAgpError('');
@@ -146,7 +101,6 @@ const Dashboard = () => {
     }
   }, [year]);
 
-  // New analytics fetch functions
   const fetchMattersByDateRange = useCallback(async () => {
     setAnalyticsLoading(prev => ({ ...prev, matters: true }));
     setAnalyticsError(prev => ({ ...prev, matters: '' }));
@@ -167,59 +121,6 @@ const Dashboard = () => {
     }
   }, [dateRange.start, dateRange.end]);
 
-  const fetchAgpDistribution = async () => {
-    // Fetch all three distribution types in parallel
-    const endpoints = [
-      { key: 'weekly', url: '/dashboard/agp-distribution-weekly' },
-      { key: 'monthly', url: '/dashboard/agp-distribution-monthly' },
-      { key: 'yearly', url: '/dashboard/agp-distribution-yearly' }
-    ];
-
-    // Set all loading states
-    setAnalyticsLoading(prev => ({
-      ...prev,
-      weekly: true,
-      monthly: true,
-      yearly: true
-    }));
-
-    // Clear all errors
-    setAnalyticsError(prev => ({
-      ...prev,
-      weekly: '',
-      monthly: '',
-      yearly: ''
-    }));
-
-    // Fetch all endpoints
-    for (const endpoint of endpoints) {
-      try {
-        const data = await authenticatedFetchJSON(endpoint.url);
-        setAgpDistribution(prev => ({
-          ...prev,
-          [endpoint.key]: data
-        }));
-      } catch (e) {
-        console.error(`Failed to fetch ${endpoint.key} AGP distribution:`, e);
-        setAnalyticsError(prev => ({
-          ...prev,
-          [endpoint.key]: `Failed to load ${endpoint.key} distribution`
-        }));
-        setAgpDistribution(prev => ({
-          ...prev,
-          [endpoint.key]: { distribution: [], total_matters: 0, period_type: endpoint.key }
-        }));
-      } finally {
-        setAnalyticsLoading(prev => ({ ...prev, [endpoint.key]: false }));
-      }
-    }
-  };
-
-  // Independent loading for each widget - placed after function definitions
-  useEffect(() => {
-    fetchWeeklyStatus();
-  }, [fetchWeeklyStatus]);
-
   useEffect(() => {
     fetchAgpStats();
   }, [fetchAgpStats]);
@@ -232,10 +133,6 @@ const Dashboard = () => {
   useEffect(() => {
     fetchMattersByDateRange();
   }, [fetchMattersByDateRange]);
-
-  useEffect(() => {
-    fetchAgpDistribution();
-  }, []);
 
   // Helper function for pagination
   const getPaginatedData = (data, currentPage) => {
@@ -325,56 +222,6 @@ const Dashboard = () => {
     ],
   };
 
-  // Color palette for AGP distribution charts
-  const COLORS = [
-    '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-    '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'
-  ];
-
-  // AGP Distribution chart components
-  const _renderAgpDistributionChart = (distributionData, title, periodType) => {
-    if (!distributionData || !distributionData.distribution || distributionData.distribution.length === 0) {
-      return (
-        <div className="text-center p-4">
-          <p style={{ color: 'var(--gray-500)' }}>No data available for {periodType} distribution</p>
-        </div>
-      );
-    }
-
-    const data = distributionData.distribution.slice(0, 8); // Top 8 for readability
-
-    return (
-      <div style={{ height: '300px' }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={100}
-              paddingAngle={2}
-              dataKey="matters"
-            >
-              {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-              ))}
-            </Pie>
-            <RechartsTooltip
-              formatter={(value, name, props) => [
-                `${value} matters (${props.payload.percentage}%)`,
-                'Cases'
-              ]}
-              labelFormatter={(label) => `AGP: ${label}`}
-            />
-            <RechartsLegend
-              formatter={(value) => value.length > 20 ? value.substring(0, 20) + '...' : value}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-    );
-  };
 
   return (
     <div className="dashboard-container">

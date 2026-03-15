@@ -56,7 +56,7 @@ class TestOrderManager:
     def test_update_order_status(self, order_manager, mock_firestore_client):
         """Test updating order status"""
         case_id = "test_case_123"
-        new_status = "order_linked"
+        new_status = "linked"
 
         result = order_manager.update_order_status(case_id, new_status)
         assert result is not None or mock_firestore_client.collection.called
@@ -178,13 +178,13 @@ class TestOrderValidation:
     def test_validate_order_status_transition(self, order_manager_module):
         """Test order status transition validation"""
         valid_transitions = {
-            "not_linked": ["order_linked", "order_failed"],
-            "order_linked": ["analysed", "order_analysis_failed"],
+            "not_linked": ["linked", "order_failed"],
+            "linked": ["analysed", "order_analysis_failed"],
             "analysed": [],
         }
 
         current = "not_linked"
-        next_status = "order_linked"
+        next_status = "linked"
         assert next_status in valid_transitions.get(current, [])
 
     def test_validate_case_reference_format(self, order_manager_module):

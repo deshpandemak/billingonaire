@@ -25,7 +25,7 @@ const AdminOrderManagement = () => {
 
     const statusLabels = {
         'not_linked': 'Not Linked',
-        'order_linked': 'Order Linked (Not Analysed)',
+        'linked': 'Order Linked (Not Analysed)',
         'analysed': 'Linked & Analysed',
         'order_failed': 'Order Failed',
         'order_analysis_failed': 'Analysis Failed'
@@ -33,7 +33,7 @@ const AdminOrderManagement = () => {
 
     const statusVariants = {
         'not_linked': 'secondary',
-        'order_linked': 'info',
+        'linked': 'info',
         'analysed': 'success',
         'order_failed': 'danger',
         'order_analysis_failed': 'warning'

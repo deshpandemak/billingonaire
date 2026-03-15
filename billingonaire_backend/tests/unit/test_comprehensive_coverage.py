@@ -16,103 +16,108 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 # ============================================================================
 
 
-@patch("Board.firestore.client")
-@patch("Board.pdfplumber")
-def test_board_read_board(mock_pdfplumber, mock_firestore):
+def test_board_read_board():
     """Test Board.read_board method"""
-    from Board import Board
+    with patch.dict(sys.modules, {"spacy": MagicMock()}):
+        with patch("firebase_admin.firestore.client") as mock_firestore:
+            with patch("Board.pdfplumber") as mock_pdfplumber:
+                from Board import Board
 
-    # Mock PDF extraction
-    mock_pdf = MagicMock()
-    mock_page = MagicMock()
-    mock_page.extract_text.return_value = """
-    DAILY COURT BOARD 01/10/2024
-    HON'BLE COURT 1 WP/12345/2024 Test vs State SHRI JOSHI
-    """
-    mock_pdf.pages = [mock_page]
-    mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
+                # Mock PDF extraction
+                mock_pdf = MagicMock()
+                mock_page = MagicMock()
+                mock_page.extract_text.return_value = """
+                DAILY COURT BOARD 01/10/2024
+                HON'BLE COURT 1 WP/12345/2024 Test vs State SHRI JOSHI
+                """
+                mock_pdf.pages = [mock_page]
+                mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
-    board = Board()
-    result = board.read_board("test.pdf", Mock())
-    assert result is not None or isinstance(result, pd.DataFrame)
+                board = Board()
+                result = board.read_board("test.pdf", Mock())
+                assert result is not None or isinstance(result, pd.DataFrame)
 
 
-@patch("Board.firestore.client")
-@patch("Board.pdfplumber")
-def test_board_readFile(mock_pdfplumber, mock_firestore):
+def test_board_readFile():
     """Test Board.readFile method"""
-    from Board import Board
+    with patch.dict(sys.modules, {"spacy": MagicMock()}):
+        with patch("firebase_admin.firestore.client"):
+            with patch("Board.pdfplumber") as mock_pdfplumber:
+                from Board import Board
 
-    mock_pdf = MagicMock()
-    mock_page = MagicMock()
-    mock_page.extract_text.return_value = "01/10/2024 WP/1/2024"
-    mock_pdf.pages = [mock_page]
-    mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
+                mock_pdf = MagicMock()
+                mock_page = MagicMock()
+                mock_page.extract_text.return_value = "01/10/2024 WP/1/2024"
+                mock_pdf.pages = [mock_page]
+                mock_pdfplumber.open.return_value.__enter__.return_value = mock_pdf
 
-    board = Board()
-    try:
-        result = board.readFile("test.pdf", Mock())
-        assert result is not None
-    except Exception:
-        pass  # Some errors expected without full setup
+                board = Board()
+                try:
+                    result = board.readFile("test.pdf", Mock())
+                    assert result is not None
+                except Exception:
+                    pass  # Some errors expected without full setup
 
 
-@patch("Board.firestore.client")
-def test_board_saveData(mock_firestore):
+def test_board_saveData():
     """Test Board.saveData method"""
-    from Board import Board
+    with patch.dict(sys.modules, {"spacy": MagicMock()}):
+        with patch("firebase_admin.firestore.client") as mock_firestore:
+            from Board import Board
 
-    df = pd.DataFrame(
-        [
-            {
-                "board_date": "2024-10-01",
-                "case_type": "WP",
-                "case_no": "12345",
-                "case_year": "2024",
-            }
-        ]
-    )
+            df = pd.DataFrame(
+                [
+                    {
+                        "board_date": "2024-10-01",
+                        "case_type": "WP",
+                        "case_no": "12345",
+                        "case_year": "2024",
+                    }
+                ]
+            )
 
-    board = Board()
-    try:
-        board.saveData(df)
-        assert mock_firestore.return_value.collection.called
-    except Exception:
-        pass
+            board = Board()
+            try:
+                board.saveData(df)
+                assert mock_firestore.return_value.collection.called
+            except Exception:
+                pass
 
 
-@patch("Board.firestore.client")
-def test_board_getData(mock_firestore):
+def test_board_getData():
     """Test Board.getData method"""
-    from Board import Board
+    with patch.dict(sys.modules, {"spacy": MagicMock()}):
+        with patch("firebase_admin.firestore.client") as mock_firestore:
+            from Board import Board
 
-    mock_collection = MagicMock()
-    mock_collection.stream.return_value = []
-    mock_collection.limit.return_value = mock_collection
-    mock_firestore.return_value.collection.return_value = mock_collection
+            mock_collection = MagicMock()
+            mock_collection.stream.return_value = []
+            mock_collection.limit.return_value = mock_collection
+            mock_firestore.return_value.collection.return_value = mock_collection
 
-    board = Board()
-    result = board.getData({"caseNumber": "12345"})
-    assert isinstance(result, list)
+            board = Board()
+            result = board.getData({"caseNumber": "12345"})
+            assert isinstance(result, list)
 
 
-@patch("Board.firestore.client")
-def test_board_create_record(mock_firestore):
+def test_board_create_record():
     """Test Board.create_record method"""
-    from Board import Board
+    with patch.dict(sys.modules, {"spacy": MagicMock()}):
+        with patch("firebase_admin.firestore.client"):
+            from Board import Board
 
-    board = Board()
-    record = board.create_record(
-        court_details="Test vs State SHRI JOSHI",
-        file_name="test.pdf",
-        board_date="2024-10-01",
-        serial_no="1",
-        case_type="WP",
-        case_no="12345",
-        case_year="2024",
-    )
-    assert record is not None
-    assert record["case_type"] == "WP"
+            board = Board()
+            record = board.create_record(
+                court_details="Test vs State SHRI JOSHI",
+                file_name="test.pdf",
+                board_date="2024-10-01",
+                serial_no="1",
+                case_type="WP",
+                case_no="12345",
+                case_year="2024",
+            )
+            assert record is not None
+            assert record["case_type"] == "WP"
 
 
 # ============================================================================
@@ -286,7 +291,7 @@ def test_ordermanager_update_order_status(mock_firestore):
     from OrderManager import OrderManager
 
     om = OrderManager()
-    om.update_order_status("case_123", "order_linked")
+    om.update_order_status("case_123", "linked")
     assert mock_firestore.return_value.collection.called
 
 

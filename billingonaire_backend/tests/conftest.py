@@ -54,7 +54,7 @@ def sample_case_with_order_link(sample_case_data) -> Dict[str, Any]:
     """Sample case data with existing order link"""
     return {
         **sample_case_data,
-        "order_status": "order_linked",
+        "order_status": "linked",
         "order_link": "https://example.com/order.pdf",
     }
 

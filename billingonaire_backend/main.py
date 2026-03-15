@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from Board import Board  # noqa: E402
 from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
+from llm_extractor import LLMExtractor, get_llm_extractor  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
 from UserManager import UserManager  # noqa: E402
 from UserMatterMatcher import UserRole  # noqa: E402
@@ -60,20 +61,12 @@ app = FastAPI(
             "name": "User Matter Mapping",
             "description": "Link users to their legal matters using AI-powered name matching",
         },
+        {
+            "name": "LLM",
+            "description": "Local open-source LLM configuration and status (powered by Ollama)",
+        },
     ],
 )
-
-# Startup event to initialize background processing
-# Temporarily disabled for Cloud Run - background processing can be initialized on first use
-# @app.on_event("startup")
-# async def startup_event():
-#     """Initialize background order processing on app startup"""
-#     logging.info("🚀 Billingonaire API starting up...")
-#     try:
-#         await ensure_background_processing_active()
-#         logging.info("✅ Background order processing initialized")
-#     except Exception as e:
-#         logging.error(f"❌ Failed to initialize background processing: {e}")
 
 # Lazy Firebase initialization - deferred until first use to avoid blocking port binding
 _firebase_initialized = False
@@ -1296,7 +1289,8 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 async def update_order_status(
     case_id: str = Query(..., description="Case document ID"),
     status: str = Query(
-        ..., description="Order status: linked, failed, manually_uploaded, not_present"
+        ...,
+        description="Order status: linked, analysed, order_failed, order_analysis_failed, manually_uploaded, not_linked",
     ),
     notes: str = Query("", description="Optional notes"),
     current_user=Depends(get_current_user),
@@ -2106,7 +2100,7 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
 
         status_counts = {
             "not_linked": 0,
-            "order_linked": 0,
+            "linked": 0,
             "analysed": 0,
             "order_failed": 0,
             "order_analysis_failed": 0,
@@ -2170,7 +2164,7 @@ async def admin_bulk_order_processing(
 
         body = await request.json()
         order_statuses = body.get(
-            "order_statuses", ["not_linked", "order_linked", "order_failed"]
+            "order_statuses", ["not_linked", "linked", "order_failed"]
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
@@ -3883,6 +3877,57 @@ async def get_order_tabular_data(
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get tabular data: {str(e)}"}
         )
+
+
+# ---------------------------------------------------------------------------
+# LLM endpoints (local open-source LLM via Ollama)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/llm/status", tags=["LLM"])
+async def llm_status():
+    """
+    Return the status of the local LLM integration.
+
+    Reports whether Ollama is reachable, which model is configured,
+    and which models are currently available on the local machine.
+    """
+    extractor = get_llm_extractor()
+    return JSONResponse(content=extractor.get_status())
+
+
+@app.post("/llm/configure", tags=["LLM"])
+async def llm_configure(
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+):
+    """
+    Reconfigure the local LLM model and/or Ollama base URL at runtime.
+
+    Pass ``model`` to switch to a different Ollama model (e.g. ``mistral``,
+    ``llama3.2``, ``gemma2``).  Pass ``base_url`` to point to a non-default
+    Ollama server (e.g. running on another host in the same network).
+
+    The change applies to all subsequent requests in this process.
+    """
+    import llm_extractor as _llm_mod
+
+    current = get_llm_extractor()
+    new_base_url = base_url or current.base_url
+    new_model = model or current.model
+
+    # Replace the module-level singleton so all code paths pick up the change
+    new_extractor = LLMExtractor(base_url=new_base_url, model=new_model)
+    _llm_mod._extractor_instance = new_extractor
+
+    return JSONResponse(
+        content={
+            "message": "LLM configuration updated",
+            "base_url": new_extractor.base_url,
+            "model": new_extractor.model,
+            "available": new_extractor.is_available(),
+        }
+    )
 
 
 # Cloud Run entry point - uvicorn will run the app directly

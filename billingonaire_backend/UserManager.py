@@ -326,30 +326,6 @@ class UserManager:
                 status_code=500, detail="Error checking user permissions"
             )
 
-    def can_access_agp_data(self, uid: str, agp_name: str) -> bool:
-        """Check if user can access data for specific AGP using fuzzy name matching"""
-        try:
-            user_profile = self.get_user_profile(uid)
-
-            # Admins can access all data
-            if user_profile.get("role") == "admin":
-                return True
-
-            # Regular users can access data if their full_name matches the AGP name (using fuzzy matching)
-            full_name = user_profile.get("full_name", "").strip()
-            if not full_name:
-                return False
-
-            # Use fuzzy matching to check if user's name matches the AGP name
-            matched_name, confidence = self.match_user_name_to_agp(
-                full_name, [agp_name]
-            )
-            return confidence >= 0.50  # 50% confidence threshold
-
-        except Exception as e:
-            logging.warning(f"Error checking user AGP access for {uid}: {e}")
-            return False
-
     def get_active_user_names(self) -> List[str]:
         """Get list of active user names (for admin user selector in bill generation)"""
         try:
