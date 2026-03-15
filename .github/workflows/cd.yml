@@ -7,9 +7,9 @@ on:
   workflow_dispatch:  # Allow manual triggering
     inputs:
       deploy_ollama:
-        description: 'Deploy/update Ollama Cloud Run service before backend deploy'
+        description: 'Ollama mode: auto (deploy if missing/unhealthy), true (force allow deploy), false (disable)'
         required: false
-        default: 'false'
+        default: 'auto'
       ollama_model:
         description: 'Ollama model to preload when deploy_ollama=true'
         required: false
@@ -23,7 +23,7 @@ env:
   CLOUD_RUN_SERVICE: 'billingonaire-backend'
   OLLAMA_SERVICE: 'billingonaire-ollama'
   OLLAMA_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.ollama_model || 'llama3.1:8b' }}
-  DEPLOY_OLLAMA: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ollama || 'false' }}
+  DEPLOY_OLLAMA: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ollama || 'auto' }}
 
 jobs:
   test:
@@ -167,8 +167,15 @@ jobs:
           echo "healthy=$HEALTHY" >> $GITHUB_OUTPUT
           echo "ollama_url=$OLLAMA_URL" >> $GITHUB_OUTPUT
 
+      - name: Log Ollama decision
+        run: |
+          echo "DEPLOY_OLLAMA mode: ${{ env.DEPLOY_OLLAMA }}"
+          echo "Ollama healthy: ${{ steps.ollama_check.outputs.healthy }}"
+          echo "Ollama should_deploy: ${{ steps.ollama_check.outputs.should_deploy }}"
+          echo "Ollama url from check: ${{ steps.ollama_check.outputs.ollama_url }}"
+
       - name: Deploy Ollama to Cloud Run (optional)
-        if: env.DEPLOY_OLLAMA == 'true' && steps.ollama_check.outputs.should_deploy == 'true'
+        if: env.DEPLOY_OLLAMA != 'false' && steps.ollama_check.outputs.should_deploy == 'true'
         env:
           GCLOUD_SERVICE_ACCOUNT_KEY: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
           OLLAMA_MODEL: ${{ env.OLLAMA_MODEL }}
@@ -179,7 +186,7 @@ jobs:
       - name: Resolve Ollama service URL (optional)
         run: |
           OLLAMA_URL="${{ steps.ollama_check.outputs.ollama_url }}"
-          if [ -z "$OLLAMA_URL" ] && [ "${{ env.DEPLOY_OLLAMA }}" = "true" ] && [ "${{ steps.ollama_check.outputs.should_deploy }}" = "true" ]; then
+          if [ -z "$OLLAMA_URL" ] && [ "${{ env.DEPLOY_OLLAMA }}" != "false" ] && [ "${{ steps.ollama_check.outputs.should_deploy }}" = "true" ]; then
             OLLAMA_URL=$(gcloud run services describe ${{ env.OLLAMA_SERVICE }} \
               --region ${{ env.GCP_REGION }} \
               --format 'value(status.url)')
