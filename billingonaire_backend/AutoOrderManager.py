@@ -297,6 +297,7 @@ class AutoOrderManager:
         order_status = order_context["order_status"]
         case_data["order_status"] = order_status
         case_data["order_link"] = order_context.get("order_link")
+        case_data["case_detail"] = order_context.get("case_detail")
 
         # Check if case has existing order link
         has_existing_order_link = bool(case_data.get("order_link"))
@@ -950,6 +951,13 @@ class AutoOrderManager:
 
             # First attempt structured scraper workflow once per case.
             if sequence_number == 1:
+                cached_result = self._download_order_from_cached_case_data(
+                    case_data=case_data,
+                    order_filename=order_filename,
+                )
+                if cached_result.get("success"):
+                    return cached_result
+
                 structured_result = self._download_order_via_scraper(
                     case_ref=case_ref,
                     board_date=board_date,
@@ -997,6 +1005,91 @@ class AutoOrderManager:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _download_order_from_cached_case_data(
+        self, case_data: Dict, order_filename: str
+    ) -> Dict:
+        """Try reusing normalized case-details order link for the same board date."""
+        case_ref = case_data.get("case_ref")
+        board_date = self._parse_board_date(case_data.get("board_date"))
+        if not case_ref or not board_date:
+            return {"success": False, "error": "missing_case_ref_or_board_date"}
+
+        case_detail = case_data.get("case_detail")
+        if not isinstance(case_detail, dict):
+            return {"success": False, "error": "missing_case_detail_context"}
+
+        has_court_details = bool(
+            str(case_detail.get("petitioner") or "").strip()
+            and str(case_detail.get("respondent") or "").strip()
+        )
+        if not has_court_details:
+            return {"success": False, "error": "missing_court_details"}
+
+        orders = case_detail.get("orders") or []
+        if not isinstance(orders, list):
+            return {"success": False, "error": "invalid_orders_cache"}
+
+        cached_link = None
+        for order in reversed(orders):
+            if not isinstance(order, dict):
+                continue
+            order_link = str(order.get("order_link") or "").strip()
+            if not order_link:
+                continue
+            order_date = self._parse_board_date(order.get("board_date"))
+            if order_date and order_date == board_date:
+                cached_link = order_link
+                break
+
+        if not cached_link:
+            return {"success": False, "error": "no_matching_cached_order_link"}
+
+        logging.info(
+            "Using cached order link for %s on board date %s; skipping structured scraper",
+            case_ref,
+            board_date.isoformat(),
+        )
+
+        try:
+            response = requests.get(cached_link, timeout=30)
+            content_type = response.headers.get("Content-Type", "")
+            pdf_bytes = response.content or b""
+            is_pdf = "application/pdf" in content_type.lower() or pdf_bytes.startswith(
+                b"%PDF"
+            )
+
+            if response.status_code != 200 or not is_pdf:
+                return {
+                    "success": False,
+                    "error": (
+                        "Cached order link did not return a valid PDF "
+                        f"(HTTP {response.status_code}, Content-Type {content_type})"
+                    ),
+                }
+
+            self.case_store.append_case_order(
+                case_ref,
+                {
+                    "order_link": cached_link,
+                    "board_date": board_date.isoformat(),
+                    "cache_validated_at": datetime.now().isoformat(),
+                    "cache_validation_source": "case_store_cached",
+                },
+            )
+
+            return {
+                "success": True,
+                "order_link": cached_link,
+                "pdf_content": pdf_bytes,
+                "filename": order_filename,
+                "source": "case_store_cached",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Cached order link download failed: {str(e)}",
+            }
 
     def _download_order_via_scraper(
         self, case_ref: str, board_date: Optional[str], order_filename: str

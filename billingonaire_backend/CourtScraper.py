@@ -215,21 +215,53 @@ Rules:
     def _fetch_with_firecrawl(
         self, case_ref: str, date: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        if not self.firecrawl_api_key or FirecrawlApp is None:
+        if not self.firecrawl_api_key:
             return None
 
         try:
-            app = FirecrawlApp(api_key=self.firecrawl_api_key)
-            result = app.agent(
-                schema=FirecrawlOrderExtraction,
-                prompt=self._build_firecrawl_prompt(case_ref),
-                urls=[self.bombay_high_court_url],
-                model=self.firecrawl_model,
-            )
+            firecrawl_cls = FirecrawlApp
+            if firecrawl_cls is None:
+                try:
+                    from firecrawl import FirecrawlApp as RuntimeFirecrawlApp
+
+                    firecrawl_cls = RuntimeFirecrawlApp
+                except ImportError as import_error:
+                    logging.error(
+                        "Firecrawl SDK unavailable at runtime for %s: %s",
+                        case_ref,
+                        import_error,
+                    )
+                    return None
+
+            app = firecrawl_cls(api_key=self.firecrawl_api_key)
+            prompt = self._build_firecrawl_prompt(case_ref)
+
+            if hasattr(app, "agent"):
+                result = app.agent(
+                    schema=FirecrawlOrderExtraction,
+                    prompt=prompt,
+                    urls=[self.bombay_high_court_url],
+                    model=self.firecrawl_model,
+                )
+            elif hasattr(app, "extract"):
+                schema = FirecrawlOrderExtraction.model_json_schema()
+                result = app.extract(
+                    urls=[self.bombay_high_court_url],
+                    prompt=prompt,
+                    schema=schema,
+                    agent={"model": self.firecrawl_model},
+                )
+            else:
+                logging.error("Firecrawl SDK missing both agent() and extract()")
+                return None
 
             payload = self._to_dict(result)
             if not payload:
                 return None
+
+            # extract() responses usually wrap structured output under payload['data'].
+            if isinstance(payload.get("data"), dict):
+                payload = payload["data"]
 
             return self._normalize_firecrawl_payload(
                 payload, case_ref=case_ref, date=date
@@ -275,6 +307,20 @@ Rules:
             Dictionary with case details or error message
         """
         try:
+            firecrawl_result = self._fetch_with_firecrawl(case_ref=case_ref, date=None)
+            if firecrawl_result:
+                case_details = firecrawl_result.get("case_details") or {}
+                return {
+                    "status": firecrawl_result.get("status") or "found",
+                    "source": "firecrawl",
+                    "case_ref": case_ref,
+                    "case_number": case_details.get("case_number") or case_ref,
+                    "petitioner": case_details.get("petitioner_name"),
+                    "respondent": case_details.get("respondent_name"),
+                    "case_status_url": case_details.get("case_status_url"),
+                    "court_orders": firecrawl_result.get("court_orders") or [],
+                }
+
             # Parse case reference
             case_parts = self.parse_case_number(case_ref)
             if not case_parts:

@@ -428,3 +428,85 @@ def test_download_order_for_case_falls_back_to_legacy_sequence(auto_order_manage
     assert result["source"] == "bombay_hc_api"
     assert result["order_link"] == "https://example.com/order-legacy.pdf"
     auto_order_manager._download_pdf_bombay_hc_simple.assert_called_once()
+
+
+def test_download_order_for_case_uses_cached_board_date_link(auto_order_manager):
+    case_data = {
+        "case_ref": "WP/200/2024",
+        "board_date": "2024-01-15",
+        "case_detail": {
+            "petitioner": "ABC Ltd",
+            "respondent": "State",
+            "orders": [
+                {
+                    "board_date": "2024-01-15",
+                    "order_link": "https://example.com/order-cached.pdf",
+                }
+            ],
+        },
+    }
+
+    auto_order_manager.court_scraper.get_case_orders = Mock()
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"Content-Type": "application/pdf"}
+        response.content = b"%PDF-1.4 cached"
+        mock_get.return_value = response
+
+        result = auto_order_manager._download_order_for_case(
+            case_data, sequence_number=1
+        )
+
+    assert result["success"] is True
+    assert result["source"] == "case_store_cached"
+    assert result["order_link"] == "https://example.com/order-cached.pdf"
+    auto_order_manager.court_scraper.get_case_orders.assert_not_called()
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
+
+
+def test_download_order_for_case_cached_link_failure_uses_scraper(auto_order_manager):
+    case_data = {
+        "case_ref": "WP/201/2024",
+        "board_date": "2024-01-16",
+        "case_detail": {
+            "petitioner": "ABC Ltd",
+            "respondent": "State",
+            "orders": [
+                {
+                    "board_date": "2024-01-16",
+                    "order_link": "https://example.com/order-cached-bad.pdf",
+                }
+            ],
+        },
+    }
+
+    auto_order_manager._download_order_via_scraper = Mock(
+        return_value={
+            "success": True,
+            "order_link": "https://example.com/order-structured.pdf",
+            "pdf_content": b"%PDF-1.4 structured",
+            "filename": "dummy.pdf",
+            "source": "firecrawl_structured",
+        }
+    )
+
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        response = Mock()
+        response.status_code = 404
+        response.headers = {"Content-Type": "text/html"}
+        response.content = b"not found"
+        mock_get.return_value = response
+
+        result = auto_order_manager._download_order_for_case(
+            case_data, sequence_number=1
+        )
+
+    assert result["success"] is True
+    assert result["source"] == "firecrawl_structured"
+    auto_order_manager._download_order_via_scraper.assert_called_once()
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()

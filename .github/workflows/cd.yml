@@ -178,10 +178,14 @@ jobs:
         if: env.DEPLOY_OLLAMA != 'false' && steps.ollama_check.outputs.should_deploy == 'true'
         env:
           GCLOUD_SERVICE_ACCOUNT_KEY: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
+          PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
+          REGION: ${{ env.GCP_REGION }}
+          OLLAMA_SERVICE_NAME: ${{ env.OLLAMA_SERVICE }}
+          OLLAMA_SERVICE_ACCOUNT: firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com
           OLLAMA_MODEL: ${{ env.OLLAMA_MODEL }}
         run: |
           chmod +x firebase/ollama-cloudrun-deploy.sh
-          ./firebase/ollama-cloudrun-deploy.sh
+          bash firebase/ollama-cloudrun-deploy.sh
 
       - name: Resolve Ollama service URL (optional)
         run: |
