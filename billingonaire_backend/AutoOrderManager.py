@@ -347,11 +347,11 @@ class AutoOrderManager:
                 result["error"] = f"Failed to analyze existing order: {str(e)}"
                 return result
 
-        # Configurable max retries - use parameter, env var, or default to 50
+        # Configurable max retries - use parameter, env var, or default to 10
         if max_sequences is not None and max_sequences > 0:
             MAX_RETRIES = max_sequences
         else:
-            MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
+            MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "10"))
         logging.info(
             f"Processing {case_ref} - will try up to {MAX_RETRIES} sequence numbers"
         )
@@ -766,11 +766,11 @@ class AutoOrderManager:
             case_data_fresh.pop("order_link", None)
 
             # Now process with normal download flow (will try up to N sequence numbers)
-            # Use parameter, env var, or default to 50
+            # Use parameter, env var, or default to 10
             if max_sequences is not None and max_sequences > 0:
                 MAX_RETRIES = max_sequences
             else:
-                MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "50"))
+                MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "10"))
 
             logging.info(
                 f"Processing {case_ref} with fresh download (trying up to {MAX_RETRIES} sequence numbers)"

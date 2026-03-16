@@ -236,17 +236,19 @@ Rules:
             app = firecrawl_cls(api_key=self.firecrawl_api_key)
             prompt = self._build_firecrawl_prompt(case_ref)
 
+            # Use wildcard URL so Firecrawl can crawl case-status sub-pages
+            crawl_urls = [f"{self.bombay_high_court_url}/*"]
             if hasattr(app, "agent"):
                 result = app.agent(
                     schema=FirecrawlOrderExtraction,
                     prompt=prompt,
-                    urls=[self.bombay_high_court_url],
+                    urls=crawl_urls,
                     model=self.firecrawl_model,
                 )
             elif hasattr(app, "extract"):
                 schema = FirecrawlOrderExtraction.model_json_schema()
                 result = app.extract(
-                    urls=[self.bombay_high_court_url],
+                    urls=crawl_urls,
                     prompt=prompt,
                     schema=schema,
                     agent={"model": self.firecrawl_model},

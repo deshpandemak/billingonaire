@@ -21,7 +21,7 @@ const AdminOrderManagement = () => {
     const [selectedStatuses, setSelectedStatuses] = useState(['not_linked', 'order_failed']);
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
-    const [maxSequences, setMaxSequences] = useState(50);
+    const [maxSequences, setMaxSequences] = useState(10);
 
     const statusLabels = {
         'not_linked': 'Not Linked',
@@ -198,6 +198,74 @@ const AdminOrderManagement = () => {
         }
     };
 
+    const retryFailedCases = async () => {
+        if (!window.confirm('Re-queue all order_failed and order_analysis_failed cases for retry? This will use the current Max Sequences setting.')) {
+            return;
+        }
+        try {
+            setProcessing(true);
+            setMessage(null);
+            const idToken = await currentUser.getIdToken();
+            const response = await fetch(`${API_URL}/jobs/retry-failed`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ limit: 500, max_sequences: maxSequences })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setMessage({
+                    type: 'success',
+                    text: `✅ Retrying failed cases — fetch queue: ${data.fetch_queued}, analysis queue: ${data.analysis_queued}`
+                });
+                setTimeout(() => { loadOverview(); loadQueueStatus(); }, 2000);
+            } else {
+                setMessage({ type: 'danger', text: data.error || 'Retry failed' });
+            }
+        } catch (error) {
+            console.error('Error retrying failed cases:', error);
+            setMessage({ type: 'danger', text: 'Failed to retry cases: ' + error.message });
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const queueLinkedForAnalysis = async () => {
+        if (!window.confirm('Queue all "linked" (downloaded but not yet analysed) cases for analysis? This will not re-download any orders.')) {
+            return;
+        }
+        try {
+            setProcessing(true);
+            setMessage(null);
+            const idToken = await currentUser.getIdToken();
+            const response = await fetch(`${API_URL}/jobs/analyze-orders`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ limit: 500 })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setMessage({
+                    type: 'success',
+                    text: `✅ Queued ${data.queued} linked cases for analysis (skipped ${data.skipped} without order links)`
+                });
+                setTimeout(() => { loadOverview(); loadQueueStatus(); }, 2000);
+            } else {
+                setMessage({ type: 'danger', text: data.error || 'Failed to queue analysis jobs' });
+            }
+        } catch (error) {
+            console.error('Error queuing linked cases for analysis:', error);
+            setMessage({ type: 'danger', text: 'Failed to queue analysis: ' + error.message });
+        } finally {
+            setProcessing(false);
+        }
+    };
+
     const handleStatusToggle = (status) => {
         if (selectedStatuses.includes(status)) {
             setSelectedStatuses(selectedStatuses.filter(s => s !== status));
@@ -319,22 +387,57 @@ const AdminOrderManagement = () => {
                         <Card.Body>
                             {queueStatus ? (
                                 <>
-                                    <div className="mb-3">
-                                        <h4 className="mb-0">{queueStatus.queue_size}</h4>
-                                        <small className="text-muted">Cases in Queue</small>
-                                    </div>
-                                    <div className="mb-2">
-                                        <Badge bg={queueStatus.processing_active ? 'success' : 'danger'}>
-                                            {queueStatus.processing_active ? 'Active' : 'Inactive'}
+                                    <Row className="mb-2">
+                                        <Col xs={6} className="text-center">
+                                            <h4 className="mb-0">{queueStatus.fetch_queue_size ?? queueStatus.queue_size ?? 0}</h4>
+                                            <small className="text-muted">Fetch Queue</small>
+                                        </Col>
+                                        <Col xs={6} className="text-center">
+                                            <h4 className="mb-0">{queueStatus.analysis_queue_size ?? 0}</h4>
+                                            <small className="text-muted">Analysis Queue</small>
+                                        </Col>
+                                    </Row>
+                                    <div className="mb-2 d-flex gap-2 flex-wrap">
+                                        <Badge bg={queueStatus.fetch_processing_active ?? queueStatus.processing_active ? 'success' : 'danger'}>
+                                            Fetch: {queueStatus.fetch_processing_active ?? queueStatus.processing_active ? 'Active' : 'Inactive'}
+                                        </Badge>
+                                        <Badge bg={queueStatus.analysis_processing_active ? 'success' : 'secondary'}>
+                                            Analysis: {queueStatus.analysis_processing_active ? 'Active' : 'Idle'}
                                         </Badge>
                                     </div>
-                                    <p className="text-muted small mb-0">
-                                        {queueStatus.message}
-                                    </p>
+                                    {(queueStatus.fetch_pending_cases > 0 || queueStatus.analysis_pending_cases > 0) && (
+                                        <p className="text-muted small mb-0">
+                                            Persisted: {queueStatus.fetch_pending_cases ?? 0} fetch pending, {queueStatus.analysis_pending_cases ?? 0} analysis pending
+                                        </p>
+                                    )}
                                 </>
                             ) : (
                                 <p className="text-muted mb-0">Loading...</p>
                             )}
+                        </Card.Body>
+                    </Card>
+
+                    <Card className="shadow-sm mb-3">
+                        <Card.Header className="bg-warning">
+                            <h5 className="mb-0">Quick Actions</h5>
+                        </Card.Header>
+                        <Card.Body className="d-grid gap-2">
+                            <Button
+                                variant="outline-warning"
+                                onClick={retryFailedCases}
+                                disabled={processing}
+                                title="Re-queue all order_failed and order_analysis_failed cases"
+                            >
+                                🔁 Retry All Failed Cases
+                            </Button>
+                            <Button
+                                variant="outline-info"
+                                onClick={queueLinkedForAnalysis}
+                                disabled={processing}
+                                title="Queue all linked (downloaded but not analysed) cases for analysis"
+                            >
+                                🔬 Queue Linked for Analysis
+                            </Button>
                         </Card.Body>
                     </Card>
                 </Col>
@@ -408,7 +511,7 @@ const AdminOrderManagement = () => {
                                                 max="200"
                                             />
                                             <Form.Text className="text-muted">
-                                                Sequences to try per case
+                                                Sequences to try per case (lower = faster)
                                             </Form.Text>
                                         </Form.Group>
                                     </Col>
@@ -462,8 +565,12 @@ const AdminOrderManagement = () => {
                                     <Col>
                                         <Alert variant="info" className="mb-0">
                                             <strong>How it works:</strong> Bulk processing adds cases to an asynchronous background queue.
-                                            Cases will be processed automatically in the background. The queue status updates every 5 seconds.
-                                            Refresh the overview to see updated statistics after processing completes.
+                                            Cases will be processed automatically in the background with {' '}
+                                            <strong>5 parallel workers</strong>. The queue status updates every 5 seconds.
+                                            Use <em>Max Sequences = 10</em> (default) for faster throughput — increase only if orders
+                                            are consistently missed. After a successful fetch, cases are <strong>automatically
+                                            queued for analysis</strong>; use <em>Queue Linked for Analysis</em> to manually
+                                            unblock any that were stuck before this fix.
                                         </Alert>
                                     </Col>
                                 </Row>

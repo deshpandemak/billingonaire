@@ -228,10 +228,10 @@ analysis_processing_queue = Queue()
 analysis_processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
 try:
-    MAX_WORKERS = max(1, int(os.environ.get("ORDER_PROCESSING_WORKERS", "3")))
+    MAX_WORKERS = max(1, int(os.environ.get("ORDER_PROCESSING_WORKERS", "5")))
 except (ValueError, TypeError):
-    logging.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 3")
-    MAX_WORKERS = 3
+    logging.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 5")
+    MAX_WORKERS = 5
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
@@ -387,9 +387,29 @@ async def process_order_queue_worker(worker_id: int):
                         )
 
                 elif result.get("download_success"):
+                    # Order was downloaded (or already linked) but analysis failed.
+                    # Auto-queue for the analysis worker so it will be retried without
+                    # admin intervention — this prevents cases from getting stuck at
+                    # "linked" status indefinitely.
                     logging.warning(
-                        f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}"
+                        f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')} — auto-queuing for analysis retry"
                     )
+                    try:
+                        await analysis_processing_queue.put(
+                            {
+                                "id": case_info.get("id"),
+                                "case_ref": case_info["case_ref"],
+                                "board_date": case_info.get("board_date"),
+                            }
+                        )
+                        await ensure_background_analysis_processing_active()
+                        logging.info(
+                            f"📋 Auto-queued {case_info['case_ref']} for analysis retry"
+                        )
+                    except Exception as queue_error:
+                        logging.error(
+                            f"❌ Failed to auto-queue {case_info['case_ref']} for analysis: {queue_error}"
+                        )
                 else:
                     logging.warning(
                         f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}"
@@ -2163,7 +2183,7 @@ async def queue_fetch_orders_jobs(
         board_dates = body.get("board_dates") or []
         case_refs = body.get("case_refs") or []
         limit = int(body.get("limit", 100))
-        max_sequences = int(body.get("max_sequences", 50))
+        max_sequences = int(body.get("max_sequences", 10))
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
@@ -2389,7 +2409,148 @@ async def queue_analysis_jobs(
         )
 
 
-@app.post("/cases/{case_ref:path}/manual-review", tags=["Auto Order Management"])
+@app.post("/jobs/retry-failed", tags=["Auto Order Management"])
+async def retry_failed_cases(
+    request: Request, current_user=Depends(require_admin_active)
+):
+    """Re-queue cases stuck in order_failed or order_analysis_failed status.
+
+    For order_failed cases: adds to the fetch queue (tries to re-download the order).
+    For order_analysis_failed cases: adds to the analysis queue (re-analyzes the
+    already-downloaded order without a fresh fetch).
+
+    Accepts optional ``board_dates`` (list of YYYY-MM-DD strings) and ``limit``
+    (default 200) in the request body.
+    """
+    try:
+        body = await request.json()
+        board_dates = body.get("board_dates") or []
+        limit = int(body.get("limit", 200))
+        max_sequences = int(body.get("max_sequences", 10))
+
+        if limit < 1 or limit > 1000:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "limit must be between 1 and 1000"},
+            )
+
+        manager = get_auto_order_manager()
+        selected_board_dates = {
+            str(v or "").strip() for v in board_dates if str(v or "").strip()
+        }
+
+        # Gather candidates with retryable statuses
+        filters: Dict = {}
+        candidate_cases = manager._get_filtered_matters(filters, limit)
+
+        fetch_queued = 0
+        analysis_queued = 0
+        skipped = 0
+        fetch_queued_refs: list = []
+        analysis_queued_refs: list = []
+
+        for case_data in candidate_cases:
+            status = case_data.get("order_status", "")
+            if status not in ("order_failed", "order_analysis_failed"):
+                continue
+
+            board_date_obj = manager._parse_board_date(case_data.get("board_date"))
+            board_date_iso = board_date_obj.isoformat() if board_date_obj else None
+            if selected_board_dates and board_date_iso not in selected_board_dates:
+                skipped += 1
+                continue
+
+            case_ref = case_data.get("case_ref")
+            case_id = case_data.get("id")
+
+            if status == "order_failed":
+                # Re-fetch the order from scratch
+                manager.case_store.transition_lifecycle(
+                    case_ref,
+                    "fetch_queued",
+                    metadata={"source": "jobs.retry-failed", "case_id": case_id},
+                    event_type="retry_fetch_queued",
+                )
+                await order_processing_queue.put(
+                    {
+                        "id": case_id,
+                        "case_ref": case_ref,
+                        "board_date": case_data.get("board_date"),
+                        "max_sequences": max_sequences,
+                    }
+                )
+                fetch_queued += 1
+                fetch_queued_refs.append(case_ref)
+            else:
+                # order_analysis_failed: order link exists, just re-run analysis
+                order_link = case_data.get("order_link")
+                if not order_link:
+                    # No link stored – fall back to fetch queue
+                    manager.case_store.transition_lifecycle(
+                        case_ref,
+                        "fetch_queued",
+                        metadata={
+                            "source": "jobs.retry-failed",
+                            "case_id": case_id,
+                            "reason": "no_order_link_for_analysis_retry",
+                        },
+                        event_type="retry_fetch_queued",
+                    )
+                    await order_processing_queue.put(
+                        {
+                            "id": case_id,
+                            "case_ref": case_ref,
+                            "board_date": case_data.get("board_date"),
+                            "max_sequences": max_sequences,
+                        }
+                    )
+                    fetch_queued += 1
+                    fetch_queued_refs.append(case_ref)
+                else:
+                    manager.case_store.transition_lifecycle(
+                        case_ref,
+                        "analysis_queued",
+                        metadata={
+                            "source": "jobs.retry-failed",
+                            "case_id": case_id,
+                        },
+                        event_type="retry_analysis_queued",
+                    )
+                    await analysis_processing_queue.put(
+                        {
+                            "id": case_id,
+                            "case_ref": case_ref,
+                            "board_date": case_data.get("board_date"),
+                        }
+                    )
+                    analysis_queued += 1
+                    analysis_queued_refs.append(case_ref)
+
+        await ensure_background_processing_active()
+        await ensure_background_analysis_processing_active()
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "fetch_queued": fetch_queued,
+                "analysis_queued": analysis_queued,
+                "skipped": skipped,
+                "fetch_queue_size": order_processing_queue.qsize(),
+                "analysis_queue_size": analysis_processing_queue.qsize(),
+                "fetch_queued_refs": fetch_queued_refs,
+                "analysis_queued_refs": analysis_queued_refs,
+                "selected_board_dates": sorted(selected_board_dates),
+            }
+        )
+
+    except Exception as e:
+        logging.error(f"Error in retry-failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to retry failed cases: {str(e)}"},
+        )
+
+
 async def mark_case_for_manual_review(
     case_ref: str,
     request: Request,
