@@ -29,7 +29,6 @@ if "spacy" not in sys.modules:
 from billingonaire_backend.AutoOrderManager import AutoOrderManager
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -151,9 +150,9 @@ def test_firecrawl_uses_wildcard_url(monkeypatch):
     scraper._fetch_with_firecrawl("WP/1/2025")
 
     assert len(captured_urls) == 1, "Expected exactly one URL passed to extract()"
-    assert captured_urls[0].endswith("/*"), (
-        f"Expected wildcard URL, got: {captured_urls[0]}"
-    )
+    assert captured_urls[0].endswith(
+        "/*"
+    ), f"Expected wildcard URL, got: {captured_urls[0]}"
     assert "bombayhighcourt.nic.in" in captured_urls[0]
 
 

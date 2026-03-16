@@ -939,8 +939,6 @@ class Board:
 
             # Check which filters need to be applied client-side (when date filters present)
             apply_advocate_filter_client_side = advocate_name and has_date_filter
-            apply_order_status_filter_client_side = False
-            apply_order_category_filter_client_side = False
 
             for doc in docs:
                 doc_data = doc.to_dict()
