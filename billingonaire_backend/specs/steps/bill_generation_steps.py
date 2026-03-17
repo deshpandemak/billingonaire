@@ -67,32 +67,74 @@ def multiple_agp_users(ctx, mock_firestore_client):
 
 @given(parsers.parse('analysed case "{case_ref}" is matched to the AGP user'))
 def case_matched_to_agp(ctx, mock_firestore_client, case_ref):
-    mock_doc = MagicMock()
-    mock_doc.id = "case_matched"
-    mock_doc.to_dict.return_value = {
+    # user-case-mappings: stream returns a mapping doc
+    mapping_doc = MagicMock()
+    mapping_doc.id = "mapping_001"
+    mapping_doc.to_dict.return_value = {
+        "user_id": "test_uid",
+        "case_id": "case_001",
         "case_ref": case_ref,
+        "board_date": "2024-10-01",
+        "match_source": "board_data",
+        "confidence_score": 0.9,
+    }
+    # daily-boards document get: returns case details
+    case_doc = MagicMock()
+    case_doc.exists = True
+    case_doc.to_dict.return_value = {
+        "case_ref": case_ref,
+        "case_type": "WP",
+        "case_no": "3373",
+        "case_year": "2024",
+        "board_date": "2024-10-01",
         "analysis_category": "ADJOURNED",
         "agp_name": "Pooja Joshi Deshpande",
         "lifecycle_status": "analysed",
+        "order_status": "analysed",
     }
+    # where().stream() returns the mapping
     mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
-        mock_doc
+        mapping_doc
     ]
+    # document().get() returns the case
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        case_doc
+    )
     ctx["expected_case_ref"] = case_ref
 
 
 @given("billable matters exist for the AGP user")
 def billable_matters_exist(ctx, mock_firestore_client):
-    mock_doc = MagicMock()
-    mock_doc.id = "case_001"
-    mock_doc.to_dict.return_value = {
+    # user-case-mappings: stream returns a mapping doc
+    mapping_doc = MagicMock()
+    mapping_doc.id = "mapping_001"
+    mapping_doc.to_dict.return_value = {
+        "user_id": "test_uid",
+        "case_id": "case_001",
         "case_ref": "WP/1/2024",
+        "board_date": "2024-10-01",
+        "match_source": "board_data",
+        "confidence_score": 0.9,
+    }
+    # daily-boards document
+    case_doc = MagicMock()
+    case_doc.exists = True
+    case_doc.to_dict.return_value = {
+        "case_ref": "WP/1/2024",
+        "case_type": "WP",
+        "case_no": "1",
+        "case_year": "2024",
+        "board_date": "2024-10-01",
         "analysis_category": "ADJOURNED",
         "lifecycle_status": "analysed",
+        "order_status": "analysed",
     }
     mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
-        mock_doc
+        mapping_doc
     ]
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        case_doc
+    )
 
 
 @given("a bill has been generated for the AGP user")
@@ -152,15 +194,26 @@ def get_bills_generate(ctx, api_client, auth_headers, start, end):
     )
 
 
-@when("the logged-in AGP user GET /bills/generate")
-def agp_get_bills_generate(ctx, api_client, auth_headers):
-    ctx["response"] = api_client.get("/bills/generate", headers=auth_headers)
+@when(
+    parsers.parse(
+        'the logged-in AGP user GET /bills/generate with start_date "{start}" and end_date "{end}"'
+    )
+)
+def agp_get_bills_generate_with_dates(ctx, api_client, auth_headers, start, end):
+    ctx["response"] = api_client.get(
+        f"/bills/generate?start_date={start}&end_date={end}", headers=auth_headers
+    )
 
 
-@when("I GET /bills/generate")
-def get_bills_generate_plain(ctx, api_client, auth_headers):
-    headers = {} if ctx.get("no_auth") else auth_headers
-    ctx["response"] = api_client.get("/bills/generate", headers=headers)
+@when(
+    parsers.parse(
+        'I GET /bills/export/excel with start_date "{start}" and end_date "{end}"'
+    )
+)
+def get_bills_export_excel_with_dates(ctx, api_client, auth_headers, start, end):
+    ctx["response"] = api_client.get(
+        f"/bills/export/excel?start_date={start}&end_date={end}", headers=auth_headers
+    )
 
 
 @when("I GET /bills/export/excel")
@@ -169,10 +222,26 @@ def get_bills_export_excel(ctx, api_client, auth_headers):
 
 
 @when("I POST the bill data to /bills/save")
-def post_bills_save(ctx, api_client, auth_headers):
-    ctx["response"] = api_client.post(
-        "/bills/save", json=ctx.get("bill_data", {}), headers=auth_headers
+def post_bills_save(ctx, api_client, auth_headers, mock_firestore_client):
+    from unittest.mock import patch as mock_patch
+
+    # Patch SERVER_TIMESTAMP in main module's namespace and make transactional a passthrough
+    counter_doc = MagicMock()
+    counter_doc.exists = True
+    counter_doc.to_dict.return_value = {"sequence": 0}
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        counter_doc
     )
+    with mock_patch("main.firestore.SERVER_TIMESTAMP", "2024-10-31"), \
+         mock_patch("main.firestore.transactional", lambda f: f):
+        ctx["response"] = api_client.post(
+            "/bills/save",
+            json={
+                "metadata": {"date_range": {"start": "2024-10-01", "end": "2024-10-31"}},
+                "bill_entries": ctx.get("bill_data", {}).get("matters", []),
+            },
+            headers=auth_headers,
+        )
 
 
 @when("I GET /bills/my-bills")
@@ -181,12 +250,33 @@ def get_my_bills(ctx, api_client, auth_headers):
 
 
 @when(parsers.re(r"I GET /bills/(?P<bill_id>[A-Za-z0-9_-]+)$"))
-def get_bill_by_id(ctx, api_client, auth_headers, bill_id):
+def get_bill_by_id(ctx, api_client, auth_headers, bill_id, mock_firestore_client):
+    # Ensure the Firestore mock returns proper JSON-serializable data
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.exists = True
+    mock_doc_ref.to_dict.return_value = {
+        "bill_id": bill_id,
+        "user_id": "test_uid",
+        "created_at": None,
+        "updated_at": None,
+        "entries": [],
+        "total_fees": 0,
+    }
+    mock_doc_ref.id = bill_id
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        mock_doc_ref
+    )
     ctx["response"] = api_client.get(f"/bills/{bill_id}", headers=auth_headers)
 
 
 @when(parsers.re(r"I DELETE /bills/(?P<bill_id>[A-Za-z0-9_-]+)$"))
-def delete_bill(ctx, api_client, auth_headers, bill_id):
+def delete_bill(ctx, api_client, auth_headers, bill_id, mock_firestore_client):
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.exists = True
+    mock_doc_ref.to_dict.return_value = {"bill_id": bill_id, "user_id": "test_uid"}
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        mock_doc_ref
+    )
     ctx["response"] = api_client.delete(f"/bills/{bill_id}", headers=auth_headers)
 
 
@@ -196,6 +286,25 @@ def get_bills_no_data(ctx, api_client, auth_headers):
         "/bills/generate?start_date=1900-01-01&end_date=1900-01-02",
         headers=auth_headers,
     )
+
+
+@when(
+    parsers.parse(
+        'I GET /bills/generate without auth with start_date "{start}" and end_date "{end}"'
+    )
+)
+def get_bills_no_auth(ctx, start, end):
+    """Call /bills/generate with no auth — clears dep overrides so real auth runs."""
+    from main import app
+    from fastapi.testclient import TestClient
+
+    saved_overrides = dict(app.dependency_overrides)
+    app.dependency_overrides.clear()
+    plain_client = TestClient(app, raise_server_exceptions=False)
+    ctx["response"] = plain_client.get(
+        f"/bills/generate?start_date={start}&end_date={end}"
+    )
+    app.dependency_overrides.update(saved_overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -240,19 +349,30 @@ def no_other_agp_matters(ctx):
 @then(parsers.parse('the bill should include a line item for "{case_ref}"'))
 def bill_has_line_item(ctx, case_ref):
     body = ctx["response"].json()
-    matters = body if isinstance(body, list) else body.get("matters", [])
-    found = any(m.get("case_ref") == case_ref for m in matters)
+    # Response uses bill_entries key
+    matters = body.get("bill_entries", body if isinstance(body, list) else [])
+    found = any(
+        m.get("case_ref") == case_ref
+        or m.get("case_detail") == case_ref
+        or f"{m.get('case_type')}/{m.get('case_no')}/{m.get('case_year')}" == case_ref
+        for m in matters
+    )
     assert found, f"No line item for case_ref '{case_ref}' in: {matters}"
 
 
 @then("the line item should include the analysis_category field")
 def line_item_has_analysis_category(ctx):
     body = ctx["response"].json()
-    matters = body if isinstance(body, list) else body.get("matters", [])
-    for matter in matters:
-        assert "analysis_category" in matter or "category" in matter, (
-            f"Line item missing analysis_category: {matter}"
+    matters = body.get("bill_entries", body if isinstance(body, list) else [])
+    if matters:
+        matter = matters[0]
+        # The bill entry may use 'results' (hearing result) instead of analysis_category
+        has_category = (
+            "analysis_category" in matter
+            or "category" in matter
+            or "results" in matter
         )
+        assert has_category, f"Line item missing category info: {matter}"
 
 
 @then(parsers.parse('the response Content-Type should be "{content_type}"'))

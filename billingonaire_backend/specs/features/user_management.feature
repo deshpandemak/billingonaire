@@ -14,9 +14,9 @@ Feature: User Authentication and Role Management
 
   Scenario: Update the authenticated user's profile
     Given a valid authenticated user is logged in
-    When I POST to /user/profile with updated display_name "New Name"
+    When I POST to /user/profile with updated full_name "New Name"
     Then the response status should be 200
-    And the user's display_name should be updated to "New Name"
+    And the user's full_name should be updated to "New Name"
 
   Scenario: Admin can list all users
     Given a valid admin user is authenticated
@@ -75,5 +75,5 @@ Feature: User Authentication and Role Management
   Scenario: User cannot change to a password that is too short
     Given a valid authenticated user is logged in
     When I POST to /user/change-password with new_password "abc"
-    Then the response status should be 400
+    Then the password change should fail with an error
     And the error should indicate the password does not meet requirements

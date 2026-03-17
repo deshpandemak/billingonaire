@@ -15,19 +15,19 @@ Feature: AGP Bill Generation
 
   Scenario: Bill includes only matters matched to the requesting AGP
     Given multiple AGP users have matters in the system
-    When the logged-in AGP user GET /bills/generate
+    When the logged-in AGP user GET /bills/generate with start_date "2024-10-01" and end_date "2024-10-31"
     Then the response should only include matters matched to that AGP user
     And matters assigned to other AGPs should not appear
 
   Scenario: Bill line items include case reference and classification
     Given analysed case "WP/3373/2024" is matched to the AGP user
-    When I GET /bills/generate
+    When I GET /bills/generate with start_date "2024-10-01" and end_date "2024-10-31"
     Then the bill should include a line item for "WP/3373/2024"
     And the line item should include the analysis_category field
 
   Scenario: Export bill as Excel file
     Given billable matters exist for the AGP user
-    When I GET /bills/export/excel
+    When I GET /bills/export/excel with start_date "2024-10-01" and end_date "2024-10-31"
     Then the response status should be 200
     And the response Content-Type should be "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     And the downloaded file should be a valid Excel workbook
@@ -64,5 +64,5 @@ Feature: AGP Bill Generation
 
   Scenario: Bill generation requires authentication
     Given no authentication token is provided
-    When I GET /bills/generate
+    When I GET /bills/generate without auth with start_date "2024-10-01" and end_date "2024-10-31"
     Then the response status should be 401 or 403

@@ -32,6 +32,7 @@ def mock_firebase_env(monkeypatch):
     mock_client = MagicMock()
     mock_collection = MagicMock()
     mock_document = MagicMock()
+    mock_document.id = "mock_document_id"
     mock_doc_ref = MagicMock()
 
     mock_client.collection.return_value = mock_collection
@@ -76,6 +77,19 @@ def mock_user_manager():
 
 
 @pytest.fixture
+def mock_user_matter_matcher(mock_firestore_client):
+    """Return a mocked UserMatterMatcher that delegates document reads to the mock client."""
+    from unittest.mock import MagicMock as MM
+    matcher = MM()
+    # Default: no role configured
+    matcher.get_user_role_config.return_value = None
+    matcher.generate_name_variations.return_value = ["Test Name", "T. Name"]
+    matcher.save_user_role_config.return_value = True
+    matcher.get_user_matter_mappings.return_value = []
+    return matcher
+
+
+@pytest.fixture
 def mock_admin_user_manager(mock_user_manager):
     """Return a mocked UserManager that acts as admin."""
     mock_user_manager.is_admin.return_value = True
@@ -94,7 +108,7 @@ def mock_admin_user_manager(mock_user_manager):
 
 
 @pytest.fixture
-def api_client(mock_user_manager):
+def api_client(mock_user_manager, mock_user_matter_matcher):
     """TestClient for a regular (non-admin) authenticated user."""
     from fastapi.testclient import TestClient
     from main import (
@@ -117,6 +131,7 @@ def api_client(mock_user_manager):
     with (
         patch("firebase_admin.auth.verify_id_token", return_value=FAKE_USER),
         patch("main.get_user_manager", return_value=mock_user_manager),
+        patch("main.get_user_matter_matcher", return_value=mock_user_matter_matcher),
         patch("main.ensure_firebase"),
         patch("firebase_admin.auth.update_user"),
     ):
@@ -127,7 +142,7 @@ def api_client(mock_user_manager):
 
 
 @pytest.fixture
-def admin_api_client(mock_admin_user_manager):
+def admin_api_client(mock_admin_user_manager, mock_user_matter_matcher):
     """TestClient where the authenticated user has admin privileges."""
     from fastapi.testclient import TestClient
     from main import (
@@ -154,6 +169,7 @@ def admin_api_client(mock_admin_user_manager):
     with (
         patch("firebase_admin.auth.verify_id_token", return_value=FAKE_ADMIN),
         patch("main.get_user_manager", return_value=mock_admin_user_manager),
+        patch("main.get_user_matter_matcher", return_value=mock_user_matter_matcher),
         patch("main.ensure_firebase"),
         patch("firebase_admin.auth.create_user", return_value=MagicMock(uid="new_uid")),
         patch("firebase_admin.auth.update_user"),
