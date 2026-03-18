@@ -247,11 +247,11 @@ def target_role_updated(ctx, role):
 
 
 @then("the role configuration should be saved for the user")
-def role_config_saved(ctx, mock_firestore_client):
-    mock_doc = mock_firestore_client.collection.return_value.document.return_value
-    assert mock_doc.update.called or mock_doc.set.called or (
-        mock_firestore_client.collection.return_value.add.called
-    ), "Expected role configuration to be persisted"
+def role_config_saved(ctx, mock_user_matter_matcher):
+    # The configure-role endpoint calls UserMatterMatcher.save_user_role_config
+    assert mock_user_matter_matcher.save_user_role_config.called, (
+        "Expected save_user_role_config to have been called to persist the role configuration"
+    )
 
 
 @then(parsers.parse('the response should include full_name "{full_name}"'))
