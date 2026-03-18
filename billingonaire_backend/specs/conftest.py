@@ -80,6 +80,7 @@ def mock_user_manager():
 def mock_user_matter_matcher(mock_firestore_client):
     """Return a mocked UserMatterMatcher that delegates document reads to the mock client."""
     from unittest.mock import MagicMock as MM
+
     matcher = MM()
     # Default: no role configured
     matcher.get_user_role_config.return_value = None

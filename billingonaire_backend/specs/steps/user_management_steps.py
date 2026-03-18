@@ -64,11 +64,10 @@ def target_user_exists(ctx, mock_firestore_client, uid):
     ctx["target_uid"] = uid
 
 
-@given(
-    parsers.parse('the AGP user has a configured role with full_name "{full_name}"')
-)
+@given(parsers.parse('the AGP user has a configured role with full_name "{full_name}"'))
 def agp_role_configured(ctx, mock_user_matter_matcher, full_name):
     from UserMatterMatcher import UserRole
+
     # Configure the mock matcher to return a role with the expected full_name
     mock_user_matter_matcher.get_user_role_config.return_value = UserRole(
         role_type="AGP",
@@ -102,7 +101,9 @@ def role_configured_and_processed(ctx, mock_firestore_client):
 
 @given("there are Firebase Auth users not yet in the Firestore users collection")
 def unsynced_firebase_users(ctx, mock_firestore_client):
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = []
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        []
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +144,11 @@ def non_admin_get_users(ctx, api_client, auth_headers):
     ctx["response"] = api_client.get("/admin/users", headers=auth_headers)
 
 
-@when(parsers.parse('I POST to /user-matters/configure-role with role "{role}" and full_name "{full_name}"'))
+@when(
+    parsers.parse(
+        'I POST to /user-matters/configure-role with role "{role}" and full_name "{full_name}"'
+    )
+)
 def configure_role(ctx, api_client, auth_headers, role, full_name):
     payload = {
         "role_type": role,
@@ -161,7 +166,9 @@ def get_role_config(ctx, api_client, auth_headers):
     ctx["response"] = api_client.get("/user-matters/role-config", headers=auth_headers)
 
 
-@when(parsers.parse('I POST to /user-matters/generate-name-variations with name "{name}"'))
+@when(
+    parsers.parse('I POST to /user-matters/generate-name-variations with name "{name}"')
+)
 def generate_name_variations(ctx, api_client, auth_headers, name):
     ctx["response"] = api_client.post(
         "/user-matters/generate-name-variations",
@@ -220,7 +227,7 @@ def response_has_email(ctx, email):
     assert body.get("email") == email, f"Expected email '{email}', got: {body}"
 
 
-@then(parsers.parse("the user's full_name should be updated to \"{name}\""))
+@then(parsers.parse('the user\'s full_name should be updated to "{name}"'))
 def full_name_updated(ctx, name):
     body = ctx["response"].json()
     ok = (
@@ -238,20 +245,20 @@ def response_has_users(ctx):
     assert isinstance(users, list)
 
 
-@then(parsers.parse("the target user's role should be updated to \"{role}\""))
+@then(parsers.parse('the target user\'s role should be updated to "{role}"'))
 def target_role_updated(ctx, role):
     # The admin update endpoint returns 200 on success
-    assert ctx["response"].status_code == 200, (
-        f"Expected 200 response for role update to '{role}', got {ctx['response'].status_code}"
-    )
+    assert (
+        ctx["response"].status_code == 200
+    ), f"Expected 200 response for role update to '{role}', got {ctx['response'].status_code}"
 
 
 @then("the role configuration should be saved for the user")
 def role_config_saved(ctx, mock_user_matter_matcher):
     # The configure-role endpoint calls UserMatterMatcher.save_user_role_config
-    assert mock_user_matter_matcher.save_user_role_config.called, (
-        "Expected save_user_role_config to have been called to persist the role configuration"
-    )
+    assert (
+        mock_user_matter_matcher.save_user_role_config.called
+    ), "Expected save_user_role_config to have been called to persist the role configuration"
 
 
 @then(parsers.parse('the response should include full_name "{full_name}"'))
@@ -262,24 +269,26 @@ def response_has_full_name(ctx, full_name):
         or (body.get("role_config") or {}).get("full_name")
         or (body.get("config") or {}).get("full_name")
     )
-    assert result_name == full_name, (
-        f"Expected full_name '{full_name}', got '{result_name}'. Body: {body}"
-    )
+    assert (
+        result_name == full_name
+    ), f"Expected full_name '{full_name}', got '{result_name}'. Body: {body}"
 
 
 @then("the response should contain a list of suggested name_variations")
 def response_has_name_variations(ctx):
     body = ctx["response"].json()
     variations = body.get("name_variations") or body.get("variations") or body
-    assert isinstance(variations, list) and len(variations) > 0, (
-        f"Expected non-empty name_variations, got: {body}"
-    )
+    assert (
+        isinstance(variations, list) and len(variations) > 0
+    ), f"Expected non-empty name_variations, got: {body}"
 
 
 @then("each matter should include case_ref and match_source")
 def matters_have_required_fields(ctx):
     body = ctx["response"].json()
-    matters = body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    matters = (
+        body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    )
     for matter in matters:
         assert "case_ref" in matter, f"Matter missing case_ref: {matter}"
         assert "match_source" in matter, f"Matter missing match_source: {matter}"
@@ -288,35 +297,47 @@ def matters_have_required_fields(ctx):
 @then("all Firebase users should be present in the Firestore users collection")
 def firebase_users_synced(ctx):
     # Verify the sync endpoint returned success
-    assert ctx["response"].status_code == 200, (
-        f"Expected 200 response for sync, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
-    )
+    assert (
+        ctx["response"].status_code == 200
+    ), f"Expected 200 response for sync, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
 
 
 @then("a new user should be created in Firebase Auth and Firestore")
 def new_user_created(ctx):
     # Verify the create-user endpoint returned success
-    assert ctx["response"].status_code == 200, (
-        f"Expected 200 response for create user, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
-    )
+    assert (
+        ctx["response"].status_code == 200
+    ), f"Expected 200 response for create user, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
 
 
 @then("the password change should fail with an error")
 def password_change_fails(ctx):
-    assert ctx["response"].status_code in (400, 422, 500), (
-        f"Expected error status for short password, got {ctx['response'].status_code}"
-    )
+    assert ctx["response"].status_code in (
+        400,
+        422,
+        500,
+    ), f"Expected error status for short password, got {ctx['response'].status_code}"
 
 
 @then("the error should indicate the password does not meet requirements")
 def password_too_short_error(ctx):
     # The endpoint may return 400 (validation) or 500 (if HTTPException is caught)
-    assert ctx["response"].status_code in (400, 422, 500), (
-        f"Expected error status, got {ctx['response'].status_code}"
-    )
+    assert ctx["response"].status_code in (
+        400,
+        422,
+        500,
+    ), f"Expected error status, got {ctx['response'].status_code}"
     body = ctx["response"].json()
     detail = str(body.get("detail", "") + body.get("error", "")).lower()
     assert any(
         word in detail
-        for word in ("password", "short", "length", "requirement", "weak", "changing", "error")
+        for word in (
+            "password",
+            "short",
+            "length",
+            "requirement",
+            "weak",
+            "changing",
+            "error",
+        )
     ), f"Expected password requirement error, got: {body}"

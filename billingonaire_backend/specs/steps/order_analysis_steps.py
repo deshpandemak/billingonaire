@@ -86,7 +86,10 @@ def analysis_records_in_system(ctx, mock_firestore_client):
     for cat in ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
         doc = MagicMock()
         doc.id = f"analysis_{cat}"
-        doc.to_dict.return_value = {"analysis_category": cat, "category_confidence": 0.9}
+        doc.to_dict.return_value = {
+            "analysis_category": cat,
+            "category_confidence": 0.9,
+        }
         docs.append(doc)
     mock_firestore_client.collection.return_value.stream.return_value = docs
 
@@ -144,15 +147,19 @@ def post_analyze_order(ctx, api_client, auth_headers):
     mock_result.disposal_reason = None
     mock_result.order_text = order_text
 
-    with patch(
-        "order_analyzer.OrderDocumentAnalyzer.analyze_order_document",
-        return_value=mock_result,
-    ), patch(
-        "order_analyzer.OrderDocumentAnalyzer.save_analysis_result",
-        return_value="test_analysis_id",
+    with (
+        patch(
+            "order_analyzer.OrderDocumentAnalyzer.analyze_order_document",
+            return_value=mock_result,
+        ),
+        patch(
+            "order_analyzer.OrderDocumentAnalyzer.save_analysis_result",
+            return_value="test_analysis_id",
+        ),
     ):
         # The endpoint requires multipart file upload
         import io
+
         pdf_bytes = order_text.encode()
         ctx["response"] = api_client.post(
             "/analyze-order",
@@ -180,6 +187,7 @@ def get_analysis_stats(ctx, api_client, auth_headers):
 @when("I POST to /auto-orders/analyze-case/test_case_id")
 def post_analyze_case(ctx, api_client, auth_headers):
     from unittest.mock import patch as mock_patch
+
     mock_details = ctx.get("_mock_case_details", {})
     with mock_patch("main.get_auto_order_manager") as mock_mgr:
         mock_mgr.return_value.case_store.get_case_details.return_value = mock_details
@@ -204,17 +212,23 @@ def check_status(ctx, status_code):
 @then(parsers.parse('the analysis_category should be "{category}"'))
 def check_analysis_category(ctx, category):
     body = ctx["response"].json()
-    actual = body.get("analysis_category") or body.get("order_category") or body.get("category")
-    assert actual == category, f"Expected category '{category}', got '{actual}'. Body: {body}"
+    actual = (
+        body.get("analysis_category")
+        or body.get("order_category")
+        or body.get("category")
+    )
+    assert (
+        actual == category
+    ), f"Expected category '{category}', got '{actual}'. Body: {body}"
 
 
 @then(parsers.parse("the category_confidence should be greater than {threshold:f}"))
 def check_confidence(ctx, threshold):
     body = ctx["response"].json()
     confidence = body.get("category_confidence") or body.get("confidence", 0)
-    assert float(confidence) > threshold, (
-        f"Expected confidence > {threshold}, got {confidence}"
-    )
+    assert (
+        float(confidence) > threshold
+    ), f"Expected confidence > {threshold}, got {confidence}"
 
 
 @then("the response should include order_date or cases data")
@@ -233,15 +247,19 @@ def response_has_order_info(ctx):
 def check_order_date(ctx, date):
     body = ctx["response"].json()
     order_date = str(body.get("order_date") or "")
-    assert date in order_date, (
-        f"Expected order_date to contain '{date}', got '{order_date}'"
-    )
+    assert (
+        date in order_date
+    ), f"Expected order_date to contain '{date}', got '{order_date}'"
 
 
 @then("the response should contain a list of past analysis results")
 def response_has_analysis_history(ctx):
     body = ctx["response"].json()
-    analyses = body if isinstance(body, list) else body.get("analyses", body.get("results", []))
+    analyses = (
+        body
+        if isinstance(body, list)
+        else body.get("analyses", body.get("results", []))
+    )
     assert isinstance(analyses, list)
 
 
@@ -255,7 +273,11 @@ def job_queued(ctx):
 def llm_fallback_used(ctx):
     # LLM fallback is not yet exposed in the response; accept any 200 with analysis data
     body = ctx["response"].json()
-    assert body.get("llm_fallback_used") is True or "order_category" in body or "analysis_id" in body
+    assert (
+        body.get("llm_fallback_used") is True
+        or "order_category" in body
+        or "analysis_id" in body
+    )
 
 
 @then("the analysis_category should reflect the LLM result")
@@ -267,24 +289,32 @@ def analysis_category_from_llm(ctx):
 @then("the analysis result is returned with an order_category")
 def analysis_result_with_order_category(ctx):
     body = ctx["response"].json()
-    assert "analysis_id" in body or "order_category" in body or "analysis_category" in body, (
-        f"Expected analysis result with order_category, got: {body}"
-    )
+    assert (
+        "analysis_id" in body or "order_category" in body or "analysis_category" in body
+    ), f"Expected analysis result with order_category, got: {body}"
 
 
-@then('the analysis_category should be "UNKNOWN" or the error should be clearly reported')
+@then(
+    'the analysis_category should be "UNKNOWN" or the error should be clearly reported'
+)
 def analysis_unknown_or_error(ctx):
     body = ctx["response"].json()
-    category = body.get("analysis_category") or body.get("order_category") or body.get("category", "")
-    assert category in ("UNKNOWN", "", None) or "error" in body or "detail" in body, (
-        f"Expected UNKNOWN or error for empty PDF, got: {body}"
+    category = (
+        body.get("analysis_category")
+        or body.get("order_category")
+        or body.get("category", "")
     )
+    assert (
+        category in ("UNKNOWN", "", None) or "error" in body or "detail" in body
+    ), f"Expected UNKNOWN or error for empty PDF, got: {body}"
 
 
 @then("the error should be clearly reported")
 def error_clearly_reported(ctx):
     body = ctx["response"].json()
-    assert "error" in body or "detail" in body, f"Expected error in response, got: {body}"
+    assert (
+        "error" in body or "detail" in body
+    ), f"Expected error in response, got: {body}"
 
 
 @then("the response should include counts per analysis_category")
@@ -297,9 +327,9 @@ def response_has_category_counts(ctx):
 @then(parsers.parse('the case lifecycle_status should be updated to "{status}"'))
 def lifecycle_updated(ctx, status):
     body = ctx["response"].json()
-    assert ctx["response"].status_code == 200, (
-        f"Expected 200, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
-    )
+    assert (
+        ctx["response"].status_code == 200
+    ), f"Expected 200, got {ctx['response'].status_code}. Body: {ctx['response'].text}"
 
 
 # ---------------------------------------------------------------------------
@@ -318,17 +348,20 @@ def _infer_category(text: str) -> str:
 
 def _extract_next_date(text: str) -> str:
     import re
+
     m = re.search(r"\d{2}/\d{2}/\d{4}", text)
     return m.group(0) if m else ""
 
 
 def _extract_agp(text: str) -> list:
     import re
+
     m = re.search(r"AGP\s+([A-Z][a-zA-Z\s]+?)(?:\s+appears|\s+for|$)", text)
     return [m.group(1).strip()] if m else []
 
 
 def _extract_petitioner(text: str) -> list:
     import re
+
     m = re.search(r"Petitioner:\s*([A-Z][a-zA-Z\s]+?)(?:\s+vs|\s+$|$)", text)
     return [m.group(1).strip()] if m else []

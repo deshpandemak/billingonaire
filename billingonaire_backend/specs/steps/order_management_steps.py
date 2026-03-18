@@ -80,7 +80,10 @@ def cases_with_lifecycle_status(ctx, mock_firestore_client, status):
 def cases_with_status_retry(ctx, mock_firestore_client, status):
     mock_doc = MagicMock()
     mock_doc.id = "case_retry_01"
-    mock_doc.to_dict.return_value = {"case_ref": "WP/2/2024", "lifecycle_status": status}
+    mock_doc.to_dict.return_value = {
+        "case_ref": "WP/2/2024",
+        "lifecycle_status": status,
+    }
     mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
         mock_doc
     ]
@@ -133,7 +136,9 @@ def five_queued_cases(ctx, mock_firestore_client):
             "lifecycle_status": "fetch_queued",
         }
         docs.append(doc)
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
     ctx["queued_count"] = 5
 
 
@@ -222,7 +227,7 @@ def lifecycle_transitions_to_fetch_succeeded(ctx):
     assert actual == expected, f"Expected '{expected}', got '{actual}'"
 
 
-@when("an attempt is made to move it to \"board_ingested\"")
+@when('an attempt is made to move it to "board_ingested"')
 def attempt_invalid_transition(ctx, api_client, auth_headers):
     case_ref = ctx.get("case_ref", "WP/3373/2024")
     ctx["response"] = api_client.put(
@@ -253,7 +258,11 @@ def admin_manual_override(ctx, admin_api_client):
     case_ref = ctx.get("case_ref", "WP/3373/2024")
     ctx["response"] = admin_api_client.post(
         f"/cases/{case_ref}/manual-override",
-        json={"order_category": "ADJOURNED", "order_date": "01/10/2024", "notes": "Manual override"},
+        json={
+            "order_category": "ADJOURNED",
+            "order_date": "01/10/2024",
+            "notes": "Manual override",
+        },
     )
 
 
@@ -281,9 +290,9 @@ def response_has_unlinked_cases(ctx):
 def case_order_status_updated(ctx, mock_firestore_client, status):
     # The create-link endpoint returns {success: True, status: ...}
     body = ctx["response"].json()
-    assert body.get("success") is True or body.get("status") == status, (
-        f"Expected successful order link creation with status '{status}', got: {body}"
-    )
+    assert (
+        body.get("success") is True or body.get("status") == status
+    ), f"Expected successful order link creation with status '{status}', got: {body}"
 
 
 @then(parsers.parse('the case lifecycle_status should be "{status}"'))
@@ -292,14 +301,12 @@ def case_lifecycle_status(ctx, status):
     if "response" in ctx and ctx["response"] is not None:
         body = ctx["response"].json()
         result_status = (
-            body.get("lifecycle_status")
-            or body.get("status")
-            or ctx.get("new_state")
+            body.get("lifecycle_status") or body.get("status") or ctx.get("new_state")
         )
         if result_status:
-            assert result_status == status, (
-                f"Expected lifecycle_status '{status}', got '{result_status}'"
-            )
+            assert (
+                result_status == status
+            ), f"Expected lifecycle_status '{status}', got '{result_status}'"
 
 
 @then("the job should be queued for background processing")
@@ -318,9 +325,10 @@ def retryable_cases_requeued(ctx):
 
 @then("the transition should be rejected with a 400 status")
 def transition_rejected(ctx):
-    assert ctx["response"].status_code in (400, 422), (
-        f"Expected 400/422, got {ctx['response'].status_code}"
-    )
+    assert ctx["response"].status_code in (
+        400,
+        422,
+    ), f"Expected 400/422, got {ctx['response'].status_code}"
 
 
 @then("the response should include counts for each lifecycle_status value")
@@ -330,7 +338,9 @@ def response_has_status_counts(ctx):
     assert isinstance(body, (dict, list))
 
 
-@then(parsers.parse("the response should report the pending fetch queue size as {size:d}"))
+@then(
+    parsers.parse("the response should report the pending fetch queue size as {size:d}")
+)
 def queue_size_reported(ctx, size):
     body = ctx["response"].json()
     # Queue size may be in various fields depending on implementation
@@ -340,25 +350,27 @@ def queue_size_reported(ctx, size):
 @then("each record should include lifecycle_status from the case-details collection")
 def records_have_lifecycle_status(ctx):
     body = ctx["response"].json()
-    records = body if isinstance(body, list) else body.get("cases", body.get("data", []))
+    records = (
+        body if isinstance(body, list) else body.get("cases", body.get("data", []))
+    )
     for record in records:
-        assert "lifecycle_status" in record or "order_status" in record, (
-            f"Record missing lifecycle_status: {record}"
-        )
+        assert (
+            "lifecycle_status" in record or "order_status" in record
+        ), f"Record missing lifecycle_status: {record}"
 
 
 @then(parsers.parse('the case lifecycle_status should be updated to "{status}"'))
 def lifecycle_status_updated_to(ctx, mock_firestore_client, status):
     mock_doc = mock_firestore_client.collection.return_value.document.return_value
-    assert mock_doc.update.called or mock_doc.set.called, (
-        f"Expected Firestore update to set lifecycle_status to '{status}'"
-    )
+    assert (
+        mock_doc.update.called or mock_doc.set.called
+    ), f"Expected Firestore update to set lifecycle_status to '{status}'"
 
 
 @then("a manual_override lifecycle event should be recorded")
 def manual_override_event_recorded(ctx):
     # The manual-override endpoint returns {success: True, transition: {...}}
     body = ctx["response"].json()
-    assert body.get("success") is True or "transition" in body, (
-        f"Expected successful manual override response, got: {body}"
-    )
+    assert (
+        body.get("success") is True or "transition" in body
+    ), f"Expected successful manual override response, got: {body}"

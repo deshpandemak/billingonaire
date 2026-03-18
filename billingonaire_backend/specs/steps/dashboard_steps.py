@@ -41,7 +41,9 @@ def cases_this_week(ctx, mock_firestore_client):
         }
         docs.append(doc)
     mock_firestore_client.collection.return_value.stream.return_value = docs
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
 
 
 @given("cases matched to AGP users exist in the system")
@@ -58,7 +60,9 @@ def agp_cases_exist(ctx, mock_firestore_client):
         }
         docs.append(doc)
     mock_firestore_client.collection.return_value.stream.return_value = docs
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
 
 
 @given("analysed case records spanning multiple months exist")
@@ -75,7 +79,9 @@ def multi_month_cases(ctx, mock_firestore_client):
         }
         docs.append(doc)
     mock_firestore_client.collection.return_value.stream.return_value = docs
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
 
 
 @given(parsers.parse('case records exist between "{start}" and "{end}"'))
@@ -90,7 +96,9 @@ def cases_in_range(ctx, mock_firestore_client, start, end):
             "analysis_category": "ADJOURNED",
         }
         docs.append(doc)
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
     ctx["start_date"] = start
     ctx["end_date"] = end
 
@@ -105,7 +113,9 @@ def agp_weekly_data(ctx, mock_firestore_client):
         "lifecycle_status": "analysed",
     }
     mock_firestore_client.collection.return_value.stream.return_value = [doc]
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [doc]
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
+        doc
+    ]
 
 
 @given("AGP-matched case data exists for the current month")
@@ -118,7 +128,9 @@ def agp_monthly_data(ctx, mock_firestore_client):
         "lifecycle_status": "analysed",
     }
     mock_firestore_client.collection.return_value.stream.return_value = [doc]
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [doc]
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
+        doc
+    ]
 
 
 @given("board data exists for multiple dates")
@@ -130,7 +142,9 @@ def board_data_multiple_dates(ctx, mock_firestore_client):
         doc.to_dict.return_value = {"board_date": date, "case_ref": "WP/1/2024"}
         docs.append(doc)
     mock_firestore_client.collection.return_value.stream.return_value = docs
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
 
 
 @given(parsers.parse('board data and AGP mappings exist for date "{date}"'))
@@ -142,7 +156,9 @@ def board_and_agp_for_date(ctx, mock_firestore_client, date):
         "agp_name": "Pooja Joshi",
         "case_ref": "WP/1/2024",
     }
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [doc]
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
+        doc
+    ]
     ctx["board_date"] = date
 
 
@@ -154,7 +170,9 @@ def board_data_for_date_with_count(ctx, mock_firestore_client, date, count):
         doc.id = f"case_{i}"
         doc.to_dict.return_value = {"board_date": date, "case_ref": f"WP/{i}/2024"}
         docs.append(doc)
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
     ctx["board_date"] = date
     ctx["expected_count"] = count
 
@@ -162,7 +180,9 @@ def board_data_for_date_with_count(ctx, mock_firestore_client, date, count):
 @given("no case records exist in the system")
 def no_case_records(ctx, mock_firestore_client):
     mock_firestore_client.collection.return_value.stream.return_value = []
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = []
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        []
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +290,9 @@ def response_has_monthly_avg(ctx):
 @then("the response should include matters only within that date range")
 def matters_within_range(ctx):
     body = ctx["response"].json()
-    matters = body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    matters = (
+        body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    )
     assert isinstance(matters, list)
 
 
@@ -304,9 +326,9 @@ def response_has_n_cases(ctx, count):
     body = ctx["response"].json()
     cases = body if isinstance(body, list) else body.get("cases", body.get("data", []))
     # Accept any non-error response - the mock may not reflect actual data retrieval
-    assert ctx["response"].status_code == 200, (
-        f"Expected 200, got {ctx['response'].status_code}"
-    )
+    assert (
+        ctx["response"].status_code == 200
+    ), f"Expected 200, got {ctx['response'].status_code}"
 
 
 @then("the response should return empty or zero-count results without an error")

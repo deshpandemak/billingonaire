@@ -153,7 +153,9 @@ def three_saved_bills(ctx, mock_firestore_client):
         doc.id = f"bill_{i}"
         doc.to_dict.return_value = {"bill_id": f"bill_{i}", "user_id": "test_uid"}
         docs.append(doc)
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = docs
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
     ctx["expected_bill_count"] = 3
 
 
@@ -170,7 +172,9 @@ def saved_bill_exists(ctx, mock_firestore_client, bill_id):
 
 @given("the AGP user has no matched matters in the given date range")
 def no_matched_matters(ctx, mock_firestore_client):
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = []
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        []
+    )
 
 
 @given("no authentication token is provided")
@@ -232,12 +236,16 @@ def post_bills_save(ctx, api_client, auth_headers, mock_firestore_client):
     mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
         counter_doc
     )
-    with mock_patch("main.firestore.SERVER_TIMESTAMP", "2024-10-31"), \
-         mock_patch("main.firestore.transactional", lambda f: f):
+    with (
+        mock_patch("main.firestore.SERVER_TIMESTAMP", "2024-10-31"),
+        mock_patch("main.firestore.transactional", lambda f: f),
+    ):
         ctx["response"] = api_client.post(
             "/bills/save",
             json={
-                "metadata": {"date_range": {"start": "2024-10-01", "end": "2024-10-31"}},
+                "metadata": {
+                    "date_range": {"start": "2024-10-01", "end": "2024-10-31"}
+                },
                 "bill_entries": ctx.get("bill_data", {}).get("matters", []),
             },
             headers=auth_headers,
@@ -368,9 +376,7 @@ def line_item_has_analysis_category(ctx):
         matter = matters[0]
         # The bill entry may use 'results' (hearing result) instead of analysis_category
         has_category = (
-            "analysis_category" in matter
-            or "category" in matter
-            or "results" in matter
+            "analysis_category" in matter or "category" in matter or "results" in matter
         )
         assert has_category, f"Line item missing category info: {matter}"
 
@@ -385,9 +391,7 @@ def check_content_type(ctx, content_type):
 def excel_workbook_valid(ctx):
     content = ctx["response"].content
     # Excel files start with the ZIP magic bytes (PK)
-    assert content[:2] == b"PK" or len(content) > 0, (
-        "Expected non-empty Excel file"
-    )
+    assert content[:2] == b"PK" or len(content) > 0, "Expected non-empty Excel file"
 
 
 @then("the saved bill should be retrievable via /bills/my-bills")
@@ -416,18 +420,23 @@ def response_has_bill_id(ctx, bill_id):
 
 @then("the bill should no longer appear in /bills/my-bills")
 def bill_no_longer_in_list(ctx, mock_firestore_client):
-    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = []
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = (
+        []
+    )
 
 
 @then("the response should return an empty list of matters")
 def response_empty_matters(ctx):
     body = ctx["response"].json()
-    matters = body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    matters = (
+        body if isinstance(body, list) else body.get("matters", body.get("data", []))
+    )
     assert len(matters) == 0, f"Expected empty matters, got: {matters}"
 
 
 @then("the response status should be 401 or 403")
 def response_401_or_403(ctx):
-    assert ctx["response"].status_code in (401, 403), (
-        f"Expected 401/403, got {ctx['response'].status_code}"
-    )
+    assert ctx["response"].status_code in (
+        401,
+        403,
+    ), f"Expected 401/403, got {ctx['response'].status_code}"
