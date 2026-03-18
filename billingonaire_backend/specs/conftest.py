@@ -113,12 +113,7 @@ def api_client(mock_user_manager, mock_user_matter_matcher):
     """TestClient for a regular (non-admin) authenticated user."""
     from fastapi.testclient import TestClient
 
-    from main import (
-        app,
-        get_current_user,
-        get_user_with_profile,
-        require_active_user,
-    )
+    from main import app, get_current_user, get_user_with_profile, require_active_user
 
     profile = mock_user_manager.get_user_profile(FAKE_USER["uid"])
     user_with_profile = {**FAKE_USER, "profile": profile}
