@@ -112,6 +112,7 @@ def mock_admin_user_manager(mock_user_manager):
 def api_client(mock_user_manager, mock_user_matter_matcher):
     """TestClient for a regular (non-admin) authenticated user."""
     from fastapi.testclient import TestClient
+
     from main import (
         app,
         get_current_user,
@@ -146,6 +147,7 @@ def api_client(mock_user_manager, mock_user_matter_matcher):
 def admin_api_client(mock_admin_user_manager, mock_user_matter_matcher):
     """TestClient where the authenticated user has admin privileges."""
     from fastapi.testclient import TestClient
+
     from main import (
         app,
         get_current_user,

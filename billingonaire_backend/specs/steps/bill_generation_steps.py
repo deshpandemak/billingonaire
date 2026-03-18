@@ -303,8 +303,9 @@ def get_bills_no_data(ctx, api_client, auth_headers):
 )
 def get_bills_no_auth(ctx, start, end):
     """Call /bills/generate with no auth — clears dep overrides so real auth runs."""
-    from main import app
     from fastapi.testclient import TestClient
+
+    from main import app
 
     saved_overrides = dict(app.dependency_overrides)
     app.dependency_overrides.clear()
