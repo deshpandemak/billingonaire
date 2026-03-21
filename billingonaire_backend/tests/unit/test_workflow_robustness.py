@@ -236,18 +236,68 @@ def test_retry_failed_analysis_failed_without_link_goes_to_fetch(manager):
 
 
 def test_retry_failed_skips_non_retryable_statuses(manager):
-    """Cases with analysed/not_linked/linked status should not be retried."""
+    """Cases with analysed/not_linked status should not be retried; linked cases should."""
     cases = [
         _make_mock_case("WP/1/2025", "analysed"),
         _make_mock_case("WP/2/2025", "not_linked"),
-        _make_mock_case("WP/3/2025", "linked"),
+        _make_mock_case(
+            "WP/3/2025", "linked", order_link="https://example.com/order.pdf"
+        ),
         _make_mock_case("WP/4/2025", "order_failed"),
     ]
 
     retried = [
         c["case_ref"]
         for c in cases
-        if c.get("order_status") in ("order_failed", "order_analysis_failed")
+        if c.get("order_status") in ("order_failed", "order_analysis_failed", "linked")
     ]
 
-    assert retried == ["WP/4/2025"]
+    assert retried == ["WP/3/2025", "WP/4/2025"]
+    assert "WP/1/2025" not in retried
+    assert "WP/2/2025" not in retried
+
+
+def test_retry_failed_linked_with_link_goes_to_analysis(manager):
+    """linked case with stored order_link is routed to analysis queue, not fetch queue."""
+    case = _make_mock_case(
+        "WP/50/2025", "linked", order_link="https://example.com/order.pdf"
+    )
+
+    fetch_queue_items = []
+    analysis_queue_items = []
+
+    status = case.get("order_status", "")
+    order_link = case.get("order_link")
+
+    if status == "order_failed":
+        fetch_queue_items.append(case["case_ref"])
+    elif status in ("order_analysis_failed", "linked"):
+        if order_link:
+            analysis_queue_items.append(case["case_ref"])
+        else:
+            fetch_queue_items.append(case["case_ref"])
+
+    assert "WP/50/2025" in analysis_queue_items
+    assert "WP/50/2025" not in fetch_queue_items
+
+
+def test_retry_failed_linked_without_link_falls_back_to_fetch(manager):
+    """linked case without a stored order_link falls back to the fetch queue."""
+    case = _make_mock_case("WP/60/2025", "linked", order_link=None)
+
+    fetch_queue_items = []
+    analysis_queue_items = []
+
+    status = case.get("order_status", "")
+    order_link = case.get("order_link")
+
+    if status == "order_failed":
+        fetch_queue_items.append(case["case_ref"])
+    elif status in ("order_analysis_failed", "linked"):
+        if order_link:
+            analysis_queue_items.append(case["case_ref"])
+        else:
+            fetch_queue_items.append(case["case_ref"])
+
+    assert "WP/60/2025" in fetch_queue_items
+    assert "WP/60/2025" not in analysis_queue_items

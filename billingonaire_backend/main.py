@@ -1739,10 +1739,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
                     order_link = order_data.get("order_link")
                     response = requests.get(order_link, timeout=30)
 
-                    if (
-                        response.status_code == 200
-                        and response.headers.get("Content-Type") == "application/pdf"
-                    ):
+                    if response.status_code == 200 and response.headers.get(
+                        "Content-Type", ""
+                    ).startswith("application/pdf"):
                         analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
                             case_id,
                             case_ref,
@@ -2413,11 +2412,13 @@ async def queue_analysis_jobs(
 async def retry_failed_cases(
     request: Request, current_user=Depends(require_admin_active)
 ):
-    """Re-queue cases stuck in order_failed or order_analysis_failed status.
+    """Re-queue cases stuck in order_failed, order_analysis_failed, or linked status.
 
     For order_failed cases: adds to the fetch queue (tries to re-download the order).
     For order_analysis_failed cases: adds to the analysis queue (re-analyzes the
     already-downloaded order without a fresh fetch).
+    For linked cases: adds to the analysis queue (order was downloaded but analysis
+    was never completed or got stuck).
 
     Accepts optional ``board_dates`` (list of YYYY-MM-DD strings) and ``limit``
     (default 200) in the request body.
@@ -2451,7 +2452,7 @@ async def retry_failed_cases(
 
         for case_data in candidate_cases:
             status = case_data.get("order_status", "")
-            if status not in ("order_failed", "order_analysis_failed"):
+            if status not in ("order_failed", "order_analysis_failed", "linked"):
                 continue
 
             board_date_obj = manager._parse_board_date(case_data.get("board_date"))
@@ -2482,7 +2483,7 @@ async def retry_failed_cases(
                 fetch_queued += 1
                 fetch_queued_refs.append(case_ref)
             else:
-                # order_analysis_failed: order link exists, just re-run analysis
+                # order_analysis_failed or linked: order link exists (or should), just re-run analysis
                 order_link = case_data.get("order_link")
                 if not order_link:
                     # No link stored – fall back to fetch queue
