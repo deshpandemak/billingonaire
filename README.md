@@ -110,12 +110,30 @@ This script:
 
 ## 🧪 Testing
 
-### Backend Tests
+### Backend Unit Tests
 
 ```bash
 cd billingonaire_backend
-pytest tests/
+pytest tests/unit -v
 ```
+
+### Backend BDD Specification Tests
+
+The backend uses [pytest-bdd](https://pytest-bdd.readthedocs.io/) with Gherkin feature files located in `billingonaire_backend/specs/`:
+
+```bash
+cd billingonaire_backend
+pytest specs/ -v
+```
+
+Run all backend tests (unit + BDD specs) together:
+
+```bash
+cd billingonaire_backend
+pytest tests/unit specs/ -v
+```
+
+See [docs/BDD_SPECIFICATIONS.md](docs/BDD_SPECIFICATIONS.md) for a full guide on writing and running BDD specifications.
 
 ### Frontend Tests
 
@@ -161,4 +179,5 @@ This runs repository checks aligned with CI, including:
 
 - SDLC workflow and deployment/verification governance: [.github/SDLC_SPEC.md](.github/SDLC_SPEC.md)
 - Runtime asynchronous board/case/order workflow and rollout plan: [docs/CURRENT_WORKFLOW.md](docs/CURRENT_WORKFLOW.md)
+- BDD specifications guide (writing, running, and CI integration): [docs/BDD_SPECIFICATIONS.md](docs/BDD_SPECIFICATIONS.md)
 - Detailed project architecture and recent changes: [replit.md](replit.md)
