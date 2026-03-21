@@ -31,7 +31,7 @@ billingonaire/
 │   ├── UserMatterMatcher.py   # Name-variation based AGP→case matching
 │   ├── order_analyzer.py      # ML rule-based order classification
 │   ├── ml_enhanced_parser.py  # LLM-assisted fallback parsing
-│   ├── llm_extractor.py       # LLM extraction with Ollama/Firecrawl
+│   ├── llm_extractor.py       # LLM extraction via Ollama (used by order_analyzer.py)
 │   ├── case_data_store.py     # Firestore read/write helpers
 │   └── specs/                 # BDD feature specs and step definitions
 │       ├── features/          # Gherkin .feature files
@@ -76,6 +76,7 @@ billingonaire/
 | Backend hosting | Google Cloud Run (asia-south1) |
 | Frontend hosting | Firebase Hosting |
 | LLM fallback | Ollama (GKE preferred, Cloud Run alternate) |
+| Court website scraper | Firecrawl (`CourtScraper.py`) — AI-powered scraping of `bombayhighcourt.nic.in` to discover court order download URLs |
 
 ## Case Lifecycle State Machine
 
@@ -180,7 +181,8 @@ Manual override is available from any terminal state.
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `GCLOUD_SERVICE_ACCOUNT_KEY` | Production | Google Cloud auth for Cloud Run deployment |
-| `FIRECRAWL_API_KEY` | Production | Firecrawl PDF extraction API |
+| `FIRECRAWL_API_KEY` | Production | Firecrawl API key — required for `CourtScraper` to scrape Bombay High Court for order download URLs |
+| `FIRECRAWL_MODEL` | Optional | Firecrawl AI model for structured extraction (default: `spark-1-mini`) |
 | `ORDER_ENABLE_LLM_FALLBACK` | Optional | Enable LLM fallback for low-confidence analysis |
 | `ORDER_LLM_PROVIDER` | Optional | LLM provider (e.g. `ollama`) |
 | `ORDER_LLM_MODEL` | Optional | LLM model name |
