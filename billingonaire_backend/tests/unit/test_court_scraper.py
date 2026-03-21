@@ -222,7 +222,10 @@ def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
     assert result["status"] == "found"
     assert result["case_details"]["case_number"] == "WP/3373/2025"
     assert len(result["court_orders"]) == 1
-    assert result["court_orders"][0]["download_url"] == "https://example.com/order-agent.pdf"
+    assert (
+        result["court_orders"][0]["download_url"]
+        == "https://example.com/order-agent.pdf"
+    )
 
 
 def test_fetch_with_firecrawl_returns_none_without_api_key():
