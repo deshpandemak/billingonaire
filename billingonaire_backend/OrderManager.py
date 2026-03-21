@@ -46,9 +46,9 @@ class OrderManager:
 
     def get_cases_without_orders(self, limit: int = 100, offset: int = 0) -> Dict:
         """
-        Fetch cases from board data that don't have linked orders
-        Includes cases with active retry statuses for reprocessing, as well as
-        cases in "linked" status that may still need analysis.
+        Fetch cases needing order linking or analysis/retry.
+        Includes cases in not_linked, linked, order_failed, and order_analysis_failed
+        statuses so that all actionable cases are visible in the order management UI.
 
         Args:
             limit: Number of cases to return
