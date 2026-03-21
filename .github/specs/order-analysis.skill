@@ -1,0 +1,91 @@
+---
+name: order-analysis
+description: Classify court order PDFs using ML rule-based analysis with optional LLM fallback, then persist the analysis result and update the case lifecycle status.
+tags: [backend, ml, analysis, classification, llm, firestore]
+---
+
+## Overview
+
+Order analysis takes a downloaded court order PDF and produces a structured classification result. The primary path is a deterministic rule-based classifier (`order_analyzer.py`). When confidence is below threshold and LLM fallback is enabled, `ml_enhanced_parser.py` delegates to `llm_extractor.py` (Ollama or Firecrawl). Results are stored in the `order-analysis` collection and the case lifecycle is advanced to `analysed`.
+
+## Key Files
+
+- `billingonaire_backend/order_analyzer.py` — deterministic rule-based classification
+- `billingonaire_backend/ml_enhanced_parser.py` — LLM-enhanced parser orchestrating fallback
+- `billingonaire_backend/llm_extractor.py` — Ollama / Firecrawl LLM extraction integration
+- `billingonaire_backend/main.py` — `/analyze-order`, `/analysis-history`, `/analysis-stats`, `/jobs/analyze-orders`, `/auto-orders/analyze-case/{id}`
+- `billingonaire_backend/specs/features/order_analysis.feature` — acceptance scenarios
+- `billingonaire_backend/specs/steps/order_analysis_steps.py` — step implementations
+
+## Firestore Collections Used
+
+| Collection | Operation | Key Fields |
+|-----------|-----------|-----------|
+| `order-analysis` | write | `case_ref`, `analysis_category`, `category_confidence`, `order_date`, `fallback_used`, `fallback_diagnostics` |
+| `case-details` | write | `lifecycle_status` → `analysed` or `analyse_failed` |
+
+## Analysis Categories
+
+| Category | Description |
+|---------|-------------|
+| `ADJOURNED` | Matter adjourned without substantive hearing |
+| `HEARD_AND_ADJOURNED` | Matter heard and adjourned to a future date |
+| `DISPOSED_OFF` | Petition dismissed or otherwise finally disposed |
+| `ALLOWED` | Petition/application allowed by court |
+| `PART_HEARD` | Matter partially heard; will continue |
+
+## LLM Fallback Configuration
+
+The LLM fallback is **opt-in** and controlled entirely through environment variables:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `ORDER_ENABLE_LLM_FALLBACK` | `false` | Master switch for LLM fallback |
+| `ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE` | `0.6` | Skip fallback if rule-based confidence ≥ this |
+| `ORDER_LLM_FALLBACK_MIN_QUALITY` | `0.5` | Minimum quality to accept an LLM result |
+| `ORDER_LLM_FALLBACK_MIN_CASES` | `1` | Minimum case count to attempt fallback |
+| `ORDER_LLM_PROVIDER` | `ollama` | LLM provider identifier |
+| `ORDER_LLM_MODEL` | model name | LLM model to invoke |
+| `OLLAMA_BASE_URL` | — | Ollama service URL |
+| `ORDER_LLM_TIMEOUT_SECONDS` | `30` | Per-request timeout for LLM calls |
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/analyze-order` | POST | Yes | Classify a court order PDF |
+| `/analysis-history` | GET | Yes | Past analysis records for a `case_ref` |
+| `/analysis-stats` | GET | Yes | Aggregate counts per `analysis_category` |
+| `/jobs/analyze-orders` | POST | Yes | Background job: analyse all `fetch_succeeded` cases |
+| `/auto-orders/analyze-case/{id}` | POST | Yes | Synchronously analyse one case by ID |
+
+## Business Rules
+
+- Deterministic extraction is always attempted first; LLM fallback is never primary path.
+- An empty or corrupt PDF returns HTTP 400 with a descriptive error.
+- `category_confidence` must be included in every response; ≥ 0.6 is considered reliable.
+- When fallback is used, `fallback_used: true` and `fallback_diagnostics` are persisted for observability.
+- A successful analysis advances the case to `analysed`; failure advances to `analyse_failed`.
+
+## Implementation Pattern
+
+When adding a new analysis category or extraction rule:
+
+1. Add the new category constant and rule patterns to `order_analyzer.py`.
+2. Ensure the new rule does not degrade confidence on already-classified categories — run existing unit tests.
+3. Update `ml_enhanced_parser.py` prompt templates if the LLM fallback also needs to recognise the new category.
+4. Add a Gherkin scenario to `specs/features/order_analysis.feature` covering the new category.
+5. Write a unit test for the new rule in `tests/unit/`.
+
+## Example Analysis Response Shape
+
+```json
+{
+  "case_ref": "WP/3373/2024",
+  "analysis_category": "HEARD_AND_ADJOURNED",
+  "category_confidence": 0.87,
+  "order_date": "01/10/2024",
+  "fallback_used": false,
+  "fallback_diagnostics": null
+}
+```

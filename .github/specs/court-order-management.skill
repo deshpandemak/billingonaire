@@ -1,0 +1,74 @@
+---
+name: court-order-management
+description: Manage the full lifecycle of court orders — from linking an order URL to a case through background fetch, retry, and manual override — using the case lifecycle state machine.
+tags: [backend, orders, lifecycle, firestore, jobs]
+---
+
+## Overview
+
+Court order management covers everything that happens after a case appears on the court board. Each case moves through a well-defined lifecycle state machine as its associated court order is discovered, downloaded, and (eventually) analysed. Background jobs handle bulk fetching and retrying; admin endpoints expose the status overview and manual override.
+
+## Key Files
+
+- `billingonaire_backend/OrderManager.py` — order download, link creation, status updates
+- `billingonaire_backend/AutoOrderManager.py` — background job orchestration (fetch + analyse)
+- `billingonaire_backend/CourtScraper.py` — Bombay High Court scraping to find order PDFs
+- `billingonaire_backend/case_data_store.py` — Firestore helpers for case-details collection
+- `billingonaire_backend/main.py` — route handlers under `/orders/`, `/jobs/`, `/cases/`, `/queue/`, `/admin/`
+- `billingonaire_backend/specs/features/order_management.feature` — acceptance scenarios
+- `billingonaire_backend/specs/steps/order_management_steps.py` — step implementations
+
+## Firestore Collections Used
+
+| Collection | Operation | Key Fields |
+|-----------|-----------|-----------|
+| `case-details` | read/write | `case_ref`, `lifecycle_status`, `order_url`, `order_pdf_path`, `lifecycle_events[]` |
+
+## Case Lifecycle State Machine
+
+```
+board_ingested
+      │  (queue for fetch)
+      ▼
+fetch_queued ──► fetch_in_progress ──► fetch_succeeded ──► analyse_queued
+      │                                       │
+      └─► fetch_failed_retryable              └─► order_unavailable
+               │
+               ▼
+        fetch_failed_terminal
+```
+
+Valid forward transitions only. Invalid transitions (e.g. `analysed` → `board_ingested`) must be rejected. A `lifecycle_events` array records every transition with timestamp and source.
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/orders/cases-without-orders` | GET | Yes | Cases with `order_status = fetch_queued` |
+| `/orders/create-link` | POST | Yes | Attach `order_url` to a case; set status to `linked` |
+| `/orders/update-status` | PUT | Yes | Update `lifecycle_status` for a case |
+| `/jobs/fetch-orders` | POST | Yes | Enqueue all `fetch_queued` cases for download |
+| `/jobs/retry-failed` | POST | Yes | Re-queue `fetch_failed_retryable` cases |
+| `/jobs/analyze-orders` | POST | Yes | Enqueue all `fetch_succeeded` cases for analysis |
+| `/auto-orders/analyze-case/{id}` | POST | Yes | Analyze a single case synchronously |
+| `/queue/status` | GET | Yes | Pending fetch queue size |
+| `/cases/lifecycle` | GET | Yes | Full lifecycle view for a board date |
+| `/cases/{case_ref}/manual-override` | POST | Admin | Override terminal-state case with manual order data |
+| `/admin/order-status-overview` | GET | Admin | Count of cases per lifecycle_status |
+
+## Business Rules
+
+- Only `fetch_failed_retryable` cases are eligible for the retry job; `fetch_failed_terminal` cases require a manual override.
+- Background jobs must be non-blocking; job enqueueing endpoints return 200 immediately.
+- `CourtScraper` is the primary mechanism for discovering order URLs; Firecrawl is the fallback extractor.
+- Manual override records a `manual_override` event in `lifecycle_events`.
+
+## Implementation Pattern
+
+When adding a new lifecycle transition or job type:
+
+1. Define the new status constant in `case_data_store.py`.
+2. Add the transition guard in `OrderManager.py` — reject invalid source states.
+3. Append a `lifecycle_events` entry with `{"status": "...", "timestamp": "...", "source": "..."}`.
+4. Add the corresponding route in `main.py` following the existing pattern.
+5. Write a unit test for the transition guard and a BDD scenario in `specs/features/order_management.feature`.

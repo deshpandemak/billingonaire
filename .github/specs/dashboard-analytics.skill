@@ -1,0 +1,79 @@
+---
+name: dashboard-analytics
+description: Expose aggregated analytics about court cases, AGP activity, and workload trends through read-only dashboard API endpoints.
+tags: [backend, analytics, dashboard, firestore, aggregation]
+---
+
+## Overview
+
+The analytics dashboard provides pre-aggregated views of the data ingested and processed by the pipeline. All dashboard endpoints are read-only and require authentication. Data is sourced from `daily-boards`, `case-details`, and `order-analysis` Firestore collections.
+
+## Key Files
+
+- `billingonaire_backend/Dashboard.py` — all aggregation logic
+- `billingonaire_backend/main.py` — `/dashboard/*` route handlers
+- `billingonaire_backend/specs/features/dashboard.feature` — acceptance scenarios
+- `billingonaire_backend/specs/steps/dashboard_steps.py` — step implementations
+- `billingonaire-ui/src/Dashboard.jsx` — charts and summary cards UI
+
+## Firestore Collections Used
+
+| Collection | Operations | Purpose |
+|-----------|-----------|---------|
+| `daily-boards` | read | Board date summaries, per-date AGP distribution |
+| `case-details` | read | Lifecycle status counts |
+| `order-analysis` | read | AGP statistics, category distributions |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/dashboard/weekly-status` | GET | Case counts grouped by `analysis_category` for the current week |
+| `/dashboard/agp-stats` | GET | Per-AGP matter counts and category breakdowns |
+| `/dashboard/monthly-avg` | GET | Monthly average appearance counts across all months |
+| `/dashboard/matters-by-date-range` | GET | Matters filtered by `start` and `end` query params |
+| `/dashboard/agp-distribution-weekly` | GET | Per-AGP appearance counts for the current week |
+| `/dashboard/agp-distribution-monthly` | GET | Per-AGP appearance counts for the current month |
+| `/dashboard/board-date-summary` | GET | All board dates with total case count per date |
+| `/dashboard/board-date-agp-distribution` | GET | Per-AGP case counts for a specific `date` |
+| `/dashboard/board-date-cases` | GET | All individual cases for a specific `date` |
+
+## Business Rules
+
+- All endpoints must return HTTP 200 even when no data exists — return empty lists or zero counts, never a 4xx error for missing data.
+- `weekly-status` uses the current server-side date to determine the week boundary; do not accept a date parameter from the client.
+- `matters-by-date-range` requires both `start` and `end` query parameters; validate that `start` ≤ `end`.
+- Dashboard endpoints are read-only; no writes to Firestore are permitted.
+
+## Implementation Pattern
+
+When adding a new dashboard metric:
+
+1. Add the aggregation function to `Dashboard.py` — keep each function focused on a single metric.
+2. Register the new route in `main.py` under the `/dashboard/` prefix.
+3. Ensure the endpoint returns an empty or zero-value response (not an error) when no data matches.
+4. Add a Gherkin scenario in `specs/features/dashboard.feature` — include both the happy path and the empty-data case.
+5. If the metric should appear in the UI, add a chart or summary card to `Dashboard.jsx` following the existing component structure.
+
+## Example Response Shapes
+
+**`/dashboard/weekly-status`**
+```json
+{
+  "week_start": "2024-09-30",
+  "week_end": "2024-10-06",
+  "counts": {
+    "ADJOURNED": 14,
+    "HEARD_AND_ADJOURNED": 7,
+    "DISPOSED_OFF": 3
+  }
+}
+```
+
+**`/dashboard/board-date-summary`**
+```json
+[
+  { "board_date": "2024-10-01", "total_cases": 42 },
+  { "board_date": "2024-10-02", "total_cases": 38 }
+]
+```

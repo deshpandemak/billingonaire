@@ -1,0 +1,77 @@
+---
+name: bill-generation
+description: Generate AGP-compliant billing reports covering all matched court appearances in a date range, and export them as Excel workbooks.
+tags: [backend, billing, excel, agp, firestore]
+---
+
+## Overview
+
+Bill generation aggregates all analysed case records matched to the authenticated AGP user across a requested date range, then produces a structured billing report. The report can be saved to Firestore for record-keeping or downloaded directly as an AGP-compliant Excel workbook.
+
+## Key Files
+
+- `billingonaire_backend/main.py` — `/bills/*` route handlers
+- `billingonaire_backend/UserMatterMatcher.py` — AGP name-variation matching logic used to filter matters
+- `billingonaire_backend/specs/features/bill_generation.feature` — acceptance scenarios
+- `billingonaire_backend/specs/steps/bill_generation_steps.py` — step implementations
+- `billingonaire-ui/src/BillGeneration.jsx` — bill generation and download UI
+
+## Firestore Collections Used
+
+| Collection | Operation | Key Fields |
+|-----------|-----------|-----------|
+| `order-analysis` | read | `case_ref`, `analysis_category`, `order_date`, AGP match fields |
+| `bills` | read/write | `user_uid`, `date_range`, `matters[]`, `created_at` |
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/bills/generate` | GET | Yes | Return billable matters for `start_date`–`end_date` |
+| `/bills/export/excel` | GET | Yes | Stream Excel workbook for `start_date`–`end_date` |
+| `/bills/save` | POST | Yes | Persist generated bill to Firestore |
+| `/bills/my-bills` | GET | Yes | List saved bills for current user |
+| `/bills/{bill_id}` | GET | Yes | Retrieve a specific saved bill |
+| `/bills/{bill_id}` | DELETE | Yes | Delete a saved bill |
+
+## Business Rules
+
+- Bill results must include **only** matters matched to the authenticated AGP — matters belonging to other AGPs must never appear.
+- Each bill line item must include `case_ref` and `analysis_category` at minimum.
+- When no matters exist for the date range, return HTTP 200 with an empty list — not an error.
+- Excel export `Content-Type` must be `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+- All bill endpoints require authentication; unauthenticated requests must return HTTP 401 or 403.
+
+## Excel Export Format
+
+The exported workbook must comply with AGP billing conventions:
+
+| Column | Content |
+|--------|---------|
+| Date | Hearing date (`order_date`) |
+| Case Reference | `case_ref` (e.g. `WP/3373/2024`) |
+| Category | `analysis_category` |
+| AGP Name | Authenticated user's `full_name` |
+| Fee Applicable | Derived from category mapping |
+
+## Implementation Pattern
+
+When extending bill generation (e.g. new column, new format):
+
+1. Identify the source field in `order-analysis` or `case-details`.
+2. Add the field to the line-item builder in `main.py` (or a dedicated bill service module if one exists).
+3. Update the Excel column mapping in the export handler; do not alter existing column order.
+4. Add or update the relevant Gherkin scenario in `specs/features/bill_generation.feature`.
+5. If the UI bill table needs to show the new field, update `BillGeneration.jsx` — maintain the existing table structure.
+
+## Example Bill Line Item Shape
+
+```json
+{
+  "case_ref": "WP/3373/2024",
+  "order_date": "01/10/2024",
+  "analysis_category": "HEARD_AND_ADJOURNED",
+  "agp_name": "Pooja Joshi Deshpande",
+  "court_type": "WP"
+}
+```
