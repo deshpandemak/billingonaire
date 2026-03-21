@@ -175,3 +175,61 @@ def test_fetch_with_firecrawl_extract_sdk_compat(monkeypatch):
     assert result["status"] == "found"
     assert result["case_details"]["case_number"] == "WP/3373/2025"
     assert len(result["court_orders"]) == 1
+
+
+def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
+    """Verify _fetch_with_firecrawl uses agent() when the SDK exposes that method."""
+    scraper = BombayHighCourtScraper()
+    scraper.firecrawl_api_key = "test-key"
+    scraper.firecrawl_model = "spark-1-mini"
+
+    agent_calls = []
+
+    class FakeAgentFirecrawlApp:
+        def __init__(self, api_key):
+            self.api_key = api_key
+
+        def agent(self, **kwargs):
+            agent_calls.append(kwargs)
+            return {
+                "case_details": {
+                    "petitioner_name": "Petitioner X",
+                    "respondent_name": "Respondent Y",
+                    "case_number": "WP/3373/2025",
+                },
+                "court_orders": [
+                    {
+                        "listing_date": "09/04/2025",
+                        "download_url": "https://example.com/order-agent.pdf",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        "billingonaire_backend.CourtScraper.FirecrawlApp", FakeAgentFirecrawlApp
+    )
+
+    result = scraper._fetch_with_firecrawl("WP/3373/2025", date="2025-04-09")
+
+    assert len(agent_calls) == 1
+    call_kwargs = agent_calls[0]
+    assert call_kwargs.get("prompt")
+    assert call_kwargs.get("model") == "spark-1-mini"
+    assert call_kwargs.get("urls") == ["https://www.bombayhighcourt.nic.in/*"]
+
+    assert isinstance(result, dict)
+    assert result["source"] == "firecrawl"
+    assert result["status"] == "found"
+    assert result["case_details"]["case_number"] == "WP/3373/2025"
+    assert len(result["court_orders"]) == 1
+    assert result["court_orders"][0]["download_url"] == "https://example.com/order-agent.pdf"
+
+
+def test_fetch_with_firecrawl_returns_none_without_api_key():
+    """Verify _fetch_with_firecrawl returns None when no API key is configured."""
+    scraper = BombayHighCourtScraper()
+    scraper.firecrawl_api_key = None
+
+    result = scraper._fetch_with_firecrawl("WP/3373/2025", date="2025-04-09")
+
+    assert result is None
