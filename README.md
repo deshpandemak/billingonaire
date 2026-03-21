@@ -112,6 +112,15 @@ This script:
 
 ### Backend Unit Tests
 
+Install backend dependencies first (if you haven't already):
+
+```bash
+cd billingonaire_backend
+pip install -r requirements.txt -r requirements-test.txt
+```
+
+Run unit tests:
+
 ```bash
 cd billingonaire_backend
 pytest tests/unit -v

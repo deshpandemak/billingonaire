@@ -28,11 +28,11 @@ billingonaire_backend/
 
 ## Running BDD Specs Locally
 
-Install the required test dependencies:
+Install the backend runtime and test dependencies (BDD steps import the FastAPI app and other backend modules):
 
 ```bash
 cd billingonaire_backend
-pip install -r requirements-test.txt
+pip install -r requirements.txt -r requirements-test.txt
 ```
 
 Run all BDD specification tests:
@@ -42,14 +42,14 @@ cd billingonaire_backend
 pytest specs/ -v
 ```
 
-Run a single feature file's tests:
+Run a single feature's scenarios via its step definition module:
 
 ```bash
 cd billingonaire_backend
 pytest specs/steps/board_upload_steps.py -v
 ```
 
-Or filter by feature file path using the `-k` flag:
+Or filter by name using the `-k` flag:
 
 ```bash
 cd billingonaire_backend
@@ -78,10 +78,10 @@ The **Backend Tests** job in [`.github/workflows/ci.yml`](../.github/workflows/c
 
 | Step | Command | Purpose |
 |------|---------|---------|
-| Run unit tests | `pytest tests/unit -v --cov=. --cov-report=xml --cov-report=term` | Fast unit tests with coverage |
-| Run BDD specification tests | `pytest specs/ -v --tb=short` | Behaviour specifications |
+| Run unit tests | `pytest tests/unit -v --cov=. --cov-report=xml --cov-report=term` | Fast unit tests; generates initial coverage |
+| Run BDD specification tests | `pytest specs/ -v --tb=short --cov=. --cov-append --cov-report=xml --cov-report=term` | Behaviour specifications; appends to coverage |
 
-Coverage from unit tests is uploaded to Codecov. BDD spec results appear in the GitHub Actions log under the "Run BDD specification tests" step.
+Combined coverage from both test runs is uploaded to Codecov after the BDD step completes. BDD spec results appear in the GitHub Actions log under the "Run BDD specification tests" step.
 
 ## Writing a New Feature Specification
 
@@ -131,8 +131,8 @@ def some_precondition(ctx):
 
 
 @when("I perform an action")
-def perform_action(ctx, test_client):
-    response = test_client.get("/my-endpoint")
+def perform_action(ctx, api_client):
+    response = api_client.get("/my-endpoint")
     ctx["response"] = response
 
 
@@ -145,8 +145,11 @@ def check_result(ctx):
 
 The `specs/conftest.py` provides shared fixtures available to all step definitions:
 
-- `test_client` — a FastAPI `TestClient` instance with mocked Firebase.
+- `api_client` — a FastAPI `TestClient` authenticated as a regular user with mocked Firebase.
+- `admin_api_client` — a FastAPI `TestClient` authenticated as an admin user with mocked Firebase.
 - `sample_pdf_bytes` — minimal valid PDF bytes for upload tests.
+- `mock_firestore_client` — the mocked Firestore client for inspecting Firestore interactions.
+- `sample_case_data` — a dict with a pre-populated case record for convenience.
 
 Add new shared fixtures to `specs/conftest.py` when they apply to multiple feature files.
 
@@ -179,7 +182,7 @@ You can tag scenarios with custom markers and filter from the command line:
 
 ```bash
 # Run only fast specs (tagged with @fast in the feature file)
-pytest specs/ -v -m "not slow"
+pytest specs/ -v -m "fast and not slow"
 ```
 
 To add a marker to a scenario, add it as a tag in the feature file:
