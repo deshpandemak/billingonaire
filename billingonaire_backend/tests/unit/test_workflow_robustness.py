@@ -7,8 +7,10 @@ Covers:
 - /jobs/retry-failed endpoint logic
 """
 
+import asyncio
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -26,6 +28,7 @@ if "spacy" not in sys.modules:
     sys.modules["spacy"] = spacy_stub
     sys.modules["spacy.matcher"] = spacy_matcher_stub
 
+import main
 from billingonaire_backend.AutoOrderManager import AutoOrderManager
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
@@ -157,7 +160,7 @@ def test_firecrawl_uses_wildcard_url(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 3.  /jobs/retry-failed — unit tests via direct import of the endpoint handler
+# 3.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
 # ---------------------------------------------------------------------------
 
 
@@ -180,74 +183,207 @@ def _make_mock_case(
     }
 
 
-def test_retry_failed_separates_fetch_and_analysis(manager):
-    """order_failed goes to fetch queue; order_analysis_failed with link goes to analysis."""
-    failed_case = _make_mock_case("WP/10/2025", "order_failed")
-    analysis_failed_case = _make_mock_case(
-        "WP/20/2025",
-        "order_analysis_failed",
-        order_link="https://example.com/order.pdf",
+def _make_request(body: dict):
+    """Return a minimal async mock of a FastAPI Request that yields body as JSON."""
+    req = MagicMock()
+    req.json = AsyncMock(return_value=body)
+    return req
+
+
+def _make_manager(cases: list):
+    """Return a mock AutoOrderManager pre-loaded with the given candidate cases."""
+    from datetime import date
+
+    mgr = MagicMock()
+    mgr._get_filtered_matters = Mock(return_value=cases)
+    mgr.case_store = MagicMock()
+    mgr.case_store.transition_lifecycle = Mock()
+    # _parse_board_date just needs to return a date (or None) so filtering works
+    mgr._parse_board_date = Mock(side_effect=lambda v: date(2024, 1, 15) if v else None)
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_order_failed_goes_to_fetch_queue(monkeypatch):
+    """order_failed case is added to the fetch queue and lifecycle is transitioned."""
+    case = _make_mock_case("WP/10/2025", "order_failed")
+    mgr = _make_manager([case])
+
+    fetch_queue = asyncio.Queue()
+    analysis_queue = asyncio.Queue()
+
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "order_processing_queue", fetch_queue)
+    monkeypatch.setattr(main, "analysis_processing_queue", analysis_queue)
+    monkeypatch.setattr(main, "ensure_background_processing_active", AsyncMock())
+    monkeypatch.setattr(
+        main, "ensure_background_analysis_processing_active", AsyncMock()
     )
 
-    manager._get_filtered_matters = Mock(
-        return_value=[failed_case, analysis_failed_case]
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    body = response.body
+    import json
+
+    data = json.loads(body)
+
+    assert data["fetch_queued"] == 1
+    assert data["analysis_queued"] == 0
+    assert "WP/10/2025" in data["fetch_queued_refs"]
+    assert fetch_queue.qsize() == 1
+    assert analysis_queue.qsize() == 0
+
+    mgr.case_store.transition_lifecycle.assert_called_once_with(
+        "WP/10/2025",
+        "fetch_queued",
+        metadata={"source": "jobs.retry-failed", "case_id": case["id"]},
+        event_type="retry_fetch_queued",
     )
 
-    fetch_queue_items = []
-    analysis_queue_items = []
 
-    # Simulate the retry logic (mirrors main.py retry_failed_cases)
-    for case_data in [failed_case, analysis_failed_case]:
-        status = case_data.get("order_status", "")
-        if status == "order_failed":
-            fetch_queue_items.append(case_data["case_ref"])
-        elif status == "order_analysis_failed":
-            order_link = case_data.get("order_link")
-            if order_link:
-                analysis_queue_items.append(case_data["case_ref"])
-            else:
-                fetch_queue_items.append(case_data["case_ref"])
+@pytest.mark.asyncio
+async def test_retry_failed_linked_with_link_goes_to_analysis_queue(monkeypatch):
+    """linked case with stored order_link is routed to the analysis queue."""
+    case = _make_mock_case(
+        "WP/50/2025", "linked", order_link="https://example.com/order.pdf"
+    )
+    mgr = _make_manager([case])
 
-    assert "WP/10/2025" in fetch_queue_items
-    assert "WP/20/2025" in analysis_queue_items
-    assert "WP/20/2025" not in fetch_queue_items
+    fetch_queue = asyncio.Queue()
+    analysis_queue = asyncio.Queue()
+
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "order_processing_queue", fetch_queue)
+    monkeypatch.setattr(main, "analysis_processing_queue", analysis_queue)
+    monkeypatch.setattr(main, "ensure_background_processing_active", AsyncMock())
+    monkeypatch.setattr(
+        main, "ensure_background_analysis_processing_active", AsyncMock()
+    )
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["analysis_queued"] == 1
+    assert data["fetch_queued"] == 0
+    assert "WP/50/2025" in data["analysis_queued_refs"]
+    assert analysis_queue.qsize() == 1
+    assert fetch_queue.qsize() == 0
+
+    mgr.case_store.transition_lifecycle.assert_called_once_with(
+        "WP/50/2025",
+        "analysis_queued",
+        metadata={"source": "jobs.retry-failed", "case_id": case["id"]},
+        event_type="retry_analysis_queued",
+    )
 
 
-def test_retry_failed_analysis_failed_without_link_goes_to_fetch(manager):
-    """order_analysis_failed without a stored link falls back to the fetch queue."""
-    case = _make_mock_case("WP/30/2025", "order_analysis_failed", order_link=None)
+@pytest.mark.asyncio
+async def test_retry_failed_linked_without_link_falls_back_to_fetch_queue(monkeypatch):
+    """linked case without a stored order_link falls back to the fetch queue."""
+    case = _make_mock_case("WP/60/2025", "linked", order_link=None)
+    mgr = _make_manager([case])
 
-    fetch_queue_items = []
-    analysis_queue_items = []
+    fetch_queue = asyncio.Queue()
+    analysis_queue = asyncio.Queue()
 
-    status = case.get("order_status", "")
-    order_link = case.get("order_link")
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "order_processing_queue", fetch_queue)
+    monkeypatch.setattr(main, "analysis_processing_queue", analysis_queue)
+    monkeypatch.setattr(main, "ensure_background_processing_active", AsyncMock())
+    monkeypatch.setattr(
+        main, "ensure_background_analysis_processing_active", AsyncMock()
+    )
 
-    if status == "order_failed":
-        fetch_queue_items.append(case["case_ref"])
-    elif status == "order_analysis_failed":
-        if order_link:
-            analysis_queue_items.append(case["case_ref"])
-        else:
-            fetch_queue_items.append(case["case_ref"])
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
 
-    assert "WP/30/2025" in fetch_queue_items
-    assert "WP/30/2025" not in analysis_queue_items
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 1
+    assert data["analysis_queued"] == 0
+    assert "WP/60/2025" in data["fetch_queued_refs"]
+    assert fetch_queue.qsize() == 1
+    assert analysis_queue.qsize() == 0
 
 
-def test_retry_failed_skips_non_retryable_statuses(manager):
-    """Cases with analysed/not_linked/linked status should not be retried."""
+@pytest.mark.asyncio
+async def test_retry_failed_skips_non_retryable_statuses(monkeypatch):
+    """analysed and not_linked cases are skipped; linked and order_failed are retried."""
     cases = [
         _make_mock_case("WP/1/2025", "analysed"),
         _make_mock_case("WP/2/2025", "not_linked"),
-        _make_mock_case("WP/3/2025", "linked"),
+        _make_mock_case(
+            "WP/3/2025", "linked", order_link="https://example.com/order.pdf"
+        ),
         _make_mock_case("WP/4/2025", "order_failed"),
     ]
+    mgr = _make_manager(cases)
 
-    retried = [
-        c["case_ref"]
-        for c in cases
-        if c.get("order_status") in ("order_failed", "order_analysis_failed")
-    ]
+    fetch_queue = asyncio.Queue()
+    analysis_queue = asyncio.Queue()
 
-    assert retried == ["WP/4/2025"]
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "order_processing_queue", fetch_queue)
+    monkeypatch.setattr(main, "analysis_processing_queue", analysis_queue)
+    monkeypatch.setattr(main, "ensure_background_processing_active", AsyncMock())
+    monkeypatch.setattr(
+        main, "ensure_background_analysis_processing_active", AsyncMock()
+    )
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    # WP/3 (linked+link) → analysis; WP/4 (order_failed) → fetch
+    assert data["analysis_queued"] == 1
+    assert data["fetch_queued"] == 1
+    assert "WP/3/2025" in data["analysis_queued_refs"]
+    assert "WP/4/2025" in data["fetch_queued_refs"]
+    # Skipped statuses not in either queue
+    assert "WP/1/2025" not in data["fetch_queued_refs"]
+    assert "WP/1/2025" not in data["analysis_queued_refs"]
+    assert "WP/2/2025" not in data["fetch_queued_refs"]
+    assert "WP/2/2025" not in data["analysis_queued_refs"]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_analysis_failed_without_link_goes_to_fetch_queue(
+    monkeypatch,
+):
+    """order_analysis_failed without a stored link falls back to the fetch queue."""
+    case = _make_mock_case("WP/30/2025", "order_analysis_failed", order_link=None)
+    mgr = _make_manager([case])
+
+    fetch_queue = asyncio.Queue()
+    analysis_queue = asyncio.Queue()
+
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "order_processing_queue", fetch_queue)
+    monkeypatch.setattr(main, "analysis_processing_queue", analysis_queue)
+    monkeypatch.setattr(main, "ensure_background_processing_active", AsyncMock())
+    monkeypatch.setattr(
+        main, "ensure_background_analysis_processing_active", AsyncMock()
+    )
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 1
+    assert data["analysis_queued"] == 0
+    assert "WP/30/2025" in data["fetch_queued_refs"]
+    assert fetch_queue.qsize() == 1
+    assert analysis_queue.qsize() == 0
