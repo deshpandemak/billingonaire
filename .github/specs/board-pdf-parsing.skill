@@ -1,0 +1,64 @@
+---
+name: board-pdf-parsing
+description: Parse a Bombay High Court daily court board PDF, extract case listings with assigned AGP names, and persist the records to Firestore.
+tags: [backend, pdf, parsing, firestore, board]
+---
+
+## Overview
+
+The board PDF parsing skill handles the ingestion of daily court board files published by the Bombay High Court. It extracts all scheduled matters, identifies the assigned AGP for each matter, and stores the structured records in the `daily-boards` Firestore collection.
+
+## Key Files
+
+- `billingonaire_backend/Board.py` — PDF parsing logic and board data management
+- `billingonaire_backend/main.py` — `/upload-pdf`, `/save-data`, `/get-data` route handlers
+- `billingonaire_backend/specs/features/board_upload.feature` — acceptance scenarios
+- `billingonaire_backend/specs/steps/board_upload_steps.py` — step implementations
+- `billingonaire_backend/tests/unit/` — unit tests for board parsing
+
+## Firestore Collections Used
+
+| Collection | Operation | Key Fields |
+|-----------|-----------|-----------|
+| `daily-boards` | write | `board_date`, `case_type`, `case_number`, `year`, `agp_name`, `court_details` |
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/upload-pdf` | POST | Admin only (`require_admin`) | Accepts multipart PDF upload; returns `{ "results": [...] }` with parse status and case counts |
+| `/save-data` | POST | Admin only (`require_admin`) | Persists parsed records to Firestore |
+| `/get-data` | POST | Authenticated active user | Retrieves records for a given `board_date` |
+
+## Business Rules
+
+- The board PDF format follows Bombay High Court conventions; AGP names appear after "WITH" in court detail lines (e.g. `SHRI P.M.JOSHI, AGP WITH`).
+- Case references follow the pattern `{TYPE}/{NUMBER}/{YEAR}` (e.g. `WP/3373/2024`).
+- Upload must not block on order availability — board ingestion and order fetching are separate pipeline stages.
+- Non-PDF uploads receive a 200 response with an error flag in results (not a 4xx).
+- Missing `file` field in multipart request returns HTTP 422.
+
+## Implementation Pattern
+
+When adding new board parsing behaviour:
+
+1. Modify `Board.py` — keep PDF text extraction and structured record building separate.
+2. New field extraction follows the existing regex pattern approach; add named groups to the existing compiled patterns.
+3. After parsing, each record must include `board_date`, `case_ref` (composite), `agp_name`, and `court_details`.
+4. Write tests in `tests/unit/` before touching production code.
+5. Add or update the corresponding Gherkin scenario in `specs/features/board_upload.feature`.
+
+## Example Record Shape
+
+```json
+{
+  "board_date": "2024-10-01",
+  "case_type": "WP",
+  "case_number": "3373",
+  "year": "2024",
+  "case_ref": "WP/3373/2024",
+  "agp_name": "P.M.JOSHI",
+  "court_details": "SHRI P.M.JOSHI, AGP WITH ...",
+  "order_status": "board_ingested"
+}
+```
