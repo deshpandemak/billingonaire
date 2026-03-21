@@ -83,16 +83,14 @@ billingonaire/
 board_ingested
       │
       ▼
-fetch_queued  ──► fetch_in_progress ──► fetch_succeeded ──► analyse_queued
-      │                                       │                    │
-      └─► fetch_failed_retryable              │                    ▼
-               │                             │              analyse_in_progress
-               ▼                             │                    │
-        fetch_failed_terminal                │             ┌──────┴──────┐
-                                             │             ▼             ▼
-                                             │          analysed    analyse_failed
-                                             │
-                                             └─► order_unavailable
+fetch_queued  ──► fetch_in_progress ──► fetch_succeeded ──► analysis_queued
+      │                                                              │
+      └─► fetch_failed_retryable                                     ▼
+               │                                          analysis_in_progress
+               ▼                                                     │
+        fetch_failed_terminal                        ┌───────────────┼───────────────────┐
+                                                     ▼               ▼                   ▼
+                                              analysed  analysis_failed_retryable  analysis_failed_terminal
 ```
 
 Manual override is available from any terminal state.
@@ -100,11 +98,11 @@ Manual override is available from any terminal state.
 ## API Surface Summary
 
 ### Board Ingestion
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/upload-pdf` | POST | Upload court board PDF; parse and store cases |
-| `/save-data` | POST | Persist parsed board records to Firestore |
-| `/get-data` | POST | Retrieve board records for a given date |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/upload-pdf` | POST | Admin only (`require_admin`) | Upload court board PDF; returns `{ "results": [...] }` with parse status and case counts |
+| `/save-data` | POST | Admin only (`require_admin`) | Persist parsed board records to Firestore |
+| `/get-data` | POST | Authenticated active user | Retrieve board records for a given date |
 
 ### Court Orders
 | Endpoint | Method | Description |
@@ -171,10 +169,11 @@ Manual override is available from any terminal state.
 | Collection | Purpose |
 |-----------|---------|
 | `daily-boards` | Parsed case records from court board PDFs |
-| `case-details` | Per-case lifecycle state and order metadata |
-| `order-analysis` | ML analysis results per case |
-| `users` | User profiles and role configuration |
-| `bills` | Saved AGP billing reports |
+| `case-details` | Per-case lifecycle state, order metadata, and ML analysis results |
+| `users` | User profiles (auth-linked metadata) |
+| `user-roles` | User role assignments and name-variation configuration |
+| `user-case-mappings` | AGP-to-case match records |
+| `user-bills` | Saved AGP billing reports per user |
 
 ## Environment Variables
 

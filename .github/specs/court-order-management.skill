@@ -30,31 +30,33 @@ Court order management covers everything that happens after a case appears on th
 board_ingested
       │  (queue for fetch)
       ▼
-fetch_queued ──► fetch_in_progress ──► fetch_succeeded ──► analyse_queued
-      │                                       │
-      └─► fetch_failed_retryable              └─► order_unavailable
-               │
-               ▼
-        fetch_failed_terminal
+fetch_queued ──► fetch_in_progress ──► fetch_succeeded ──► analysis_queued
+      │                                                           │
+      └─► fetch_failed_retryable                                  ▼
+               │                                       analysis_in_progress
+               ▼                                                  │
+        fetch_failed_terminal            ┌─────────────────────────┼──────────────────────────┐
+                                         ▼                         ▼                          ▼
+                                      analysed     analysis_failed_retryable   analysis_failed_terminal
 ```
 
-Valid forward transitions only. Invalid transitions (e.g. `analysed` → `board_ingested`) must be rejected. A `lifecycle_events` array records every transition with timestamp and source.
+Valid forward transitions only. Invalid transitions must be rejected. A `lifecycle_events` array records every transition with timestamp and source.
 
 ## API Endpoints
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/orders/cases-without-orders` | GET | Yes | Cases with `order_status = fetch_queued` |
-| `/orders/create-link` | POST | Yes | Attach `order_url` to a case; set status to `linked` |
-| `/orders/update-status` | PUT | Yes | Update `lifecycle_status` for a case |
-| `/jobs/fetch-orders` | POST | Yes | Enqueue all `fetch_queued` cases for download |
-| `/jobs/retry-failed` | POST | Yes | Re-queue `fetch_failed_retryable` cases |
-| `/jobs/analyze-orders` | POST | Yes | Enqueue all `fetch_succeeded` cases for analysis |
-| `/auto-orders/analyze-case/{id}` | POST | Yes | Analyze a single case synchronously |
-| `/queue/status` | GET | Yes | Pending fetch queue size |
-| `/cases/lifecycle` | GET | Yes | Full lifecycle view for a board date |
-| `/cases/{case_ref}/manual-override` | POST | Admin | Override terminal-state case with manual order data |
-| `/admin/order-status-overview` | GET | Admin | Count of cases per lifecycle_status |
+| `/orders/cases-without-orders` | GET | Authenticated | Cases with `order_status = fetch_queued` |
+| `/orders/create-link` | POST | Authenticated | Attach `order_url` to a case; set status to `linked` |
+| `/orders/update-status` | PUT | Authenticated | Update `lifecycle_status` for a case |
+| `/jobs/fetch-orders` | POST | Admin active (`require_admin_active`) | Enqueue all `fetch_queued` cases for download |
+| `/jobs/retry-failed` | POST | Admin active (`require_admin_active`) | Re-queue `fetch_failed_retryable` cases |
+| `/jobs/analyze-orders` | POST | Admin active (`require_admin_active`) | Enqueue all `fetch_succeeded` cases for analysis |
+| `/auto-orders/analyze-case/{id}` | POST | Authenticated | Analyze a single case synchronously |
+| `/queue/status` | GET | Authenticated | Pending fetch queue size |
+| `/cases/lifecycle` | GET | Authenticated | Full lifecycle view for a board date |
+| `/cases/{case_ref}/manual-override` | POST | Admin active (`require_admin_active`) | Override terminal-state case with manual order data |
+| `/admin/order-status-overview` | GET | Admin (`require_admin`) | Count of cases per lifecycle_status |
 
 ## Business Rules
 

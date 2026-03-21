@@ -18,7 +18,7 @@ This skill describes the standard pattern for adding a new API endpoint to the B
 | Linter | flake8 (config in `billingonaire_backend/.flake8`) |
 | Type checker | mypy (config in `billingonaire_backend/mypy.ini`) |
 | Type hints | Required on all public function signatures |
-| Async | Use `async def` for all route handlers and Firestore calls |
+| Async | Use `async def` for all FastAPI route handlers. Firestore operations use the synchronous Firebase Admin SDK (`collection().document().get()/set()/stream()`); offload them to a threadpool if needed to avoid blocking the event loop. |
 | Framework | FastAPI with Pydantic request/response models |
 | Auth | Firebase ID token via `Authorization: Bearer <token>` header |
 

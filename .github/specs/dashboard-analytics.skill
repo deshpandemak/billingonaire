@@ -6,7 +6,7 @@ tags: [backend, analytics, dashboard, firestore, aggregation]
 
 ## Overview
 
-The analytics dashboard provides pre-aggregated views of the data ingested and processed by the pipeline. All dashboard endpoints are read-only and require authentication. Data is sourced from `daily-boards`, `case-details`, and `order-analysis` Firestore collections.
+The analytics dashboard provides pre-aggregated views of the data ingested and processed by the pipeline. All dashboard endpoints are read-only and require authentication. Data is sourced from the `daily-boards` Firestore collection (the primary data source for all `Dashboard.py` aggregations).
 
 ## Key Files
 
@@ -20,18 +20,16 @@ The analytics dashboard provides pre-aggregated views of the data ingested and p
 
 | Collection | Operations | Purpose |
 |-----------|-----------|---------|
-| `daily-boards` | read | Board date summaries, per-date AGP distribution |
-| `case-details` | read | Lifecycle status counts |
-| `order-analysis` | read | AGP statistics, category distributions |
+| `daily-boards` | read | All dashboard aggregations — board date summaries, AGP distributions, weekly/monthly stats |
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/dashboard/weekly-status` | GET | Case counts grouped by `analysis_category` for the current week |
+| `/dashboard/weekly-status` | GET | Case counts grouped by `analysis_category`; optional `start_date`/`end_date` params (defaults to last 7 days) |
 | `/dashboard/agp-stats` | GET | Per-AGP matter counts and category breakdowns |
 | `/dashboard/monthly-avg` | GET | Monthly average appearance counts across all months |
-| `/dashboard/matters-by-date-range` | GET | Matters filtered by `start` and `end` query params |
+| `/dashboard/matters-by-date-range` | GET | Matters by date; optional `start`/`end` params (defaults to last 5 days → today) |
 | `/dashboard/agp-distribution-weekly` | GET | Per-AGP appearance counts for the current week |
 | `/dashboard/agp-distribution-monthly` | GET | Per-AGP appearance counts for the current month |
 | `/dashboard/board-date-summary` | GET | All board dates with total case count per date |
@@ -41,8 +39,8 @@ The analytics dashboard provides pre-aggregated views of the data ingested and p
 ## Business Rules
 
 - All endpoints must return HTTP 200 even when no data exists — return empty lists or zero counts, never a 4xx error for missing data.
-- `weekly-status` uses the current server-side date to determine the week boundary; do not accept a date parameter from the client.
-- `matters-by-date-range` requires both `start` and `end` query parameters; validate that `start` ≤ `end`.
+- `weekly-status` accepts optional `start_date`/`end_date` query params; when omitted it defaults to the last 7 days ending today.
+- `matters-by-date-range` accepts optional `start`/`end` params; when omitted it defaults to the last 5 days ending today.
 - Dashboard endpoints are read-only; no writes to Firestore are permitted.
 
 ## Implementation Pattern

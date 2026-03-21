@@ -20,8 +20,9 @@ Bill generation aggregates all analysed case records matched to the authenticate
 
 | Collection | Operation | Key Fields |
 |-----------|-----------|-----------|
-| `order-analysis` | read | `case_ref`, `analysis_category`, `order_date`, AGP match fields |
-| `bills` | read/write | `user_uid`, `date_range`, `matters[]`, `created_at` |
+| `daily-boards` | read | `case_ref`, `board_date`, `agp_name`, `court_details`, case type/number/year |
+| `user-case-mappings` | read | `uid`, `case_id`, `source`, `match_score` — links AGP user to their matched cases |
+| `user-bills` | read/write | `user_uid`, `date_range`, `matters[]`, `created_at` |
 
 ## API Endpoints
 
@@ -58,7 +59,7 @@ The exported workbook must comply with AGP billing conventions:
 
 When extending bill generation (e.g. new column, new format):
 
-1. Identify the source field in `order-analysis` or `case-details`.
+1. Identify the source field in `daily-boards` or `case-details`.
 2. Add the field to the line-item builder in `main.py` (or a dedicated bill service module if one exists).
 3. Update the Excel column mapping in the export handler; do not alter existing column order.
 4. Add or update the relevant Gherkin scenario in `specs/features/bill_generation.feature`.

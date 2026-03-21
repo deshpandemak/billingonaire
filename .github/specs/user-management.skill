@@ -22,14 +22,21 @@ User management covers Firebase Auth integration, Firestore user profiles, role-
 
 | Collection | Operation | Key Fields |
 |-----------|-----------|-----------|
-| `users` | read/write | `uid`, `email`, `full_name`, `role`, `agp_config`, `name_variations[]` |
+| `users` | read/write | `uid`, `email`, `full_name`, `role`, `legal_category`, `is_active`, ... |
+| `user-roles` | read/write | `uid`, `agp_role`, `name_variations[]`, `active`, ... |
+| `user-case-mappings` | read/write | `uid`, `case_id`, `source`, `match_score`, ... |
 
 ## Roles
 
-| Role | Capabilities |
-|------|-------------|
-| `admin` | All endpoints; user management; order status overview |
-| `user` (AGP) | Profile management; role configuration; bill generation; dashboard |
+The role model has two distinct layers:
+
+| Layer | Storage | Values | Purpose |
+|-------|---------|--------|---------|
+| System role | `users.role` | `admin` or `user` | Controls API access (admin vs. regular user) |
+| Legal role type | `user-roles` collection (`agp_role`) | `AGP`, `GP`, etc. | Identifies the legal professional category for court board matching |
+| Legal category | `users.legal_category` | e.g. `assistant_government_pleader` | Categorises the user within the legal system |
+
+Only users with `role = admin` can access admin endpoints. AGP/GP configuration and name variations are stored separately in `user-roles`, not in the `users` document.
 
 ## API Endpoints
 
@@ -50,7 +57,7 @@ User management covers Firebase Auth integration, Firestore user profiles, role-
 ## Business Rules
 
 - Admin endpoints must return HTTP 403 for non-admin users — never 404.
-- Password change must fail with a clear error when the new password is shorter than the minimum (8 characters).
+- Password change must fail with a clear error when the new password is shorter than the minimum (6 characters).
 - AGP name matching uses `name_variations` — a list of name permutations generated from `full_name` (e.g. initials, reversed order, title variations). Never hard-code a specific name format.
 - `admin/sync-firebase-users` is idempotent: running it multiple times must not create duplicate Firestore documents.
 - Firebase Auth is the source of truth for authentication; Firestore stores additional profile data.

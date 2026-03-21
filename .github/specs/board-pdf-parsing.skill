@@ -24,11 +24,11 @@ The board PDF parsing skill handles the ingestion of daily court board files pub
 
 ## API Endpoints
 
-| Endpoint | Method | Auth Required | Description |
-|----------|--------|--------------|-------------|
-| `/upload-pdf` | POST | Yes | Accepts multipart PDF upload; returns parsed case list |
-| `/save-data` | POST | Yes | Persists parsed records to Firestore |
-| `/get-data` | POST | Yes | Retrieves records for a given `board_date` |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/upload-pdf` | POST | Admin only (`require_admin`) | Accepts multipart PDF upload; returns `{ "results": [...] }` with parse status and case counts |
+| `/save-data` | POST | Admin only (`require_admin`) | Persists parsed records to Firestore |
+| `/get-data` | POST | Authenticated active user | Retrieves records for a given `board_date` |
 
 ## Business Rules
 
