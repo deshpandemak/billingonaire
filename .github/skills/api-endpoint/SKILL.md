@@ -114,6 +114,7 @@ cd billingonaire_backend
 black .
 isort .
 flake8 . --config=.flake8
+mypy --config-file mypy.ini CourtScraper.py main.py OrderManager.py
 pytest tests/unit -v
 ```
 

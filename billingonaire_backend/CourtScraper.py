@@ -571,7 +571,7 @@ HTML text:
             except Exception:
                 continue
 
-        normalized = {
+        normalized: Dict[str, Any] = {
             "status": "found" if direct_orders else "not_found",
             "source": "ollama_scraper",
             "case_details": case_details,

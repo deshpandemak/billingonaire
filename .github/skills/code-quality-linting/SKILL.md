@@ -157,7 +157,8 @@ cd billingonaire_backend && \
   echo "🔍 Checking Python code quality..." && \
   python -m black --check . && echo "✅ Black passed" && \
   python -m isort --check-only . && echo "✅ isort passed" && \
-  python -m flake8 . --config=.flake8 && echo "✅ flake8 passed" && \
+   python -m flake8 . --config=.flake8 && echo "✅ flake8 passed" && \
+   python -m mypy CourtScraper.py main.py OrderManager.py --config-file=mypy.ini && echo "✅ mypy passed" && \
   echo "✅ Backend quality checks passed!"
 
 # Frontend Quality Check  
@@ -208,11 +209,17 @@ If you fail linting checks, follow this order to fix:
    cd ../billingonaire_backend && python -m flake8 . --config=.flake8
    ```
 
-5. **Re-run all checks**:
+5. **Run mypy on critical backend modules**:
+   ```bash
+   python -m mypy CourtScraper.py main.py OrderManager.py --config-file=mypy.ini
+   ```
+
+6. **Re-run all checks**:
    ```bash
    python -m black --check . && \
    python -m isort --check-only . && \
-   python -m flake8 . --config=.flake8
+   python -m flake8 . --config=.flake8 && \
+   python -m mypy CourtScraper.py main.py OrderManager.py --config-file=mypy.ini
    ```
 
 ---
@@ -245,7 +252,7 @@ If you fail linting checks, follow this order to fix:
 These checks run automatically on all pull requests via GitHub Actions (`.github/workflows/ci.yml`):
 
 ```yaml
-- Backend: black, isort, flake8
+- Backend: black, isort, flake8, mypy
 - Frontend: eslint
 - Backend tests: pytest
 - Frontend tests: vitest
@@ -295,7 +302,11 @@ File: `billingonaire_backend/mypy.ini`
 **Before every commit:**
 ```bash
 # Backend
-cd billingonaire_backend && black . && isort . && flake8 . --config=.flake8
+cd billingonaire_backend && \
+   black . && \
+   isort . && \
+   flake8 . --config=.flake8 && \
+   mypy CourtScraper.py main.py OrderManager.py --config-file=mypy.ini
 
 # Frontend
 cd ../billingonaire-ui && npx eslint . --fix
@@ -307,7 +318,8 @@ cd ../billingonaire-ui && npx eslint . --fix
 cd billingonaire_backend && \
   python -m black --check . && \
   python -m isort --check-only . && \
-  python -m flake8 . --config=.flake8
+   python -m flake8 . --config=.flake8 && \
+   python -m mypy CourtScraper.py main.py OrderManager.py --config-file=mypy.ini
 
 # Frontend
 cd ../billingonaire-ui && npx eslint . --no-fix
