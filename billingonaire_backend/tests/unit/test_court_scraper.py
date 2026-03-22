@@ -57,14 +57,24 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
         case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"},
     )
 
-    # Starting URL must be present
+    # Home-page navigation: agent starts from the Bombay High Court home page
+    assert "bombayhighcourt.nic.in" in prompt
+    # Menu navigation steps must be present
+    assert "Case Status" in prompt
+    assert "Case Number Wise" in prompt
+    # Fallback direct URL must also be present
     assert "case_no.php" in prompt
     # Form field values injected
     assert "WP" in prompt
     assert "3373" in prompt
     assert "2025" in prompt
-    # Critical: agent must click "Listing Dates" tab
-    assert "Listing Dates" in prompt
+    # Stamp/Reg No field mentioned for the form
+    assert "Stamp" in prompt or "Reg" in prompt
+    # Petitioner and respondent extraction after form submission
+    assert "petitioner" in prompt.lower() or "Petitioner" in prompt
+    assert "respondent" in prompt.lower() or "Respondent" in prompt
+    # Critical: agent must click "Listing Dates/Order" button
+    assert "Listing Dates/Order" in prompt
     # Critical: table column name so agent knows where to look
     assert "Order/Judgement" in prompt
     # Critical: agent must read href, not click the link
@@ -76,6 +86,41 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
     assert "NO date filter" in prompt
     # All rows collected
     assert "ALL rows" in prompt or "ALL" in prompt
+
+
+def test_ollama_extraction_prompt_describes_navigation_sequence():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_ollama_extraction_prompt(
+        "WP/3373/2025",
+        html_chunks=["<html><body>Test HTML</body></html>"],
+    )
+
+    # Navigation sequence must be described
+    assert "Case Status" in prompt
+    assert "Case Number Wise" in prompt
+    assert "Listing Dates/Order" in prompt
+    # Form fields described
+    assert "CAPTCHA" in prompt or "captcha" in prompt.lower()
+    # Extraction rules
+    assert "petitioner" in prompt.lower()
+    assert "respondent" in prompt.lower()
+    assert "Order/Judgement" in prompt
+    # Case ref injected
+    assert "WP/3373/2025" in prompt
+
+
+def test_build_candidate_urls_starts_with_home_page():
+    scraper = BombayHighCourtScraper()
+    case_parts = {"case_type": "WP", "case_number": "3373", "year": "2025"}
+    urls = scraper._build_candidate_urls(case_parts, court_code="2")
+
+    # Home page must be the first URL (navigation entry point)
+    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
+    # Case search page must be present
+    assert any("case_no.php" in u for u in urls)
+    # Direct case detail URLs must still be present as fallbacks
+    assert any("case_detail.php" in u for u in urls)
+    assert any("order_list.php" in u for u in urls)
 
 
 def test_get_case_details_error():
@@ -322,6 +367,8 @@ def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
     assert call_kwargs.get("prompt")
     assert call_kwargs.get("model") == "spark-1-mini"
     urls = call_kwargs.get("urls") or []
+    # Home page must be first (navigation entry point)
+    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
     assert any("case_no.php" in u for u in urls)
     assert any("bombayhighcourt.nic.in" in u for u in urls)
     assert any("hcservices.ecourts.gov.in/ecourtindiaHC" in u for u in urls)

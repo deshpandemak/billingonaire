@@ -376,11 +376,13 @@ class BombayHighCourtScraper:
         case_type = case_parts.get("case_type")
         case_number = case_parts.get("case_number")
         year = case_parts.get("year")
+        # Start from the Bombay High Court home page (entry point for menu navigation).
+        # Then try the case-number search page and direct case/order URLs as fallbacks.
         return [
+            f"{self.bombay_high_court_url}/",
             f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
             f"{self.base_url}/cases/case_detail.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
             f"{self.base_url}/order_list.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
-            f"{self.bombay_high_court_url}/",
         ]
 
     def _extract_links_from_html(
@@ -459,6 +461,14 @@ class BombayHighCourtScraper:
         combined = "\n\n---PAGE-CHUNK---\n\n".join(html_chunks[:3])
         return f"""
 Extract court-order links for case {case_ref} from the HTML text below.
+
+The HTML was fetched by navigating the Bombay High Court website in this sequence:
+1. Home page (bombayhighcourt.nic.in) → click "Case Status" → click "Case Number Wise"
+2. Fill in the search form: Case Type, Stamp/Reg No, Case Number, Year, and solve CAPTCHA
+3. On the case details page: read the petitioner and respondent names
+4. Click the "Listing Dates/Order" button to view the orders table
+5. The orders table has columns: Date | Coram | Action | Order/Judgement
+
 Return ONLY valid JSON in this shape:
 {{
   "case_details": {{
@@ -475,7 +485,10 @@ Return ONLY valid JSON in this shape:
 }}
 
 Rules:
-- Include only probable order/judgement links.
+- Extract petitioner and respondent names from the case details section if present.
+- Include only probable order/judgement links from the Listing Dates table.
+- The "Order/Judgement" column contains links — extract their href values as download_url.
+- The "Date" column provides the listing_date (format DD/MM/YYYY).
 - Do not invent URLs.
 - If no order links are present, return an empty court_orders array.
 
@@ -534,6 +547,11 @@ HTML text:
                 timeout=self.ollama_timeout_seconds,
             )
             if response.status_code != 200:
+                logging.warning(
+                    "Ollama returned HTTP %s for case %s",
+                    response.status_code,
+                    case_ref,
+                )
                 return None
 
             llm_text = (response.json() or {}).get("response", "").strip()
@@ -792,6 +810,7 @@ HTML text:
         case_number = (case_parts or {}).get("case_number", "")
         case_year = (case_parts or {}).get("year", "")
         start_url = f"{self.base_url}/cases/case_no.php"
+        home_url = self.bombay_high_court_url
         return f"""
 CRITICAL RESTRICTION — READ BEFORE DOING ANYTHING:
 - You MUST NOT download, open, follow, fetch, or request any PDF or file URL at any point.
@@ -802,24 +821,30 @@ Task: Find case {human_case_ref} and return every court-order link from its List
 
 STEP-BY-STEP NAVIGATION (follow exactly in order):
 
-Step 1 — Open the case-number search page:
-  Go to: {start_url}
-  (Or from the home page click "Case Status" → "Case Number Wise".)
+Step 1 — Navigate to the case search page via the home page menu:
+  Open: {home_url}
+  On the home page, locate the "Case Status" menu item in the navigation bar and click it.
+  In the dropdown that appears, click "Case Number Wise".
+  (Alternatively, navigate directly to: {start_url})
 
 Step 2 — Fill in the search form with these exact values:
-  - Case Type  : {case_type}
-  - Case Number: {case_number}
-  - Year       : {case_year}
-  - Bench      : Mumbai (High Court)
+  - Case Type     : {case_type}
+  - Stamp/Reg No  : {case_number}
+  - Case Number   : {case_number}
+  - Year          : {case_year}
+  - Bench         : Mumbai (High Court)
   Submit the form.
 
 Step 3 — Handle CAPTCHA if shown, then re-submit.
 
 Step 4 — On the case details page:
+  Read and record:
+  - The petitioner name (labelled "Petitioner" or "Appellant")
+  - The respondent name (labelled "Respondent" or "Defendant")
   The page header may show both a Stamp No. (e.g. WP/7203/{case_year}) and a
   Reg. No. (e.g. WP/{case_number}/{case_year}) — either is the correct case.
-  Click the button or tab labelled exactly "Listing Dates"
-  (it may also be labelled "Listing Dates/Orders", "Hearing Dates", or "View Orders").
+  Click the button or tab labelled "Listing Dates/Order"
+  (it may also be labelled "Listing Dates", "Listing Dates/Orders", "Hearing Dates", or "View Orders").
 
 Step 5 — On the Listing Dates table page you will see a table with these columns:
     Date | Coram | Action | Order/Judgement
@@ -938,11 +963,13 @@ Rules:
             case_parts = self.parse_case_number(case_ref) or {}
             prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
-            # Agent starts at the eCourts case-number search page; allow both domains.
+            # Agent starts at the Bombay High Court home page and navigates via
+            # "Case Status" → "Case Number Wise" menu; allow both site domains.
             crawl_urls = [
+                f"{self.bombay_high_court_url}/",
+                f"{self.bombay_high_court_url}/*",
                 f"{self.base_url}/cases/case_no.php",
                 f"{self.base_url}/*",
-                f"{self.bombay_high_court_url}/*",
             ]
             if hasattr(app, "agent"):
                 result = app.agent(
