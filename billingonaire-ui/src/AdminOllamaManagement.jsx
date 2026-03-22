@@ -1,9 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Alert, Badge, Spinner, Table, Form } from 'react-bootstrap';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Col,
+  Container,
+  Form,
+  Row,
+  Spinner,
+  Table,
+} from 'react-bootstrap';
+import { onAuthStateChanged } from 'firebase/auth';
 import { authenticatedFetchJSON } from './lib/api';
 import { auth } from './lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
 import './styles/professional.css';
+
+const DEFAULT_SCRAPER_FORM = {
+  provider: 'ollama_first',
+  allow_firecrawl_fallback: true,
+  ollama_base_url: 'http://localhost:11434',
+  ollama_model: 'llama3.2',
+  ollama_timeout_seconds: 20,
+};
+
+const DEFAULT_PROBE_FORM = {
+  case_ref: 'WP/3373/2025',
+  date: '',
+  bench: 'mumbai',
+};
 
 const AdminOllamaManagement = () => {
   const [user, setUser] = useState(null);
@@ -12,38 +37,46 @@ const AdminOllamaManagement = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Ollama Status
   const [health, setHealth] = useState(null);
   const [models, setModels] = useState(null);
+  const [scraperStatus, setScraperStatus] = useState(null);
+  const [scraperForm, setScraperForm] = useState(DEFAULT_SCRAPER_FORM);
+  const [probeForm, setProbeForm] = useState(DEFAULT_PROBE_FORM);
+  const [probeResult, setProbeResult] = useState(null);
+  const [orderAnalysisUrl, setOrderAnalysisUrl] = useState('');
+  const [orderAnalysisPersist, setOrderAnalysisPersist] = useState(false);
+  const [orderAnalysisResult, setOrderAnalysisResult] = useState(null);
+
   const [healthLoading, setHealthLoading] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
-
-  // Pull Model Form
-  const [modelNameInput, setModelNameInput] = useState('llama3.1:8b');
+  const [scraperLoading, setScraperLoading] = useState(false);
+  const [scraperSaving, setScraperSaving] = useState(false);
   const [pullLoading, setPullLoading] = useState(false);
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [orderAnalysisLoading, setOrderAnalysisLoading] = useState(false);
 
-  const loadUserProfile = async () => {
+  const [modelNameInput, setModelNameInput] = useState('llama3.1:8b');
+
+  const loadUserProfile = useCallback(async () => {
     try {
       const profileData = await authenticatedFetchJSON('/user/profile');
       setProfile(profileData);
-
       if (profileData.role !== 'admin') {
         setError('Access denied. Administrator privileges required.');
-        return;
       }
-    } catch (error) {
-      console.error('Error loading profile:', error);
+    } catch (loadError) {
+      console.error('Error loading profile:', loadError);
       setError('Failed to load user profile');
     }
-  };
+  }, []);
 
   const refreshHealth = useCallback(async () => {
     setHealthLoading(true);
     try {
       const data = await authenticatedFetchJSON('/admin/ollama/health');
       setHealth(data);
-    } catch (error) {
-      console.error('Error fetching health:', error);
+    } catch (requestError) {
+      console.error('Error fetching health:', requestError);
       setError('Failed to fetch health status');
     } finally {
       setHealthLoading(false);
@@ -55,11 +88,34 @@ const AdminOllamaManagement = () => {
     try {
       const data = await authenticatedFetchJSON('/admin/ollama/models');
       setModels(data);
-    } catch (error) {
-      console.error('Error fetching models:', error);
+    } catch (requestError) {
+      console.error('Error fetching models:', requestError);
       setError('Failed to fetch models');
     } finally {
       setModelsLoading(false);
+    }
+  }, []);
+
+  const refreshScraperStatus = useCallback(async () => {
+    setScraperLoading(true);
+    try {
+      const data = await authenticatedFetchJSON('/scraper/status');
+      setScraperStatus(data);
+      setScraperForm({
+        provider: data.provider || DEFAULT_SCRAPER_FORM.provider,
+        allow_firecrawl_fallback:
+          data.allow_firecrawl_fallback ?? DEFAULT_SCRAPER_FORM.allow_firecrawl_fallback,
+        ollama_base_url:
+          data.ollama?.base_url || DEFAULT_SCRAPER_FORM.ollama_base_url,
+        ollama_model: data.ollama?.model || DEFAULT_SCRAPER_FORM.ollama_model,
+        ollama_timeout_seconds:
+          data.ollama?.timeout_seconds || DEFAULT_SCRAPER_FORM.ollama_timeout_seconds,
+      });
+    } catch (requestError) {
+      console.error('Error fetching scraper status:', requestError);
+      setError('Failed to fetch scraper configuration');
+    } finally {
+      setScraperLoading(false);
     }
   }, []);
 
@@ -78,46 +134,161 @@ const AdminOllamaManagement = () => {
       const result = await authenticatedFetchJSON(url, {
         method: 'POST',
       });
-
-      setSuccessMessage(`✅ ${result.message}`);
-      // Refresh models after pulling
-      setTimeout(() => {
+      setSuccessMessage(result.message || 'Model pull initiated');
+      window.setTimeout(() => {
         refreshModels();
       }, 2000);
-    } catch (error) {
-      console.error('Error pulling model:', error);
-      setError(`Failed to pull model: ${error.message}`);
+    } catch (requestError) {
+      console.error('Error pulling model:', requestError);
+      setError(`Failed to pull model: ${requestError.message}`);
     } finally {
       setPullLoading(false);
     }
   };
 
+  const handleScraperFormChange = (field, value) => {
+    setScraperForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleSaveScraperConfig = async () => {
+    setScraperSaving(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      const params = new URLSearchParams();
+      params.set('provider', scraperForm.provider);
+      params.set(
+        'allow_firecrawl_fallback',
+        String(scraperForm.allow_firecrawl_fallback)
+      );
+      params.set('ollama_base_url', scraperForm.ollama_base_url.trim());
+      params.set('ollama_model', scraperForm.ollama_model.trim());
+      params.set(
+        'ollama_timeout_seconds',
+        String(Number(scraperForm.ollama_timeout_seconds) || 20)
+      );
+
+      const result = await authenticatedFetchJSON(`/scraper/configure?${params.toString()}`, {
+        method: 'POST',
+      });
+      setScraperStatus(result);
+      setSuccessMessage('Scraper configuration updated');
+      await refreshHealth();
+      await refreshModels();
+    } catch (requestError) {
+      console.error('Error updating scraper config:', requestError);
+      setError(`Failed to update scraper config: ${requestError.message}`);
+    } finally {
+      setScraperSaving(false);
+    }
+  };
+
+  const handleProbeCase = async () => {
+    if (!probeForm.case_ref.trim()) {
+      setError('Please enter a case reference to test');
+      return;
+    }
+
+    setProbeLoading(true);
+    setError('');
+    setSuccessMessage('');
+    setProbeResult(null);
+
+    try {
+      const result = await authenticatedFetchJSON('/admin/ollama/test-case', {
+        method: 'POST',
+        body: JSON.stringify({
+          case_ref: probeForm.case_ref.trim(),
+          date: probeForm.date.trim() || null,
+          bench: probeForm.bench,
+        }),
+      });
+      setProbeResult(result);
+      setSuccessMessage('Case probe completed');
+    } catch (requestError) {
+      console.error('Error probing case:', requestError);
+      setError(`Failed to probe case: ${requestError.message}`);
+    } finally {
+      setProbeLoading(false);
+    }
+  };
+
+  const handleAnalyzeOrderLink = async () => {
+    if (!orderAnalysisUrl.trim()) {
+      setError('Please enter an order PDF link');
+      return;
+    }
+
+    setOrderAnalysisLoading(true);
+    setError('');
+    setSuccessMessage('');
+    setOrderAnalysisResult(null);
+
+    try {
+      const result = await authenticatedFetchJSON('/admin/order-analysis/from-link', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: orderAnalysisUrl.trim(),
+          persist_result: orderAnalysisPersist,
+        }),
+      });
+      setOrderAnalysisResult(result);
+      setSuccessMessage('Order analysis completed');
+    } catch (requestError) {
+      console.error('Error analyzing order link:', requestError);
+      setError(`Failed to analyze order link: ${requestError.message}`);
+    } finally {
+      setOrderAnalysisLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      setUser(authUser);
+      if (authUser) {
         await loadUserProfile();
-        // Initial load
-        setTimeout(() => {
-          refreshHealth();
-          refreshModels();
-        }, 500);
+        await Promise.all([
+          refreshHealth(),
+          refreshModels(),
+          refreshScraperStatus(),
+        ]);
       }
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [refreshHealth, refreshModels]);
+  }, [loadUserProfile, refreshHealth, refreshModels, refreshScraperStatus]);
 
-  // Auto-refresh health every 10 seconds
   useEffect(() => {
-    if (!user) return;
-    
-    const interval = setInterval(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
       refreshHealth();
     }, 10000);
 
-    return () => clearInterval(interval);
-  }, [user, refreshHealth]);
+    return () => window.clearInterval(interval);
+  }, [refreshHealth, user]);
+
+  const renderJsonBlock = (title, value) => (
+    <Card className="card-professional mt-3">
+      <Card.Header className="card-header-professional">
+        <h6 className="mb-0">{title}</h6>
+      </Card.Header>
+      <Card.Body>
+        <pre
+          className="bg-light border rounded p-3 small mb-0"
+          style={{ maxHeight: '320px', overflow: 'auto' }}
+        >
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </Card.Body>
+    </Card>
+  );
 
   if (loading) {
     return (
@@ -166,6 +337,10 @@ const AdminOllamaManagement = () => {
   return (
     <Container className="container-professional py-5">
       <h1 className="mb-4">🦙 Ollama Model Management</h1>
+      <p className="text-muted mb-4">
+        Monitor Ollama, tweak the court scraper at runtime, test a case lookup,
+        and analyze an order PDF directly from a link.
+      </p>
 
       {error && (
         <Alert variant="danger" onClose={() => setError('')} dismissible>
@@ -179,29 +354,19 @@ const AdminOllamaManagement = () => {
         </Alert>
       )}
 
-      {/* Health Status Card */}
       <Row className="mb-4">
         <Col lg={6}>
-          <Card className="card-professional">
-            <Card.Header className="card-header-professional">
-              <div className="d-flex justify-content-between align-items-center">
-                <h5 className="mb-0">🏥 Ollama Service Health</h5>
-                <Button
-                  size="sm"
-                  variant="outline-primary"
-                  onClick={refreshHealth}
-                  disabled={healthLoading}
-                >
-                  {healthLoading ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="me-2" />
-                      Checking...
-                    </>
-                  ) : (
-                    '🔄 Refresh'
-                  )}
-                </Button>
-              </div>
+          <Card className="card-professional h-100">
+            <Card.Header className="card-header-professional d-flex justify-content-between align-items-center">
+              <h5 className="mb-0">🏥 Ollama Service Health</h5>
+              <Button
+                size="sm"
+                variant="outline-primary"
+                onClick={refreshHealth}
+                disabled={healthLoading}
+              >
+                {healthLoading ? 'Checking...' : 'Refresh'}
+              </Button>
             </Card.Header>
             <Card.Body>
               {health === null ? (
@@ -212,35 +377,24 @@ const AdminOllamaManagement = () => {
               ) : (
                 <>
                   <div className="mb-3">
-                    <label className="form-label">Status</label>
-                    <div>
-                      {health.healthy ? (
-                        <Badge bg="success" className="fs-6 py-2 px-3">
-                          ✅ Healthy
-                        </Badge>
-                      ) : (
-                        <Badge bg="danger" className="fs-6 py-2 px-3">
-                          ❌ Unhealthy
-                        </Badge>
-                      )}
-                    </div>
+                    <div className="form-label">Status</div>
+                    {health.healthy ? (
+                      <Badge bg="success" className="fs-6 py-2 px-3">Healthy</Badge>
+                    ) : (
+                      <Badge bg="danger" className="fs-6 py-2 px-3">Unhealthy</Badge>
+                    )}
                   </div>
-
                   <div className="mb-3">
-                    <label className="form-label">Base URL</label>
+                    <div className="form-label">Base URL</div>
                     <code className="d-block bg-light p-2 rounded">
                       {health.base_url || 'Not configured'}
                     </code>
                   </div>
-
-                  <div className="mb-0">
-                    <label className="form-label">Response Time</label>
-                    <div>
-                      <strong>{health.response_time_ms}ms</strong>
-                    </div>
+                  <div>
+                    <div className="form-label">Response Time</div>
+                    <strong>{health.response_time_ms}ms</strong>
                   </div>
-
-                  {health.status !== 'ok' && health.status !== '' && (
+                  {health.status && health.status !== 'ok' && (
                     <Alert variant="warning" className="mt-3 mb-0">
                       <strong>Details:</strong> {health.status}
                     </Alert>
@@ -251,87 +405,359 @@ const AdminOllamaManagement = () => {
           </Card>
         </Col>
 
-        {/* Pull Model Card */}
         <Col lg={6}>
-          <Card className="card-professional">
+          <Card className="card-professional h-100">
             <Card.Header className="card-header-professional">
               <h5 className="mb-0">📥 Pull New Model</h5>
             </Card.Header>
             <Card.Body>
               <p className="text-muted small">
-                Enter a model name from Ollama library (e.g., llama3.1:8b, mistral, neural-chat)
+                Pull a new model into Ollama without leaving the admin panel.
               </p>
-
               <Form.Group className="mb-3">
                 <Form.Label>Model Name</Form.Label>
                 <Form.Control
                   type="text"
                   placeholder="e.g., llama3.1:8b"
                   value={modelNameInput}
-                  onChange={(e) => setModelNameInput(e.target.value)}
+                  onChange={(event) => setModelNameInput(event.target.value)}
                   disabled={pullLoading || !health?.healthy}
                 />
-                <Form.Text className="d-block mt-2 text-muted">
-                  Popular models: llama3.1:8b, llama3.2, mistral, neural-chat, zephyr
+                <Form.Text className="text-muted">
+                  Popular models: llama3.1:8b, llama3.2, mistral, gemma2.
                 </Form.Text>
               </Form.Group>
-
               <Button
                 variant="primary"
                 className="w-100"
                 onClick={handlePullModel}
                 disabled={pullLoading || !health?.healthy}
               >
-                {pullLoading ? (
-                  <>
-                    <Spinner animation="border" size="sm" className="me-2" />
-                    Initiating Pull...
-                  </>
-                ) : (
-                  '📥 Pull Model'
-                )}
+                {pullLoading ? 'Initiating Pull...' : 'Pull Model'}
               </Button>
-
-              {!health?.healthy && (
-                <Alert variant="warning" className="mt-3 mb-0">
-                  ⚠️ Ollama service is not healthy. Cannot pull models.
-                </Alert>
-              )}
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
-      {/* Models Table */}
-      <Row>
+      <Row className="mb-4">
+        <Col xl={6}>
+          <Card className="card-professional h-100">
+            <Card.Header className="card-header-professional d-flex justify-content-between align-items-center">
+              <h5 className="mb-0">⚙️ Scraper Runtime Config</h5>
+              <Button
+                size="sm"
+                variant="outline-primary"
+                onClick={refreshScraperStatus}
+                disabled={scraperLoading}
+              >
+                {scraperLoading ? 'Refreshing...' : 'Reload'}
+              </Button>
+            </Card.Header>
+            <Card.Body>
+              <Row>
+                <Col md={6} className="mb-3">
+                  <Form.Label>Provider</Form.Label>
+                  <Form.Select
+                    value={scraperForm.provider}
+                    onChange={(event) => handleScraperFormChange('provider', event.target.value)}
+                  >
+                    {(scraperStatus?.supported_providers || [
+                      'firecrawl_first',
+                      'firecrawl_only',
+                      'ollama_first',
+                      'ollama_only',
+                    ]).map((provider) => (
+                      <option key={provider} value={provider}>{provider}</option>
+                    ))}
+                  </Form.Select>
+                </Col>
+                <Col md={6} className="mb-3">
+                  <Form.Label>Ollama Timeout (seconds)</Form.Label>
+                  <Form.Control
+                    type="number"
+                    min="1"
+                    value={scraperForm.ollama_timeout_seconds}
+                    onChange={(event) =>
+                      handleScraperFormChange('ollama_timeout_seconds', event.target.value)
+                    }
+                  />
+                </Col>
+              </Row>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Ollama Base URL</Form.Label>
+                <Form.Control
+                  type="text"
+                  value={scraperForm.ollama_base_url}
+                  onChange={(event) =>
+                    handleScraperFormChange('ollama_base_url', event.target.value)
+                  }
+                />
+              </Form.Group>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Ollama Model</Form.Label>
+                <Form.Control
+                  type="text"
+                  value={scraperForm.ollama_model}
+                  onChange={(event) =>
+                    handleScraperFormChange('ollama_model', event.target.value)
+                  }
+                />
+              </Form.Group>
+
+              <Form.Check
+                className="mb-3"
+                type="switch"
+                id="allow-firecrawl-fallback"
+                label="Allow Firecrawl fallback when Ollama scraping fails"
+                checked={scraperForm.allow_firecrawl_fallback}
+                onChange={(event) =>
+                  handleScraperFormChange(
+                    'allow_firecrawl_fallback',
+                    event.target.checked
+                  )
+                }
+              />
+
+              <Button
+                variant="primary"
+                onClick={handleSaveScraperConfig}
+                disabled={scraperSaving}
+              >
+                {scraperSaving ? 'Saving...' : 'Save Scraper Config'}
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col xl={6}>
+          <Card className="card-professional h-100">
+            <Card.Header className="card-header-professional">
+              <h5 className="mb-0">🧪 Probe Case Lookup</h5>
+            </Card.Header>
+            <Card.Body>
+              <p className="text-muted small">
+                Run the court scraper for one case and inspect the court requests,
+                HTML previews, Ollama prompt, raw response, and final normalized result.
+              </p>
+              <Row>
+                <Col md={7} className="mb-3">
+                  <Form.Label>Case Reference</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={probeForm.case_ref}
+                    placeholder="WP/3373/2025"
+                    onChange={(event) =>
+                      setProbeForm((current) => ({
+                        ...current,
+                        case_ref: event.target.value,
+                      }))
+                    }
+                  />
+                </Col>
+                <Col md={5} className="mb-3">
+                  <Form.Label>Bench</Form.Label>
+                  <Form.Select
+                    value={probeForm.bench}
+                    onChange={(event) =>
+                      setProbeForm((current) => ({
+                        ...current,
+                        bench: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="mumbai">Mumbai</option>
+                    <option value="mumbai_appellate">Mumbai Appellate</option>
+                    <option value="aurangabad">Aurangabad</option>
+                    <option value="nagpur">Nagpur</option>
+                    <option value="goa">Goa</option>
+                  </Form.Select>
+                </Col>
+              </Row>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Board Date (optional)</Form.Label>
+                <Form.Control
+                  type="date"
+                  value={probeForm.date}
+                  onChange={(event) =>
+                    setProbeForm((current) => ({
+                      ...current,
+                      date: event.target.value,
+                    }))
+                  }
+                />
+              </Form.Group>
+
+              <Button
+                variant="primary"
+                className="w-100"
+                onClick={handleProbeCase}
+                disabled={probeLoading}
+              >
+                {probeLoading ? 'Running Case Probe...' : 'Run Case Probe'}
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {probeResult && (
+        <Row className="mb-4">
+          <Col>
+            <Card className="card-professional">
+              <Card.Header className="card-header-professional">
+                <h5 className="mb-0">🔎 Probe Result</h5>
+              </Card.Header>
+              <Card.Body>
+                <Row>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Provider</div>
+                    <Badge bg="info">{probeResult.scraper_config?.provider || 'unknown'}</Badge>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Final Status</div>
+                    <strong>{probeResult.final_result?.status || 'unknown'}</strong>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Result Source</div>
+                    <strong>{probeResult.final_result?.source || 'unknown'}</strong>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Orders Found</div>
+                    <strong>{probeResult.final_result?.court_orders?.length || 0}</strong>
+                  </Col>
+                </Row>
+
+                <div className="table-responsive mt-3">
+                  <Table striped hover size="sm">
+                    <thead>
+                      <tr>
+                        <th>URL</th>
+                        <th>Status</th>
+                        <th>Bytes</th>
+                        <th>Orders</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(probeResult.http_trace || []).map((trace, index) => (
+                        <tr key={`${trace.url}-${index}`}>
+                          <td className="small"><code>{trace.url}</code></td>
+                          <td>{trace.status_code || trace.error || 'n/a'}</td>
+                          <td>{trace.content_length || 0}</td>
+                          <td>{trace.extracted_order_count || 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              </Card.Body>
+            </Card>
+
+            {renderJsonBlock('Probe Request', probeResult.request)}
+            {renderJsonBlock('HTTP Trace', probeResult.http_trace)}
+            {renderJsonBlock('Ollama Request', probeResult.ollama_request)}
+            {renderJsonBlock('Ollama Response', probeResult.ollama_response)}
+            {renderJsonBlock('Final Scraper Result', probeResult.final_result)}
+          </Col>
+        </Row>
+      )}
+
+      <Row className="mb-4">
         <Col>
           <Card className="card-professional">
             <Card.Header className="card-header-professional">
-              <div className="d-flex justify-content-between align-items-center">
-                <h5 className="mb-0">
-                  📚 Available Models
-                  {models?.models && (
-                    <Badge bg="info" className="ms-2">
-                      {models.models.length}
-                    </Badge>
-                  )}
-                </h5>
-                <Button
-                  size="sm"
-                  variant="outline-primary"
-                  onClick={refreshModels}
-                  disabled={modelsLoading}
-                >
-                  {modelsLoading ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="me-2" />
-                      Loading...
-                    </>
-                  ) : (
-                    '🔄 Refresh'
-                  )}
-                </Button>
-              </div>
+              <h5 className="mb-0">📄 Analyze Order From Link</h5>
+            </Card.Header>
+            <Card.Body>
+              <p className="text-muted small">
+                Paste a PDF link and run the existing order analyzer directly. This is useful for
+                validating a scraped order link without uploading a file manually.
+              </p>
+              <Form.Group className="mb-3">
+                <Form.Label>Order PDF URL</Form.Label>
+                <Form.Control
+                  type="url"
+                  placeholder="https://.../order.pdf"
+                  value={orderAnalysisUrl}
+                  onChange={(event) => setOrderAnalysisUrl(event.target.value)}
+                />
+              </Form.Group>
+              <Form.Check
+                className="mb-3"
+                type="switch"
+                id="persist-order-analysis"
+                label="Persist analysis result to database"
+                checked={orderAnalysisPersist}
+                onChange={(event) => setOrderAnalysisPersist(event.target.checked)}
+              />
+              <Button
+                variant="primary"
+                onClick={handleAnalyzeOrderLink}
+                disabled={orderAnalysisLoading}
+              >
+                {orderAnalysisLoading ? 'Analyzing Order Link...' : 'Analyze Link'}
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {orderAnalysisResult && (
+        <Row className="mb-4">
+          <Col>
+            <Card className="card-professional">
+              <Card.Header className="card-header-professional">
+                <h5 className="mb-0">🧾 Order Analysis Result</h5>
+              </Card.Header>
+              <Card.Body>
+                <Row>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Category</div>
+                    <Badge bg="primary">{orderAnalysisResult.order_category}</Badge>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Confidence</div>
+                    <strong>{orderAnalysisResult.category_confidence}</strong>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Order Date</div>
+                    <strong>{orderAnalysisResult.order_date || 'Unknown'}</strong>
+                  </Col>
+                  <Col md={3} className="mb-3">
+                    <div className="small text-muted">Cases Extracted</div>
+                    <strong>{orderAnalysisResult.summary?.total_cases || 0}</strong>
+                  </Col>
+                </Row>
+              </Card.Body>
+            </Card>
+
+            {renderJsonBlock('Download Metadata', orderAnalysisResult.download_metadata)}
+            {renderJsonBlock('Order Analysis Response', orderAnalysisResult)}
+          </Col>
+        </Row>
+      )}
+
+      <Row>
+        <Col>
+          <Card className="card-professional">
+            <Card.Header className="card-header-professional d-flex justify-content-between align-items-center">
+              <h5 className="mb-0">
+                📚 Available Models
+                {models?.models && (
+                  <Badge bg="info" className="ms-2">{models.models.length}</Badge>
+                )}
+              </h5>
+              <Button
+                size="sm"
+                variant="outline-primary"
+                onClick={refreshModels}
+                disabled={modelsLoading}
+              >
+                {modelsLoading ? 'Loading...' : 'Refresh'}
+              </Button>
             </Card.Header>
             <Card.Body>
               {models === null ? (
@@ -342,14 +768,11 @@ const AdminOllamaManagement = () => {
               ) : models.models && models.models.length > 0 ? (
                 <>
                   <div className="mb-3">
-                    <label className="form-label">
-                      Configured Model for Billingonaire
-                    </label>
-                    <Badge bg="info" className="d-block fs-6 py-2 px-3">
+                    <div className="form-label">Configured Model</div>
+                    <Badge bg="info" className="fs-6 py-2 px-3">
                       {models.configured_model}
                     </Badge>
                   </div>
-
                   <div className="table-responsive">
                     <Table striped hover size="sm" className="mb-0">
                       <thead>
@@ -357,24 +780,24 @@ const AdminOllamaManagement = () => {
                           <th>Model Name</th>
                           <th>Size</th>
                           <th>Format</th>
-                          <th style={{ width: '150px' }}>Status</th>
+                          <th>Status</th>
                         </tr>
                       </thead>
                       <tbody>
                         {models.models.map((model) => {
-                          const isConfigured =
-                            model.name === models.configured_model;
+                          const isConfigured = model.name === models.configured_model;
                           const sizeMB = (model.size / (1024 * 1024)).toFixed(0);
                           return (
-                            <tr key={model.name} className={isConfigured ? 'table-info' : ''}>
-                              <td>
-                                <code>{model.name}</code>
-                              </td>
+                            <tr
+                              key={model.name}
+                              className={isConfigured ? 'table-info' : ''}
+                            >
+                              <td><code>{model.name}</code></td>
                               <td>{sizeMB} MB</td>
                               <td className="text-muted small">{model.format || 'unknown'}</td>
                               <td>
                                 {isConfigured ? (
-                                  <Badge bg="success">✅ Configured</Badge>
+                                  <Badge bg="success">Configured</Badge>
                                 ) : (
                                   <Badge bg="secondary">Available</Badge>
                                 )}
@@ -388,55 +811,9 @@ const AdminOllamaManagement = () => {
                 </>
               ) : (
                 <Alert variant="warning" className="mb-0">
-                  <strong>No models loaded</strong>
-                  <p className="mb-0 mt-2">
-                    Use the "Pull New Model" form above or check your Ollama configuration.
-                  </p>
+                  No models loaded. Pull a model or verify the Ollama endpoint.
                 </Alert>
               )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Configuration Info */}
-      <Row className="mt-4">
-        <Col>
-          <Card className="card-professional bg-light">
-            <Card.Header className="card-header-professional">
-              <h6 className="mb-0">ℹ️ Configuration Info</h6>
-            </Card.Header>
-            <Card.Body>
-              <dl className="row small mb-0">
-                <dt className="col-sm-4">Ollama Endpoint:</dt>
-                <dd className="col-sm-8">
-                  <code>{health?.base_url || 'Not configured'}</code>
-                </dd>
-
-                <dt className="col-sm-4">Configured Model:</dt>
-                <dd className="col-sm-8">
-                  <code>{models?.configured_model || 'llama3.2'}</code>
-                </dd>
-
-                <dt className="col-sm-4">Service Status:</dt>
-                <dd className="col-sm-8">
-                  {health?.healthy ? (
-                    <span>
-                      <Badge bg="success" className="me-2">Online</Badge>
-                      Response: {health?.response_time_ms}ms
-                    </span>
-                  ) : (
-                    <span>
-                      <Badge bg="danger">Offline</Badge>
-                    </span>
-                  )}
-                </dd>
-
-                <dt className="col-sm-4">Models Loaded:</dt>
-                <dd className="col-sm-8">
-                  {models ? `${models.models?.length || 0} model(s)` : 'Unknown'}
-                </dd>
-              </dl>
             </Card.Body>
           </Card>
         </Col>

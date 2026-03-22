@@ -87,6 +87,7 @@ def test_get_case_details_error():
 
 def test_get_case_details_uses_firecrawl_result(monkeypatch):
     scraper = BombayHighCourtScraper()
+    scraper.scraper_provider = "firecrawl_only"
     mocked = {
         "status": "found",
         "source": "firecrawl",
@@ -153,6 +154,7 @@ def test_normalize_firecrawl_payload_returns_all_order_links_even_with_date():
 
 def test_get_case_orders_uses_firecrawl_result(monkeypatch):
     scraper = BombayHighCourtScraper()
+    scraper.scraper_provider = "firecrawl_only"
     mocked = {
         "status": "found",
         "source": "firecrawl",
@@ -445,3 +447,68 @@ def test_pull_ollama_model_handles_timeout(monkeypatch):
 
     with pytest.raises(ValueError, match="Timeout"):
         scraper.pull_ollama_model(model_name="llama3.1:8b")
+
+
+def test_debug_case_orders_returns_trace_and_ollama_payload(monkeypatch):
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = "llama3.2"
+
+    class FakeGetResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.url = (
+                "https://hcservices.ecourts.gov.in/ecourtindiaHC/cases/case_detail.php"
+            )
+            self.text = """
+                <html>
+                  <body>
+                    <p>Petitioner: ABC Ltd</p>
+                    <p>Respondent: State of Maharashtra</p>
+                    <a href=\"/orders/test-order.pdf\">Order/Judg-1</a>
+                  </body>
+                </html>
+            """
+
+    class FakePostResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "response": '{"case_details": {"case_number": "WP/3373/2025"}, "court_orders": [{"listing_date": "09/04/2025", "download_url": "https://example.com/test-order.pdf"}]}'
+            }
+
+    monkeypatch.setattr(scraper.session, "get", lambda url, timeout: FakeGetResponse())
+    monkeypatch.setattr(
+        "billingonaire_backend.CourtScraper.requests.post",
+        lambda *args, **kwargs: FakePostResponse(),
+    )
+    monkeypatch.setattr(
+        scraper,
+        "get_case_orders",
+        lambda case_ref, date=None, bench="mumbai": {
+            "status": "found",
+            "source": "ollama_scraper",
+            "case_details": {"case_number": case_ref},
+            "court_orders": [
+                {
+                    "listing_date": "09/04/2025",
+                    "download_url": "https://example.com/test-order.pdf",
+                }
+            ],
+        },
+    )
+
+    result = scraper.debug_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
+
+    assert result["ok"] is True
+    assert result["request"]["case_ref"] == "WP/3373/2025"
+    assert len(result["http_trace"]) >= 1
+    assert result["http_trace"][0]["status_code"] == 200
+    assert result["http_trace"][0]["extracted_order_count"] >= 1
+    assert result["ollama_request"]["model"] == "llama3.2"
+    assert result["ollama_response"]["normalized"]["status"] == "found"
+    assert result["final_result"]["source"] == "ollama_scraper"

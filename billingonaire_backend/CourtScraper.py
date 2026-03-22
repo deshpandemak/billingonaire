@@ -483,6 +483,37 @@ HTML text:
 {combined[:14000]}
 """.strip()
 
+    def _parse_ollama_order_response(
+        self, llm_text: str, case_ref: str
+    ) -> Dict[str, Any]:
+        cleaned_text = re.sub(r"```(?:json)?\s*", "", llm_text or "")
+        cleaned_text = re.sub(r"```\s*$", "", cleaned_text, flags=re.MULTILINE)
+
+        parsed = None
+        parse_error = None
+        try:
+            parsed = json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            block = re.search(r"\{[\s\S]*\}", cleaned_text)
+            if block:
+                try:
+                    parsed = json.loads(block.group())
+                except json.JSONDecodeError as exc:
+                    parse_error = str(exc)
+            else:
+                parse_error = "No JSON object found in Ollama response"
+
+        normalized = None
+        if isinstance(parsed, dict):
+            normalized = self._normalize_firecrawl_payload(parsed, case_ref=case_ref)
+
+        return {
+            "cleaned_text": cleaned_text,
+            "parsed": parsed if isinstance(parsed, dict) else None,
+            "normalized": normalized,
+            "parse_error": parse_error,
+        }
+
     def _call_ollama_for_orders(
         self, case_ref: str, html_chunks: List[str]
     ) -> Optional[Dict[str, Any]]:
@@ -509,26 +540,127 @@ HTML text:
             if not llm_text:
                 return None
 
-            llm_text = re.sub(r"```(?:json)?\s*", "", llm_text)
-            llm_text = re.sub(r"```\s*$", "", llm_text, flags=re.MULTILINE)
-
-            parsed = None
-            try:
-                parsed = json.loads(llm_text)
-            except json.JSONDecodeError:
-                block = re.search(r"\{[\s\S]*\}", llm_text)
-                if block:
-                    parsed = json.loads(block.group())
-
-            if not isinstance(parsed, dict):
-                return None
-
-            return self._normalize_firecrawl_payload(parsed, case_ref=case_ref)
+            parsed_payload = self._parse_ollama_order_response(llm_text, case_ref)
+            return parsed_payload.get("normalized")
         except Exception as exc:
             logging.warning(
                 "Ollama order-link extraction failed for %s: %s", case_ref, exc
             )
             return None
+
+    def debug_case_orders(
+        self,
+        case_ref: str,
+        date: Optional[str] = None,
+        bench: str = "mumbai",
+    ) -> Dict[str, Any]:
+        case_parts = self.parse_case_number(case_ref)
+        if not case_parts:
+            return {
+                "ok": False,
+                "error": "Invalid case reference format",
+                "request": {
+                    "case_ref": case_ref,
+                    "date": date,
+                    "bench": bench,
+                },
+            }
+
+        court_code = self._get_bench_code(bench)
+        urls = self._build_candidate_urls(case_parts, court_code)
+
+        html_chunks: List[str] = []
+        direct_orders: List[Dict[str, Optional[str]]] = []
+        traces: List[Dict[str, Any]] = []
+
+        for url in urls:
+            trace: Dict[str, Any] = {
+                "url": url,
+                "status_code": None,
+                "response_url": None,
+                "content_length": 0,
+                "html_preview": "",
+                "extracted_order_count": 0,
+                "extracted_case_meta": {},
+            }
+            try:
+                resp = self.session.get(url, timeout=self.timeout)
+                html = resp.text or ""
+
+                trace["status_code"] = resp.status_code
+                trace["response_url"] = getattr(resp, "url", url)
+                trace["content_length"] = len(html)
+                trace["html_preview"] = html[:1200]
+
+                if resp.status_code == 200 and html.strip():
+                    extracted_orders = self._extract_links_from_html(html, url)
+                    extracted_meta = self._extract_case_meta_from_html(html, case_ref)
+                    trace["extracted_order_count"] = len(extracted_orders)
+                    trace["extracted_case_meta"] = extracted_meta
+                    direct_orders.extend(extracted_orders)
+                    html_chunks.append(html[:8000])
+            except Exception as exc:
+                trace["error"] = str(exc)
+
+            traces.append(trace)
+
+        prompt = self._build_ollama_extraction_prompt(case_ref, html_chunks)
+        ollama_request: Dict[str, Any] = {
+            "base_url": self.ollama_base_url,
+            "model": self.ollama_model,
+            "timeout_seconds": self.ollama_timeout_seconds,
+            "html_chunk_count": len(html_chunks),
+            "prompt_preview": prompt[:8000],
+        }
+        ollama_response: Dict[str, Any] = {
+            "raw_response": None,
+            "parsed": None,
+            "normalized": None,
+            "parse_error": None,
+            "error": None,
+        }
+
+        if html_chunks:
+            payload = {
+                "model": self.ollama_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0},
+            }
+            try:
+                response = requests.post(
+                    f"{self.ollama_base_url}/api/generate",
+                    json=payload,
+                    timeout=self.ollama_timeout_seconds,
+                )
+                ollama_response["status_code"] = response.status_code
+                response.raise_for_status()
+                llm_text = (response.json() or {}).get("response", "").strip()
+                ollama_response["raw_response"] = llm_text[:8000]
+                parsed_payload = self._parse_ollama_order_response(llm_text, case_ref)
+                ollama_response["parsed"] = parsed_payload.get("parsed")
+                ollama_response["normalized"] = parsed_payload.get("normalized")
+                ollama_response["parse_error"] = parsed_payload.get("parse_error")
+            except Exception as exc:
+                ollama_response["error"] = str(exc)
+
+        final_result = self.get_case_orders(case_ref=case_ref, date=date, bench=bench)
+        return {
+            "ok": True,
+            "request": {
+                "case_ref": case_ref,
+                "date": date,
+                "bench": bench,
+                "court_code": court_code,
+            },
+            "scraper_config": self.get_scraper_config(),
+            "candidate_urls": urls,
+            "http_trace": traces,
+            "ollama_request": ollama_request,
+            "ollama_response": ollama_response,
+            "direct_order_count": len(direct_orders),
+            "final_result": final_result,
+        }
 
     def _fetch_with_ollama_scraper(
         self, case_ref: str, date: Optional[str] = None, bench: str = "mumbai"

@@ -2,18 +2,22 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import sys
 from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import firebase_admin
 import pandas as pd
+import requests
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
+from pydantic import BaseModel
 
 # Configure logging to show INFO level messages
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -1472,6 +1476,95 @@ def _normalize_iso_date(value: Optional[str]) -> Optional[str]:
     return raw
 
 
+class ScraperProbeRequest(BaseModel):
+    case_ref: str
+    date: Optional[str] = None
+    bench: str = "mumbai"
+
+
+class OrderLinkAnalysisRequest(BaseModel):
+    url: str
+    persist_result: bool = False
+
+
+def _serialize_order_analysis_result(
+    filename: str,
+    analysis_result,
+    analysis_id: Optional[str] = None,
+    source_url: Optional[str] = None,
+    download_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    response_data: Dict[str, Any] = {
+        "filename": filename,
+        "order_category": analysis_result.order_category,
+        "category_confidence": round(analysis_result.category_confidence, 3),
+        "order_date": analysis_result.order_date,
+        "cases": [
+            {
+                "case_type": case.case_type,
+                "case_number": case.case_number,
+                "case_year": case.case_year,
+                "petitioner": case.petitioner,
+                "respondent": case.respondent,
+                "government_pleader": case.government_pleader,
+            }
+            for case in analysis_result.cases
+        ],
+        "summary": {
+            "total_cases": len(analysis_result.cases),
+        },
+    }
+
+    if analysis_id is not None:
+        response_data["analysis_id"] = analysis_id
+    if source_url is not None:
+        response_data["source_url"] = source_url
+    if download_metadata is not None:
+        response_data["download_metadata"] = download_metadata
+
+    return response_data
+
+
+def _derive_pdf_filename(source_url: str) -> str:
+    parsed = urlparse(source_url)
+    basename = posixpath.basename(parsed.path or "") or "order.pdf"
+    if not basename.lower().endswith(".pdf"):
+        basename = f"{basename}.pdf"
+    return basename
+
+
+def _download_pdf_from_url(source_url: str) -> Dict[str, Any]:
+    response = requests.get(source_url, timeout=60)
+    response.raise_for_status()
+
+    file_content = response.content or b""
+    if not file_content:
+        raise ValueError("Downloaded file is empty")
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    is_pdf = (
+        source_url.lower().endswith(".pdf")
+        or "application/pdf" in content_type
+        or file_content.startswith(b"%PDF")
+    )
+    if not is_pdf:
+        raise ValueError(
+            f"URL did not return a PDF document. Content-Type was '{content_type or 'unknown'}'"
+        )
+
+    return {
+        "filename": _derive_pdf_filename(source_url),
+        "file_content": file_content,
+        "metadata": {
+            "source_url": source_url,
+            "resolved_url": response.url,
+            "content_type": content_type,
+            "content_length": len(file_content),
+            "status_code": response.status_code,
+        },
+    }
+
+
 def _get_cached_case_details_payload(case_ref: str) -> Optional[Dict]:
     normalized_case_ref = str(case_ref or "").strip().upper()
     if not normalized_case_ref:
@@ -1852,8 +1945,10 @@ async def analyze_order_document(
     - Key phrases and next hearing dates
     """
     try:
+        filename = file.filename or "uploaded-order.pdf"
+
         # Validate file type
-        if not file.filename.lower().endswith(".pdf"):
+        if not filename.lower().endswith(".pdf"):
             return JSONResponse(
                 status_code=400,
                 content={"error": "Only PDF files are supported for order analysis"},
@@ -1867,47 +1962,28 @@ async def analyze_order_document(
                 status_code=400, content={"error": "Uploaded file is empty"}
             )
 
-        logging.info(f"Starting order analysis for file: {file.filename}")
+        logging.info(f"Starting order analysis for file: {filename}")
 
         # Analyze the order document
         analysis_result = get_order_analyzer().analyze_order_document(
-            file.filename, file_content
+            filename, file_content
         )
 
         # DEBUG: Log the actual category being returned
-        logging.info(f"🔍 CATEGORY DEBUG for {file.filename}:")
+        logging.info(f"🔍 CATEGORY DEBUG for {filename}:")
         logging.info(f"   order_category: '{analysis_result.order_category}'")
         logging.info(f"   category_confidence: {analysis_result.category_confidence}")
 
         # Save analysis result to database
-        doc_id = get_order_analyzer().save_analysis_result(
-            file.filename, analysis_result
+        doc_id = get_order_analyzer().save_analysis_result(filename, analysis_result)
+
+        response_data = _serialize_order_analysis_result(
+            filename=filename,
+            analysis_result=analysis_result,
+            analysis_id=doc_id,
         )
 
-        # Prepare simplified response with clean case-by-case extraction
-        response_data = {
-            "analysis_id": doc_id,
-            "filename": file.filename,
-            "order_category": analysis_result.order_category,
-            "category_confidence": round(analysis_result.category_confidence, 3),
-            "order_date": analysis_result.order_date,
-            "cases": [
-                {
-                    "case_type": case.case_type,
-                    "case_number": case.case_number,
-                    "case_year": case.case_year,
-                    "petitioner": case.petitioner,
-                    "respondent": case.respondent,
-                    "government_pleader": case.government_pleader,
-                }
-                for case in analysis_result.cases
-            ],
-            "summary": {
-                "total_cases": len(analysis_result.cases),
-            },
-        }
-
-        logging.info(f"Order analysis completed successfully for {file.filename}")
+        logging.info(f"Order analysis completed successfully for {filename}")
         return JSONResponse(content=response_data)
 
     except HTTPException as he:
@@ -1917,6 +1993,51 @@ async def analyze_order_document(
         logging.error(f"Unexpected error in order analysis: {str(e)}")
         return JSONResponse(
             status_code=500, content={"error": f"Order analysis failed: {str(e)}"}
+        )
+
+
+@app.post("/admin/order-analysis/from-link", tags=["Order Analysis"])
+async def analyze_order_document_from_link(
+    request: OrderLinkAnalysisRequest,
+    current_user: dict = Depends(require_admin_active),
+):
+    """Download a PDF from the provided URL and run the existing order analyzer on it."""
+    _ = current_user
+    try:
+        download = _download_pdf_from_url(request.url)
+        filename = download["filename"]
+        file_content = download["file_content"]
+
+        analysis_result = get_order_analyzer().analyze_order_document(
+            filename, file_content
+        )
+        analysis_id = None
+        if request.persist_result:
+            analysis_id = get_order_analyzer().save_analysis_result(
+                filename, analysis_result
+            )
+
+        response_data = _serialize_order_analysis_result(
+            filename=filename,
+            analysis_result=analysis_result,
+            analysis_id=analysis_id,
+            source_url=request.url,
+            download_metadata=download["metadata"],
+        )
+        response_data["persisted"] = bool(request.persist_result)
+        return JSONResponse(content=response_data)
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to download order PDF from URL: {str(exc)}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logging.error(f"Unexpected error analyzing order from link: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Order analysis failed for link: {str(exc)}",
         )
 
 
@@ -5095,6 +5216,24 @@ async def scraper_configure(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/admin/ollama/test-case", tags=["Case Orders"])
+async def admin_ollama_test_case(
+    request: ScraperProbeRequest,
+    current_user: dict = Depends(require_admin_active),
+):
+    """Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output."""
+    _ = current_user
+    scraper = get_court_scraper()
+    result = scraper.debug_case_orders(
+        case_ref=request.case_ref,
+        date=request.date,
+        bench=request.bench,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Probe failed"))
+    return JSONResponse(content=result)
 
 
 @app.post("/admin/ollama-pull-model", tags=["Case Orders"])
