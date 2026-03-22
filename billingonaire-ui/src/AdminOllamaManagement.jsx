@@ -30,6 +30,12 @@ const DEFAULT_PROBE_FORM = {
   bench: 'mumbai',
 };
 
+const DEFAULT_ORDER_LINKS_FORM = {
+  case_ref: 'WP/3373/2025',
+  date: '',
+  bench: 'mumbai',
+};
+
 const AdminOllamaManagement = () => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -43,6 +49,9 @@ const AdminOllamaManagement = () => {
   const [scraperForm, setScraperForm] = useState(DEFAULT_SCRAPER_FORM);
   const [probeForm, setProbeForm] = useState(DEFAULT_PROBE_FORM);
   const [probeResult, setProbeResult] = useState(null);
+  const [orderLinksForm, setOrderLinksForm] = useState(DEFAULT_ORDER_LINKS_FORM);
+  const [orderLinksResult, setOrderLinksResult] = useState(null);
+  const [orderLinksLoading, setOrderLinksLoading] = useState(false);
   const [orderAnalysisUrl, setOrderAnalysisUrl] = useState('');
   const [orderAnalysisPersist, setOrderAnalysisPersist] = useState(false);
   const [orderAnalysisResult, setOrderAnalysisResult] = useState(null);
@@ -214,6 +223,33 @@ const AdminOllamaManagement = () => {
       setError(`Failed to probe case: ${requestError.message}`);
     } finally {
       setProbeLoading(false);
+    }
+  };
+
+  const handleFetchOrderLinks = async () => {
+    if (!orderLinksForm.case_ref.trim()) {
+      setError('Please enter a case reference');
+      return;
+    }
+
+    setOrderLinksLoading(true);
+    setError('');
+    setSuccessMessage('');
+    setOrderLinksResult(null);
+
+    try {
+      const params = new URLSearchParams({ case_ref: orderLinksForm.case_ref.trim() });
+      if (orderLinksForm.date) params.set('date', orderLinksForm.date);
+      params.set('bench', orderLinksForm.bench);
+      const data = await authenticatedFetchJSON(`/court/case-orders?${params.toString()}`);
+      setOrderLinksResult(data);
+      const count = (data.court_orders || data.orders || []).length;
+      setSuccessMessage(`Found ${count} order link(s) for ${orderLinksForm.case_ref}`);
+    } catch (requestError) {
+      console.error('Error fetching order links:', requestError);
+      setError(`Failed to fetch order links: ${requestError.message}`);
+    } finally {
+      setOrderLinksLoading(false);
     }
   };
 
@@ -665,6 +701,200 @@ const AdminOllamaManagement = () => {
         </Row>
       )}
 
+      {/* ── Ad-hoc: Fetch Order Links via Web Scraping + Ollama ─────────────── */}
+      <Row className="mb-4">
+        <Col>
+          <Card className="card-professional">
+            <Card.Header className="card-header-professional">
+              <h5 className="mb-0">🔗 Ad-hoc Fetch Order Links</h5>
+            </Card.Header>
+            <Card.Body>
+              <p className="text-muted small">
+                Enter a case number to fetch all available order PDF links from the
+                Bombay High Court website using the configured scraper (Ollama or
+                Firecrawl). The currently active model is{' '}
+                <strong>{scraperForm.ollama_model || 'not configured'}</strong>.
+              </p>
+              <Row>
+                <Col md={7} className="mb-3">
+                  <Form.Label>Case Reference</Form.Label>
+                  <Form.Control
+                    type="text"
+                    placeholder="e.g. WP/3373/2025"
+                    value={orderLinksForm.case_ref}
+                    onChange={(event) =>
+                      setOrderLinksForm((prev) => ({
+                        ...prev,
+                        case_ref: event.target.value,
+                      }))
+                    }
+                  />
+                </Col>
+                <Col md={5} className="mb-3">
+                  <Form.Label>Bench</Form.Label>
+                  <Form.Select
+                    value={orderLinksForm.bench}
+                    onChange={(event) =>
+                      setOrderLinksForm((prev) => ({
+                        ...prev,
+                        bench: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="mumbai">Mumbai</option>
+                    <option value="mumbai_appellate">Mumbai Appellate</option>
+                    <option value="aurangabad">Aurangabad</option>
+                    <option value="nagpur">Nagpur</option>
+                    <option value="goa">Goa</option>
+                  </Form.Select>
+                </Col>
+              </Row>
+              <Form.Group className="mb-3">
+                <Form.Label>Date (optional – leave blank for all orders)</Form.Label>
+                <Form.Control
+                  type="date"
+                  value={orderLinksForm.date}
+                  onChange={(event) =>
+                    setOrderLinksForm((prev) => ({
+                      ...prev,
+                      date: event.target.value,
+                    }))
+                  }
+                />
+              </Form.Group>
+              <Button
+                variant="primary"
+                className="w-100"
+                onClick={handleFetchOrderLinks}
+                disabled={orderLinksLoading}
+              >
+                {orderLinksLoading ? (
+                  <>
+                    <Spinner animation="border" size="sm" className="me-2" />
+                    Fetching Order Links…
+                  </>
+                ) : (
+                  'Fetch Order Links'
+                )}
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {orderLinksResult && (
+        <Row className="mb-4">
+          <Col>
+            <Card className="card-professional">
+              <Card.Header className="card-header-professional">
+                <h5 className="mb-0">🗂️ Order Links Result</h5>
+              </Card.Header>
+              <Card.Body>
+                <Row className="mb-3">
+                  <Col md={4}>
+                    <div className="small text-muted">Case Reference</div>
+                    <strong>{orderLinksResult.case_ref}</strong>
+                  </Col>
+                  <Col md={4}>
+                    <div className="small text-muted">Order Links Found</div>
+                    <Badge bg={(orderLinksResult.court_orders || orderLinksResult.orders || []).length > 0 ? 'success' : 'secondary'}>
+                      {(orderLinksResult.court_orders || orderLinksResult.orders || []).length}
+                    </Badge>
+                  </Col>
+                  <Col md={4}>
+                    <div className="small text-muted">Ollama Model Used</div>
+                    <code>{scraperForm.ollama_model || '—'}</code>
+                  </Col>
+                </Row>
+
+                {(orderLinksResult.court_orders || orderLinksResult.orders || []).length > 0 ? (
+                  <div className="table-responsive">
+                    <Table striped hover size="sm" className="mb-0">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Order Link</th>
+                          <th>Date</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(orderLinksResult.court_orders || orderLinksResult.orders || []).map(
+                          (order, index) => {
+                            const url =
+                              typeof order === 'string'
+                                ? order
+                                : order.url || order.order_url || order.link || '';
+                            const orderDate =
+                              typeof order === 'object'
+                                ? order.date || order.order_date || '—'
+                                : '—';
+                            return (
+                              <tr key={`${url}-${index}`}>
+                                <td>{index + 1}</td>
+                                <td className="small">
+                                  <code
+                                    style={{
+                                      wordBreak: 'break-all',
+                                      whiteSpace: 'pre-wrap',
+                                    }}
+                                  >
+                                    {url || '(no URL)'}
+                                  </code>
+                                </td>
+                                <td>{orderDate}</td>
+                                <td>
+                                  {url && (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        variant="outline-primary"
+                                        className="me-1"
+                                        onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+                                      >
+                                        Open
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline-secondary"
+                                        onClick={() => {
+                                          setOrderAnalysisUrl(url);
+                                          window.scrollTo({
+                                            top: document.body.scrollHeight,
+                                            behavior: 'smooth',
+                                          });
+                                        }}
+                                      >
+                                        Analyze ↓
+                                      </Button>
+                                    </>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        )}
+                      </tbody>
+                    </Table>
+                  </div>
+                ) : (
+                  <Alert variant="warning" className="mb-0">
+                    No order links found for this case. Check the case reference and bench, or
+                    verify Ollama is healthy.
+                  </Alert>
+                )}
+
+                {orderLinksResult.status && (
+                  <div className="mt-3 small text-muted">
+                    Scraper status: <strong>{orderLinksResult.status}</strong>
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
       <Row className="mb-4">
         <Col>
           <Card className="card-professional">
@@ -716,11 +946,29 @@ const AdminOllamaManagement = () => {
                 <Row>
                   <Col md={3} className="mb-3">
                     <div className="small text-muted">Category</div>
-                    <Badge bg="primary">{orderAnalysisResult.order_category}</Badge>
+                    <Badge
+                      bg={
+                        orderAnalysisResult.order_category === 'DISPOSED_OFF'
+                          ? 'danger'
+                          : orderAnalysisResult.order_category === 'HEARD_AND_ADJOURNED'
+                          ? 'warning'
+                          : 'primary'
+                      }
+                    >
+                      {orderAnalysisResult.order_category || 'Unknown'}
+                    </Badge>
                   </Col>
                   <Col md={3} className="mb-3">
                     <div className="small text-muted">Confidence</div>
-                    <strong>{orderAnalysisResult.category_confidence}</strong>
+                    <Badge
+                      bg={
+                        orderAnalysisResult.category_confidence >= 0.7
+                          ? 'success'
+                          : 'warning'
+                      }
+                    >
+                      {(orderAnalysisResult.category_confidence * 100).toFixed(1)}%
+                    </Badge>
                   </Col>
                   <Col md={3} className="mb-3">
                     <div className="small text-muted">Order Date</div>
@@ -731,11 +979,49 @@ const AdminOllamaManagement = () => {
                     <strong>{orderAnalysisResult.summary?.total_cases || 0}</strong>
                   </Col>
                 </Row>
+
+                {orderAnalysisResult.persisted !== undefined && (
+                  <div className="mb-3">
+                    <div className="small text-muted">Persisted to DB</div>
+                    <Badge bg={orderAnalysisResult.persisted ? 'success' : 'secondary'}>
+                      {orderAnalysisResult.persisted ? 'Yes' : 'No'}
+                    </Badge>
+                  </div>
+                )}
+
+                {(orderAnalysisResult.cases || []).length > 0 && (
+                  <div className="table-responsive mt-2">
+                    <Table striped hover size="sm" className="mb-0">
+                      <thead>
+                        <tr>
+                          <th>Case</th>
+                          <th>Petitioner</th>
+                          <th>Respondent</th>
+                          <th>AGP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderAnalysisResult.cases.map((c, i) => (
+                          <tr key={i}>
+                            <td>
+                              <code>
+                                {c.case_type}/{c.case_number}/{c.case_year}
+                              </code>
+                            </td>
+                            <td className="small">{c.petitioner || '—'}</td>
+                            <td className="small">{c.respondent || '—'}</td>
+                            <td className="small">{c.government_pleader || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </div>
+                )}
               </Card.Body>
             </Card>
 
             {renderJsonBlock('Download Metadata', orderAnalysisResult.download_metadata)}
-            {renderJsonBlock('Order Analysis Response', orderAnalysisResult)}
+            {renderJsonBlock('Full Analysis Response', orderAnalysisResult)}
           </Col>
         </Row>
       )}
