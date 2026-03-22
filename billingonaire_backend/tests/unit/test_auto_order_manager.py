@@ -403,6 +403,44 @@ def test_download_order_for_case_prefers_structured_scraper(auto_order_manager):
     auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
 
 
+def test_download_order_for_case_uses_ollama_structured_source(auto_order_manager):
+    case_data = {
+        "case_ref": "WP/125/2024",
+        "board_date": "2024-01-15",
+    }
+
+    auto_order_manager.court_scraper.get_case_orders.return_value = {
+        "status": "found",
+        "source": "ollama_scraper",
+        "court_orders": [
+            {
+                "listing_date": "15/01/2024",
+                "download_url": "https://example.com/order-ollama.pdf",
+            }
+        ],
+    }
+
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock(
+        return_value={"success": False, "error": "should not be called"}
+    )
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"Content-Type": "application/pdf"}
+        response.content = b"%PDF-1.4 test"
+        mock_get.return_value = response
+
+        result = auto_order_manager._download_order_for_case(
+            case_data, sequence_number=1
+        )
+
+    assert result["success"] is True
+    assert result["source"] == "ollama_scraper_structured"
+    assert result["order_link"] == "https://example.com/order-ollama.pdf"
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
+
+
 def test_download_order_for_case_falls_back_to_legacy_sequence(auto_order_manager):
     case_data = {
         "case_ref": "WP/124/2024",

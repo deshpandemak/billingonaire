@@ -5059,5 +5059,113 @@ async def llm_configure(
     )
 
 
+@app.get("/scraper/status", tags=["Case Orders"])
+async def scraper_status(current_user: dict = Depends(require_admin_active)):
+    """Return current Bombay High Court scraper configuration and provider status."""
+    _ = current_user  # Explicitly keep dependency for admin-only access.
+    scraper = get_court_scraper()
+    return JSONResponse(content=scraper.get_scraper_config())
+
+
+@app.post("/scraper/configure", tags=["Case Orders"])
+async def scraper_configure(
+    provider: Optional[str] = None,
+    allow_firecrawl_fallback: Optional[bool] = None,
+    ollama_base_url: Optional[str] = None,
+    ollama_model: Optional[str] = None,
+    ollama_timeout_seconds: Optional[int] = None,
+    current_user: dict = Depends(require_admin_active),
+):
+    """Update scraper provider settings at runtime without redeploying the backend."""
+    _ = current_user  # Explicitly keep dependency for admin-only access.
+    scraper = get_court_scraper()
+    try:
+        updated = scraper.configure_scraper(
+            provider=provider,
+            allow_firecrawl_fallback=allow_firecrawl_fallback,
+            ollama_base_url=ollama_base_url,
+            ollama_model=ollama_model,
+            ollama_timeout_seconds=ollama_timeout_seconds,
+        )
+        return JSONResponse(
+            content={
+                "message": "Scraper configuration updated",
+                **updated,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/admin/ollama-pull-model", tags=["Case Orders"])
+async def admin_ollama_pull_model(
+    model_name: Optional[str] = None,
+    current_user: dict = Depends(require_admin_active),
+):
+    """
+    Trigger an asynchronous model pull on the configured Ollama instance.
+
+    **Admin-only endpoint.** Initiates model download without waiting for completion.
+    Download may take several minutes. Check Ollama endpoint directly for pull progress.
+
+    Query Parameters:
+    - model_name: Model identifier (e.g., 'llama3.1:8b').
+                  If omitted, uses configured COURT_OLLAMA_MODEL.
+
+    Returns 200 with pull status (status='pulling') if initiated successfully.
+    Returns 400 if model name is missing or Ollama is unreachable.
+    """
+    _ = current_user  # Explicitly keep dependency for admin-only access.
+    scraper = get_court_scraper()
+    try:
+        result = scraper.pull_ollama_model(model_name=model_name)
+        return JSONResponse(content=result, status_code=200)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logging.error(f"Unexpected error pulling Ollama model: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Server error while initiating model pull: {str(exc)}",
+        )
+
+
+@app.get("/admin/ollama/health", tags=["Case Orders"])
+async def admin_ollama_health(current_user: dict = Depends(require_admin_active)):
+    """
+    Check Ollama service health and responsiveness.
+
+    **Admin-only endpoint.** Returns detailed health check information.
+
+    Returns:
+    - healthy: bool indicating if service is up and responding
+    - status: 'ok' for healthy, or error description
+    - base_url: The Ollama endpoint being monitored
+    - response_time_ms: Milliseconds to complete health check
+    """
+    _ = current_user  # Explicitly keep dependency for admin-only access.
+    scraper = get_court_scraper()
+    return JSONResponse(content=scraper.get_ollama_health())
+
+
+@app.get("/admin/ollama/models", tags=["Case Orders"])
+async def admin_ollama_models(current_user: dict = Depends(require_admin_active)):
+    """
+    Get list of available models on Ollama instance.
+
+    **Admin-only endpoint.** Returns detailed model information from Ollama.
+
+    Returns:
+    - models: Array of model objects with name, size, digest, etc.
+    - healthy: bool indicating if Ollama is reachable
+    - status: 'ok' for success, or error description
+    - configured_model: The model Billingonaire is set to use
+    - available_model_names: Simple list of model names only
+    """
+    _ = current_user  # Explicitly keep dependency for admin-only access.
+    scraper = get_court_scraper()
+    return JSONResponse(content=scraper.get_ollama_models())
+
+
 # Cloud Run entry point - uvicorn will run the app directly
 # For Cloud Functions deployment, use a separate functions_entry.py file

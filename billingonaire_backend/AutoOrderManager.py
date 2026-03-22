@@ -1138,6 +1138,7 @@ class AutoOrderManager:
                 }
 
             download_url = order_entry["download_url"]
+            structured_source = str(response.get("source") or "firecrawl")
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
@@ -1163,7 +1164,7 @@ class AutoOrderManager:
                 "order_link": download_url,
                 "pdf_content": pdf_bytes,
                 "filename": order_filename,
-                "source": "firecrawl_structured",
+                "source": f"{structured_source}_structured",
                 "listing_date": order_entry.get("listing_date"),
                 "order_description": order_entry.get("order_description"),
             }

@@ -12,6 +12,7 @@ This skill describes the standard pattern for adding a new API endpoint to the B
 
 | Convention | Detail |
 |-----------|--------|
+### 6. Code Quality & Linting
 | Python version | 3.11 |
 | Formatter | Black, line length 88 |
 | Import sorting | isort |

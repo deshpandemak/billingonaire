@@ -1,6 +1,8 @@
 import pytest
+from unittest.mock import Mock
 
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
+
 
 
 def test_scraper_initialization():
@@ -23,6 +25,29 @@ def test_parse_case_number_invalid():
     assert isinstance(result, dict)
     # Should be empty dict for invalid input
     assert result == {}
+
+
+def test_scraper_runtime_config_roundtrip():
+    scraper = BombayHighCourtScraper()
+    updated = scraper.configure_scraper(
+        provider="ollama_only",
+        allow_firecrawl_fallback=False,
+        ollama_base_url="http://localhost:11434",
+        ollama_model="llama3.2",
+        ollama_timeout_seconds=25,
+    )
+
+    assert updated["provider"] == "ollama_only"
+    assert updated["allow_firecrawl_fallback"] is False
+    assert updated["ollama"]["base_url"] == "http://localhost:11434"
+    assert updated["ollama"]["model"] == "llama3.2"
+    assert updated["ollama"]["timeout_seconds"] == 25
+
+
+def test_scraper_runtime_config_rejects_invalid_provider():
+    scraper = BombayHighCourtScraper()
+    with pytest.raises(ValueError):
+        scraper.configure_scraper(provider="invalid_provider")
 
 
 def test_firecrawl_prompt_includes_listing_navigation_steps():
@@ -154,6 +179,52 @@ def test_get_case_orders_fallback_shape_when_firecrawl_unavailable(monkeypatch):
     assert isinstance(result["court_orders"], list)
 
 
+def test_get_case_orders_prefers_ollama_when_configured(monkeypatch):
+    scraper = BombayHighCourtScraper()
+    scraper.scraper_provider = "ollama_first"
+
+    ollama_result = {
+        "status": "found",
+        "source": "ollama_scraper",
+        "case_details": {"case_number": "WP/3373/2025"},
+        "court_orders": [{"listing_date": "09/04/2025", "download_url": "https://example.com/order-1.pdf"}],
+    }
+
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_ollama_scraper",
+        lambda case_ref, date=None, bench="mumbai": ollama_result,
+    )
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_firecrawl",
+        lambda case_ref, date=None: pytest.fail("Firecrawl should not be called"),
+    )
+
+    result = scraper.get_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
+    assert result["source"] == "ollama_scraper"
+    assert result["status"] == "found"
+
+
+def test_get_case_orders_ollama_only_skips_firecrawl(monkeypatch):
+    scraper = BombayHighCourtScraper()
+    scraper.scraper_provider = "ollama_only"
+
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_ollama_scraper",
+        lambda case_ref, date=None, bench="mumbai": None,
+    )
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_firecrawl",
+        lambda case_ref, date=None: pytest.fail("Firecrawl must be skipped in ollama_only mode"),
+    )
+
+    result = scraper.get_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
+    assert result["status"] in {"captcha_required", "error"}
+
+
 def test_fetch_with_firecrawl_extract_sdk_compat(monkeypatch):
     scraper = BombayHighCourtScraper()
     scraper.firecrawl_api_key = "test-key"
@@ -238,7 +309,10 @@ def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
     call_kwargs = agent_calls[0]
     assert call_kwargs.get("prompt")
     assert call_kwargs.get("model") == "spark-1-mini"
-    assert call_kwargs.get("urls") == ["https://www.bombayhighcourt.nic.in/*"]
+    urls = call_kwargs.get("urls") or []
+    assert any("case_no.php" in u for u in urls)
+    assert any("bombayhighcourt.nic.in" in u for u in urls)
+    assert any("hcservices.ecourts.gov.in/ecourtindiaHC" in u for u in urls)
 
     assert isinstance(result, dict)
     assert result["source"] == "firecrawl"
@@ -259,3 +333,106 @@ def test_fetch_with_firecrawl_returns_none_without_api_key():
     result = scraper._fetch_with_firecrawl("WP/3373/2025", date="2025-04-09")
 
     assert result is None
+
+
+def test_pull_ollama_model_success(monkeypatch):
+    """Verify pull_ollama_model triggers model pull and returns status."""
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = "llama3.2"
+    
+    # Mock successful POST request
+    mock_response = Mock()
+    mock_response.raise_for_status = Mock()
+    mock_response.status_code = 200
+    
+    mock_post = Mock(return_value=mock_response)
+    monkeypatch.setattr("billingonaire_backend.CourtScraper.requests.post", mock_post)
+    
+    result = scraper.pull_ollama_model(model_name="llama3.1:8b")
+    
+    # Verify POST called with correct URL and payload
+    mock_post.assert_called_once()
+    call_args = mock_post.call_args
+    assert "http://localhost:11434/api/pull" in call_args[0]
+    assert call_args[1]["json"]["model"] == "llama3.1:8b"
+    
+    # Verify response structure
+    assert result["status"] == "pulling"
+    assert result["model"] == "llama3.1:8b"
+    assert result["ollama_base_url"] == "http://localhost:11434"
+    assert "message" in result
+
+
+def test_pull_ollama_model_uses_default_model(monkeypatch):
+    """Verify pull_ollama_model defaults to configured model if not provided."""
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = "llama3.2"
+    
+    mock_response = Mock()
+    mock_response.raise_for_status = Mock()
+    
+    mock_post = Mock(return_value=mock_response)
+    monkeypatch.setattr("billingonaire_backend.CourtScraper.requests.post", mock_post)
+    
+    result = scraper.pull_ollama_model()  # No model_name provided
+    
+    # Should use default llama3.2
+    call_args = mock_post.call_args
+    assert call_args[1]["json"]["model"] == "llama3.2"
+    assert result["model"] == "llama3.2"
+
+
+
+def test_pull_ollama_model_requires_base_url():
+    """Verify pull_ollama_model raises error if base URL not configured."""
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = ""
+    
+    with pytest.raises(ValueError, match="base URL"):
+        scraper.pull_ollama_model(model_name="llama3.1:8b")
+
+
+def test_pull_ollama_model_requires_model_name():
+    """Verify pull_ollama_model raises error if model name not provided or configured."""
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = ""  # Empty default
+    
+    with pytest.raises(ValueError, match="Model name"):
+        scraper.pull_ollama_model()  # No model_name + empty default
+
+
+def test_pull_ollama_model_handles_connection_error(monkeypatch):
+    """Verify pull_ollama_model raises error on connection failure."""
+    import requests
+    
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = "llama3.2"
+    
+    # Mock connection error
+    mock_post = Mock(side_effect=requests.exceptions.ConnectionError("Network unreachable"))
+    monkeypatch.setattr("billingonaire_backend.CourtScraper.requests.post", mock_post)
+    
+    with pytest.raises(ValueError, match="Cannot reach Ollama"):
+        scraper.pull_ollama_model(model_name="llama3.1:8b")
+
+
+def test_pull_ollama_model_handles_timeout(monkeypatch):
+    """Verify pull_ollama_model raises error on timeout."""
+    import requests
+    
+    scraper = BombayHighCourtScraper()
+    scraper.ollama_base_url = "http://localhost:11434"
+    scraper.ollama_model = "llama3.2"
+    
+    # Mock timeout
+    mock_post = Mock(side_effect=requests.exceptions.Timeout("Request timed out"))
+    monkeypatch.setattr("billingonaire_backend.CourtScraper.requests.post", mock_post)
+    
+    with pytest.raises(ValueError, match="Timeout"):
+        scraper.pull_ollama_model(model_name="llama3.1:8b")
+
+
