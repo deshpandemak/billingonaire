@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'billingonaire_backend/**'
+      - 'billingonaire-ui/**'
+      - 'firebase/**'
+      - '.github/workflows/**'
+      - 'firebase.json'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'package.json'
   workflow_dispatch:  # Allow manual triggering
     inputs:
       deploy_ollama:
@@ -14,6 +23,10 @@ on:
         description: 'Ollama model to preload when deploy_ollama=true'
         required: false
         default: 'llama3.1:8b'
+
+concurrency:
+  group: cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   PYTHON_VERSION: '3.11'
