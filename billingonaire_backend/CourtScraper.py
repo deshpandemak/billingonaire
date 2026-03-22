@@ -20,22 +20,13 @@ load_dotenv()
 
 class FirecrawlCaseDetails(BaseModel):
     petitioner_name: Optional[str] = Field(default=None)
-    petitioner_name_citation: Optional[str] = Field(default=None)
     respondent_name: Optional[str] = Field(default=None)
-    respondent_name_citation: Optional[str] = Field(default=None)
     case_number: Optional[str] = Field(default=None)
-    case_number_citation: Optional[str] = Field(default=None)
-    case_status_url: Optional[str] = Field(default=None)
-    case_status_url_citation: Optional[str] = Field(default=None)
 
 
 class FirecrawlCourtOrder(BaseModel):
     listing_date: Optional[str] = Field(default=None)
-    listing_date_citation: Optional[str] = Field(default=None)
     download_url: Optional[str] = Field(default=None)
-    download_url_citation: Optional[str] = Field(default=None)
-    order_description: Optional[str] = Field(default=None)
-    order_description_citation: Optional[str] = Field(default=None)
 
 
 class FirecrawlOrderExtraction(BaseModel):
@@ -84,46 +75,73 @@ class BombayHighCourtScraper:
         case_type = case_type_map.get(case_parts["case_type"], case_parts["case_type"])
         return f"{case_type} {case_parts['case_number']} of {case_parts['year']}"
 
-    def _build_firecrawl_prompt(self, case_ref: str) -> str:
+    def _build_firecrawl_prompt(
+        self, case_ref: str, case_parts: Optional[Dict[str, str]] = None
+    ) -> str:
         human_case_ref = self._normalize_case_ref(case_ref)
+        case_type = (case_parts or {}).get("case_type", "")
+        case_number = (case_parts or {}).get("case_number", "")
+        case_year = (case_parts or {}).get("year", "")
+        start_url = f"{self.base_url}/cases/case_no.php"
         return f"""
-Extract case details and court orders from bombayhighcourt.nic.in for:
-{human_case_ref}.
+CRITICAL RESTRICTION — READ BEFORE DOING ANYTHING:
+- You MUST NOT download, open, follow, fetch, or request any PDF or file URL at any point.
+- You MUST NOT click any link in the "Order/Judgement" column — only read the href attribute value.
+- There is NO date filter — collect ALL rows in the listing-dates table.
 
-Return data exactly in this structure:
+Task: Find case {human_case_ref} and return every court-order link from its Listing Dates page.
+
+STEP-BY-STEP NAVIGATION (follow exactly in order):
+
+Step 1 — Open the case-number search page:
+  Go to: {start_url}
+  (Or from the home page click "Case Status" → "Case Number Wise".)
+
+Step 2 — Fill in the search form with these exact values:
+  - Case Type  : {case_type}
+  - Case Number: {case_number}
+  - Year       : {case_year}
+  - Bench      : Mumbai (High Court)
+  Submit the form.
+
+Step 3 — Handle CAPTCHA if shown, then re-submit.
+
+Step 4 — On the case details page:
+  The page header may show both a Stamp No. (e.g. WP/7203/{case_year}) and a
+  Reg. No. (e.g. WP/{case_number}/{case_year}) — either is the correct case.
+  Click the button or tab labelled exactly "Listing Dates"
+  (it may also be labelled "Listing Dates/Orders", "Hearing Dates", or "View Orders").
+
+Step 5 — On the Listing Dates table page you will see a table with these columns:
+    Date | Coram | Action | Order/Judgement
+
+  For EVERY data row in that table:
+    a) Read the "Date" cell  → this is listing_date (format DD/MM/YYYY).
+    b) Look at the "Order/Judgement" cell — it contains a link with text like
+       "Order/Judg-1". DO NOT click it. Instead, read the href attribute of that
+       link and store it as download_url.
+  Collect ALL rows. Do not skip any row.
+
+Return ONLY this JSON — nothing else:
 {{
   "case_details": {{
     "petitioner_name": "...",
-    "petitioner_name_citation": "...",
     "respondent_name": "...",
-    "respondent_name_citation": "...",
-    "case_number": "...",
-    "case_number_citation": "...",
-    "case_status_url": "...",
-    "case_status_url_citation": "..."
+    "case_number": "..."
   }},
   "court_orders": [
     {{
       "listing_date": "DD/MM/YYYY",
-      "listing_date_citation": "...",
-      "download_url": "...",
-      "download_url_citation": "...",
-      "order_description": "...",
-      "order_description_citation": "..."
+      "download_url": "https://..."
     }}
   ]
 }}
 
-Navigation instructions:
-1. Case Status -> Case Number Wise.
-2. Resolve captcha if possible.
-3. Open Listing Dates and extract all order rows.
-
 Rules:
-- Preserve full download URL values exactly.
-- Keep court_orders as a list.
-- Use null for missing values.
-- Use citation URL values for each extracted field.
+- Copy the full URL from the href attribute exactly — do NOT shorten or modify it.
+- court_orders must list ALL rows from the table (e.g. 3 rows → 3 entries).
+- Use null only if a field is genuinely absent.
+- NEVER open, fetch, or preview any PDF or linked file.
 """.strip()
 
     def _parse_iso_date(self, value: str) -> Optional[datetime]:
@@ -153,25 +171,13 @@ Rules:
     def _normalize_firecrawl_payload(
         self, payload: Dict[str, Any], case_ref: str, date: Optional[str] = None
     ) -> Dict[str, Any]:
-        citation_default = self.bombay_high_court_url
         case_details = payload.get("case_details") or {}
         raw_orders = payload.get("court_orders") or []
-        expected_date = self._parse_iso_date(date) if date else None
 
         normalized_case_details = {
             "petitioner_name": case_details.get("petitioner_name"),
-            "petitioner_name_citation": case_details.get("petitioner_name_citation")
-            or citation_default,
             "respondent_name": case_details.get("respondent_name"),
-            "respondent_name_citation": case_details.get("respondent_name_citation")
-            or citation_default,
             "case_number": case_details.get("case_number") or case_ref,
-            "case_number_citation": case_details.get("case_number_citation")
-            or citation_default,
-            "case_status_url": case_details.get("case_status_url")
-            or f"{self.bombay_high_court_url}/casequery_action.php",
-            "case_status_url_citation": case_details.get("case_status_url_citation")
-            or citation_default,
         }
 
         normalized_orders: List[Dict[str, Optional[str]]] = []
@@ -180,28 +186,14 @@ Rules:
                 continue
 
             listing_date = order.get("listing_date")
-            if expected_date:
-                parsed_listing_date = self._parse_listing_date(str(listing_date or ""))
-                if (
-                    not parsed_listing_date
-                    or parsed_listing_date.date() != expected_date.date()
-                ):
-                    continue
+            download_url = str(order.get("download_url") or "").strip()
+            if not download_url:
+                continue
 
             normalized_orders.append(
                 {
                     "listing_date": listing_date,
-                    "listing_date_citation": order.get("listing_date_citation")
-                    or citation_default,
-                    "download_url": order.get("download_url"),
-                    "download_url_citation": order.get("download_url_citation")
-                    or citation_default,
-                    "order_description": order.get("order_description")
-                    or "Order/Judg-1",
-                    "order_description_citation": order.get(
-                        "order_description_citation"
-                    )
-                    or citation_default,
+                    "download_url": download_url,
                 }
             )
 
@@ -234,10 +226,15 @@ Rules:
                     return None
 
             app = firecrawl_cls(api_key=self.firecrawl_api_key)
-            prompt = self._build_firecrawl_prompt(case_ref)
+            case_parts = self.parse_case_number(case_ref) or {}
+            prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
-            # Use wildcard URL so Firecrawl can crawl case-status sub-pages
-            crawl_urls = [f"{self.bombay_high_court_url}/*"]
+            # Agent starts at the eCourts case-number search page; allow both domains.
+            crawl_urls = [
+                f"{self.base_url}/cases/case_no.php",
+                f"{self.base_url}/*",
+                f"{self.bombay_high_court_url}/*",
+            ]
             if hasattr(app, "agent"):
                 result = app.agent(
                     schema=FirecrawlOrderExtraction,

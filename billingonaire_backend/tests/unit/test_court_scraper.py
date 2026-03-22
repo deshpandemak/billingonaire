@@ -25,6 +25,31 @@ def test_parse_case_number_invalid():
     assert result == {}
 
 
+def test_firecrawl_prompt_includes_listing_navigation_steps():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_firecrawl_prompt("WP/3373/2025", case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"})
+
+    # Starting URL must be present
+    assert "case_no.php" in prompt
+    # Form field values injected
+    assert "WP" in prompt
+    assert "3373" in prompt
+    assert "2025" in prompt
+    # Critical: agent must click "Listing Dates" tab
+    assert "Listing Dates" in prompt
+    # Critical: table column name so agent knows where to look
+    assert "Order/Judgement" in prompt
+    # Critical: agent must read href, not click the link
+    assert "Order/Judg-1" in prompt
+    # No-download restriction is prominent
+    assert "MUST NOT" in prompt
+    assert "NEVER" in prompt
+    # No date filter
+    assert "NO date filter" in prompt
+    # All rows collected
+    assert "ALL rows" in prompt or "ALL" in prompt
+
+
 def test_get_case_details_error():
     scraper = BombayHighCourtScraper()
     # Should not raise, just return empty dict or error info
@@ -60,7 +85,7 @@ def test_get_case_details_uses_firecrawl_result(monkeypatch):
     assert isinstance(result["court_orders"], list)
 
 
-def test_normalize_firecrawl_payload_applies_defaults_and_date_filter():
+def test_normalize_firecrawl_payload_returns_all_order_links_even_with_date():
     scraper = BombayHighCourtScraper()
     payload = {
         "case_details": {
@@ -89,15 +114,13 @@ def test_normalize_firecrawl_payload_applies_defaults_and_date_filter():
     assert result["status"] == "found"
     assert result["source"] == "firecrawl"
     assert result["case_details"]["petitioner_name"] == "Petitioner A"
-    assert (
-        result["case_details"]["petitioner_name_citation"]
-        == scraper.bombay_high_court_url
-    )
-    assert len(result["court_orders"]) == 1
+    assert len(result["court_orders"]) == 2
     assert (
         result["court_orders"][0]["download_url"] == "https://example.com/order-1.pdf"
     )
-    assert result["court_orders"][0]["order_description"] == "Order/Judg-1"
+    assert (
+        result["court_orders"][1]["download_url"] == "https://example.com/order-2.pdf"
+    )
 
 
 def test_get_case_orders_uses_firecrawl_result(monkeypatch):
