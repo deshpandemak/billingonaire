@@ -1,5 +1,5 @@
-import os
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -7,8 +7,10 @@ import pytest
 try:
     from dotenv import load_dotenv
 except ImportError:
+
     def load_dotenv(*_args, **_kwargs):
         return False
+
 
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
@@ -129,7 +131,9 @@ def test_live_firecrawl_finds_orders_for_bombay_high_court_case(live_firecrawl_r
 
     # Validate that extracted data is link metadata only (no binary content download).
     download_urls = [
-        str(order.get("download_url") or "").strip() for order in orders if isinstance(order, dict)
+        str(order.get("download_url") or "").strip()
+        for order in orders
+        if isinstance(order, dict)
     ]
     assert any(url.startswith("http") for url in download_urls), (
         "Orders were returned but no valid download_url values were found. "
@@ -141,7 +145,9 @@ def test_live_firecrawl_finds_orders_for_bombay_high_court_case(live_firecrawl_r
         for order in orders
         if isinstance(order, dict)
     ]
-    assert any(listing_dates), "Orders were returned but listing_date is missing for all rows"
+    assert any(
+        listing_dates
+    ), "Orders were returned but listing_date is missing for all rows"
 
     forbidden_payload_keys = {
         "file_bytes",

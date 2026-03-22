@@ -55,7 +55,9 @@ def benchmark(
 
     for case_ref in case_refs:
         started = time.perf_counter()
-        payload = scraper.get_case_orders(case_ref=case_ref, date=board_date, bench=bench)
+        payload = scraper.get_case_orders(
+            case_ref=case_ref, date=board_date, bench=bench
+        )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
 
         status = str(payload.get("status") or "unknown")
@@ -112,17 +114,29 @@ def benchmark(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark Bombay High Court scraper providers")
-    parser.add_argument("--input-file", required=True, help="Text file with one case ref per line, e.g. WP/3373/2025")
+    parser = argparse.ArgumentParser(
+        description="Benchmark Bombay High Court scraper providers"
+    )
+    parser.add_argument(
+        "--input-file",
+        required=True,
+        help="Text file with one case ref per line, e.g. WP/3373/2025",
+    )
     parser.add_argument(
         "--provider",
         default="ollama_only",
         choices=["firecrawl_first", "firecrawl_only", "ollama_first", "ollama_only"],
         help="Scraper provider strategy",
     )
-    parser.add_argument("--board-date", default=None, help="Optional board date filter in YYYY-MM-DD")
-    parser.add_argument("--bench", default="mumbai", help="Bench code input, e.g. mumbai, aurangabad")
-    parser.add_argument("--limit", type=int, default=50, help="Maximum number of case refs to benchmark")
+    parser.add_argument(
+        "--board-date", default=None, help="Optional board date filter in YYYY-MM-DD"
+    )
+    parser.add_argument(
+        "--bench", default="mumbai", help="Bench code input, e.g. mumbai, aurangabad"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=50, help="Maximum number of case refs to benchmark"
+    )
     parser.add_argument(
         "--allow-firecrawl-fallback",
         action="store_true",
@@ -134,7 +148,9 @@ def main() -> None:
         default=23,
         help="Credit estimate per Firecrawl case call for budgeting",
     )
-    parser.add_argument("--output", default=None, help="Optional output JSON report path")
+    parser.add_argument(
+        "--output", default=None, help="Optional output JSON report path"
+    )
 
     args = parser.parse_args()
 

@@ -152,14 +152,18 @@ def test_firecrawl_uses_wildcard_url(monkeypatch):
 
     scraper._fetch_with_firecrawl("WP/1/2025")
 
-    assert len(captured_urls) == 3, f"Expected 3 URLs (start + 2 wildcards), got: {captured_urls}"
+    assert (
+        len(captured_urls) == 3
+    ), f"Expected 3 URLs (start + 2 wildcards), got: {captured_urls}"
     # Starting URL must be the eCourts case-number search page
-    assert any("case_no.php" in url for url in captured_urls), (
-        f"Expected case_no.php starting URL, got: {captured_urls}"
-    )
+    assert any(
+        "case_no.php" in url for url in captured_urls
+    ), f"Expected case_no.php starting URL, got: {captured_urls}"
     # Both domains must be present as wildcards
     assert any("bombayhighcourt.nic.in" in url for url in captured_urls)
-    assert any("hcservices.ecourts.gov.in/ecourtindiaHC" in url for url in captured_urls)
+    assert any(
+        "hcservices.ecourts.gov.in/ecourtindiaHC" in url for url in captured_urls
+    )
 
 
 # ---------------------------------------------------------------------------
