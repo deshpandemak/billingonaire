@@ -233,13 +233,15 @@ jobs:
 
           echo "🚀 Deploying to Cloud Run..."
 
-          BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }}"
+          BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }},FIRECRAWL_MODEL=spark-1-mini"
           if [ -n "$OLLAMA_BASE_URL" ]; then
             BACKEND_ENV_VARS="$BACKEND_ENV_VARS,ORDER_ENABLE_LLM_FALLBACK=true,ORDER_LLM_PROVIDER=ollama,ORDER_LLM_MODEL=${{ env.OLLAMA_MODEL }},OLLAMA_BASE_URL=$OLLAMA_BASE_URL"
           fi
 
           # Deploy with Application Default Credentials (service account)
           # Using commit SHA tag ensures we deploy exactly what was built
+          # --startup-cpu-boost ensures full CPU during cold start so heavy Python/ML
+          # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --region=${{ env.GCP_REGION }} \
@@ -250,8 +252,10 @@ jobs:
             --timeout=540s \
             --max-instances=10 \
             --min-instances=1 \
+            --startup-cpu-boost \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-            --set-env-vars="$BACKEND_ENV_VARS"
+            --set-env-vars="$BACKEND_ENV_VARS" \
+            --set-secrets="FIRECRAWL_API_KEY=FIRECRAWL_API_KEY:latest"
 
       - name: Verify Deployment
         run: |
