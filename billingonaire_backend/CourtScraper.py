@@ -995,25 +995,33 @@ Rules:
             case_parts = self.parse_case_number(case_ref) or {}
             prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
-            # Agent starts at the Bombay High Court home page and navigates via
-            # "Case Status" → "Case Number Wise" menu; allow both site domains.
-            crawl_urls = [
-                f"{self.bombay_high_court_url}/",
-                f"{self.bombay_high_court_url}/*",
-                f"{self.base_url}/cases/case_no.php",
-                f"{self.base_url}/*",
-            ]
             if hasattr(app, "agent"):
+                # Agent-based SDK: start at the BHC home page so the agent can
+                # navigate via "Case Status" → "Case Number Wise"; also allow
+                # both site domains via wildcard.
+                agent_urls = [
+                    f"{self.bombay_high_court_url}/",
+                    f"{self.bombay_high_court_url}/*",
+                    f"{self.base_url}/cases/case_no.php",
+                    f"{self.base_url}/*",
+                ]
                 result = app.agent(
                     schema=FirecrawlOrderExtraction,
                     prompt=prompt,
-                    urls=crawl_urls,
+                    urls=agent_urls,
                     model=self.firecrawl_model,
                 )
             elif hasattr(app, "extract"):
+                # Extract-based SDK: point directly at the eCourts search page
+                # and allow both site domains via wildcard.
+                extract_urls = [
+                    f"{self.base_url}/cases/case_no.php",
+                    f"{self.bombay_high_court_url}/*",
+                    f"{self.base_url}/*",
+                ]
                 schema = FirecrawlOrderExtraction.model_json_schema()
                 result = app.extract(
-                    urls=crawl_urls,
+                    urls=extract_urls,
                     prompt=prompt,
                     schema=schema,
                     agent={"model": self.firecrawl_model},

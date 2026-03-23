@@ -104,7 +104,7 @@ def test_ollama_extraction_prompt_describes_navigation_sequence():
     # Form fields described
     assert "CAPTCHA" in prompt or "captcha" in prompt.lower()
     # Stamp/Regn value included
-    assert "Registration" in prompt   # WP type → Registration
+    assert "Registration" in prompt  # WP type → Registration
     # Extraction rules
     assert "petitioner" in prompt.lower()
     assert "respondent" in prompt.lower()
@@ -206,10 +206,10 @@ def test_ollama_prompt_includes_parsed_form_fields():
         "WP(ST)/294/2025",
         html_chunks=["<html><body>Test</body></html>"],
     )
-    assert "WP" in prompt       # base case type
-    assert "294" in prompt      # case number
-    assert "2025" in prompt     # year
-    assert "Stamp" in prompt    # stamp/regn type
+    assert "WP" in prompt  # base case type
+    assert "294" in prompt  # case number
+    assert "2025" in prompt  # year
+    assert "Stamp" in prompt  # stamp/regn type
 
 
 def test_get_case_details_error():
