@@ -648,3 +648,68 @@ def test_debug_case_orders_returns_trace_and_ollama_payload(monkeypatch):
     assert result["ollama_request"]["model"] == "llama3.2"
     assert result["ollama_response"]["normalized"]["status"] == "found"
     assert result["final_result"]["source"] == "ollama_scraper"
+
+
+def test_debug_case_orders_invalid_case_ref_returns_ok_false():
+    """Invalid case reference must return ok=False without raising."""
+    scraper = BombayHighCourtScraper()
+    result = scraper.debug_case_orders("INVALID-REF", None, "mumbai")
+    assert result["ok"] is False
+    assert "error" in result
+    assert result["request"]["case_ref"] == "INVALID-REF"
+
+
+def test_debug_case_orders_ollama_500_captured_in_response(monkeypatch):
+    """When Ollama returns HTTP 500 the error must be captured in ollama_response
+    and the probe result must still have ok=True with the debug trace."""
+
+    class FakeGetResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.url = "https://example.com/"
+            self.text = (
+                "<html><body>"
+                "<a href='/orders/test.pdf'>Order/Judg-1</a>"
+                "</body></html>"
+            )
+
+    class FakeOllama500:
+        status_code = 500
+
+    monkeypatch.setattr(scraper := BombayHighCourtScraper(), "session", None)
+    # Create a clean scraper instance and patch its session.get
+    scraper = BombayHighCourtScraper()
+    monkeypatch.setattr(scraper.session, "get", lambda url, timeout: FakeGetResponse())
+    monkeypatch.setattr(
+        "billingonaire_backend.CourtScraper.requests.post",
+        lambda *args, **kwargs: FakeOllama500(),
+    )
+    monkeypatch.setattr(
+        scraper,
+        "get_case_orders",
+        lambda case_ref, date=None, bench="mumbai": {"status": "captcha_required"},
+    )
+
+    result = scraper.debug_case_orders("WP/3373/2025", None, "mumbai")
+
+    assert result["ok"] is True
+    assert result["ollama_response"]["status_code"] == 500
+    assert result["ollama_response"]["error"] == "Ollama returned HTTP 500"
+    assert result["ollama_response"]["raw_response"] is None
+
+
+def test_debug_case_orders_unexpected_exception_returns_ok_false(monkeypatch):
+    """An unexpected exception inside _debug_case_orders_impl must be caught by
+    the top-level handler and returned as ok=False with the error message."""
+    scraper = BombayHighCourtScraper()
+
+    def _explode(case_ref, date=None, bench="mumbai"):
+        raise RuntimeError("unexpected scraper failure")
+
+    monkeypatch.setattr(scraper, "_debug_case_orders_impl", _explode)
+
+    result = scraper.debug_case_orders("WP/3373/2025", None, "mumbai")
+
+    assert result["ok"] is False
+    assert "unexpected scraper failure" in result["error"]
+    assert result["request"]["case_ref"] == "WP/3373/2025"
