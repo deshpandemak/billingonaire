@@ -8,6 +8,10 @@ on:
   workflow_dispatch:
   workflow_call:  # Allow this workflow to be called by other workflows
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
