@@ -5225,17 +5225,15 @@ async def admin_ollama_test_case(
 ):
     """Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output."""
     _ = current_user
-    scraper = get_court_scraper()
     try:
+        scraper = get_court_scraper()
         result = scraper.debug_case_orders(
             case_ref=request.case_ref,
             date=request.date,
             bench=request.bench,
         )
     except Exception as exc:
-        logging.error(
-            f"Unexpected error in scraper probe for {request.case_ref}: {exc}"
-        )
+        logging.exception("Unexpected error in scraper probe for %s", request.case_ref)
         result = {
             "ok": False,
             "error": str(exc),

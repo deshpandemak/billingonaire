@@ -676,8 +676,6 @@ def test_debug_case_orders_ollama_500_captured_in_response(monkeypatch):
     class FakeOllama500:
         status_code = 500
 
-    monkeypatch.setattr(scraper := BombayHighCourtScraper(), "session", None)
-    # Create a clean scraper instance and patch its session.get
     scraper = BombayHighCourtScraper()
     monkeypatch.setattr(scraper.session, "get", lambda url, timeout: FakeGetResponse())
     monkeypatch.setattr(
