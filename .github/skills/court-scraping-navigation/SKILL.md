@@ -18,13 +18,15 @@ bombayhighcourt.nic.in (home)
         ▼ click "Case Number Wise" in dropdown
         │
   [Case Number Search Form]
-  ┌─────────────────────────────────┐
-  │ Case Type   : e.g. WP           │
-  │ Stamp/Reg No: e.g. 3373         │
-  │ Case Number : e.g. 3373         │
-  │ Year        : e.g. 2025         │
-  │ CAPTCHA     : (solve manually)  │
-  └─────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ Case Type   : e.g. WP  (base type, without "(ST)")                  │
+  │ Stamp/Regn  : Registration  ← default                               │
+  │               Stamp         ← set when case type ends with "(ST)"   │
+  │               (e.g. WP(ST)/294/2025 → Case Type=WP, Stamp/Regn=Stamp) │
+  │ Case Number : e.g. 3373  (the numeric part only)                    │
+  │ Year        : e.g. 2025                                             │
+  │ CAPTCHA     : (solve manually)                                      │
+  └─────────────────────────────────────────────────────────────────────┘
         │ submit
         ▼
   [Case Details Page]
@@ -57,6 +59,32 @@ bombayhighcourt.nic.in (home)
 | `billingonaire_backend/tests/unit/test_court_scraper.py` | Unit tests for prompts, navigation URLs, extraction logic |
 | `.github/skills/court-order-management/SKILL.md` | Order lifecycle and broader court order management |
 
+## Stamp/Regn Field Determination
+
+The Bombay HC search form has a **Stamp/Regn dropdown** with two options:
+
+| Stamp/Regn Value | When to use |
+|------------------|-------------|
+| `Registration` | Default — all regular case types (WP, PIL, APL, WPL, …) |
+| `Stamp` | Case type ends with `(ST)` — e.g. `WP(ST)/294/2025` |
+
+The `(ST)` suffix is part of the case reference as provided by the user. It is not passed to the Case Type dropdown; instead the base type (e.g. `WP`) is entered there, and the Stamp/Regn dropdown is set to `Stamp`.
+
+### Helper methods in `CourtScraper.py`
+
+```python
+scraper._get_stamp_regn_type("WP")        # → "Registration"
+scraper._get_stamp_regn_type("WP(ST)")    # → "Stamp"
+scraper._get_base_case_type("WP(ST)")     # → "WP"
+scraper._get_base_case_type("WP")         # → "WP"
+```
+
+`parse_case_number()` accepts both formats:
+```python
+scraper.parse_case_number("WP/3373/2025")     # → {"case_type": "WP", ...}
+scraper.parse_case_number("WP(ST)/294/2025")  # → {"case_type": "WP(ST)", ...}
+```
+
 ## Firecrawl Integration
 
 Firecrawl uses an AI agent that can navigate the browser, solve CAPTCHAs, and extract structured data. The key method is `_build_firecrawl_prompt()` in `CourtScraper.py`.
@@ -75,7 +103,7 @@ Firecrawl uses an AI agent that can navigate the browser, solve CAPTCHAs, and ex
    ```
 3. The prompt (from `_build_firecrawl_prompt()`) instructs the agent step-by-step:
    - Step 1: Open home page → click "Case Status" → "Case Number Wise"
-   - Step 2: Fill form (Case Type, Stamp/Reg No, Case Number, Year, Bench)
+   - Step 2: Fill form — Case Type (base type, without "(ST)"), Stamp/Regn ("Registration" or "Stamp"), Case Number, Year, Bench
    - Step 3: Handle CAPTCHA, re-submit
    - Step 4: On case details page — read petitioner/respondent; click "Listing Dates/Order"
    - Step 5: Collect ALL rows from the Listing Dates table (Date + Order/Judgement href)
