@@ -57,14 +57,26 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
         case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"},
     )
 
-    # Starting URL must be present
+    # Home-page navigation: agent starts from the Bombay High Court home page
+    assert "bombayhighcourt.nic.in" in prompt
+    # Menu navigation steps must be present
+    assert "Case Status" in prompt
+    assert "Case Number Wise" in prompt
+    # Fallback direct URL must also be present
     assert "case_no.php" in prompt
     # Form field values injected
     assert "WP" in prompt
     assert "3373" in prompt
     assert "2025" in prompt
-    # Critical: agent must click "Listing Dates" tab
-    assert "Listing Dates" in prompt
+    # Stamp/Regn dropdown is a separate form field with a specific value
+    assert "Stamp/Regn" in prompt
+    # For a plain WP type, value should be "Registration"
+    assert "Registration" in prompt
+    # Petitioner and respondent extraction after form submission
+    assert "petitioner" in prompt.lower() or "Petitioner" in prompt
+    assert "respondent" in prompt.lower() or "Respondent" in prompt
+    # Critical: agent must click "Listing Dates/Order" button
+    assert "Listing Dates/Order" in prompt
     # Critical: table column name so agent knows where to look
     assert "Order/Judgement" in prompt
     # Critical: agent must read href, not click the link
@@ -76,6 +88,128 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
     assert "NO date filter" in prompt
     # All rows collected
     assert "ALL rows" in prompt or "ALL" in prompt
+
+
+def test_ollama_extraction_prompt_describes_navigation_sequence():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_ollama_extraction_prompt(
+        "WP/3373/2025",
+        html_chunks=["<html><body>Test HTML</body></html>"],
+    )
+
+    # Navigation sequence must be described
+    assert "Case Status" in prompt
+    assert "Case Number Wise" in prompt
+    assert "Listing Dates/Order" in prompt
+    # Form fields described
+    assert "CAPTCHA" in prompt or "captcha" in prompt.lower()
+    # Stamp/Regn value included
+    assert "Registration" in prompt   # WP type → Registration
+    # Extraction rules
+    assert "petitioner" in prompt.lower()
+    assert "respondent" in prompt.lower()
+    assert "Order/Judgement" in prompt
+    # Case ref injected
+    assert "WP/3373/2025" in prompt
+
+
+def test_build_candidate_urls_starts_with_home_page():
+    scraper = BombayHighCourtScraper()
+    case_parts = {"case_type": "WP", "case_number": "3373", "year": "2025"}
+    urls = scraper._build_candidate_urls(case_parts, court_code="2")
+
+    # Home page must be the first URL (navigation entry point)
+    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
+    # Case search page must be present
+    assert any("case_no.php" in u for u in urls)
+    # Direct case detail URLs must still be present as fallbacks
+    assert any("case_detail.php" in u for u in urls)
+    assert any("order_list.php" in u for u in urls)
+
+
+def test_parse_case_number_with_stamp_suffix():
+    scraper = BombayHighCourtScraper()
+    result = scraper.parse_case_number("WP(ST)/294/2025")
+    assert result["case_type"] == "WP(ST)"
+    assert result["case_number"] == "294"
+    assert result["year"] == "2025"
+
+
+def test_get_stamp_regn_type_registration_default():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_stamp_regn_type("WP") == "Registration"
+    assert scraper._get_stamp_regn_type("PIL") == "Registration"
+    assert scraper._get_stamp_regn_type("APL") == "Registration"
+
+
+def test_get_stamp_regn_type_stamp_for_st_suffix():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_stamp_regn_type("WP(ST)") == "Stamp"
+    assert scraper._get_stamp_regn_type("wp(st)") == "Stamp"  # case-insensitive
+
+
+def test_get_base_case_type_strips_st_suffix():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_base_case_type("WP(ST)") == "WP"
+    assert scraper._get_base_case_type("WP") == "WP"
+    assert scraper._get_base_case_type("PIL") == "PIL"
+
+
+def test_firecrawl_prompt_uses_registration_for_normal_case_type():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_firecrawl_prompt(
+        "WP/3373/2025",
+        case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"},
+    )
+    assert "Registration" in prompt
+    # Stamp/Regn is a dropdown field — it should be distinct from the Case Number field
+    assert "Stamp/Regn" in prompt
+    assert "Case Number" in prompt
+    # Case number value appears in the Case Number field
+    assert "3373" in prompt
+
+
+def test_firecrawl_prompt_uses_stamp_for_st_case_type():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_firecrawl_prompt(
+        "WP(ST)/294/2025",
+        case_parts={"case_type": "WP(ST)", "case_number": "294", "year": "2025"},
+    )
+    # Stamp/Regn dropdown should be "Stamp"
+    assert "Stamp" in prompt
+    # Base case type WP (not WP(ST)) should appear in the Case Type field
+    assert "WP" in prompt
+    # Case Number field has the number
+    assert "294" in prompt
+
+
+def test_ollama_prompt_uses_stamp_regn_type():
+    scraper = BombayHighCourtScraper()
+    # Regular case type → Registration
+    prompt_reg = scraper._build_ollama_extraction_prompt(
+        "WP/3373/2025",
+        html_chunks=["<html><body>Test</body></html>"],
+    )
+    assert "Registration" in prompt_reg
+
+    # (ST) case type → Stamp
+    prompt_st = scraper._build_ollama_extraction_prompt(
+        "WP(ST)/294/2025",
+        html_chunks=["<html><body>Test</body></html>"],
+    )
+    assert "Stamp" in prompt_st
+
+
+def test_ollama_prompt_includes_parsed_form_fields():
+    scraper = BombayHighCourtScraper()
+    prompt = scraper._build_ollama_extraction_prompt(
+        "WP(ST)/294/2025",
+        html_chunks=["<html><body>Test</body></html>"],
+    )
+    assert "WP" in prompt       # base case type
+    assert "294" in prompt      # case number
+    assert "2025" in prompt     # year
+    assert "Stamp" in prompt    # stamp/regn type
 
 
 def test_get_case_details_error():
@@ -322,6 +456,8 @@ def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
     assert call_kwargs.get("prompt")
     assert call_kwargs.get("model") == "spark-1-mini"
     urls = call_kwargs.get("urls") or []
+    # Home page must be first (navigation entry point)
+    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
     assert any("case_no.php" in u for u in urls)
     assert any("bombayhighcourt.nic.in" in u for u in urls)
     assert any("hcservices.ecourts.gov.in/ecourtindiaHC" in u for u in urls)
