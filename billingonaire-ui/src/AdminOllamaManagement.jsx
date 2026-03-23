@@ -217,7 +217,11 @@ const AdminOllamaManagement = () => {
         }),
       });
       setProbeResult(result);
-      setSuccessMessage('Case probe completed');
+      if (result && result.ok === false) {
+        setError(`Probe returned an error: ${result.error || 'Unknown error'}`);
+      } else {
+        setSuccessMessage('Case probe completed');
+      }
     } catch (requestError) {
       console.error('Error probing case:', requestError);
       setError(`Failed to probe case: ${requestError.message}`);
@@ -891,6 +895,8 @@ const AdminOllamaManagement = () => {
                 )}
               </Card.Body>
             </Card>
+
+            {renderJsonBlock('Order Links Raw Response', orderLinksResult)}
           </Col>
         </Row>
       )}

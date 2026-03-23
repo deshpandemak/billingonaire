@@ -5225,14 +5225,26 @@ async def admin_ollama_test_case(
 ):
     """Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output."""
     _ = current_user
-    scraper = get_court_scraper()
-    result = scraper.debug_case_orders(
-        case_ref=request.case_ref,
-        date=request.date,
-        bench=request.bench,
-    )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Probe failed"))
+    try:
+        scraper = get_court_scraper()
+        result = scraper.debug_case_orders(
+            case_ref=request.case_ref,
+            date=request.date,
+            bench=request.bench,
+        )
+    except Exception as exc:
+        logging.exception("Unexpected error in scraper probe for %s", request.case_ref)
+        result = {
+            "ok": False,
+            "error": str(exc),
+            "request": {
+                "case_ref": request.case_ref,
+                "date": request.date,
+                "bench": request.bench,
+            },
+        }
+    # Always return 200 with the full result so the frontend can display
+    # request/response details even when the probe encountered an error.
     return JSONResponse(content=result)
 
 

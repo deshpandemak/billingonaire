@@ -54,6 +54,69 @@ async def test_admin_ollama_test_case_returns_probe_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_ollama_test_case_invalid_case_ref_returns_200_with_ok_false(
+    monkeypatch,
+):
+    """When debug_case_orders returns ok=False (invalid case ref), the endpoint
+    must still return HTTP 200 with the structured error payload so the frontend
+    can display request/response details rather than showing a generic error."""
+    monkeypatch.setattr(
+        main,
+        "get_court_scraper",
+        lambda: SimpleNamespace(
+            debug_case_orders=lambda case_ref, date, bench: {
+                "ok": False,
+                "error": "Invalid case reference format",
+                "request": {
+                    "case_ref": case_ref,
+                    "date": date,
+                    "bench": bench,
+                },
+            }
+        ),
+    )
+
+    response = await main.admin_ollama_test_case(
+        main.ScraperProbeRequest(case_ref="INVALID", date=None, bench="mumbai"),
+        current_user={"role": "admin"},
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["ok"] is False
+    assert "Invalid case reference format" in payload["error"]
+    assert payload["request"]["case_ref"] == "INVALID"
+
+
+@pytest.mark.asyncio
+async def test_admin_ollama_test_case_unexpected_exception_returns_200_with_ok_false(
+    monkeypatch,
+):
+    """When debug_case_orders raises an unexpected exception the endpoint must
+    return HTTP 200 with a structured error payload instead of propagating 500."""
+
+    def _raise(case_ref, date, bench):
+        raise RuntimeError("simulated internal failure")
+
+    monkeypatch.setattr(
+        main,
+        "get_court_scraper",
+        lambda: SimpleNamespace(debug_case_orders=_raise),
+    )
+
+    response = await main.admin_ollama_test_case(
+        main.ScraperProbeRequest(case_ref="WP/3373/2025", date=None, bench="mumbai"),
+        current_user={"role": "admin"},
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["ok"] is False
+    assert "simulated internal failure" in payload["error"]
+    assert payload["request"]["case_ref"] == "WP/3373/2025"
+
+
+@pytest.mark.asyncio
 async def test_analyze_order_document_from_link_downloads_and_serializes(monkeypatch):
     analysis_result = SimpleNamespace(
         order_category="ADJOURNED",

@@ -599,6 +599,30 @@ HTML text:
         date: Optional[str] = None,
         bench: str = "mumbai",
     ) -> Dict[str, Any]:
+        try:
+            return self._debug_case_orders_impl(
+                case_ref=case_ref, date=date, bench=bench
+            )
+        except Exception as exc:
+            logging.error(
+                "Unexpected error in debug_case_orders for %s: %s", case_ref, exc
+            )
+            return {
+                "ok": False,
+                "error": str(exc),
+                "request": {
+                    "case_ref": case_ref,
+                    "date": date,
+                    "bench": bench,
+                },
+            }
+
+    def _debug_case_orders_impl(
+        self,
+        case_ref: str,
+        date: Optional[str] = None,
+        bench: str = "mumbai",
+    ) -> Dict[str, Any]:
         case_parts = self.parse_case_number(case_ref)
         if not case_parts:
             return {
@@ -658,6 +682,7 @@ HTML text:
             "prompt_preview": prompt[:8000],
         }
         ollama_response: Dict[str, Any] = {
+            "status_code": None,
             "raw_response": None,
             "parsed": None,
             "normalized": None,
@@ -679,13 +704,19 @@ HTML text:
                     timeout=self.ollama_timeout_seconds,
                 )
                 ollama_response["status_code"] = response.status_code
-                response.raise_for_status()
-                llm_text = (response.json() or {}).get("response", "").strip()
-                ollama_response["raw_response"] = llm_text[:8000]
-                parsed_payload = self._parse_ollama_order_response(llm_text, case_ref)
-                ollama_response["parsed"] = parsed_payload.get("parsed")
-                ollama_response["normalized"] = parsed_payload.get("normalized")
-                ollama_response["parse_error"] = parsed_payload.get("parse_error")
+                if response.status_code != 200:
+                    ollama_response[
+                        "error"
+                    ] = f"Ollama returned HTTP {response.status_code}"
+                else:
+                    llm_text = (response.json() or {}).get("response", "").strip()
+                    ollama_response["raw_response"] = llm_text[:8000]
+                    parsed_payload = self._parse_ollama_order_response(
+                        llm_text, case_ref
+                    )
+                    ollama_response["parsed"] = parsed_payload.get("parsed")
+                    ollama_response["normalized"] = parsed_payload.get("normalized")
+                    ollama_response["parse_error"] = parsed_payload.get("parse_error")
             except Exception as exc:
                 ollama_response["error"] = str(exc)
 
