@@ -44,10 +44,21 @@ export const authenticatedFetch = async (url, options = {}) => {
     console.log('📡 authenticatedFetch: Making request to:', fullUrl);
     console.log('📡 authenticatedFetch: Method:', options.method || 'GET');
 
-    const response = await fetch(fullUrl, {
-      ...options,
-      headers
-    });
+    const timeoutMs = Number(options.timeoutMs ?? 45000);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    const { timeoutMs: _ignoredTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
+
+    let response;
+    try {
+      response = await fetch(fullUrl, {
+        ...fetchOptions,
+        headers,
+        signal: callerSignal || controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
 
     console.log('📥 authenticatedFetch: Response status:', response.status, response.statusText);
 
@@ -60,6 +71,9 @@ export const authenticatedFetch = async (url, options = {}) => {
     console.log('✅ authenticatedFetch: Request successful');
     return response;
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Request timed out. Please retry.');
+    }
     console.error('❌ authenticatedFetch: Exception caught:', error);
     throw error;
   }

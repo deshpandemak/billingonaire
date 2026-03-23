@@ -2,10 +2,8 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,13 +14,6 @@ try:
     from firecrawl import FirecrawlApp
 except ImportError:
     FirecrawlApp = None
-
-try:
-    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.sync_api import sync_playwright
-except ImportError:
-    PlaywrightTimeoutError = Exception
-    sync_playwright = None
 
 
 load_dotenv()
@@ -57,17 +48,11 @@ class BombayHighCourtScraper:
         self.firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY")
         self.firecrawl_model = os.getenv("FIRECRAWL_MODEL", "spark-1-mini")
         self.scraper_provider = (
-            os.getenv("COURT_SCRAPER_PROVIDER", "playwright_first").strip().lower()
+            os.getenv("COURT_SCRAPER_PROVIDER", "firecrawl_first").strip().lower()
         )
         self.allow_firecrawl_fallback = (
             os.getenv("COURT_ALLOW_FIRECRAWL_FALLBACK", "true").strip().lower()
             == "true"
-        )
-        self.playwright_headless = (
-            os.getenv("COURT_PLAYWRIGHT_HEADLESS", "true").strip().lower() == "true"
-        )
-        self.playwright_timeout_seconds = int(
-            os.getenv("COURT_PLAYWRIGHT_TIMEOUT_SECONDS", "25")
         )
         self.ollama_base_url = (
             os.getenv("COURT_OLLAMA_BASE_URL")
@@ -106,28 +91,8 @@ class BombayHighCourtScraper:
             }
         )
 
-    def _get_stamp_regn_type(self, case_type: str) -> str:
-        """
-        Return the Stamp/Regn dropdown value for the court search form.
-
-        Case types that end with "(ST)" (e.g. WP(ST)) indicate a Stamp
-        number lookup; all others use the default Registration number lookup.
-        """
-        return "Stamp" if case_type.upper().endswith("(ST)") else "Registration"
-
-    def _get_base_case_type(self, case_type: str) -> str:
-        """
-        Strip the '(ST)' suffix from the case type so it can be entered into
-        the Case Type dropdown on the court search form (e.g. WP(ST) → WP).
-        """
-        return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
-
     def _supported_providers(self) -> List[str]:
         return [
-            "playwright_first",
-            "playwright_only",
-            "playwright_then_ollama",
-            "ollama_then_playwright",
             "firecrawl_first",
             "firecrawl_only",
             "ollama_first",
@@ -139,15 +104,9 @@ class BombayHighCourtScraper:
             "provider": self.scraper_provider,
             "supported_providers": self._supported_providers(),
             "allow_firecrawl_fallback": self.allow_firecrawl_fallback,
-            "playwright": {
-                "available": bool(sync_playwright),
-                "headless": self.playwright_headless,
-                "timeout_seconds": self.playwright_timeout_seconds,
-            },
             "firecrawl": {
                 "configured": bool(self.firecrawl_api_key),
                 "model": self.firecrawl_model,
-                "deprecated": True,
             },
             "ollama": {
                 "base_url": self.ollama_base_url,
@@ -456,13 +415,11 @@ class BombayHighCourtScraper:
         case_type = case_parts.get("case_type")
         case_number = case_parts.get("case_number")
         year = case_parts.get("year")
-        # Start from the Bombay High Court home page (entry point for menu navigation).
-        # Then try the case-number search page and direct case/order URLs as fallbacks.
         return [
-            f"{self.bombay_high_court_url}/",
             f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
             f"{self.base_url}/cases/case_detail.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
             f"{self.base_url}/order_list.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
+            f"{self.bombay_high_court_url}/",
         ]
 
     def _extract_links_from_html(
@@ -538,28 +495,9 @@ class BombayHighCourtScraper:
     def _build_ollama_extraction_prompt(
         self, case_ref: str, html_chunks: List[str]
     ) -> str:
-        case_parts = self.parse_case_number(case_ref) or {}
-        raw_case_type = case_parts.get("case_type", "")
-        base_case_type = self._get_base_case_type(raw_case_type)
-        stamp_regn = self._get_stamp_regn_type(raw_case_type)
-        case_number = case_parts.get("case_number", "")
-        case_year = case_parts.get("year", "")
         combined = "\n\n---PAGE-CHUNK---\n\n".join(html_chunks[:3])
         return f"""
 Extract court-order links for case {case_ref} from the HTML text below.
-
-The HTML was fetched by navigating the Bombay High Court website in this sequence:
-1. Home page (bombayhighcourt.nic.in) → click "Case Status" → click "Case Number Wise"
-2. Fill in the search form:
-   - Case Type   : {base_case_type}
-   - Stamp/Regn  : {stamp_regn}  (use "Stamp" when case type ends with "(ST)", else "Registration")
-   - Case Number : {case_number}
-   - Year        : {case_year}
-   - Solve CAPTCHA and submit
-3. On the case details page: read the petitioner and respondent names
-4. Click the "Listing Dates/Order" button to view the orders table
-5. The orders table has columns: Date | Coram | Action | Order/Judgement
-
 Return ONLY valid JSON in this shape:
 {{
   "case_details": {{
@@ -576,10 +514,7 @@ Return ONLY valid JSON in this shape:
 }}
 
 Rules:
-- Extract petitioner and respondent names from the case details section if present.
-- Include only probable order/judgement links from the Listing Dates table.
-- The "Order/Judgement" column contains links — extract their href values as download_url.
-- The "Date" column provides the listing_date (format DD/MM/YYYY).
+- Include only probable order/judgement links.
 - Do not invent URLs.
 - If no order links are present, return an empty court_orders array.
 
@@ -638,11 +573,6 @@ HTML text:
                 timeout=self.ollama_timeout_seconds,
             )
             if response.status_code != 200:
-                logging.warning(
-                    "Ollama returned HTTP %s for case %s",
-                    response.status_code,
-                    case_ref,
-                )
                 return None
 
             llm_text = (response.json() or {}).get("response", "").strip()
@@ -658,31 +588,6 @@ HTML text:
             return None
 
     def debug_case_orders(
-        self,
-        case_ref: str,
-        date: Optional[str] = None,
-        bench: str = "mumbai",
-        compare_all: bool = False,
-    ) -> Dict[str, Any]:
-        try:
-            return self._debug_case_orders_impl(
-                case_ref=case_ref, date=date, bench=bench
-            )
-        except Exception as exc:
-            logging.error(
-                "Unexpected error in debug_case_orders for %s: %s", case_ref, exc
-            )
-            return {
-                "ok": False,
-                "error": str(exc),
-                "request": {
-                    "case_ref": case_ref,
-                    "date": date,
-                    "bench": bench,
-                },
-            }
-
-    def _debug_case_orders_impl(
         self,
         case_ref: str,
         date: Optional[str] = None,
@@ -747,7 +652,6 @@ HTML text:
             "prompt_preview": prompt[:8000],
         }
         ollama_response: Dict[str, Any] = {
-            "status_code": None,
             "raw_response": None,
             "parsed": None,
             "normalized": None,
@@ -769,36 +673,15 @@ HTML text:
                     timeout=self.ollama_timeout_seconds,
                 )
                 ollama_response["status_code"] = response.status_code
-                if response.status_code != 200:
-                    ollama_response[
-                        "error"
-                    ] = f"Ollama returned HTTP {response.status_code}"
-                else:
-                    llm_text = (response.json() or {}).get("response", "").strip()
-                    ollama_response["raw_response"] = llm_text[:8000]
-                    parsed_payload = self._parse_ollama_order_response(
-                        llm_text, case_ref
-                    )
-                    ollama_response["parsed"] = parsed_payload.get("parsed")
-                    ollama_response["normalized"] = parsed_payload.get("normalized")
-                    ollama_response["parse_error"] = parsed_payload.get("parse_error")
+                response.raise_for_status()
+                llm_text = (response.json() or {}).get("response", "").strip()
+                ollama_response["raw_response"] = llm_text[:8000]
+                parsed_payload = self._parse_ollama_order_response(llm_text, case_ref)
+                ollama_response["parsed"] = parsed_payload.get("parsed")
+                ollama_response["normalized"] = parsed_payload.get("normalized")
+                ollama_response["parse_error"] = parsed_payload.get("parse_error")
             except Exception as exc:
                 ollama_response["error"] = str(exc)
-
-        provider_debug = self._fetch_with_provider(
-            case_ref=case_ref,
-            date=date,
-            bench=bench,
-            include_diagnostics=True,
-        )
-
-        provider_matrix: List[Dict[str, Any]] = []
-        if compare_all:
-            provider_matrix = self._probe_provider_matrix(
-                case_ref=case_ref,
-                date=date,
-                bench=bench,
-            )
 
         final_result = self.get_case_orders(case_ref=case_ref, date=date, bench=bench)
         return {
@@ -814,153 +697,9 @@ HTML text:
             "http_trace": traces,
             "ollama_request": ollama_request,
             "ollama_response": ollama_response,
-            "provider_sequence": provider_debug.get("provider_sequence") or [],
-            "provider_attempts": provider_debug.get("provider_attempts") or [],
-            "provider_matrix": provider_matrix,
             "direct_order_count": len(direct_orders),
             "final_result": final_result,
         }
-
-    def _provider_attempt_sequence(self, provider: str) -> List[str]:
-        normalized = (provider or "playwright_first").lower()
-        if normalized == "ollama_only":
-            return ["ollama"]
-        if normalized == "ollama_first":
-            return ["ollama", "playwright", "firecrawl"]
-        if normalized == "ollama_then_playwright":
-            return ["ollama", "playwright"]
-        if normalized == "firecrawl_only":
-            return ["firecrawl"]
-        if normalized == "firecrawl_first":
-            return ["playwright", "firecrawl", "ollama"]
-        if normalized == "playwright_only":
-            return ["playwright"]
-        if normalized == "playwright_then_ollama":
-            return ["playwright", "ollama"]
-        return ["playwright", "ollama", "firecrawl"]
-
-    def _run_provider_attempts(
-        self,
-        case_ref: str,
-        date: Optional[str],
-        bench: str,
-        provider: str,
-    ) -> Dict[str, Any]:
-        sequence = self._provider_attempt_sequence(provider)
-        attempts: List[Dict[str, Any]] = []
-        final_result: Optional[Dict[str, Any]] = None
-
-        for index, attempt_provider in enumerate(sequence, start=1):
-            start = time.time()
-            if (
-                attempt_provider == "firecrawl"
-                and not self.allow_firecrawl_fallback
-                and provider != "firecrawl_only"
-            ):
-                attempts.append(
-                    {
-                        "step": index,
-                        "provider": attempt_provider,
-                        "status": "skipped",
-                        "reason": "firecrawl_fallback_disabled",
-                        "duration_ms": 0,
-                    }
-                )
-                continue
-
-            try:
-                if attempt_provider == "playwright":
-                    result = self._fetch_with_playwright(
-                        case_ref=case_ref,
-                        date=date,
-                        bench=bench,
-                    )
-                elif attempt_provider == "ollama":
-                    result = self._fetch_with_ollama_scraper(
-                        case_ref=case_ref,
-                        date=date,
-                        bench=bench,
-                    )
-                else:
-                    result = self._fetch_with_firecrawl(case_ref=case_ref, date=date)
-
-                duration_ms = int((time.time() - start) * 1000)
-                if result:
-                    attempts.append(
-                        {
-                            "step": index,
-                            "provider": attempt_provider,
-                            "status": "success",
-                            "source": result.get("source"),
-                            "final_status": result.get("status"),
-                            "orders_found": len(result.get("court_orders") or []),
-                            "duration_ms": duration_ms,
-                        }
-                    )
-                    final_result = result
-                    break
-
-                attempts.append(
-                    {
-                        "step": index,
-                        "provider": attempt_provider,
-                        "status": "no_result",
-                        "duration_ms": duration_ms,
-                    }
-                )
-            except Exception as exc:
-                attempts.append(
-                    {
-                        "step": index,
-                        "provider": attempt_provider,
-                        "status": "error",
-                        "error": str(exc),
-                        "duration_ms": int((time.time() - start) * 1000),
-                    }
-                )
-
-        return {
-            "provider": provider,
-            "provider_sequence": sequence,
-            "provider_attempts": attempts,
-            "result": final_result,
-        }
-
-    def _probe_provider_matrix(
-        self,
-        case_ref: str,
-        date: Optional[str],
-        bench: str,
-    ) -> List[Dict[str, Any]]:
-        matrix_providers = [
-            "playwright_first",
-            "playwright_only",
-            "playwright_then_ollama",
-            "ollama_then_playwright",
-            "ollama_only",
-            "firecrawl_only",
-        ]
-        matrix: List[Dict[str, Any]] = []
-        for matrix_provider in matrix_providers:
-            run = self._run_provider_attempts(
-                case_ref=case_ref,
-                date=date,
-                bench=bench,
-                provider=matrix_provider,
-            )
-            result = run.get("result") or {}
-            matrix.append(
-                {
-                    "provider": matrix_provider,
-                    "worked": bool(run.get("result")),
-                    "source": result.get("source"),
-                    "final_status": result.get("status"),
-                    "orders_found": len(result.get("court_orders") or []),
-                    "provider_sequence": run.get("provider_sequence") or [],
-                    "provider_attempts": run.get("provider_attempts") or [],
-                }
-            )
-        return matrix
 
     def _fetch_with_ollama_scraper(
         self, case_ref: str, date: Optional[str] = None, bench: str = "mumbai"
@@ -1046,212 +785,28 @@ HTML text:
         return None
 
     def _fetch_with_provider(
-        self,
-        case_ref: str,
-        date: Optional[str] = None,
-        bench: str = "mumbai",
-        include_diagnostics: bool = False,
-    ) -> Any:
-        provider = (self.scraper_provider or "playwright_first").lower()
-        diagnostics = self._run_provider_attempts(
-            case_ref=case_ref,
-            date=date,
-            bench=bench,
-            provider=provider,
-        )
-        if include_diagnostics:
-            return diagnostics
-        return diagnostics.get("result")
+        self, case_ref: str, date: Optional[str] = None, bench: str = "mumbai"
+    ) -> Optional[Dict[str, Any]]:
+        provider = (self.scraper_provider or "firecrawl_first").lower()
 
-    def _looks_like_captcha(self, html: str) -> bool:
-        snippet = (html or "").lower()
-        return "captcha" in snippet or "security code" in snippet
+        def _try_firecrawl() -> Optional[Dict[str, Any]]:
+            if not self.allow_firecrawl_fallback and provider != "firecrawl_only":
+                return None
+            return self._fetch_with_firecrawl(case_ref=case_ref, date=date)
 
-    def _extract_listing_date_from_anchor_context(
-        self,
-        anchor: Any,
-    ) -> Optional[str]:
-        date_match = re.search(
-            r"\b(\d{2}[/-]\d{2}[/-]\d{4})\b",
-            anchor.get_text(" ", strip=True) or "",
-        )
-        if date_match:
-            return date_match.group(1)
-
-        parent_row = anchor.find_parent("tr")
-        if not parent_row:
-            return None
-
-        row_text = parent_row.get_text(" ", strip=True)
-        row_date_match = re.search(r"\b(\d{2}[/-]\d{2}[/-]\d{4})\b", row_text)
-        if row_date_match:
-            return row_date_match.group(1)
-        return None
-
-    def _extract_case_status_url(self, url: str) -> Optional[str]:
-        parsed = urlparse(url or "")
-        if not parsed.scheme:
-            return None
-        if "case" not in (parsed.path or "").lower():
-            return None
-        return url
-
-    def _extract_case_ref_from_url(self, url: str) -> Optional[str]:
-        parsed = urlparse(url or "")
-        query = parse_qs(parsed.query)
-        case_type = (query.get("case_type") or [""])[0].strip().upper()
-        case_no = (query.get("case_no") or [""])[0].strip()
-        case_year = (query.get("case_year") or [""])[0].strip()
-        if case_type and case_no and case_year:
-            return f"{case_type}/{case_no}/{case_year}"
-        return None
-
-    def _extract_order_rows_from_html(
-        self, html: str, source_url: str
-    ) -> List[Dict[str, Optional[str]]]:
-        soup = BeautifulSoup(html or "", "html.parser")
-        rows: List[Dict[str, Optional[str]]] = []
-        for anchor in soup.find_all("a", href=True):
-            href = anchor.get("href") or ""
-            text = (anchor.get_text(" ", strip=True) or "").lower()
-            href_lower = href.lower()
-            if not (
-                ".pdf" in href_lower
-                or "order" in href_lower
-                or "judg" in href_lower
-                or "order" in text
-                or "judg" in text
-            ):
-                continue
-
-            rows.append(
-                {
-                    "listing_date": self._extract_listing_date_from_anchor_context(
-                        anchor
-                    ),
-                    "download_url": requests.compat.urljoin(source_url, href),
-                }
+        def _try_ollama() -> Optional[Dict[str, Any]]:
+            return self._fetch_with_ollama_scraper(
+                case_ref=case_ref, date=date, bench=bench
             )
 
-        dedup: Dict[str, Dict[str, Optional[str]]] = {}
-        for row in rows:
-            url = (row.get("download_url") or "").strip()
-            if not url:
-                continue
-            dedup[url] = row
-        return list(dedup.values())
-
-    def _fetch_with_playwright(
-        self,
-        case_ref: str,
-        date: Optional[str] = None,
-        bench: str = "mumbai",
-    ) -> Optional[Dict[str, Any]]:
-        if sync_playwright is None:
-            return None
-
-        case_parts = self.parse_case_number(case_ref)
-        if not case_parts:
-            return None
-
-        court_code = self._get_bench_code(bench)
-        candidate_urls = self._build_candidate_urls(case_parts, court_code)
-
-        aggregated_orders: Dict[str, Dict[str, Optional[str]]] = {}
-        case_details: Dict[str, Optional[str]] = {
-            "petitioner_name": None,
-            "respondent_name": None,
-            "case_number": case_ref,
-            "case_status_url": None,
-        }
-
-        try:
-            timeout_ms = self.playwright_timeout_seconds * 1000
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=self.playwright_headless)
-                page = browser.new_page()
-
-                for url in candidate_urls:
-                    try:
-                        page.goto(
-                            url, wait_until="domcontentloaded", timeout=timeout_ms
-                        )
-                        html = page.content()
-                        current_url = page.url
-                    except PlaywrightTimeoutError:
-                        continue
-                    except Exception:
-                        continue
-
-                    if self._looks_like_captcha(html):
-                        continue
-
-                    extracted_orders = self._extract_order_rows_from_html(
-                        html,
-                        current_url,
-                    )
-                    for row in extracted_orders:
-                        row_url = (row.get("download_url") or "").strip()
-                        if row_url:
-                            aggregated_orders[row_url] = row
-
-                    extracted_meta = self._extract_case_meta_from_html(html, case_ref)
-                    if extracted_meta.get("petitioner_name") and not case_details.get(
-                        "petitioner_name"
-                    ):
-                        case_details["petitioner_name"] = extracted_meta.get(
-                            "petitioner_name"
-                        )
-                    if extracted_meta.get("respondent_name") and not case_details.get(
-                        "respondent_name"
-                    ):
-                        case_details["respondent_name"] = extracted_meta.get(
-                            "respondent_name"
-                        )
-
-                    case_details["case_status_url"] = case_details.get(
-                        "case_status_url"
-                    ) or self._extract_case_status_url(current_url)
-                    case_details["case_number"] = case_details.get(
-                        "case_number"
-                    ) or self._extract_case_ref_from_url(current_url)
-
-                browser.close()
-
-            court_orders = list(aggregated_orders.values())
-            if date:
-                parsed_target = self._parse_iso_date(date)
-                if parsed_target:
-                    date_matched_orders: List[Dict[str, Optional[str]]] = []
-                    for row in court_orders:
-                        parsed_listing = self._parse_listing_date(
-                            row.get("listing_date") or ""
-                        )
-                        if (
-                            parsed_listing
-                            and parsed_listing.date() == parsed_target.date()
-                        ):
-                            date_matched_orders.append(row)
-                    if date_matched_orders:
-                        court_orders = date_matched_orders
-
-            if not court_orders:
-                return None
-
-            return {
-                "status": "found",
-                "source": "playwright_scraper",
-                "case_details": {
-                    "petitioner_name": case_details.get("petitioner_name"),
-                    "respondent_name": case_details.get("respondent_name"),
-                    "case_number": case_details.get("case_number") or case_ref,
-                    "case_status_url": case_details.get("case_status_url"),
-                },
-                "court_orders": court_orders,
-            }
-        except Exception as exc:
-            logging.warning("Playwright scraper failed for %s: %s", case_ref, exc)
-            return None
+        if provider == "ollama_only":
+            return _try_ollama()
+        if provider == "ollama_first":
+            return _try_ollama() or _try_firecrawl()
+        if provider == "firecrawl_only":
+            return _try_firecrawl()
+        # Default: firecrawl_first for backward compatibility.
+        return _try_firecrawl() or _try_ollama()
 
     def _normalize_case_ref(self, case_ref: str) -> str:
         """Normalize WP/3373/2025 to Civil Writ Petition 3373 of 2025."""
@@ -1265,21 +820,17 @@ HTML text:
             "PIL": "Public Interest Litigation",
             "APL": "Criminal Application",
         }
-        base_type = self._get_base_case_type(case_parts["case_type"])
-        case_type = case_type_map.get(base_type, base_type)
+        case_type = case_type_map.get(case_parts["case_type"], case_parts["case_type"])
         return f"{case_type} {case_parts['case_number']} of {case_parts['year']}"
 
     def _build_firecrawl_prompt(
         self, case_ref: str, case_parts: Optional[Dict[str, str]] = None
     ) -> str:
         human_case_ref = self._normalize_case_ref(case_ref)
-        raw_case_type = (case_parts or {}).get("case_type", "")
-        case_type = self._get_base_case_type(raw_case_type)
-        stamp_regn = self._get_stamp_regn_type(raw_case_type)
+        case_type = (case_parts or {}).get("case_type", "")
         case_number = (case_parts or {}).get("case_number", "")
         case_year = (case_parts or {}).get("year", "")
         start_url = f"{self.base_url}/cases/case_no.php"
-        home_url = self.bombay_high_court_url
         return f"""
 CRITICAL RESTRICTION — READ BEFORE DOING ANYTHING:
 - You MUST NOT download, open, follow, fetch, or request any PDF or file URL at any point.
@@ -1290,32 +841,24 @@ Task: Find case {human_case_ref} and return every court-order link from its List
 
 STEP-BY-STEP NAVIGATION (follow exactly in order):
 
-Step 1 — Navigate to the case search page via the home page menu:
-  Open: {home_url}
-  On the home page, locate the "Case Status" menu item in the navigation bar and click it.
-  In the dropdown that appears, click "Case Number Wise".
-  (Alternatively, navigate directly to: {start_url})
+Step 1 — Open the case-number search page:
+  Go to: {start_url}
+  (Or from the home page click "Case Status" → "Case Number Wise".)
 
 Step 2 — Fill in the search form with these exact values:
-  - Case Type  : {case_type}       (select from the Case Type dropdown)
-  - Stamp/Regn : {stamp_regn}      (select "{stamp_regn}" from the Stamp/Regn dropdown;
-                                    use "Stamp" when the case type ends with "(ST)",
-                                    otherwise use "Registration")
-  - Case Number: {case_number}     (enter in the Case Number text field)
-  - Year       : {case_year}       (enter in the Year field)
+  - Case Type  : {case_type}
+  - Case Number: {case_number}
+  - Year       : {case_year}
   - Bench      : Mumbai (High Court)
   Submit the form.
 
 Step 3 — Handle CAPTCHA if shown, then re-submit.
 
 Step 4 — On the case details page:
-  Read and record:
-  - The petitioner name (labelled "Petitioner" or "Appellant")
-  - The respondent name (labelled "Respondent" or "Defendant")
   The page header may show both a Stamp No. (e.g. WP/7203/{case_year}) and a
   Reg. No. (e.g. WP/{case_number}/{case_year}) — either is the correct case.
-  Click the button or tab labelled "Listing Dates/Order"
-  (it may also be labelled "Listing Dates", "Listing Dates/Orders", "Hearing Dates", or "View Orders").
+  Click the button or tab labelled exactly "Listing Dates"
+  (it may also be labelled "Listing Dates/Orders", "Hearing Dates", or "View Orders").
 
 Step 5 — On the Listing Dates table page you will see a table with these columns:
     Date | Coram | Action | Order/Judgement
@@ -1434,33 +977,23 @@ Rules:
             case_parts = self.parse_case_number(case_ref) or {}
             prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
+            # Agent starts at the eCourts case-number search page; allow both domains.
+            crawl_urls = [
+                f"{self.base_url}/cases/case_no.php",
+                f"{self.base_url}/*",
+                f"{self.bombay_high_court_url}/*",
+            ]
             if hasattr(app, "agent"):
-                # Agent-based SDK: start at the BHC home page so the agent can
-                # navigate via "Case Status" → "Case Number Wise"; also allow
-                # both site domains via wildcard.
-                agent_urls = [
-                    f"{self.bombay_high_court_url}/",
-                    f"{self.bombay_high_court_url}/*",
-                    f"{self.base_url}/cases/case_no.php",
-                    f"{self.base_url}/*",
-                ]
                 result = app.agent(
                     schema=FirecrawlOrderExtraction,
                     prompt=prompt,
-                    urls=agent_urls,
+                    urls=crawl_urls,
                     model=self.firecrawl_model,
                 )
             elif hasattr(app, "extract"):
-                # Extract-based SDK: point directly at the eCourts search page
-                # and allow both site domains via wildcard.
-                extract_urls = [
-                    f"{self.base_url}/cases/case_no.php",
-                    f"{self.bombay_high_court_url}/*",
-                    f"{self.base_url}/*",
-                ]
                 schema = FirecrawlOrderExtraction.model_json_schema()
                 result = app.extract(
-                    urls=extract_urls,
+                    urls=crawl_urls,
                     prompt=prompt,
                     schema=schema,
                     agent={"model": self.firecrawl_model},
@@ -1486,20 +1019,15 @@ Rules:
 
     def parse_case_number(self, case_ref: str) -> Dict[str, str]:
         """
-        Parse case reference like 'WP/294/2025' or 'WP(ST)/294/2025' into components.
-
-        The optional '(ST)' suffix on the case type indicates a Stamp-number lookup
-        (see _get_stamp_regn_type).
-
+        Parse case reference like 'WP/294/2025' into components
         Returns: {'case_type': 'WP', 'case_number': '294', 'year': '2025'}
-                 {'case_type': 'WP(ST)', 'case_number': '294', 'year': '2025'}
         """
         try:
             # Normalize input - convert to uppercase and strip whitespace
             case_ref = case_ref.strip().upper()
 
-            # Pattern: CASE_TYPE[optional (ST)]/CASE_NUMBER/YEAR
-            match = re.match(r"^([A-Z]+(?:\(ST\))?)\/(\d+)\/(\d{4})$", case_ref)
+            # Pattern: CASE_TYPE/CASE_NUMBER/YEAR
+            match = re.match(r"^([A-Z]+)\/(\d+)\/(\d{4})$", case_ref)
             if match:
                 return {
                     "case_type": match.group(1),
@@ -1508,7 +1036,7 @@ Rules:
                 }
             else:
                 raise ValueError(
-                    f"Invalid case reference format: {case_ref}. Expected format: TYPE/NUMBER/YEAR (e.g., WP/294/2025 or WP(ST)/294/2025)"
+                    f"Invalid case reference format: {case_ref}. Expected format: TYPE/NUMBER/YEAR (e.g., WP/294/2025)"
                 )
         except Exception as e:
             logging.error(f"Error parsing case number {case_ref}: {e}")

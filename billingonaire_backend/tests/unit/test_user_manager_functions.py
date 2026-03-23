@@ -3,7 +3,7 @@
 
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -41,6 +41,58 @@ def test_get_user(mock_firestore):
     um = UserManager()
     result = um.get_user_profile("test_uid")
     assert result is not None
+
+
+@patch("UserManager.firestore.client")
+def test_get_user_promotes_bootstrap_admin(mock_firestore):
+    """Bootstrap admin email should be treated as admin even if Firestore is stale."""
+    from UserManager import UserManager
+
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "uid": "admin_uid",
+        "email": "deshpande.mak@gmail.com",
+        "role": "user",
+        "legal_category": "assistant_government_pleader",
+    }
+    user_ref = mock_firestore.return_value.collection.return_value.document.return_value
+    user_ref.get.return_value = mock_doc
+
+    um = UserManager()
+    result = um.get_user_profile("admin_uid")
+
+    assert result["role"] == "admin"
+    assert result["legal_category"] is None
+    user_ref.update.assert_called_once_with(
+        {"role": "admin", "legal_category": None, "updated_at": ANY}
+    )
+
+
+@patch("UserManager.firestore.client")
+def test_get_user_promotes_bootstrap_admin_case_insensitive_email(mock_firestore):
+    """Bootstrap admin should still be promoted when email casing/spacing is inconsistent."""
+    from UserManager import UserManager
+
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "uid": "admin_uid",
+        "email": " Deshpande.Mak@GMAIL.com ",
+        "role": "user",
+        "legal_category": "assistant_government_pleader",
+    }
+    user_ref = mock_firestore.return_value.collection.return_value.document.return_value
+    user_ref.get.return_value = mock_doc
+
+    um = UserManager()
+    result = um.get_user_profile("admin_uid")
+
+    assert result["role"] == "admin"
+    assert result["legal_category"] is None
+    user_ref.update.assert_called_once_with(
+        {"role": "admin", "legal_category": None, "updated_at": ANY}
+    )
 
 
 @patch("UserManager.firestore.client")

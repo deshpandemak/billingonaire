@@ -125,7 +125,16 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         default="ollama_only",
-        choices=["firecrawl_first", "firecrawl_only", "ollama_first", "ollama_only"],
+        choices=[
+            "playwright_first",
+            "playwright_only",
+            "playwright_then_ollama",
+            "ollama_then_playwright",
+            "firecrawl_first",
+            "firecrawl_only",
+            "ollama_first",
+            "ollama_only",
+        ],
         help="Scraper provider strategy",
     )
     parser.add_argument(

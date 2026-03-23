@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Badge,
@@ -19,7 +19,7 @@ import './styles/professional.css';
 const DEFAULT_SCRAPER_FORM = {
   provider: 'ollama_first',
   allow_firecrawl_fallback: true,
-  ollama_base_url: 'http://localhost:11434',
+  ollama_base_url: '',
   ollama_model: 'llama3.2',
   ollama_timeout_seconds: 20,
 };
@@ -28,6 +28,7 @@ const DEFAULT_PROBE_FORM = {
   case_ref: 'WP/3373/2025',
   date: '',
   bench: 'mumbai',
+  compare_all: true,
 };
 
 const DEFAULT_ORDER_LINKS_FORM = {
@@ -79,14 +80,16 @@ const AdminOllamaManagement = () => {
     }
   }, []);
 
-  const refreshHealth = useCallback(async () => {
+  const refreshHealth = useCallback(async (silent = false) => {
     setHealthLoading(true);
     try {
       const data = await authenticatedFetchJSON('/admin/ollama/health');
       setHealth(data);
     } catch (requestError) {
       console.error('Error fetching health:', requestError);
-      setError('Failed to fetch health status');
+      if (!silent) {
+        setError('Failed to fetch health status');
+      }
     } finally {
       setHealthLoading(false);
     }
@@ -174,7 +177,10 @@ const AdminOllamaManagement = () => {
         'allow_firecrawl_fallback',
         String(scraperForm.allow_firecrawl_fallback)
       );
-      params.set('ollama_base_url', scraperForm.ollama_base_url.trim());
+      const trimmedBaseUrl = scraperForm.ollama_base_url.trim();
+      if (trimmedBaseUrl) {
+        params.set('ollama_base_url', trimmedBaseUrl);
+      }
       params.set('ollama_model', scraperForm.ollama_model.trim());
       params.set(
         'ollama_timeout_seconds',
@@ -210,10 +216,12 @@ const AdminOllamaManagement = () => {
     try {
       const result = await authenticatedFetchJSON('/admin/ollama/test-case', {
         method: 'POST',
+        timeoutMs: 130000, // 130 seconds (matches 120s backend timeout + buffer)
         body: JSON.stringify({
           case_ref: probeForm.case_ref.trim(),
           date: probeForm.date.trim() || null,
           bench: probeForm.bench,
+          compare_all: Boolean(probeForm.compare_all),
         }),
       });
       setProbeResult(result);
@@ -290,12 +298,30 @@ const AdminOllamaManagement = () => {
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
       setUser(authUser);
       if (authUser) {
-        await loadUserProfile();
-        await Promise.all([
-          refreshHealth(),
-          refreshModels(),
-          refreshScraperStatus(),
-        ]);
+        try {
+          await loadUserProfile();
+          // Load scraper config first (required for core functionality)
+          await refreshScraperStatus();
+        } catch (err) {
+          console.error('Error loading core config:', err);
+          setError('Failed to load scraper configuration');
+        }
+        // Load health and models in background (non-blocking) with timeout
+        Promise.race([
+          Promise.all([refreshHealth(), refreshModels()]),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Health/models check timeout')),
+              15000 // 15 second timeout before we give up
+            )
+          ),
+        ]).catch((err) => {
+          console.warn('Health/models check failed or timed out:', err);
+          // Don't block the page - just set a warning if both failed
+          setError(
+            'Unable to reach Ollama service. Health and model list may be unavailable.'
+          );
+        });
       }
       setLoading(false);
     });
@@ -303,16 +329,9 @@ const AdminOllamaManagement = () => {
   }, [loadUserProfile, refreshHealth, refreshModels, refreshScraperStatus]);
 
   useEffect(() => {
-    if (!user) {
-      return undefined;
-    }
-
-    const interval = window.setInterval(() => {
-      refreshHealth();
-    }, 10000);
-
-    return () => window.clearInterval(interval);
-  }, [refreshHealth, user]);
+    // Polling disabled: health status is checked on load and via manual refresh button
+    // Automatic polling was causing excessive API calls in a loop
+  }, []);
 
   const renderJsonBlock = (title, value) => (
     <Card className="card-professional mt-3">
@@ -329,6 +348,47 @@ const AdminOllamaManagement = () => {
       </Card.Body>
     </Card>
   );
+
+  const providerRanking = useMemo(() => {
+    const matrix = probeResult?.provider_matrix || [];
+    if (!Array.isArray(matrix) || matrix.length === 0) {
+      return [];
+    }
+
+    const ranked = matrix.map((row) => {
+      const attempts = row.provider_attempts || [];
+      const totalDurationMs = attempts.reduce(
+        (sum, attempt) => sum + Number(attempt.duration_ms || 0),
+        0
+      );
+      const successStep =
+        attempts.find((attempt) => attempt.status === 'success')?.step || Number.POSITIVE_INFINITY;
+
+      return {
+        provider: row.provider,
+        worked: Boolean(row.worked),
+        ordersFound: Number(row.orders_found || 0),
+        totalDurationMs,
+        successStep,
+        source: row.source || '—',
+        finalStatus: row.final_status || '—',
+      };
+    });
+
+    ranked.sort((a, b) => {
+      if (a.worked !== b.worked) return Number(b.worked) - Number(a.worked);
+      if (a.ordersFound !== b.ordersFound) return b.ordersFound - a.ordersFound;
+      if (a.successStep !== b.successStep) return a.successStep - b.successStep;
+      return a.totalDurationMs - b.totalDurationMs;
+    });
+
+    return ranked.map((row, index) => ({
+      ...row,
+      rank: index + 1,
+    }));
+  }, [probeResult]);
+
+  const recommendedProvider = providerRanking.length > 0 ? providerRanking[0] : null;
 
   if (loading) {
     return (
@@ -631,6 +691,20 @@ const AdminOllamaManagement = () => {
                 />
               </Form.Group>
 
+              <Form.Check
+                className="mb-3"
+                type="switch"
+                id="probe-compare-all"
+                label="Compare all provider strategies (slower, richer diagnostics)"
+                checked={probeForm.compare_all}
+                onChange={(event) =>
+                  setProbeForm((current) => ({
+                    ...current,
+                    compare_all: event.target.checked,
+                  }))
+                }
+              />
+
               <Button
                 variant="primary"
                 className="w-100"
@@ -693,6 +767,149 @@ const AdminOllamaManagement = () => {
                     </tbody>
                   </Table>
                 </div>
+
+                <h6 className="mt-4">Provider Transition Sequence</h6>
+                {(probeResult.provider_sequence || []).length > 0 ? (
+                  <div className="mb-3">
+                    {(probeResult.provider_sequence || []).map((provider, index) => (
+                      <React.Fragment key={`${provider}-${index}`}>
+                        <Badge bg="secondary" className="me-2">{provider}</Badge>
+                        {index < (probeResult.provider_sequence || []).length - 1 && (
+                          <span className="me-2">→</span>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="small text-muted mb-3">No sequence available.</div>
+                )}
+
+                <div className="table-responsive mt-3">
+                  <Table striped hover size="sm">
+                    <thead>
+                      <tr>
+                        <th>Step</th>
+                        <th>Provider</th>
+                        <th>Status</th>
+                        <th>Orders</th>
+                        <th>Duration (ms)</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(probeResult.provider_attempts || []).map((attempt) => (
+                        <tr key={`${attempt.provider}-${attempt.step}`}>
+                          <td>{attempt.step}</td>
+                          <td><code>{attempt.provider}</code></td>
+                          <td>
+                            <Badge
+                              bg={
+                                attempt.status === 'success'
+                                  ? 'success'
+                                  : attempt.status === 'skipped'
+                                  ? 'secondary'
+                                  : attempt.status === 'error'
+                                  ? 'danger'
+                                  : 'warning'
+                              }
+                            >
+                              {attempt.status}
+                            </Badge>
+                          </td>
+                          <td>{attempt.orders_found || 0}</td>
+                          <td>{attempt.duration_ms || 0}</td>
+                          <td className="small">
+                            {attempt.reason || attempt.error || attempt.source || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+
+                {(probeResult.provider_matrix || []).length > 0 && (
+                  <>
+                    {recommendedProvider && (
+                      <Alert variant={recommendedProvider.worked ? 'success' : 'warning'} className="mt-3 mb-3">
+                        <strong>Recommended Default Provider:</strong>{' '}
+                        <code>{recommendedProvider.provider}</code>
+                        {' '}| worked: <strong>{recommendedProvider.worked ? 'yes' : 'no'}</strong>
+                        {' '}| orders: <strong>{recommendedProvider.ordersFound}</strong>
+                        {' '}| total time: <strong>{recommendedProvider.totalDurationMs}ms</strong>
+                      </Alert>
+                    )}
+
+                    <h6 className="mt-4">Compact Ranking</h6>
+                    <div className="table-responsive mt-2">
+                      <Table striped hover size="sm">
+                        <thead>
+                          <tr>
+                            <th>Rank</th>
+                            <th>Strategy</th>
+                            <th>Worked</th>
+                            <th>Orders</th>
+                            <th>Total Time (ms)</th>
+                            <th>Source</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {providerRanking.map((row) => (
+                            <tr key={`rank-${row.provider}`}>
+                              <td>
+                                <Badge bg={row.rank === 1 ? 'success' : 'secondary'}>
+                                  #{row.rank}
+                                </Badge>
+                              </td>
+                              <td><code>{row.provider}</code></td>
+                              <td>
+                                <Badge bg={row.worked ? 'success' : 'secondary'}>
+                                  {row.worked ? 'yes' : 'no'}
+                                </Badge>
+                              </td>
+                              <td>{row.ordersFound}</td>
+                              <td>{row.totalDurationMs}</td>
+                              <td>{row.source}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </div>
+
+                    <h6 className="mt-4">Provider Strategy Comparison</h6>
+                    <div className="table-responsive mt-2">
+                      <Table striped hover size="sm">
+                        <thead>
+                          <tr>
+                            <th>Strategy</th>
+                            <th>Worked</th>
+                            <th>Source</th>
+                            <th>Status</th>
+                            <th>Orders</th>
+                            <th>Attempt Order</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {probeResult.provider_matrix.map((row) => (
+                            <tr key={row.provider}>
+                              <td><code>{row.provider}</code></td>
+                              <td>
+                                <Badge bg={row.worked ? 'success' : 'secondary'}>
+                                  {row.worked ? 'yes' : 'no'}
+                                </Badge>
+                              </td>
+                              <td>{row.source || '—'}</td>
+                              <td>{row.final_status || '—'}</td>
+                              <td>{row.orders_found || 0}</td>
+                              <td className="small">
+                                {(row.provider_sequence || []).join(' → ') || '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </div>
+                  </>
+                )}
               </Card.Body>
             </Card>
 
@@ -700,6 +917,8 @@ const AdminOllamaManagement = () => {
             {renderJsonBlock('HTTP Trace', probeResult.http_trace)}
             {renderJsonBlock('Ollama Request', probeResult.ollama_request)}
             {renderJsonBlock('Ollama Response', probeResult.ollama_response)}
+            {renderJsonBlock('Provider Attempts', probeResult.provider_attempts)}
+            {renderJsonBlock('Provider Matrix', probeResult.provider_matrix)}
             {renderJsonBlock('Final Scraper Result', probeResult.final_result)}
           </Col>
         </Row>

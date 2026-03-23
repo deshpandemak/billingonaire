@@ -22,6 +22,7 @@ requests==2.32.3
 beautifulsoup4==4.12.2
 httpx==0.25.2
 firecrawl-py==2.6.0
+playwright==1.52.0
 
 # AWS Lambda adapter (for Mangum)
 mangum==0.17.0

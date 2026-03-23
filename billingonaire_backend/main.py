@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import sys
 from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +18,8 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from starlette.concurrency import run_in_threadpool
 
 # Configure logging to show INFO level messages
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -1454,6 +1456,23 @@ def get_court_scraper():
     global court_scraper
     if court_scraper is None:
         court_scraper = BombayHighCourtScraper()
+    else:
+        configured_ollama_base_url = (
+            (
+                os.getenv("COURT_OLLAMA_BASE_URL")
+                or os.getenv("OLLAMA_BASE_URL")
+                or os.getenv("LLM_BASE_URL")
+                or ""
+            )
+            .strip()
+            .rstrip("/")
+        )
+        if (
+            configured_ollama_base_url
+            and configured_ollama_base_url != court_scraper.ollama_base_url
+            and court_scraper.ollama_base_url.rstrip("/") == "http://localhost:11434"
+        ):
+            court_scraper.ollama_base_url = configured_ollama_base_url
     return court_scraper
 
 
@@ -1480,6 +1499,46 @@ class ScraperProbeRequest(BaseModel):
     case_ref: str
     date: Optional[str] = None
     bench: str = "mumbai"
+    compare_all: bool = False
+
+    @field_validator("case_ref")
+    @classmethod
+    def validate_case_ref(cls, value: str) -> str:
+        normalized = (value or "").strip().upper()
+        if not re.match(r"^[A-Z]+/\d+/\d{4}$", normalized):
+            raise ValueError(
+                "case_ref must be in TYPE/NUMBER/YEAR format (e.g. WP/3373/2025)"
+            )
+        return normalized
+
+    @field_validator("bench")
+    @classmethod
+    def validate_bench(cls, value: str) -> str:
+        normalized = (value or "").strip().lower()
+        supported_benches = {
+            "mumbai",
+            "mumbai_appellate",
+            "aurangabad",
+            "nagpur",
+            "goa",
+        }
+        if normalized not in supported_benches:
+            raise ValueError(
+                "bench must be one of: mumbai, mumbai_appellate, aurangabad, nagpur, goa"
+            )
+        return normalized
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
+            raise ValueError("date must be in YYYY-MM-DD format")
+        return raw
 
 
 class OrderLinkAnalysisRequest(BaseModel):
@@ -5223,8 +5282,13 @@ async def admin_ollama_test_case(
     request: ScraperProbeRequest,
     current_user: dict = Depends(require_admin_active),
 ):
-    """Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output."""
+    """
+    Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output.
+
+    Times out after 120 seconds if scraper does not complete.
+    """
     _ = current_user
+<<<<<<< HEAD
     try:
         scraper = get_court_scraper()
         result = scraper.debug_case_orders(
@@ -5245,6 +5309,36 @@ async def admin_ollama_test_case(
         }
     # Always return 200 with the full result so the frontend can display
     # request/response details even when the probe encountered an error.
+=======
+    scraper = get_court_scraper()
+    # Probe runs on an isolated instance so diagnostics cannot mutate shared scraper runtime state.
+    probe_scraper = BombayHighCourtScraper()
+    probe_scraper.configure_scraper(
+        provider=scraper.scraper_provider,
+        allow_firecrawl_fallback=scraper.allow_firecrawl_fallback,
+        ollama_base_url=scraper.ollama_base_url,
+        ollama_model=scraper.ollama_model,
+        ollama_timeout_seconds=scraper.ollama_timeout_seconds,
+    )
+    try:
+        result = await asyncio.wait_for(
+            run_in_threadpool(
+                probe_scraper.debug_case_orders,
+                request.case_ref,
+                request.date,
+                request.bench,
+                request.compare_all,
+            ),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="Probe timed out after 120 seconds. Ollama may be unreachable or overloaded.",
+        )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Probe failed"))
+>>>>>>> 4f04fa1 (Add CourtScraper implementation and start script for backend setup)
     return JSONResponse(content=result)
 
 
@@ -5287,6 +5381,7 @@ async def admin_ollama_health(current_user: dict = Depends(require_admin_active)
     Check Ollama service health and responsiveness.
 
     **Admin-only endpoint.** Returns detailed health check information.
+    Times out after 5 seconds if Ollama is unreachable.
 
     Returns:
     - healthy: bool indicating if service is up and responding
@@ -5296,7 +5391,32 @@ async def admin_ollama_health(current_user: dict = Depends(require_admin_active)
     """
     _ = current_user  # Explicitly keep dependency for admin-only access.
     scraper = get_court_scraper()
-    return JSONResponse(content=scraper.get_ollama_health())
+    try:
+        # Use a shorter timeout (5 sec) to prevent UI from hanging indefinitely
+        health = await asyncio.wait_for(
+            run_in_threadpool(scraper.get_ollama_health), timeout=5.0
+        )
+        return JSONResponse(content=health)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "status": "timeout",
+                "base_url": scraper.ollama_base_url or "not configured",
+                "response_time_ms": 5000,
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error fetching Ollama health: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "healthy": False,
+                "status": str(e),
+                "base_url": scraper.ollama_base_url or "not configured",
+                "response_time_ms": 0,
+            },
+        )
 
 
 @app.get("/admin/ollama/models", tags=["Case Orders"])
@@ -5315,7 +5435,8 @@ async def admin_ollama_models(current_user: dict = Depends(require_admin_active)
     """
     _ = current_user  # Explicitly keep dependency for admin-only access.
     scraper = get_court_scraper()
-    return JSONResponse(content=scraper.get_ollama_models())
+    models = await run_in_threadpool(scraper.get_ollama_models)
+    return JSONResponse(content=models)
 
 
 # Cloud Run entry point - uvicorn will run the app directly

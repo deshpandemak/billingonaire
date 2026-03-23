@@ -4,17 +4,26 @@
 # Usage:
 #   export GCLOUD_SERVICE_ACCOUNT_KEY='{"type":"service_account",...}'
 #   export OLLAMA_MODEL='llama3.1:8b'   # optional, defaults to llama3.1:8b
+#   export OLLAMA_CPU='8'               # optional, defaults to 8
+#   export OLLAMA_MEMORY='32Gi'         # optional, defaults to 32Gi
 #   ./firebase/ollama-cloudrun-deploy.sh
 
 set -e
+set -o pipefail
+
+# Show the exact line that caused the script to fail.
+trap 'echo "❌ Script failed at line $LINENO (exit code $?)" >&2' ERR
 
 PROJECT_ID="${PROJECT_ID:-billingonaire}"
 REGION="${REGION:-asia-south1}"
 SERVICE_NAME="${OLLAMA_SERVICE_NAME:-billingonaire-ollama}"
 SERVICE_ACCOUNT="${OLLAMA_SERVICE_ACCOUNT:-firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.1:8b}"
+OLLAMA_CPU="${OLLAMA_CPU:-8}"
+OLLAMA_MEMORY="${OLLAMA_MEMORY:-32Gi}"
+OLLAMA_REGION="${OLLAMA_REGION:-$REGION}"
 
-echo "ℹ️  Deploy target: project=$PROJECT_ID region=$REGION service=$SERVICE_NAME"
+echo "ℹ️  Deploy target: project=$PROJECT_ID region=$OLLAMA_REGION service=$SERVICE_NAME"
 
 if [ -n "$GCLOUD_SERVICE_ACCOUNT_KEY" ]; then
   echo "🔐 Authenticating with Google Cloud using provided service account key..."
@@ -24,28 +33,32 @@ else
   echo "ℹ️  GCLOUD_SERVICE_ACCOUNT_KEY not provided; using existing gcloud auth context"
 fi
 
-gcloud config set project "$PROJECT_ID"
+gcloud config set project "$PROJECT_ID" || { echo "❌ Failed to set gcloud project '$PROJECT_ID'. Check PROJECT_ID and permissions." >&2; exit 1; }
 
 echo "🚀 Deploying Ollama service to Cloud Run..."
 echo "ℹ️  Model to preload: $OLLAMA_MODEL"
+echo "ℹ️  Resources: cpu=$OLLAMA_CPU memory=$OLLAMA_MEMORY"
 
-gcloud run deploy "$SERVICE_NAME" \
-  --image=ollama/ollama:latest \
-  --region="$REGION" \
-  --platform=managed \
-  --port=11434 \
-  --allow-unauthenticated \
-  --memory=8Gi \
-  --cpu=4 \
-  --timeout=900s \
-  --max-instances=1 \
-  --min-instances=1 \
-  --service-account="$SERVICE_ACCOUNT" \
-  --set-env-vars="OLLAMA_MODEL=$OLLAMA_MODEL,OLLAMA_HOST=0.0.0.0:11434" \
-  --command="/bin/sh" \
+DEPLOY_ARGS=(
+  --image=ollama/ollama:latest
+  --region="$OLLAMA_REGION"
+  --platform=managed
+  --port=11434
+  --allow-unauthenticated
+  --memory="$OLLAMA_MEMORY"
+  --cpu="$OLLAMA_CPU"
+  --timeout=900s
+  --max-instances=1
+  --min-instances=1
+  --service-account="$SERVICE_ACCOUNT"
+  --set-env-vars="OLLAMA_MODEL=$OLLAMA_MODEL,OLLAMA_HOST=0.0.0.0:11434"
+  --command="/bin/sh"
   --args="-c,ollama serve"
+)
 
-OLLAMA_URL=$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" --format='value(status.url)')
+gcloud run deploy "$SERVICE_NAME" "${DEPLOY_ARGS[@]}"
+
+OLLAMA_URL=$(gcloud run services describe "$SERVICE_NAME" --region="$OLLAMA_REGION" --format='value(status.url)')
 
 # Best-effort model warm-up after service is reachable.
 echo "⏳ Waiting for Ollama API readiness at $OLLAMA_URL/api/tags"

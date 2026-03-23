@@ -5,6 +5,16 @@ from typing import Dict, List, Optional
 from fastapi import HTTPException
 from firebase_admin import auth, firestore
 
+INITIAL_ADMIN_EMAIL = "deshpande.mak@gmail.com"
+
+
+def _normalize_email(email: Optional[str]) -> str:
+    return (email or "").strip().lower()
+
+
+def _is_initial_admin_email(email: Optional[str]) -> bool:
+    return _normalize_email(email) == _normalize_email(INITIAL_ADMIN_EMAIL)
+
 
 class UserManager:
     def __init__(self):
@@ -35,7 +45,7 @@ class UserManager:
         """
         Set up deshpande.mak@gmail.com as the initial system administrator
         """
-        admin_email = "deshpande.mak@gmail.com"
+        admin_email = INITIAL_ADMIN_EMAIL
         try:
             # Check if admin already exists
             admin_users = list(
@@ -103,7 +113,7 @@ class UserManager:
                 role = "user"  # Default to user role
 
             # Check if this is the initial admin setup
-            if email == "deshpande.mak@gmail.com":
+            if _is_initial_admin_email(email):
                 role = "admin"
                 legal_category = None  # Admins don't need legal categories
 
@@ -141,7 +151,7 @@ class UserManager:
                 # Return default profile for backward compatibility
                 firebase_user = auth.get_user(uid)
                 # Check if this is the initial admin
-                if firebase_user.email == "deshpande.mak@gmail.com":
+                if _is_initial_admin_email(firebase_user.email):
                     return {
                         "uid": uid,
                         "email": firebase_user.email,
@@ -170,6 +180,38 @@ class UserManager:
                     }
 
             user_data = user_doc.to_dict()
+
+            # Self-heal the bootstrap admin account if an older sync/profile creation
+            # stored it as a regular user in Firestore.
+            stored_email = user_data.get("email")
+            firebase_email: Optional[str] = None
+            is_bootstrap_admin = _is_initial_admin_email(stored_email)
+
+            if not is_bootstrap_admin:
+                try:
+                    firebase_email = auth.get_user(uid).email
+                    is_bootstrap_admin = _is_initial_admin_email(firebase_email)
+                except Exception as auth_error:
+                    logging.warning(
+                        f"Could not verify Firebase email for {uid}: {auth_error}"
+                    )
+
+            if is_bootstrap_admin and user_data.get("role") != "admin":
+                update_payload = {
+                    "role": "admin",
+                    "legal_category": None,
+                    "updated_at": datetime.now(),
+                }
+                if not _is_initial_admin_email(stored_email) and firebase_email:
+                    update_payload["email"] = firebase_email
+
+                user_ref.update(update_payload)
+                user_data["role"] = "admin"
+                user_data["legal_category"] = None
+                if "email" in update_payload:
+                    user_data["email"] = update_payload["email"]
+                user_data["updated_at"] = datetime.now()
+
             # Convert Firestore timestamp to string for JSON serialization
             if "created_at" in user_data and hasattr(
                 user_data["created_at"], "strftime"
@@ -748,7 +790,7 @@ class UserManager:
 
                 try:
                     # Determine role - make deshpande.mak@gmail.com admin, others default to user
-                    role = "admin" if email == "deshpande.mak@gmail.com" else "user"
+                    role = "admin" if email == INITIAL_ADMIN_EMAIL else "user"
                     legal_category = (
                         "assistant_government_pleader" if role != "admin" else None
                     )
