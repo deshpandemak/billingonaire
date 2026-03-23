@@ -995,12 +995,11 @@ Rules:
             case_parts = self.parse_case_number(case_ref) or {}
             prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
-            # Agent starts at the Bombay High Court home page and navigates via
-            # "Case Status" → "Case Number Wise" menu; allow both site domains.
+            # Start at the eCourts case-number search page; allow both site domains
+            # via wildcard so the agent can navigate freely across them.
             crawl_urls = [
-                f"{self.bombay_high_court_url}/",
-                f"{self.bombay_high_court_url}/*",
                 f"{self.base_url}/cases/case_no.php",
+                f"{self.bombay_high_court_url}/*",
                 f"{self.base_url}/*",
             ]
             if hasattr(app, "agent"):
