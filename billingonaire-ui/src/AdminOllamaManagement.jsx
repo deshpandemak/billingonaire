@@ -165,38 +165,69 @@ const AdminOllamaManagement = () => {
     }));
   };
 
+  const saveScraperConfig = useCallback(async (providerOverride = null) => {
+    const providerToSave = providerOverride || scraperForm.provider;
+    const params = new URLSearchParams();
+    params.set('provider', providerToSave);
+    params.set(
+      'allow_firecrawl_fallback',
+      String(scraperForm.allow_firecrawl_fallback)
+    );
+    const trimmedBaseUrl = scraperForm.ollama_base_url.trim();
+    if (trimmedBaseUrl) {
+      params.set('ollama_base_url', trimmedBaseUrl);
+    }
+    params.set('ollama_model', scraperForm.ollama_model.trim());
+    params.set(
+      'ollama_timeout_seconds',
+      String(Number(scraperForm.ollama_timeout_seconds) || 20)
+    );
+
+    const result = await authenticatedFetchJSON(`/scraper/configure?${params.toString()}`, {
+      method: 'POST',
+    });
+
+    setScraperStatus(result);
+    setScraperForm((current) => ({
+      ...current,
+      provider: providerToSave,
+    }));
+    return providerToSave;
+  }, [scraperForm]);
+
   const handleSaveScraperConfig = async () => {
     setScraperSaving(true);
     setError('');
     setSuccessMessage('');
 
     try {
-      const params = new URLSearchParams();
-      params.set('provider', scraperForm.provider);
-      params.set(
-        'allow_firecrawl_fallback',
-        String(scraperForm.allow_firecrawl_fallback)
-      );
-      const trimmedBaseUrl = scraperForm.ollama_base_url.trim();
-      if (trimmedBaseUrl) {
-        params.set('ollama_base_url', trimmedBaseUrl);
-      }
-      params.set('ollama_model', scraperForm.ollama_model.trim());
-      params.set(
-        'ollama_timeout_seconds',
-        String(Number(scraperForm.ollama_timeout_seconds) || 20)
-      );
-
-      const result = await authenticatedFetchJSON(`/scraper/configure?${params.toString()}`, {
-        method: 'POST',
-      });
-      setScraperStatus(result);
+      await saveScraperConfig();
       setSuccessMessage('Scraper configuration updated');
       await refreshHealth();
       await refreshModels();
     } catch (requestError) {
       console.error('Error updating scraper config:', requestError);
       setError(`Failed to update scraper config: ${requestError.message}`);
+    } finally {
+      setScraperSaving(false);
+    }
+  };
+
+  const handleApplyRecommendedProvider = async () => {
+    if (!recommendedProvider?.provider) {
+      return;
+    }
+    setScraperSaving(true);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const appliedProvider = await saveScraperConfig(recommendedProvider.provider);
+      setSuccessMessage(`Applied recommended provider: ${appliedProvider}`);
+      await refreshHealth();
+      await refreshModels();
+    } catch (requestError) {
+      console.error('Error applying recommended provider:', requestError);
+      setError(`Failed to apply recommended provider: ${requestError.message}`);
     } finally {
       setScraperSaving(false);
     }
@@ -831,11 +862,27 @@ const AdminOllamaManagement = () => {
                   <>
                     {recommendedProvider && (
                       <Alert variant={recommendedProvider.worked ? 'success' : 'warning'} className="mt-3 mb-3">
-                        <strong>Recommended Default Provider:</strong>{' '}
-                        <code>{recommendedProvider.provider}</code>
-                        {' '}| worked: <strong>{recommendedProvider.worked ? 'yes' : 'no'}</strong>
-                        {' '}| orders: <strong>{recommendedProvider.ordersFound}</strong>
-                        {' '}| total time: <strong>{recommendedProvider.totalDurationMs}ms</strong>
+                        <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                          <div>
+                            <strong>Recommended Default Provider:</strong>{' '}
+                            <code>{recommendedProvider.provider}</code>
+                            {' '}| worked: <strong>{recommendedProvider.worked ? 'yes' : 'no'}</strong>
+                            {' '}| orders: <strong>{recommendedProvider.ordersFound}</strong>
+                            {' '}| total time: <strong>{recommendedProvider.totalDurationMs}ms</strong>
+                            {' '}| current: <strong>{scraperForm.provider}</strong>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline-primary"
+                            onClick={handleApplyRecommendedProvider}
+                            disabled={
+                              scraperSaving ||
+                              scraperForm.provider === recommendedProvider.provider
+                            }
+                          >
+                            {scraperSaving ? 'Applying...' : 'Apply As Runtime Default'}
+                          </Button>
+                        </div>
                       </Alert>
                     )}
 
