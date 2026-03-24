@@ -54,7 +54,7 @@ echo "ℹ️  Backend will use Application Default Credentials (ADC) via service
 echo "ℹ️  Using OLLAMA_BASE_URL=${OLLAMA_BASE_URL_VALUE}"
 
 # Firebase Admin SDK uses ADC via the service account; Secret Manager is still used for FIRECRAWL_API_KEY
-# --startup-cpu-boost ensures full CPU during cold start so heavy Python/ML
+# --cpu-boost ensures full CPU during cold start so heavy Python/ML
 # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
 gcloud run deploy billingonaire-backend \
   --image=gcr.io/billingonaire/billingonaire-backend \
@@ -66,7 +66,7 @@ gcloud run deploy billingonaire-backend \
   --timeout=540s \
   --max-instances=10 \
   --min-instances=1 \
-  --startup-cpu-boost \
+  --cpu-boost \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
   --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=billingonaire,FIRECRAWL_MODEL=spark-1-mini,ORDER_ENABLE_LLM_FALLBACK=${ORDER_ENABLE_LLM_FALLBACK_VALUE},ORDER_LLM_PROVIDER=${ORDER_LLM_PROVIDER_VALUE},ORDER_LLM_MODEL=${ORDER_LLM_MODEL_VALUE},OLLAMA_BASE_URL=${OLLAMA_BASE_URL_VALUE},ORDER_LLM_TIMEOUT_SECONDS=${ORDER_LLM_TIMEOUT_SECONDS_VALUE},ORDER_LLM_FALLBACK_MIN_QUALITY=${ORDER_LLM_FALLBACK_MIN_QUALITY_VALUE},ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE=${ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE_VALUE},ORDER_LLM_FALLBACK_MIN_CASES=${ORDER_LLM_FALLBACK_MIN_CASES_VALUE}" \
   --set-secrets="FIRECRAWL_API_KEY=FIRECRAWL_API_KEY:latest"
