@@ -5288,28 +5288,6 @@ async def admin_ollama_test_case(
     Times out after 120 seconds if scraper does not complete.
     """
     _ = current_user
-<<<<<<< HEAD
-    try:
-        scraper = get_court_scraper()
-        result = scraper.debug_case_orders(
-            case_ref=request.case_ref,
-            date=request.date,
-            bench=request.bench,
-        )
-    except Exception as exc:
-        logging.exception("Unexpected error in scraper probe for %s", request.case_ref)
-        result = {
-            "ok": False,
-            "error": str(exc),
-            "request": {
-                "case_ref": request.case_ref,
-                "date": request.date,
-                "bench": request.bench,
-            },
-        }
-    # Always return 200 with the full result so the frontend can display
-    # request/response details even when the probe encountered an error.
-=======
     scraper = get_court_scraper()
     # Probe runs on an isolated instance so diagnostics cannot mutate shared scraper runtime state.
     probe_scraper = BombayHighCourtScraper()
@@ -5338,7 +5316,6 @@ async def admin_ollama_test_case(
         )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Probe failed"))
->>>>>>> 4f04fa1 (Add CourtScraper implementation and start script for backend setup)
     return JSONResponse(content=result)
 
 
