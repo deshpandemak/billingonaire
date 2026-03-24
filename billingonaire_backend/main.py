@@ -5288,13 +5288,13 @@ async def admin_ollama_test_case(
     Times out after 120 seconds if scraper does not complete.
     """
     _ = current_user
-<<<<<<< HEAD
     try:
         scraper = get_court_scraper()
         result = scraper.debug_case_orders(
             case_ref=request.case_ref,
             date=request.date,
             bench=request.bench,
+            compare_all=request.compare_all,
         )
     except Exception as exc:
         logging.exception("Unexpected error in scraper probe for %s", request.case_ref)
@@ -5309,36 +5309,6 @@ async def admin_ollama_test_case(
         }
     # Always return 200 with the full result so the frontend can display
     # request/response details even when the probe encountered an error.
-=======
-    scraper = get_court_scraper()
-    # Probe runs on an isolated instance so diagnostics cannot mutate shared scraper runtime state.
-    probe_scraper = BombayHighCourtScraper()
-    probe_scraper.configure_scraper(
-        provider=scraper.scraper_provider,
-        allow_firecrawl_fallback=scraper.allow_firecrawl_fallback,
-        ollama_base_url=scraper.ollama_base_url,
-        ollama_model=scraper.ollama_model,
-        ollama_timeout_seconds=scraper.ollama_timeout_seconds,
-    )
-    try:
-        result = await asyncio.wait_for(
-            run_in_threadpool(
-                probe_scraper.debug_case_orders,
-                request.case_ref,
-                request.date,
-                request.bench,
-                request.compare_all,
-            ),
-            timeout=120.0,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=504,
-            detail="Probe timed out after 120 seconds. Ollama may be unreachable or overloaded.",
-        )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Probe failed"))
->>>>>>> 4f04fa1 (Add CourtScraper implementation and start script for backend setup)
     return JSONResponse(content=result)
 
 
