@@ -701,7 +701,7 @@ def test_debug_case_orders_unexpected_exception_returns_ok_false(monkeypatch):
     the top-level handler and returned as ok=False with the error message."""
     scraper = BombayHighCourtScraper()
 
-    def _explode(case_ref, date=None, bench="mumbai"):
+    def _explode(case_ref, date=None, bench="mumbai", compare_all=False):
         raise RuntimeError("unexpected scraper failure")
 
     monkeypatch.setattr(scraper, "_debug_case_orders_impl", _explode)

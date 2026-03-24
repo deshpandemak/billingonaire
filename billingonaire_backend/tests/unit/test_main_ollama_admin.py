@@ -28,7 +28,7 @@ async def test_admin_ollama_test_case_returns_probe_payload(monkeypatch):
         main,
         "get_court_scraper",
         lambda: SimpleNamespace(
-            debug_case_orders=lambda case_ref, date=None, bench="mumbai": {
+            debug_case_orders=lambda case_ref, date=None, bench="mumbai", compare_all=False: {
                 "ok": True,
                 "request": {
                     "case_ref": case_ref,
@@ -64,7 +64,7 @@ async def test_admin_ollama_test_case_invalid_case_ref_returns_200_with_ok_false
         main,
         "get_court_scraper",
         lambda: SimpleNamespace(
-            debug_case_orders=lambda case_ref, date, bench: {
+            debug_case_orders=lambda case_ref, date, bench, compare_all=False: {
                 "ok": False,
                 "error": "Invalid case reference format",
                 "request": {
@@ -77,7 +77,7 @@ async def test_admin_ollama_test_case_invalid_case_ref_returns_200_with_ok_false
     )
 
     response = await main.admin_ollama_test_case(
-        main.ScraperProbeRequest(case_ref="INVALID", date=None, bench="mumbai"),
+        main.ScraperProbeRequest(case_ref="WP/0/2025", date=None, bench="mumbai"),
         current_user={"role": "admin"},
     )
 
@@ -85,7 +85,7 @@ async def test_admin_ollama_test_case_invalid_case_ref_returns_200_with_ok_false
     assert response.status_code == 200
     assert payload["ok"] is False
     assert "Invalid case reference format" in payload["error"]
-    assert payload["request"]["case_ref"] == "INVALID"
+    assert payload["request"]["case_ref"] == "WP/0/2025"
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_admin_ollama_test_case_unexpected_exception_returns_200_with_ok_f
     """When debug_case_orders raises an unexpected exception the endpoint must
     return HTTP 200 with a structured error payload instead of propagating 500."""
 
-    def _raise(case_ref, date, bench):
+    def _raise(case_ref, date, bench, compare_all=False):
         raise RuntimeError("simulated internal failure")
 
     monkeypatch.setattr(
