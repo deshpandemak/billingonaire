@@ -666,7 +666,7 @@ HTML text:
     ) -> Dict[str, Any]:
         try:
             return self._debug_case_orders_impl(
-                case_ref=case_ref, date=date, bench=bench
+                case_ref=case_ref, date=date, bench=bench, compare_all=compare_all
             )
         except Exception as exc:
             logging.error(
@@ -687,6 +687,7 @@ HTML text:
         case_ref: str,
         date: Optional[str] = None,
         bench: str = "mumbai",
+        compare_all: bool = False,
     ) -> Dict[str, Any]:
         case_parts = self.parse_case_number(case_ref)
         if not case_parts:
