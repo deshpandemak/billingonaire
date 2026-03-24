@@ -53,8 +53,7 @@ echo "🚀 Deploying to Cloud Run..."
 echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 echo "ℹ️  Using OLLAMA_BASE_URL=${OLLAMA_BASE_URL_VALUE}"
 
-# Deploy with Application Default Credentials (service account)
-# No Secret Manager - ADC is more reliable for Firebase Admin SDK
+# Firebase Admin SDK uses ADC via the service account; Secret Manager is still used for FIRECRAWL_API_KEY
 # --startup-cpu-boost ensures full CPU during cold start so heavy Python/ML
 # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
 gcloud run deploy billingonaire-backend \
