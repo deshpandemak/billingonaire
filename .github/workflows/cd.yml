@@ -240,7 +240,7 @@ jobs:
 
           # Deploy with Application Default Credentials (service account)
           # Using commit SHA tag ensures we deploy exactly what was built
-          # --startup-cpu-boost ensures full CPU during cold start so heavy Python/ML
+          # --cpu-boost ensures full CPU during cold start so heavy Python/ML
           # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
@@ -252,7 +252,7 @@ jobs:
             --timeout=540s \
             --max-instances=10 \
             --min-instances=1 \
-            --startup-cpu-boost \
+            --cpu-boost \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
             --set-env-vars="$BACKEND_ENV_VARS" \
             --set-secrets="FIRECRAWL_API_KEY=FIRECRAWL_API_KEY:latest"
