@@ -255,7 +255,7 @@ jobs:
             --cpu-boost \
             --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
             --set-env-vars="$BACKEND_ENV_VARS" \
-            --set-secrets="FIRECRAWL_API_KEY=FIRECRAWL_API_KEY:latest"
+            --set-secrets="FIRECRAWL_API_KEY=FIRECRAWL_API_KEY:1"
 
       - name: Verify Deployment
         run: |
