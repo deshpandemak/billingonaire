@@ -118,7 +118,7 @@ def test_env_var_overrides_max_sequence_retries(manager, monkeypatch):
 
 
 def test_firecrawl_uses_wildcard_url(monkeypatch):
-    """_fetch_with_firecrawl must pass the eCourts starting URL and wildcard domains."""
+    """_fetch_with_firecrawl must pass the new BHC portal starting URL and wildcard domains."""
     scraper = BombayHighCourtScraper()
     scraper.firecrawl_api_key = "test-key"
     scraper.firecrawl_model = "spark-1-mini"
@@ -155,12 +155,15 @@ def test_firecrawl_uses_wildcard_url(monkeypatch):
     assert (
         len(captured_urls) == 3
     ), f"Expected 3 URLs (start + 2 wildcards), got: {captured_urls}"
-    # Starting URL must be the eCourts case-number search page
+    # Starting URL must be the new BHC case-number search portal
     assert any(
-        "case_no.php" in url for url in captured_urls
-    ), f"Expected case_no.php starting URL, got: {captured_urls}"
+        "bombayhighcourt.gov.in/bhc/casestatus/casenumber" in url
+        for url in captured_urls
+    ), f"Expected BHC portal starting URL, got: {captured_urls}"
     # Both domains must be present as wildcards
-    assert any("bombayhighcourt.nic.in" in url for url in captured_urls)
+    assert any(
+        "bombayhighcourt.gov.in" in url and url.endswith("/*") for url in captured_urls
+    ), f"Expected bombayhighcourt.gov.in wildcard, got: {captured_urls}"
     assert any(
         "hcservices.ecourts.gov.in/ecourtindiaHC" in url for url in captured_urls
     )
