@@ -52,7 +52,10 @@ class BombayHighCourtScraper:
     def __init__(self):
         self.base_url = "https://hcservices.ecourts.gov.in/ecourtindiaHC"
         self.search_url = f"{self.base_url}/cases/case_no.php"
-        self.bombay_high_court_url = "https://www.bombayhighcourt.nic.in"
+        self.bombay_high_court_url = "https://bombayhighcourt.gov.in"
+        self.bhc_case_status_url = (
+            "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+        )
         self.session = requests.Session()
         self.firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY")
         self.firecrawl_model = os.getenv("FIRECRAWL_MODEL", "spark-1-mini")
@@ -121,6 +124,48 @@ class BombayHighCourtScraper:
         the Case Type dropdown on the court search form (e.g. WP(ST) → WP).
         """
         return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
+
+    def _get_stamp_regn_bhc(self, case_type: str) -> str:
+        """
+        Return the Stamp/Regn dropdown value for the new BHC case status portal
+        (https://bombayhighcourt.gov.in/bhc/casestatus/casenumber).
+
+        The portal uses "Register" for regular registration numbers and "Stamp"
+        for stamp numbers (case types ending with "(ST)").
+        """
+        return "Stamp" if case_type.upper().endswith("(ST)") else "Register"
+
+    def _get_side_code(self, bench: str = "mumbai") -> str:
+        """
+        Return the Side code for the BHC case status search form.
+
+        The portal displays a "Side" dropdown.  Most writ/appellate matters are
+        filed on the Appellate Side ("AS").  Original-side matters use "OS".
+        """
+        bench_side_map: Dict[str, str] = {
+            "mumbai": "AS",
+            "mumbai_appellate": "AS",
+            "mumbai_original": "OS",
+            "aurangabad": "AS",
+            "nagpur": "AS",
+            "goa": "AS",
+        }
+        return bench_side_map.get((bench or "mumbai").lower(), "AS")
+
+    def _build_short_title(
+        self,
+        petitioner: Optional[str],
+        respondent: Optional[str],
+    ) -> Optional[str]:
+        """
+        Build a short case title in the form '<petitioner> against <respondent>'.
+
+        Returns the petitioner or respondent alone when only one is available,
+        and None when both are absent.
+        """
+        if petitioner and respondent:
+            return f"{petitioner} against {respondent}"
+        return petitioner or respondent or None
 
     def _supported_providers(self) -> List[str]:
         return [
@@ -456,10 +501,10 @@ class BombayHighCourtScraper:
         case_type = case_parts.get("case_type")
         case_number = case_parts.get("case_number")
         year = case_parts.get("year")
-        # Start from the Bombay High Court home page (entry point for menu navigation).
-        # Then try the case-number search page and direct case/order URLs as fallbacks.
+        # Start from the new BHC case-number search portal (primary entry point).
+        # Fall back to the legacy eCourts search page and direct case/order URLs.
         return [
-            f"{self.bombay_high_court_url}/",
+            self.bhc_case_status_url,
             f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
             f"{self.base_url}/cases/case_detail.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
             f"{self.base_url}/order_list.php?case_type={case_type}&case_no={case_number}&case_year={year}&court_code={court_code}",
@@ -541,31 +586,34 @@ class BombayHighCourtScraper:
         case_parts = self.parse_case_number(case_ref) or {}
         raw_case_type = case_parts.get("case_type", "")
         base_case_type = self._get_base_case_type(raw_case_type)
-        stamp_regn = self._get_stamp_regn_type(raw_case_type)
+        stamp_regn = self._get_stamp_regn_bhc(raw_case_type)
         case_number = case_parts.get("case_number", "")
         case_year = case_parts.get("year", "")
         combined = "\n\n---PAGE-CHUNK---\n\n".join(html_chunks[:3])
         return f"""
 Extract court-order links for case {case_ref} from the HTML text below.
 
-The HTML was fetched by navigating the Bombay High Court website in this sequence:
-1. Home page (bombayhighcourt.nic.in) → click "Case Status" → click "Case Number Wise"
+The HTML was fetched by navigating the Bombay High Court case status portal:
+1. Navigate directly to: {self.bhc_case_status_url}
 2. Fill in the search form:
-   - Case Type   : {base_case_type}
-   - Stamp/Regn  : {stamp_regn}  (use "Stamp" when case type ends with "(ST)", else "Registration")
-   - Case Number : {case_number}
+   - Side        : AS   (Appellate Side)
+   - Stamp/Regn. : {stamp_regn}  (use "Stamp" when case type ends with "(ST)", else "Register")
+   - Type        : {base_case_type}
+   - Number      : {case_number}
    - Year        : {case_year}
-   - Solve CAPTCHA and submit
-3. On the case details page: read the petitioner and respondent names
-4. Click the "Listing Dates/Order" button to view the orders table
-5. The orders table has columns: Date | Coram | Action | Order/Judgement
+   - Click the Search button
+3. On the case details page: read the petitioner and respondent names and the full case summary text
+4. Click the "Orders/Judgements" tab/button to view the orders table
+5. The orders table has columns: Date | Order link
 
 Return ONLY valid JSON in this shape:
 {{
   "case_details": {{
     "petitioner_name": null,
     "respondent_name": null,
-    "case_number": "{case_ref}"
+    "case_number": "{case_ref}",
+    "case_summary": null,
+    "title": null
   }},
   "court_orders": [
     {{
@@ -577,9 +625,11 @@ Return ONLY valid JSON in this shape:
 
 Rules:
 - Extract petitioner and respondent names from the case details section if present.
-- Include only probable order/judgement links from the Listing Dates table.
-- The "Order/Judgement" column contains links — extract their href values as download_url.
-- The "Date" column provides the listing_date (format DD/MM/YYYY).
+- Extract the full case summary sentence (e.g. "Case No. WP/3373/2025 with CNR No. ..., was filed on DD/MM/YYYY...").
+- Set "title" to "<petitioner> against <respondent>" when both are available.
+- Include only probable order/judgement links from the orders table.
+- The order column contains links — extract their href values as download_url.
+- The date column provides the listing_date (format DD/MM/YYYY).
 - Do not invent URLs.
 - If no order links are present, return an empty court_orders array.
 
@@ -771,9 +821,9 @@ HTML text:
                 )
                 ollama_response["status_code"] = response.status_code
                 if response.status_code != 200:
-                    ollama_response[
-                        "error"
-                    ] = f"Ollama returned HTTP {response.status_code}"
+                    ollama_response["error"] = (
+                        f"Ollama returned HTTP {response.status_code}"
+                    )
                 else:
                     llm_text = (response.json() or {}).get("response", "").strip()
                     ollama_response["raw_response"] = llm_text[:8000]
@@ -1142,12 +1192,347 @@ HTML text:
             dedup[url] = row
         return list(dedup.values())
 
+    def _playwright_try_select(
+        self, page: Any, selectors: List[str], value: str, timeout_ms: int = 2000
+    ) -> bool:
+        """
+        Attempt to select *value* from a dropdown using each selector in turn.
+
+        Returns True on the first successful selection, False if all selectors fail.
+        """
+        for sel in selectors:
+            try:
+                locator = page.locator(sel).first
+                locator.select_option(value, timeout=timeout_ms)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _playwright_try_fill(
+        self, page: Any, selectors: List[str], value: str, timeout_ms: int = 2000
+    ) -> bool:
+        """
+        Attempt to fill *value* into an input using each selector in turn.
+
+        Returns True on the first successful fill, False if all selectors fail.
+        """
+        for sel in selectors:
+            try:
+                locator = page.locator(sel).first
+                locator.fill(value, timeout=timeout_ms)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _playwright_fill_bhc_form(
+        self,
+        page: Any,
+        side_code: str,
+        stamp_regn: str,
+        case_type: str,
+        case_number: str,
+        case_year: str,
+    ) -> None:
+        """
+        Fill the case-number search form on the BHC portal
+        (https://bombayhighcourt.gov.in/bhc/casestatus/casenumber).
+
+        Uses prioritised lists of selectors so the scraper degrades gracefully
+        when the portal HTML changes.
+        """
+        # Side dropdown (e.g. "AS" = Appellate Side, "OS" = Original Side)
+        self._playwright_try_select(
+            page,
+            [
+                "select[id*='side' i]",
+                "select[name*='side' i]",
+                "select[formcontrolname*='side' i]",
+                "mat-select[formcontrolname*='side' i]",
+                "select >> nth=0",
+            ],
+            side_code,
+        )
+
+        # Stamp/Regn. dropdown ("Register" or "Stamp")
+        self._playwright_try_select(
+            page,
+            [
+                "select[id*='stamp' i]",
+                "select[id*='regn' i]",
+                "select[name*='stamp' i]",
+                "select[name*='regn' i]",
+                "select[formcontrolname*='stamp' i]",
+                "select[formcontrolname*='regn' i]",
+                "select >> nth=1",
+            ],
+            stamp_regn,
+        )
+
+        # Type (case type) dropdown
+        self._playwright_try_select(
+            page,
+            [
+                "select[id*='type' i]",
+                "select[name*='type' i]",
+                "select[id*='ctype' i]",
+                "select[name*='ctype' i]",
+                "select[formcontrolname*='type' i]",
+                "select >> nth=2",
+            ],
+            case_type,
+        )
+
+        # Number (case number) input
+        self._playwright_try_fill(
+            page,
+            [
+                "input[id*='number' i]",
+                "input[name*='number' i]",
+                "input[id*='cno' i]",
+                "input[name*='cno' i]",
+                "input[placeholder*='number' i]",
+                "input[formcontrolname*='number' i]",
+                "input[formcontrolname*='cno' i]",
+            ],
+            case_number,
+        )
+
+        # Year input
+        self._playwright_try_fill(
+            page,
+            [
+                "input[id*='year' i]",
+                "input[name*='year' i]",
+                "input[placeholder*='year' i]",
+                "input[formcontrolname*='year' i]",
+            ],
+            case_year,
+        )
+
+    def _playwright_click_search(self, page: Any, timeout_ms: int) -> None:
+        """Click the Search button on the BHC case status form."""
+        search_selectors = [
+            "button[type='submit']",
+            "input[type='submit']",
+            "button:has-text('Search')",
+            "button:has-text('search')",
+            "a:has-text('Search')",
+            "[class*='search' i]",
+        ]
+        for sel in search_selectors:
+            try:
+                page.click(sel, timeout=3000)
+                page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                return
+            except Exception:
+                continue
+
+    def _playwright_click_orders_tab(self, page: Any, timeout_ms: int) -> None:
+        """
+        Click the Orders/Judgements tab on the BHC case details page.
+
+        Tries several text patterns used by the portal for this button/tab.
+        """
+        orders_selectors = [
+            "text=Orders/Judgements",
+            "text=Orders / Judgements",
+            "text=Judgements",
+            "text=Orders",
+            "text=Listing Dates/Order",
+            "text=View Orders",
+            "text=Listing Dates",
+            "a:has-text('Order')",
+            "button:has-text('Order')",
+            "a:has-text('Judgement')",
+            "button:has-text('Judgement')",
+        ]
+        for sel in orders_selectors:
+            try:
+                page.click(sel, timeout=3000)
+                page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                return
+            except Exception:
+                continue
+
+    def _playwright_extract_case_summary(self, page: Any, html: str) -> Optional[str]:
+        """
+        Extract the full case summary sentence from the BHC case details page.
+
+        The summary typically reads:
+        "Case No. WP/3373/2025 with CNR No. HCBM010116572025, was filed on
+         26/02/2025 at Bombay High Court by <petitioner> against <respondent>"
+        """
+        soup = BeautifulSoup(html or "", "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Pattern 1: "Case No. … was filed on … by … against …"
+        summary_match = re.search(
+            r"(Case\s+No\.?\s+[A-Z]+/\d+/\d{4}[^.]*?(?:was\s+filed[^.]*?\.))",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if summary_match:
+            return summary_match.group(1).strip()
+
+        # Pattern 2: Any sentence containing "CNR No."
+        cnr_match = re.search(
+            r"(Case[^.]*?CNR\s+No\.?\s+[A-Z0-9]+[^.]*\.)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if cnr_match:
+            return cnr_match.group(1).strip()
+
+        # Pattern 3: Try JavaScript to get relevant text visible on the page
+        try:
+            summary_js = page.evaluate("""() => {
+                    const selectors = [
+                        '[class*="case-summary" i]',
+                        '[class*="casedetail" i]',
+                        '[class*="case-detail" i]',
+                        '[id*="case-summary" i]',
+                        '[id*="caseSummary" i]',
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) return el.innerText.trim();
+                    }
+                    return null;
+                }""")
+            if summary_js and len(summary_js) > 20:
+                return summary_js.strip()
+        except Exception:
+            pass
+
+        return None
+
+    def _playwright_extract_parties(
+        self, page: Any, html: str, case_ref: str
+    ) -> Dict[str, Optional[str]]:
+        """
+        Extract petitioner and respondent from the BHC case details page.
+
+        Extends the base regex extraction with Playwright JS evaluation for
+        portal-specific DOM patterns.
+        """
+        meta = self._extract_case_meta_from_html(html, case_ref)
+        petitioner = meta.get("petitioner_name")
+        respondent = meta.get("respondent_name")
+
+        if not (petitioner and respondent):
+            # Try JS evaluation for Angular/React rendered content
+            try:
+                parties_js = page.evaluate("""() => {
+                        const getText = (sel) => {
+                            const el = document.querySelector(sel);
+                            return el ? el.innerText.trim() : null;
+                        };
+                        return {
+                            petitioner: getText('[class*="petitioner" i]')
+                                || getText('[id*="petitioner" i]')
+                                || getText('[class*="appellant" i]'),
+                            respondent: getText('[class*="respondent" i]')
+                                || getText('[id*="respondent" i]')
+                                || getText('[class*="defendant" i]'),
+                        };
+                    }""")
+                if parties_js:
+                    petitioner = petitioner or parties_js.get("petitioner")
+                    respondent = respondent or parties_js.get("respondent")
+            except Exception:
+                pass
+
+        return {
+            "petitioner_name": petitioner,
+            "respondent_name": respondent,
+        }
+
+    def _playwright_extract_orders_from_table(
+        self, page: Any, html: str, current_url: str
+    ) -> List[Dict[str, Optional[str]]]:
+        """
+        Extract order rows from the Orders/Judgements table on the BHC portal.
+
+        Tries:
+        1. DOM inspection via JavaScript for Angular/React rendered tables.
+        2. Falls back to HTML parsing via _extract_order_rows_from_html().
+        """
+        orders: Dict[str, Dict[str, Optional[str]]] = {}
+
+        # Attempt 1: JS-based extraction of rendered table rows
+        try:
+            rows_js = page.evaluate("""() => {
+                    const results = [];
+                    // Look for table rows that contain order links
+                    const rows = document.querySelectorAll('tr');
+                    for (const row of rows) {
+                        const anchors = row.querySelectorAll('a[href]');
+                        if (!anchors.length) continue;
+                        // Date cell (first or second td)
+                        const cells = row.querySelectorAll('td');
+                        let dateText = null;
+                        for (const cell of cells) {
+                            const t = cell.innerText.trim();
+                            if (/\\d{2}[\\/-]\\d{2}[\\/-]\\d{4}/.test(t)) {
+                                dateText = t.match(/\\d{2}[\\/-]\\d{2}[\\/-]\\d{4}/)[0];
+                                break;
+                            }
+                        }
+                        for (const a of anchors) {
+                            const href = a.href || a.getAttribute('href');
+                            const txt = (a.innerText || '').toLowerCase();
+                            if (!href) continue;
+                            const lhref = href.toLowerCase();
+                            if (lhref.includes('.pdf') || lhref.includes('order')
+                                    || lhref.includes('judg') || txt.includes('order')
+                                    || txt.includes('judg')) {
+                                results.push({date: dateText, href: href});
+                            }
+                        }
+                    }
+                    return results;
+                }""")
+            for item in rows_js or []:
+                href = (item.get("href") or "").strip()
+                if not href:
+                    continue
+                orders[href] = {
+                    "listing_date": item.get("date"),
+                    "download_url": href,
+                }
+        except Exception:
+            pass
+
+        # Attempt 2: HTML-based extraction as fallback
+        for row in self._extract_order_rows_from_html(html, current_url):
+            row_url = (row.get("download_url") or "").strip()
+            if row_url and row_url not in orders:
+                orders[row_url] = row
+
+        return list(orders.values())
+
     def _fetch_with_playwright(
         self,
         case_ref: str,
         date: Optional[str] = None,
         bench: str = "mumbai",
     ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch case details and court orders from the Bombay High Court portal
+        using Playwright browser automation.
+
+        Navigation flow (new BHC portal):
+        1. Navigate to https://bombayhighcourt.gov.in/bhc/casestatus/casenumber
+        2. Fill form: Side, Stamp/Regn., Type, Number, Year → click Search
+        3. Extract case summary, petitioner, respondent from the case details page
+        4. Click "Orders/Judgements" tab
+        5. Collect all order rows (date + download link)
+
+        Returns the structured result dict on success, or None when no orders
+        are found or an unrecoverable error occurs.
+        """
         if sync_playwright is None:
             return None
 
@@ -1155,16 +1540,22 @@ HTML text:
         if not case_parts:
             return None
 
-        court_code = self._get_bench_code(bench)
-        candidate_urls = self._build_candidate_urls(case_parts, court_code)
+        raw_case_type = case_parts.get("case_type", "")
+        base_case_type = self._get_base_case_type(raw_case_type)
+        stamp_regn = self._get_stamp_regn_bhc(raw_case_type)
+        case_number = case_parts.get("case_number", "")
+        case_year = case_parts.get("year", "")
+        side_code = self._get_side_code(bench)
 
-        aggregated_orders: Dict[str, Dict[str, Optional[str]]] = {}
         case_details: Dict[str, Optional[str]] = {
             "petitioner_name": None,
             "respondent_name": None,
             "case_number": case_ref,
-            "case_status_url": None,
+            "case_status_url": self.bhc_case_status_url,
+            "case_summary": None,
+            "title": None,
         }
+        aggregated_orders: Dict[str, Dict[str, Optional[str]]] = {}
 
         try:
             timeout_ms = self.playwright_timeout_seconds * 1000
@@ -1172,69 +1563,90 @@ HTML text:
                 browser = playwright.chromium.launch(headless=self.playwright_headless)
                 page = browser.new_page()
 
-                for url in candidate_urls:
-                    try:
-                        page.goto(
-                            url, wait_until="domcontentloaded", timeout=timeout_ms
-                        )
-                        html = page.content()
-                        current_url = page.url
-                    except PlaywrightTimeoutError:
-                        continue
-                    except Exception:
-                        continue
-
-                    if self._looks_like_captcha(html):
-                        continue
-
-                    extracted_orders = self._extract_order_rows_from_html(
-                        html,
-                        current_url,
+                # Step 1: Navigate to the BHC case status portal
+                try:
+                    page.goto(
+                        self.bhc_case_status_url,
+                        wait_until="domcontentloaded",
+                        timeout=timeout_ms,
                     )
-                    for row in extracted_orders:
-                        row_url = (row.get("download_url") or "").strip()
-                        if row_url:
-                            aggregated_orders[row_url] = row
+                except PlaywrightTimeoutError:
+                    browser.close()
+                    return None
+                except Exception as exc:
+                    logging.warning(
+                        "Playwright: failed to load BHC portal for %s: %s",
+                        case_ref,
+                        exc,
+                    )
+                    browser.close()
+                    return None
 
-                    extracted_meta = self._extract_case_meta_from_html(html, case_ref)
-                    if extracted_meta.get("petitioner_name") and not case_details.get(
-                        "petitioner_name"
-                    ):
-                        case_details["petitioner_name"] = extracted_meta.get(
-                            "petitioner_name"
-                        )
-                    if extracted_meta.get("respondent_name") and not case_details.get(
-                        "respondent_name"
-                    ):
-                        case_details["respondent_name"] = extracted_meta.get(
-                            "respondent_name"
-                        )
+                # Step 2: Fill the search form
+                self._playwright_fill_bhc_form(
+                    page,
+                    side_code=side_code,
+                    stamp_regn=stamp_regn,
+                    case_type=base_case_type,
+                    case_number=case_number,
+                    case_year=case_year,
+                )
 
-                    case_details["case_status_url"] = case_details.get(
-                        "case_status_url"
-                    ) or self._extract_case_status_url(current_url)
-                    case_details["case_number"] = case_details.get(
-                        "case_number"
-                    ) or self._extract_case_ref_from_url(current_url)
+                # Step 3: Submit the form
+                self._playwright_click_search(page, timeout_ms)
+
+                # Step 4: Extract case details from the result page
+                html = page.content()
+                current_url = page.url
+
+                parties = self._playwright_extract_parties(page, html, case_ref)
+                case_details["petitioner_name"] = parties.get("petitioner_name")
+                case_details["respondent_name"] = parties.get("respondent_name")
+                case_details["case_summary"] = self._playwright_extract_case_summary(
+                    page, html
+                )
+                case_details["case_status_url"] = (
+                    self._extract_case_status_url(current_url)
+                    or self.bhc_case_status_url
+                )
+
+                # Step 5: Navigate to the Orders/Judgements tab
+                self._playwright_click_orders_tab(page, timeout_ms)
+
+                # Step 6: Collect all order rows
+                html = page.content()
+                current_url = page.url
+                for row in self._playwright_extract_orders_from_table(
+                    page, html, current_url
+                ):
+                    row_url = (row.get("download_url") or "").strip()
+                    if row_url:
+                        aggregated_orders[row_url] = row
 
                 browser.close()
 
+            # Build the short title from extracted parties
+            petitioner = case_details.get("petitioner_name")
+            respondent = case_details.get("respondent_name")
+            case_details["title"] = self._build_short_title(petitioner, respondent)
+
             court_orders = list(aggregated_orders.values())
+
+            # Optional date filter (keep all rows if date is absent)
             if date:
                 parsed_target = self._parse_iso_date(date)
                 if parsed_target:
-                    date_matched_orders: List[Dict[str, Optional[str]]] = []
-                    for row in court_orders:
-                        parsed_listing = self._parse_listing_date(
+                    date_matched: List[Dict[str, Optional[str]]] = [
+                        row
+                        for row in court_orders
+                        if self._parse_listing_date(row.get("listing_date") or "")
+                        and self._parse_listing_date(
                             row.get("listing_date") or ""
-                        )
-                        if (
-                            parsed_listing
-                            and parsed_listing.date() == parsed_target.date()
-                        ):
-                            date_matched_orders.append(row)
-                    if date_matched_orders:
-                        court_orders = date_matched_orders
+                        ).date()
+                        == parsed_target.date()
+                    ]
+                    if date_matched:
+                        court_orders = date_matched
 
             if not court_orders:
                 return None
@@ -1247,6 +1659,8 @@ HTML text:
                     "respondent_name": case_details.get("respondent_name"),
                     "case_number": case_details.get("case_number") or case_ref,
                     "case_status_url": case_details.get("case_status_url"),
+                    "case_summary": case_details.get("case_summary"),
+                    "title": case_details.get("title"),
                 },
                 "court_orders": court_orders,
             }
@@ -1276,54 +1690,47 @@ HTML text:
         human_case_ref = self._normalize_case_ref(case_ref)
         raw_case_type = (case_parts or {}).get("case_type", "")
         case_type = self._get_base_case_type(raw_case_type)
-        stamp_regn = self._get_stamp_regn_type(raw_case_type)
+        stamp_regn = self._get_stamp_regn_bhc(raw_case_type)
         case_number = (case_parts or {}).get("case_number", "")
         case_year = (case_parts or {}).get("year", "")
-        start_url = f"{self.base_url}/cases/case_no.php"
-        home_url = self.bombay_high_court_url
+        portal_url = self.bhc_case_status_url
         return f"""
 CRITICAL RESTRICTION — READ BEFORE DOING ANYTHING:
 - You MUST NOT download, open, follow, fetch, or request any PDF or file URL at any point.
-- You MUST NOT click any link in the "Order/Judgement" column — only read the href attribute value.
-- There is NO date filter — collect ALL rows in the listing-dates table.
+- You MUST NOT click any order link — only read the href attribute value.
+- There is NO date filter — collect ALL rows in the orders table.
 
-Task: Find case {human_case_ref} and return every court-order link from its Listing Dates page.
+Task: Find case {human_case_ref} and return every court-order link from its Orders/Judgements page.
 
 STEP-BY-STEP NAVIGATION (follow exactly in order):
 
-Step 1 — Navigate to the case search page via the home page menu:
-  Open: {home_url}
-  On the home page, locate the "Case Status" menu item in the navigation bar and click it.
-  In the dropdown that appears, click "Case Number Wise".
-  (Alternatively, navigate directly to: {start_url})
+Step 1 — Navigate directly to the BHC case status portal:
+  Open: {portal_url}
+  (This is the Bombay High Court case status search page at bombayhighcourt.gov.in)
 
 Step 2 — Fill in the search form with these exact values:
-  - Case Type  : {case_type}       (select from the Case Type dropdown)
-  - Stamp/Regn : {stamp_regn}      (select "{stamp_regn}" from the Stamp/Regn dropdown;
+  - Side        : AS               (select "AS" — Appellate Side — from the Side dropdown)
+  - Stamp/Regn. : {stamp_regn}     (select "{stamp_regn}" from the Stamp/Regn. dropdown;
                                     use "Stamp" when the case type ends with "(ST)",
-                                    otherwise use "Registration")
-  - Case Number: {case_number}     (enter in the Case Number text field)
-  - Year       : {case_year}       (enter in the Year field)
-  - Bench      : Mumbai (High Court)
-  Submit the form.
+                                    otherwise use "Register")
+  - Type        : {case_type}      (select from the Type dropdown)
+  - Number      : {case_number}    (enter in the Number text field)
+  - Year        : {case_year}      (enter in the Year field)
+  Click the Search button.
 
-Step 3 — Handle CAPTCHA if shown, then re-submit.
-
-Step 4 — On the case details page:
+Step 3 — On the case details page:
   Read and record:
-  - The petitioner name (labelled "Petitioner" or "Appellant")
-  - The respondent name (labelled "Respondent" or "Defendant")
-  The page header may show both a Stamp No. (e.g. WP/7203/{case_year}) and a
-  Reg. No. (e.g. WP/{case_number}/{case_year}) — either is the correct case.
-  Click the button or tab labelled "Listing Dates/Order"
-  (it may also be labelled "Listing Dates", "Listing Dates/Orders", "Hearing Dates", or "View Orders").
+  - The full case summary sentence (e.g. "Case No. WP/3373/2025 with CNR No. ..., was filed on...")
+  - The petitioner name (labelled "Petitioner" or "Appellant" or the party before "against")
+  - The respondent name (labelled "Respondent" or "Defendant" or the party after "against")
+  Click the button or tab labelled "Orders/Judgements"
+  (it may also be labelled "Orders", "Judgements", "View Orders", or "Listing Dates/Order").
 
-Step 5 — On the Listing Dates table page you will see a table with these columns:
-    Date | Coram | Action | Order/Judgement
+Step 4 — On the Orders/Judgements table page you will see a table with date and order links.
 
   For EVERY data row in that table:
-    a) Read the "Date" cell  → this is listing_date (format DD/MM/YYYY).
-    b) Look at the "Order/Judgement" cell — it contains a link with text like
+    a) Read the date cell  → this is listing_date (format DD/MM/YYYY).
+    b) Look at the order/judgement cell — it contains a link with text like
        "Order/Judg-1". DO NOT click it. Instead, read the href attribute of that
        link and store it as download_url.
   Collect ALL rows. Do not skip any row.
@@ -1333,7 +1740,9 @@ Return ONLY this JSON — nothing else:
   "case_details": {{
     "petitioner_name": "...",
     "respondent_name": "...",
-    "case_number": "..."
+    "case_number": "...",
+    "case_summary": "...",
+    "title": "<petitioner> against <respondent>"
   }},
   "court_orders": [
     {{
@@ -1346,6 +1755,7 @@ Return ONLY this JSON — nothing else:
 Rules:
 - Copy the full URL from the href attribute exactly — do NOT shorten or modify it.
 - court_orders must list ALL rows from the table (e.g. 3 rows → 3 entries).
+- Set "title" to "<petitioner_name> against <respondent_name>".
 - Use null only if a field is genuinely absent.
 - NEVER open, fetch, or preview any PDF or linked file.
 """.strip()
@@ -1380,10 +1790,15 @@ Rules:
         case_details = payload.get("case_details") or {}
         raw_orders = payload.get("court_orders") or []
 
+        petitioner = case_details.get("petitioner_name")
+        respondent = case_details.get("respondent_name")
         normalized_case_details = {
-            "petitioner_name": case_details.get("petitioner_name"),
-            "respondent_name": case_details.get("respondent_name"),
+            "petitioner_name": petitioner,
+            "respondent_name": respondent,
             "case_number": case_details.get("case_number") or case_ref,
+            "case_summary": case_details.get("case_summary"),
+            "title": case_details.get("title")
+            or self._build_short_title(petitioner, respondent),
         }
 
         normalized_orders: List[Dict[str, Optional[str]]] = []
@@ -1436,11 +1851,10 @@ Rules:
             prompt = self._build_firecrawl_prompt(case_ref, case_parts=case_parts)
 
             if hasattr(app, "agent"):
-                # Agent-based SDK: start at the BHC home page so the agent can
-                # navigate via "Case Status" → "Case Number Wise"; also allow
-                # both site domains via wildcard.
+                # Agent-based SDK: start at the new BHC case status portal so the
+                # agent can fill the form directly; also allow both site domains.
                 agent_urls = [
-                    f"{self.bombay_high_court_url}/",
+                    self.bhc_case_status_url,
                     f"{self.bombay_high_court_url}/*",
                     f"{self.base_url}/cases/case_no.php",
                     f"{self.base_url}/*",
@@ -1452,10 +1866,9 @@ Rules:
                     model=self.firecrawl_model,
                 )
             elif hasattr(app, "extract"):
-                # Extract-based SDK: point directly at the eCourts search page
-                # and allow both site domains via wildcard.
+                # Extract-based SDK: point at the BHC portal and both domains.
                 extract_urls = [
-                    f"{self.base_url}/cases/case_no.php",
+                    self.bhc_case_status_url,
                     f"{self.bombay_high_court_url}/*",
                     f"{self.base_url}/*",
                 ]
@@ -1658,7 +2071,7 @@ Rules:
         self, case_ref: str, date: Optional[str] = None, bench: str = "mumbai"
     ) -> Dict[str, Any]:
         """
-        Fetch case orders for a specific case and date
+        Fetch case orders for a specific case and date.
 
         Args:
             case_ref: Case reference like 'WP/294/2025'
@@ -1666,7 +2079,14 @@ Rules:
             bench: Court bench - 'mumbai', 'aurangabad', 'nagpur', 'goa'
 
         Returns:
-            Structured case details and list of court orders
+            Structured result containing:
+            - case_summary: Full case summary sentence from the portal
+            - petitioner: Petitioner / appellant name
+            - respondent: Respondent / defendant name
+            - title: Short title "<petitioner> against <respondent>"
+            - case_orders: [{"date": "DD/MM/YYYY", "download_link": "https://..."}]
+            - case_details: (also present for backward compatibility)
+            - court_orders: (also present for backward compatibility)
         """
         try:
             case_parts = self.parse_case_number(case_ref)
@@ -1679,22 +2099,28 @@ Rules:
                         "case_number_citation": self.bombay_high_court_url,
                     },
                     "court_orders": [],
+                    "case_orders": [],
                 }
 
             provider_result = self._fetch_with_provider(
                 case_ref=case_ref, date=date, bench=bench
             )
             if provider_result:
-                return provider_result
+                return self._enrich_case_orders_result(provider_result)
 
             # Set court code based on bench (same as case details)
             court_code = self._get_bench_code(bench)
 
-            # Fallback response when Firecrawl is not configured or cannot bypass captcha.
+            # Fallback response when no scraper provider could retrieve orders.
             return {
                 "status": "captcha_required",
                 "source": "ecourts_fallback",
                 "message": "Court order lookup did not yield downloadable links via configured scraper provider",
+                "case_summary": None,
+                "petitioner": None,
+                "respondent": None,
+                "title": None,
+                "case_orders": [],
                 "case_details": {
                     "petitioner_name": None,
                     "petitioner_name_citation": self.bombay_high_court_url,
@@ -1702,22 +2128,70 @@ Rules:
                     "respondent_name_citation": self.bombay_high_court_url,
                     "case_number": case_ref,
                     "case_number_citation": self.bombay_high_court_url,
-                    "case_status_url": f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
+                    "case_status_url": self.bhc_case_status_url,
                     "case_status_url_citation": self.bombay_high_court_url,
                 },
                 "court_orders": [],
                 "bench": bench,
                 "court_code": court_code,
-                "instructions": "Please visit the court website manually to complete CAPTCHA verification and get case orders",
+                "instructions": "Please visit the court website manually to complete verification and get case orders",
             }
 
         except Exception as e:
             return {
                 "status": "error",
                 "error": f"Failed to fetch orders: {str(e)}",
+                "case_summary": None,
+                "petitioner": None,
+                "respondent": None,
+                "title": None,
+                "case_orders": [],
                 "case_details": {
                     "case_number": case_ref,
                     "case_number_citation": self.bombay_high_court_url,
                 },
                 "court_orders": [],
             }
+
+    def _enrich_case_orders_result(
+        self, provider_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Add the new top-level convenience fields to a provider result dict.
+
+        New fields:
+        - case_summary  — full case summary sentence
+        - petitioner    — petitioner / appellant name
+        - respondent    — respondent / defendant name
+        - title         — "<petitioner> against <respondent>"
+        - case_orders   — [{date, download_link}] (mirrors court_orders with renamed keys)
+
+        The original case_details and court_orders keys are preserved for
+        backward compatibility.
+        """
+        case_details = provider_result.get("case_details") or {}
+        court_orders = provider_result.get("court_orders") or []
+
+        petitioner = case_details.get("petitioner_name")
+        respondent = case_details.get("respondent_name")
+        case_summary = case_details.get("case_summary")
+        title = case_details.get("title") or self._build_short_title(
+            petitioner, respondent
+        )
+
+        case_orders = [
+            {
+                "date": row.get("listing_date"),
+                "download_link": row.get("download_url"),
+            }
+            for row in court_orders
+            if row.get("download_url")
+        ]
+
+        enriched = dict(provider_result)
+        enriched["case_summary"] = case_summary
+        enriched["petitioner"] = petitioner
+        enriched["respondent"] = respondent
+        enriched["title"] = title
+        enriched["case_orders"] = case_orders
+        return enriched
