@@ -795,3 +795,11 @@ class BombayHighCourtScraper:
         enriched["title"] = title
         enriched["case_orders"] = case_orders
         return enriched
+
+    def _build_short_title(
+        self, petitioner: Optional[str], respondent: Optional[str]
+    ) -> Optional[str]:
+        """Build a short title from petitioner and respondent names."""
+        if petitioner and respondent:
+            return f"{petitioner} against {respondent}"
+        return petitioner or respondent
