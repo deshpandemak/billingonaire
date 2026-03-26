@@ -448,7 +448,7 @@ def test_download_order_for_case_falls_back_to_legacy_sequence(auto_order_manage
     }
 
     auto_order_manager.court_scraper.get_case_orders.return_value = {
-        "status": "captcha_required",
+        "status": "not_found",
         "court_orders": [],
     }
 

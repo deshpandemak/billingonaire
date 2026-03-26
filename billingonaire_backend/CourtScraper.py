@@ -2028,13 +2028,11 @@ Rules:
                     logging.debug(f"Alternative URL failed: {url}, error: {e}")
                     continue
 
-            # If direct access fails, return a structured response indicating CAPTCHA requirement
+            # If direct access fails, return a structured response indicating no results
             return {
-                "status": "captcha_required",
-                "message": "Case lookup requires manual CAPTCHA verification",
+                "status": "not_found",
+                "message": "Case lookup did not return results via alternative URLs",
                 "case_ref": f"{case_type}/{case_number}/{year}",
-                "search_url": f"{self.search_url}?state_cd=1&dist_cd=1&court_code={court_code}&stateNm=Bombay",
-                "instructions": "Please visit the court website manually to complete CAPTCHA verification",
             }
 
         except Exception as e:
@@ -2124,7 +2122,7 @@ Rules:
 
             # Fallback response when no scraper provider could retrieve orders.
             return {
-                "status": "captcha_required",
+                "status": "not_found",
                 "source": "ecourts_fallback",
                 "message": "Court order lookup did not yield downloadable links via configured scraper provider",
                 "case_summary": None,
@@ -2145,7 +2143,6 @@ Rules:
                 "court_orders": [],
                 "bench": bench,
                 "court_code": court_code,
-                "instructions": "Please visit the court website manually to complete verification and get case orders",
             }
 
         except Exception as e:

@@ -228,9 +228,9 @@ def get_user_matter_matcher():
 
 
 # In-memory queue for async order processing
-order_processing_queue = Queue()
+order_processing_queue: Queue[Any] = Queue()
 processing_active = False
-analysis_processing_queue = Queue()
+analysis_processing_queue: Queue[Any] = Queue()
 analysis_processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
 try:
@@ -364,8 +364,8 @@ async def process_order_queue_worker(worker_id: int):
             try:
                 loop = asyncio.get_event_loop()
                 max_sequences = case_info.get(
-                    "max_sequences", 50
-                )  # Get max_sequences from case_info, default to 50
+                    "max_sequences"
+                )  # None when not set → AutoOrderManager uses ORDER_MAX_SEQUENCE_RETRIES env var
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
@@ -3114,7 +3114,24 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
     try:
         body = await request.json()
         case_ids = body.get("case_ids", [])
-        max_sequences = body.get("max_sequences", 50)
+        raw_max_sequences = body.get("max_sequences")
+        if raw_max_sequences is not None:
+            try:
+                max_sequences = int(raw_max_sequences)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "Invalid value for max_sequences; must be a positive integer."
+                    },
+                )
+            if max_sequences <= 0 or max_sequences > 100:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "max_sequences must be between 1 and 100"},
+                )
+        else:
+            max_sequences = None  # Let AutoOrderManager use ORDER_MAX_SEQUENCE_RETRIES
 
         if not case_ids:
             return JSONResponse(
@@ -3393,7 +3410,7 @@ async def admin_bulk_order_processing(
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
         "limit": 100,  // Maximum cases to process
         "days_back": 30,  // Only process cases from last N days (optional)
-        "max_sequences": 50  // Maximum sequence numbers to try per case (optional, default: 50)
+        "max_sequences": 5  // Maximum sequence numbers to try per case (optional, omit to use server default)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
@@ -3407,9 +3424,24 @@ async def admin_bulk_order_processing(
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
-        max_sequences = body.get("max_sequences", 50)
-
-        # Build query
+        raw_max_sequences = body.get("max_sequences")
+        if raw_max_sequences is not None:
+            try:
+                max_sequences = int(raw_max_sequences)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "Invalid value for max_sequences; must be a positive integer."
+                    },
+                )
+            if max_sequences <= 0 or max_sequences > 100:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "max_sequences must be between 1 and 100"},
+                )
+        else:
+            max_sequences = None  # Let queue worker use ORDER_MAX_SEQUENCE_RETRIES
         query = db.collection("daily-boards")
 
         # Filter by date if specified (board_date is stored as datetime object)
@@ -3989,7 +4021,9 @@ async def generate_bill_data(
             all_cases = boards_ref.stream()
 
             unique_agp_names = set()
-            cases_by_agp = {}  # Map AGP names to their cases for efficient lookup
+            cases_by_agp: Dict[
+                str, List
+            ] = {}  # Map AGP names to their cases for efficient lookup
 
             for case_doc in all_cases:
                 case_data = case_doc.to_dict()
@@ -4251,7 +4285,7 @@ async def generate_bill_data(
         }
 
         # Add matching debug info for admin fuzzy matching
-        if user_name and "matched_agp" in locals():
+        if user_name and "matched_agp" in locals() and matched_agp is not None:
             response_data["debug_info"] = {
                 "requested_name": user_name,
                 "matched_agp_name": matched_agp,
@@ -4956,7 +4990,7 @@ async def search_orders(
 ):
     """Search orders with petitioner, respondent, and order links"""
     try:
-        search_params = {}
+        search_params: Dict[str, Any] = {}
 
         if petitioner_search:
             search_params["petitioner_search"] = petitioner_search
