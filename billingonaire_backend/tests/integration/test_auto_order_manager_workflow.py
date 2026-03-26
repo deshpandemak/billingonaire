@@ -181,10 +181,10 @@ def test_process_single_case_falls_back_to_legacy_when_structured_unavailable(
     }
 
     manager.court_scraper.get_case_orders.return_value = {
-        "status": "captcha_required",
+        "status": "not_found",
         "source": "ecourts_fallback",
         "court_orders": [],
-        "message": "Court order lookup requires manual CAPTCHA verification",
+        "message": "Court order lookup did not yield downloadable links via configured scraper provider",
     }
 
     manager._download_pdf_bombay_hc_simple = Mock(

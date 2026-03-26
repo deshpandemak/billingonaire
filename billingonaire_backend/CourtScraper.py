@@ -705,6 +705,11 @@ class BombayHighCourtScraper:
                 return {
                     "status": "error",
                     "error": "Invalid case reference format",
+                    "case_summary": None,
+                    "petitioner": None,
+                    "respondent": None,
+                    "title": None,
+                    "case_orders": [],
                     "case_details": {
                         "case_number": case_ref,
                         "case_status_url": self.case_status_url,
@@ -716,12 +721,17 @@ class BombayHighCourtScraper:
                 case_ref=case_ref, date=date, bench=bench
             )
             if provider_result:
-                return provider_result
+                return self._enrich_case_orders_result(provider_result)
 
             return {
                 "status": "not_found",
                 "source": self.scraper_provider,
                 "message": "Court order lookup did not yield downloadable links via configured scraper provider",
+                "case_summary": None,
+                "petitioner": None,
+                "respondent": None,
+                "title": None,
+                "case_orders": [],
                 "case_details": {
                     "petitioner_name": None,
                     "respondent_name": None,
@@ -742,3 +752,46 @@ class BombayHighCourtScraper:
                 },
                 "court_orders": [],
             }
+
+    def _enrich_case_orders_result(
+        self, provider_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Add the new top-level convenience fields to a provider result dict.
+
+        New fields:
+        - case_summary  — full case summary sentence
+        - petitioner    — petitioner / appellant name
+        - respondent    — respondent / defendant name
+        - title         — "<petitioner> against <respondent>"
+        - case_orders   — [{date, download_link}] (mirrors court_orders with renamed keys)
+
+        The original case_details and court_orders keys are preserved for
+        backward compatibility.
+        """
+        case_details = provider_result.get("case_details") or {}
+        court_orders = provider_result.get("court_orders") or []
+
+        petitioner = case_details.get("petitioner_name")
+        respondent = case_details.get("respondent_name")
+        case_summary = case_details.get("case_summary")
+        title = case_details.get("title") or self._build_short_title(
+            petitioner, respondent
+        )
+
+        case_orders = [
+            {
+                "date": row.get("listing_date"),
+                "download_link": row.get("download_url"),
+            }
+            for row in court_orders
+            if row.get("download_url")
+        ]
+
+        enriched = dict(provider_result)
+        enriched["case_summary"] = case_summary
+        enriched["petitioner"] = petitioner
+        enriched["respondent"] = respondent
+        enriched["title"] = title
+        enriched["case_orders"] = case_orders
+        return enriched
