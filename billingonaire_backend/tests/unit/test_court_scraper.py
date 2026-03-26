@@ -260,3 +260,57 @@ def test_fetch_with_direct_api_handles_not_found_json(monkeypatch):
 
     result = scraper._fetch_with_direct_api("WP/9999/2025")
     assert result is None
+
+
+@pytest.mark.parametrize(
+    "petitioner, respondent, expected",
+    [
+        ("Alice", "Bob", "Alice against Bob"),
+        ("Alice", None, "Alice"),
+        (None, "Bob", "Bob"),
+        (None, None, None),
+    ],
+)
+def test_build_short_title(petitioner, respondent, expected):
+    scraper = BombayHighCourtScraper()
+    assert scraper._build_short_title(petitioner, respondent) == expected
+
+
+def test_enrich_case_orders_result_uses_title_from_case_details():
+    scraper = BombayHighCourtScraper()
+    provider_result = {
+        "case_details": {
+            "petitioner_name": "Alice",
+            "respondent_name": "Bob",
+            "case_summary": "Summary text",
+            "title": "Explicit Title",
+        },
+        "court_orders": [],
+    }
+    enriched = scraper._enrich_case_orders_result(provider_result)
+    assert enriched["title"] == "Explicit Title"
+    assert enriched["petitioner"] == "Alice"
+    assert enriched["respondent"] == "Bob"
+    assert enriched["case_summary"] == "Summary text"
+    assert enriched["case_orders"] == []
+
+
+def test_enrich_case_orders_result_builds_title_when_missing():
+    scraper = BombayHighCourtScraper()
+    provider_result = {
+        "case_details": {
+            "petitioner_name": "Alice",
+            "respondent_name": "Bob",
+            "case_summary": None,
+            "title": None,
+        },
+        "court_orders": [
+            {"listing_date": "01/01/2025", "download_url": "http://example.com/order.pdf"},
+            {"listing_date": "02/01/2025", "download_url": None},
+        ],
+    }
+    enriched = scraper._enrich_case_orders_result(provider_result)
+    assert enriched["title"] == "Alice against Bob"
+    assert enriched["case_orders"] == [
+        {"date": "01/01/2025", "download_link": "http://example.com/order.pdf"}
+    ]
