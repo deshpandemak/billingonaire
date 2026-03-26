@@ -228,9 +228,9 @@ def get_user_matter_matcher():
 
 
 # In-memory queue for async order processing
-order_processing_queue = Queue()
+order_processing_queue: Queue[Any] = Queue()
 processing_active = False
-analysis_processing_queue = Queue()
+analysis_processing_queue: Queue[Any] = Queue()
 analysis_processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
 try:
@@ -1398,9 +1398,9 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         if hasattr(board, "ml_parser") and board.ml_parser:
             status = board.ml_parser.get_enhancement_status()
             status["ml_parser_available"] = True
-            status[
-                "message"
-            ] = "ML Enhanced Parser is active and improving PDF processing quality"
+            status["message"] = (
+                "ML Enhanced Parser is active and improving PDF processing quality"
+            )
         else:
             status = {
                 "ml_parser_available": False,
@@ -1927,9 +1927,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
                         if analysis_result.get("success"):
                             result["analysis_completed"] = True
-                            result[
-                                "analysis_message"
-                            ] = "Order linked and analyzed successfully"
+                            result["analysis_message"] = (
+                                "Order linked and analyzed successfully"
+                            )
                             logging.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
@@ -3128,9 +3128,7 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
             if max_sequences <= 0 or max_sequences > 100:
                 return JSONResponse(
                     status_code=400,
-                    content={
-                        "error": "max_sequences must be between 1 and 100"
-                    },
+                    content={"error": "max_sequences must be between 1 and 100"},
                 )
         else:
             max_sequences = None  # Let AutoOrderManager use ORDER_MAX_SEQUENCE_RETRIES
@@ -4023,7 +4021,9 @@ async def generate_bill_data(
             all_cases = boards_ref.stream()
 
             unique_agp_names = set()
-            cases_by_agp = {}  # Map AGP names to their cases for efficient lookup
+            cases_by_agp: Dict[str, List] = (
+                {}
+            )  # Map AGP names to their cases for efficient lookup
 
             for case_doc in all_cases:
                 case_data = case_doc.to_dict()
@@ -4119,7 +4119,9 @@ async def generate_bill_data(
                 logging.info(
                     f"📊 Collected {len(matched_variants)} AGP variants matching '{user_name}'"
                 )
-                logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
+                logging.info(
+                    f"📁 Total cases across all variants: {len(matched_cases)}"
+                )
 
                 # Track filtering for debugging
                 date_filtered = 0
@@ -4285,7 +4287,7 @@ async def generate_bill_data(
         }
 
         # Add matching debug info for admin fuzzy matching
-        if user_name and "matched_agp" in locals():
+        if user_name and "matched_agp" in locals() and matched_agp is not None:
             response_data["debug_info"] = {
                 "requested_name": user_name,
                 "matched_agp_name": matched_agp,
@@ -4721,26 +4723,26 @@ async def export_bill_excel(
         # Header Section
         # Title
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        ws[f"A{current_row}"] = (
+            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        )
         ws[f"A{current_row}"].font = title_font
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        ws[f"A{current_row}"] = (
+            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        ws[f"A{current_row}"] = (
+            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
@@ -4990,7 +4992,7 @@ async def search_orders(
 ):
     """Search orders with petitioner, respondent, and order links"""
     try:
-        search_params = {}
+        search_params: Dict[str, Any] = {}
 
         if petitioner_search:
             search_params["petitioner_search"] = petitioner_search
