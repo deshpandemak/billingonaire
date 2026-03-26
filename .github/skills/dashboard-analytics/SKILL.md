@@ -1,7 +1,6 @@
 ---
 name: dashboard-analytics
 description: Expose aggregated analytics about court cases, AGP activity, and workload trends through read-only dashboard API endpoints.
-tags: [backend, analytics, dashboard, firestore, aggregation]
 ---
 
 ## Overview

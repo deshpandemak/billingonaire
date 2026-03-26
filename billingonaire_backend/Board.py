@@ -31,22 +31,6 @@ except ImportError:
             "ML Enhanced Parser not available - continuing with standard parsing"
         )
 
-# Import LLM Extractor (optional – gracefully disabled when Ollama is absent)
-try:
-    from llm_extractor import LLMExtractor
-
-    LLM_EXTRACTOR_AVAILABLE = True
-except ImportError:
-    try:
-        from .llm_extractor import LLMExtractor
-
-        LLM_EXTRACTOR_AVAILABLE = True
-    except ImportError:
-        LLM_EXTRACTOR_AVAILABLE = False
-        logging.warning(
-            "LLM Extractor not available - continuing without LLM enhancements"
-        )
-
 
 class Board:
     def __init__(self):
@@ -62,16 +46,6 @@ class Board:
             except Exception as e:
                 logging.warning(f"Could not initialize ML Enhanced Parser: {e}")
                 self.ml_parser = None
-
-        # Initialize LLM Extractor if available
-        self.llm_extractor = None
-        if LLM_EXTRACTOR_AVAILABLE:
-            try:
-                self.llm_extractor = LLMExtractor()
-                logging.info("LLM Extractor initialized successfully")
-            except Exception as e:
-                logging.warning(f"Could not initialize LLM Extractor: {e}")
-                self.llm_extractor = None
 
     def readFile(self, filename, file):
         logging.info(f"Reading file: {filename}")
@@ -90,10 +64,6 @@ class Board:
             df = self.read_board(filename, file)
             # Replace NaN and infinite values
             df = df.replace([np.nan, np.inf, -np.inf], None)
-
-            # Optionally enrich with LLM when Ollama is running locally
-            if self.llm_extractor and self.llm_extractor.is_available():
-                df = self._enrich_with_llm(df)
 
             return df
         except Exception as e:
@@ -468,80 +438,6 @@ class Board:
             "additional_cases": [c.strip() for c in additional_cases],
             "additional_respondent_lawyers": additional_respondent_lawyers,
         }
-
-    def _enrich_with_llm(self, df: "pd.DataFrame") -> "pd.DataFrame":
-        """
-        Use the local LLM to fill gaps in parsed board data.
-
-        For each row that is missing AGP names or petitioner lawyer information,
-        we ask the LLM to re-extract those fields from the raw court details text
-        that was stored in the ``respondent_lawyer`` / ``petitioner_lawyer`` columns.
-        The LLM result is merged in only when the base parser returned empty values,
-        so existing correct data is never overwritten.
-        """
-        if self.llm_extractor is None:
-            return df
-
-        try:
-            # Build a compact text representation of all rows for a single LLM call
-            rows_text_parts = []
-            for idx, row in df.iterrows():
-                case_ref = f"{row.get('case_type', '')}/{row.get('case_no', '')}/{row.get('case_year', '')}"
-                detail = " ".join(
-                    filter(
-                        None,
-                        [
-                            str(row.get("petitioner_lawyer", "") or ""),
-                            str(row.get("respondent_lawyer", "") or ""),
-                        ],
-                    )
-                )
-                rows_text_parts.append(
-                    f"Serial: {row.get('serial_number', '')}  Case: {case_ref}  Details: {detail}"
-                )
-
-            combined_text = "\n".join(rows_text_parts)
-            llm_result = self.llm_extractor.extract_board_data(combined_text)
-
-            entries = llm_result.get("entries", [])
-            if not entries:
-                return df
-
-            # Match LLM entries back to DataFrame rows by case number
-            llm_by_case: dict = {}
-            for entry in entries:
-                cn = str(entry.get("case_number", "")).strip()
-                if cn:
-                    llm_by_case[cn] = entry
-
-            for idx, row in df.iterrows():
-                case_ref = f"{row.get('case_type', '')}/{row.get('case_no', '')}/{row.get('case_year', '')}"
-                entry = llm_by_case.get(case_ref)
-                if not entry:
-                    continue
-
-                # Fill missing petitioner lawyer
-                if not row.get("petitioner_lawyer") and entry.get("petitioner_lawyer"):
-                    df.at[idx, "petitioner_lawyer"] = entry["petitioner_lawyer"]
-
-                # Attach LLM-extracted AGP names as a new column (non-destructive)
-                if entry.get("agp_names"):
-                    df.at[idx, "llm_agp_names"] = entry["agp_names"]
-
-                # Supplement associated cases
-                if entry.get("associated_cases"):
-                    existing = list(row.get("additional_cases") or [])
-                    new_cases = [
-                        c for c in entry["associated_cases"] if c and c not in existing
-                    ]
-                    if new_cases:
-                        df.at[idx, "additional_cases"] = existing + new_cases
-
-            logging.info("LLM board enrichment applied to %d entries", len(entries))
-        except Exception as exc:
-            logging.warning("LLM board enrichment failed: %s", exc)
-
-        return df
 
     def read_board(self, filename, file):
         logging.info("Reading board")

@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import asdict
 from datetime import date, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from firebase_admin import firestore
@@ -54,8 +54,11 @@ class AutoOrderManager:
         ]
 
     def get_orders_for_cases(
-        self, case_filters: Dict = None, limit: int = 50, max_sequences: int = None
-    ) -> Dict:
+        self,
+        case_filters: Optional[Dict[str, Any]] = None,
+        limit: int = 50,
+        max_sequences: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
         Main method to automatically get orders for filtered cases
 
@@ -78,7 +81,7 @@ class AutoOrderManager:
                     "processed": 0,
                 }
 
-            results = {
+            results: Dict[str, Any] = {
                 "total_cases": len(filtered_cases),
                 "successful_downloads": 0,
                 "failed_downloads": 0,
@@ -115,7 +118,9 @@ class AutoOrderManager:
             logging.error(f"Error in get_orders_for_cases: {e}")
             return {"success": False, "error": str(e)}
 
-    def bulk_process_orders(self, case_ids: List[str], max_sequences: int = 50) -> Dict:
+    def bulk_process_orders(
+        self, case_ids: List[str], max_sequences: int = 50
+    ) -> Dict[str, Any]:
         """
         Bulk process specific cases by their IDs with configurable max sequences
 
@@ -130,7 +135,7 @@ class AutoOrderManager:
             if not case_ids:
                 return {"success": False, "error": "No case IDs provided"}
 
-            results = {
+            results: Dict[str, Any] = {
                 "total_cases": len(case_ids),
                 "successful": 0,
                 "failed": 0,
@@ -181,8 +186,8 @@ class AutoOrderManager:
             return {"success": False, "error": str(e)}
 
     def _get_filtered_matters(
-        self, filters: Dict = None, limit: int = 50
-    ) -> List[Dict]:
+        self, filters: Optional[Dict[str, Any]] = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
         """Get cases that need order processing based on filters"""
         try:
             query = self.db.collection(self.boards_collection)
@@ -200,7 +205,7 @@ class AutoOrderManager:
 
             # Get cases without order analysis
             query = query.limit(limit * 2)  # Get more to filter
-            cases = []
+            cases: List[Dict[str, Any]] = []
 
             for doc in query.stream():
                 case_data = doc.to_dict()
@@ -231,7 +236,7 @@ class AutoOrderManager:
             logging.error(f"Error getting filtered matters: {e}")
             return []
 
-    def _get_case_order_context(self, case_ref: str) -> Dict:
+    def _get_case_order_context(self, case_ref: str) -> Dict[str, Any]:
         case_detail = self.case_store.get_case_details(case_ref) or {}
         orders = case_detail.get("orders") or []
         latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
@@ -284,7 +289,9 @@ class AutoOrderManager:
         except ValueError:
             return None
 
-    def _process_single_case(self, case_data: Dict, max_sequences: int = None) -> Dict:
+    def _process_single_case(
+        self, case_data: Dict[str, Any], max_sequences: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Process a single case with retry logic - try up to N sequence numbers
 
         Args:
@@ -302,7 +309,7 @@ class AutoOrderManager:
         # Check if case has existing order link
         has_existing_order_link = bool(case_data.get("order_link"))
 
-        result = {
+        result: Dict[str, Any] = {
             "case_id": case_id,
             "case_ref": case_ref,
             "download_success": False,
@@ -372,7 +379,7 @@ class AutoOrderManager:
                         f"{case_ref} - trying sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
-                attempt_log = {
+                attempt_log: Dict[str, Any] = {
                     "sequence": sequence_num,
                     "status": "attempting",
                     "message": None,
@@ -456,7 +463,7 @@ class AutoOrderManager:
                             case_id,
                             case_ref,
                             order_info["pdf_content"],
-                            case_data.get("board_date"),
+                            str(case_data.get("board_date") or ""),
                             order_info.get("order_link"),
                         )
 
@@ -516,7 +523,7 @@ class AutoOrderManager:
                                 case_ref,
                                 link_analysis_data,
                                 order_info,
-                                case_data.get("board_date"),
+                                str(case_data.get("board_date") or ""),
                             )
                             if linked_cases:
                                 result["additional_cases_linked"] = linked_cases
@@ -596,8 +603,11 @@ class AutoOrderManager:
         return result
 
     def _analyze_existing_order(
-        self, case_data: Dict, result: Dict, max_sequences: int = None
-    ) -> Dict:
+        self,
+        case_data: Dict[str, Any],
+        result: Dict[str, Any],
+        max_sequences: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Analyze an order that's already been downloaded (linked status)
 
         Args:
@@ -664,7 +674,11 @@ class AutoOrderManager:
 
             # Analyze the order
             analysis_result = self._analyze_order_with_date_validation(
-                case_id, case_ref, pdf_content, case_data.get("board_date"), order_link
+                case_id,
+                case_ref,
+                pdf_content,
+                str(case_data.get("board_date") or ""),
+                order_link,
             )
 
             if analysis_result.get("success"):
@@ -690,7 +704,7 @@ class AutoOrderManager:
                         case_ref,
                         link_analysis_data,
                         {"order_link": order_link, "pdf_content": pdf_content},
-                        case_data.get("board_date"),
+                        str(case_data.get("board_date") or ""),
                     )
                     if linked_cases:
                         result["additional_cases_linked"] = linked_cases
@@ -741,8 +755,12 @@ class AutoOrderManager:
             return result
 
     def _fallback_to_fresh_download(
-        self, case_data: Dict, result: Dict, reason: str, max_sequences: int = None
-    ) -> Dict:
+        self,
+        case_data: Dict[str, Any],
+        result: Dict[str, Any],
+        reason: str,
+        max_sequences: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Fallback to fresh download when stored order link is invalid
 
         Args:
@@ -798,6 +816,11 @@ class AutoOrderManager:
                     if download_result.get("success"):
                         order_link = download_result.get("order_link")
                         pdf_content = download_result.get("pdf_content")
+                        if not isinstance(pdf_content, bytes):
+                            result[
+                                "error"
+                            ] = "Downloaded order did not contain PDF bytes"
+                            continue
 
                         result["download_success"] = True
                         result["order_link"] = order_link
@@ -807,7 +830,7 @@ class AutoOrderManager:
                             case_id,
                             case_ref,
                             pdf_content,
-                            case_data.get("board_date"),
+                            str(case_data.get("board_date") or ""),
                             order_link,
                         )
 
@@ -836,7 +859,7 @@ class AutoOrderManager:
                                     case_ref,
                                     link_analysis_data,
                                     download_result,
-                                    case_data.get("board_date"),
+                                    str(case_data.get("board_date") or ""),
                                 )
                                 if linked_cases:
                                     result["additional_cases_linked"] = linked_cases
@@ -893,8 +916,8 @@ class AutoOrderManager:
             return result
 
     def _download_order_for_case(
-        self, case_data: Dict, sequence_number: int = 0
-    ) -> Dict:
+        self, case_data: Dict[str, Any], sequence_number: int = 0
+    ) -> Dict[str, Any]:
         """
         Download order for a specific case using the Bombay High Court API
 
@@ -928,8 +951,8 @@ class AutoOrderManager:
             )
 
             # Format case number with leading zeros
-            case_number = str(case_number).zfill(7)
-            logging.warning(f"🔵 After zfill: case_number={case_number}")
+            case_number_str = str(case_number).zfill(7)
+            logging.warning(f"🔵 After zfill: case_number={case_number_str}")
 
             # Convert board_date to datetime object for comparison
             case_board_date = None
@@ -960,7 +983,7 @@ class AutoOrderManager:
 
                 structured_result = self._download_order_via_scraper(
                     case_ref=case_ref,
-                    board_date=board_date,
+                    board_date=str(board_date) if board_date is not None else None,
                     order_filename=order_filename,
                 )
                 if structured_result.get("success"):
@@ -980,8 +1003,8 @@ class AutoOrderManager:
             # Try to download using specific sequence number
             download_result = self._download_pdf_bombay_hc_simple(
                 case_type,
-                case_number,
-                year,
+                case_number_str,
+                str(year),
                 search_stamp_no,
                 order_filename,
                 sequence_number,
@@ -1007,8 +1030,8 @@ class AutoOrderManager:
             return {"success": False, "error": str(e)}
 
     def _download_order_from_cached_case_data(
-        self, case_data: Dict, order_filename: str
-    ) -> Dict:
+        self, case_data: Dict[str, Any], order_filename: str
+    ) -> Dict[str, Any]:
         """Try reusing normalized case-details order link for the same board date."""
         case_ref = case_data.get("case_ref")
         board_date = self._parse_board_date(case_data.get("board_date"))
@@ -1138,7 +1161,7 @@ class AutoOrderManager:
                 }
 
             download_url = order_entry["download_url"]
-            structured_source = str(response.get("source") or "firecrawl")
+            structured_source = str(response.get("source") or "direct_api")
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
@@ -1300,7 +1323,7 @@ class AutoOrderManager:
         pdf_content: bytes,
         expected_board_date: str,
         order_link: Optional[str] = None,
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Analyze a downloaded order and persist the event in case-details."""
         try:
             # Create temporary filename for analysis
@@ -1311,7 +1334,7 @@ class AutoOrderManager:
                 temp_filename, pdf_content
             )
             analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
-            analyzer_fallback_metrics = {}
+            analyzer_fallback_metrics: Dict[str, Any] = {}
             if hasattr(self.order_analyzer, "get_fallback_metrics"):
                 try:
                     analyzer_fallback_metrics = (
@@ -1496,8 +1519,10 @@ class AutoOrderManager:
             return {"success": False, "error": str(e)}
 
     def _validate_order_date(
-        self, extracted_order_date: str, expected_board_date: str
-    ) -> Dict:
+        self,
+        extracted_order_date: Optional[Any],
+        expected_board_date: Optional[Any],
+    ) -> Dict[str, Any]:
         """
         Validate extracted order date against expected board date
         Returns validation result with details
@@ -1692,8 +1717,8 @@ class AutoOrderManager:
         self,
         primary_case_id: str,
         primary_case_ref: str,
-        analysis_data: Dict,
-        order_info: Dict,
+        analysis_data: Dict[str, Any],
+        order_info: Dict[str, Any],
         board_date: str,
     ) -> List[str]:
         """
@@ -1702,7 +1727,7 @@ class AutoOrderManager:
 
         Returns: List of case references that were successfully linked
         """
-        linked_cases = []
+        linked_cases: List[str] = []
 
         try:
             # Extract case numbers from analysis
@@ -1846,8 +1871,11 @@ class AutoOrderManager:
             return None
 
     def _create_case_specific_analysis(
-        self, analysis_data: Dict, case_info: Dict, order_link: str
-    ) -> Dict:
+        self,
+        analysis_data: Dict[str, Any],
+        case_info: Dict[str, Any],
+        order_link: Optional[str],
+    ) -> Dict[str, Any]:
         """
         Create case-specific analysis data with the specific details for this case
         Uses simplified structure with case_type, case_number, case_year, petitioner, respondent, government_pleader
@@ -1888,7 +1916,7 @@ class AutoOrderManager:
             logging.warning(f"Error parsing case reference {case_ref}: {e}")
             return None
 
-    def search_orders(self, search_params: Dict) -> Dict:
+    def search_orders(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Search orders with optimized query
 

@@ -35,11 +35,6 @@ def court_order_pdf_with_text(ctx, order_text):
     ctx["order_pdf"] = io.BytesIO(f"%PDF-1.4\n{order_text}".encode())
 
 
-@given("the LLM fallback is enabled via ORDER_ENABLE_LLM_FALLBACK=true")
-def llm_fallback_enabled(ctx, monkeypatch):
-    monkeypatch.setenv("ORDER_ENABLE_LLM_FALLBACK", "true")
-
-
 @given("a court order with ambiguous content that scores below confidence threshold")
 def ambiguous_order(ctx):
     ctx["order_text"] = "The case was mentioned"
@@ -267,23 +262,6 @@ def response_has_analysis_history(ctx):
 def job_queued(ctx):
     body = ctx["response"].json()
     assert body is not None
-
-
-@then("the response should indicate llm_fallback_used is true")
-def llm_fallback_used(ctx):
-    # LLM fallback is not yet exposed in the response; accept any 200 with analysis data
-    body = ctx["response"].json()
-    assert (
-        body.get("llm_fallback_used") is True
-        or "order_category" in body
-        or "analysis_id" in body
-    )
-
-
-@then("the analysis_category should reflect the LLM result")
-def analysis_category_from_llm(ctx):
-    body = ctx["response"].json()
-    assert "analysis_category" in body or "order_category" in body or "category" in body
 
 
 @then("the analysis result is returned with an order_category")

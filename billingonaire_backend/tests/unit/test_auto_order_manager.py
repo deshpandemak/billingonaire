@@ -398,12 +398,12 @@ def test_download_order_for_case_prefers_structured_scraper(auto_order_manager):
         )
 
     assert result["success"] is True
-    assert result["source"] == "firecrawl_structured"
+    assert result["source"] == "direct_api_structured"
     assert result["order_link"] == "https://example.com/order-structured.pdf"
     auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
 
 
-def test_download_order_for_case_uses_ollama_structured_source(auto_order_manager):
+def test_download_order_for_case_uses_playwright_structured_source(auto_order_manager):
     case_data = {
         "case_ref": "WP/125/2024",
         "board_date": "2024-01-15",
@@ -411,11 +411,11 @@ def test_download_order_for_case_uses_ollama_structured_source(auto_order_manage
 
     auto_order_manager.court_scraper.get_case_orders.return_value = {
         "status": "found",
-        "source": "ollama_scraper",
+        "source": "playwright",
         "court_orders": [
             {
                 "listing_date": "15/01/2024",
-                "download_url": "https://example.com/order-ollama.pdf",
+                "download_url": "https://example.com/order-playwright.pdf",
             }
         ],
     }
@@ -436,8 +436,8 @@ def test_download_order_for_case_uses_ollama_structured_source(auto_order_manage
         )
 
     assert result["success"] is True
-    assert result["source"] == "ollama_scraper_structured"
-    assert result["order_link"] == "https://example.com/order-ollama.pdf"
+    assert result["source"] == "playwright_structured"
+    assert result["order_link"] == "https://example.com/order-playwright.pdf"
     auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
 
 
@@ -527,7 +527,7 @@ def test_download_order_for_case_cached_link_failure_uses_scraper(auto_order_man
             "order_link": "https://example.com/order-structured.pdf",
             "pdf_content": b"%PDF-1.4 structured",
             "filename": "dummy.pdf",
-            "source": "firecrawl_structured",
+            "source": "direct_api_structured",
         }
     )
 
@@ -545,6 +545,6 @@ def test_download_order_for_case_cached_link_failure_uses_scraper(auto_order_man
         )
 
     assert result["success"] is True
-    assert result["source"] == "firecrawl_structured"
+    assert result["source"] == "direct_api_structured"
     auto_order_manager._download_order_via_scraper.assert_called_once()
     auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()

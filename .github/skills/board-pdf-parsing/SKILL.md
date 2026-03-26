@@ -1,7 +1,6 @@
 ---
 name: board-pdf-parsing
 description: Parse a Bombay High Court daily court board PDF, extract case listings with assigned AGP names, and persist the records to Firestore.
-tags: [backend, pdf, parsing, firestore, board]
 ---
 
 ## Overview

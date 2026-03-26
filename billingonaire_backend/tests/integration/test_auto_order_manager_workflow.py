@@ -35,9 +35,37 @@ def manager_with_mocks():
     ):
         manager = AutoOrderManager()
 
-        # Explicit DB mock chain to validate persisted updates.
         manager.db = Mock()
-        manager.db.collection.return_value.document.return_value.update = Mock()
+        boards_collection = Mock()
+        case_details_collection = Mock()
+        search_index_collection = Mock()
+
+        def get_collection(name):
+            if name == manager.boards_collection:
+                return boards_collection
+            if name == manager.case_store.case_collection:
+                return case_details_collection
+            if name == manager.search_index_collection:
+                return search_index_collection
+            return Mock()
+
+        manager.db.collection.side_effect = get_collection
+
+        board_doc_ref = Mock()
+        board_snapshot = Mock()
+        board_snapshot.exists = True
+        board_snapshot.to_dict.return_value = {}
+        board_doc_ref.get.return_value = board_snapshot
+        boards_collection.document.return_value = board_doc_ref
+
+        case_doc_ref = Mock()
+        case_snapshot = Mock()
+        case_snapshot.exists = False
+        case_snapshot.to_dict.return_value = {}
+        case_doc_ref.get.return_value = case_snapshot
+        case_details_collection.document.return_value = case_doc_ref
+
+        manager.case_store.db = manager.db
 
         manager.order_analyzer = mock_analyzer.return_value
         manager.court_scraper = mock_scraper.return_value
@@ -56,9 +84,17 @@ def test_process_single_case_uses_structured_scraper_workflow(manager_with_mocks
         "order_status": "not_linked",
     }
 
+    manager.db.collection(
+        manager.boards_collection
+    ).document.return_value.get.return_value.to_dict.return_value = {
+        "case_type": "WP",
+        "case_no": 3373,
+        "case_year": 2025,
+    }
+
     manager.court_scraper.get_case_orders.return_value = {
         "status": "found",
-        "source": "firecrawl",
+        "source": "direct_api",
         "case_details": {
             "case_number": "WP/3373/2025",
             "petitioner_name": "MOTILAL OSWAL HOME FINANCE LTD",
@@ -101,16 +137,23 @@ def test_process_single_case_uses_structured_scraper_workflow(manager_with_mocks
     assert result["analysis_success"] is True
     assert result["order_link"] == "https://example.com/structured-order.pdf"
 
-    persisted_updates = (
-        manager.db.collection.return_value.document.return_value.update.call_args_list
-    )
+    persisted_updates = manager.db.collection(
+        manager.case_store.case_collection
+    ).document.return_value.set.call_args_list
     assert persisted_updates
     assert any(
         call.args
         and isinstance(call.args[0], dict)
-        and call.args[0].get("order_status") == "linked"
-        and call.args[0].get("order_link") == "https://example.com/structured-order.pdf"
-        and call.args[0].get("order_source") == "firecrawl_structured"
+        and call.args[0].get("latest_order_status") == "linked"
+        and call.args[0].get("latest_order_link")
+        == "https://example.com/structured-order.pdf"
+        and any(
+            isinstance(order, dict)
+            and order.get("order_status") == "linked"
+            and order.get("order_link") == "https://example.com/structured-order.pdf"
+            and order.get("order_source") == "direct_api_structured"
+            for order in (call.args[0].get("orders") or [])
+        )
         for call in persisted_updates
     )
 
@@ -127,6 +170,14 @@ def test_process_single_case_falls_back_to_legacy_when_structured_unavailable(
         "case_year": 2025,
         "board_date": "2025-04-09",
         "order_status": "not_linked",
+    }
+
+    manager.db.collection(
+        manager.boards_collection
+    ).document.return_value.get.return_value.to_dict.return_value = {
+        "case_type": "WP",
+        "case_no": 3374,
+        "case_year": 2025,
     }
 
     manager.court_scraper.get_case_orders.return_value = {
@@ -166,15 +217,22 @@ def test_process_single_case_falls_back_to_legacy_when_structured_unavailable(
     )
     manager._download_pdf_bombay_hc_simple.assert_called_once()
 
-    persisted_updates = (
-        manager.db.collection.return_value.document.return_value.update.call_args_list
-    )
+    persisted_updates = manager.db.collection(
+        manager.case_store.case_collection
+    ).document.return_value.set.call_args_list
     assert any(
         call.args
         and isinstance(call.args[0], dict)
-        and call.args[0].get("order_status") == "linked"
-        and call.args[0].get("order_link")
+        and call.args[0].get("latest_order_status") == "linked"
+        and call.args[0].get("latest_order_link")
         == "https://example.com/legacy-sequence-order.pdf"
-        and call.args[0].get("order_source") == "bombay_hc_api"
+        and any(
+            isinstance(order, dict)
+            and order.get("order_status") == "linked"
+            and order.get("order_link")
+            == "https://example.com/legacy-sequence-order.pdf"
+            and order.get("order_source") == "bombay_hc_api"
+            for order in (call.args[0].get("orders") or [])
+        )
         for call in persisted_updates
     )

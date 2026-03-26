@@ -21,19 +21,12 @@ if [ ! -f "$FIREBASE_KEY_PATH" ]; then
   exit 1
 fi
 
-if [ -f "$REPO_ROOT/.codespaces-env.sh" ]; then
-  # Loads the remote Ollama Cloud Run endpoint and model defaults.
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/.codespaces-env.sh"
-fi
-
 export GCLOUD_SERVICE_ACCOUNT_KEY="$(cat "$FIREBASE_KEY_PATH")"
 
 echo "Starting Billingonaire backend"
 echo "  repo: $REPO_ROOT"
 echo "  python: $PYTHON_BIN"
 echo "  firebase key: $FIREBASE_KEY_PATH"
-echo "  ollama: ${OLLAMA_BASE_URL:-not-set}"
 echo "  host: $HOST"
 echo "  port: $PORT"
 

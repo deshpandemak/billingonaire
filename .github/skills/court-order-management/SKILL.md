@@ -1,7 +1,6 @@
 ---
 name: court-order-management
 description: Manage the full lifecycle of court orders — from linking an order URL to a case through background fetch, retry, and manual override — using the case lifecycle state machine.
-tags: [backend, orders, lifecycle, firestore, jobs]
 ---
 
 ## Overview
@@ -62,43 +61,32 @@ Valid forward transitions only. Invalid transitions must be rejected. A `lifecyc
 
 - Only `fetch_failed_retryable` cases are eligible for the retry job; `fetch_failed_terminal` cases require a manual override.
 - Background jobs must be non-blocking; job enqueueing endpoints return 200 immediately.
-- `CourtScraper` uses **Firecrawl as the primary mechanism** for discovering order download URLs. Firecrawl crawls `bombayhighcourt.nic.in` using an AI agent prompt, bypassing the CAPTCHA that blocks direct e-courts scraping. When `FIRECRAWL_API_KEY` is not configured, the endpoint returns a `captcha_required` stub instead of order data.
+- `CourtScraper` uses the Bombay High Court direct API as the primary mechanism for discovering order download URLs, with Playwright as the fallback when the direct path does not produce structured data.
 - Manual override records a `manual_override` event in `lifecycle_events`.
 
-## Web Scraping — Firecrawl Integration
+## Web Scraping
 
-`CourtScraper` (`BombayHighCourtScraper`) uses the **Firecrawl SDK** to scrape `bombayhighcourt.nic.in` for case details and court order download URLs. Firecrawl is required because the Bombay High Court's e-courts portal returns a CAPTCHA challenge when accessed programmatically, making traditional HTTP scraping unreliable.
+`CourtScraper` (`BombayHighCourtScraper`) uses the Bombay High Court direct API to fetch case details and order links, then falls back to Playwright if the API path is unavailable or incomplete.
 
 ### How It Works
 
 1. The caller invokes `get_case_details(case_ref)` or `get_case_orders(case_ref, date)`.
-2. `CourtScraper` builds a structured extraction prompt describing the case (e.g. "Civil Writ Petition 3373 of 2025") and passes a wildcard `bombayhighcourt.nic.in/*` URL to Firecrawl.
-3. Firecrawl's AI agent crawls the site, extracts petitioner/respondent names, case status URL, and a list of court orders with their download links.
-4. Results are returned as a `FirecrawlOrderExtraction` Pydantic model normalised into the shared order dict shape (`case_details`, `court_orders[]`, `source: "firecrawl"`).
-5. If `FIRECRAWL_API_KEY` is absent or the extraction fails, the endpoint returns a `captcha_required` stub — **no order data is available in this fallback path**.
+2. `CourtScraper` parses the Bombay High Court direct API response, normalises case details, and extracts order links from the returned HTML table.
+3. If the direct path cannot provide usable results, `CourtScraper` uses Playwright to follow the supported browser flow.
+4. Results are normalised into the shared order dict shape (`case_details`, `court_orders[]`, `source: "direct_api"` or `"playwright_new_scraper"`).
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `FIRECRAWL_API_KEY` | _(required for live use)_ | API key for the Firecrawl service |
-| `FIRECRAWL_MODEL` | `spark-1-mini` | Firecrawl AI model used for structured extraction |
-
-### Key Pydantic Models (CourtScraper.py)
-
-| Model | Fields |
-|-------|--------|
-| `FirecrawlCaseDetails` | `petitioner_name`, `respondent_name`, `case_number`, `case_status_url` (each with `_citation`) |
-| `FirecrawlCourtOrder` | `listing_date`, `download_url`, `order_description` (each with `_citation`) |
-| `FirecrawlOrderExtraction` | `case_details: FirecrawlCaseDetails`, `court_orders: List[FirecrawlCourtOrder]` |
+| `COURT_SCRAPER_PROVIDER` | `direct_api` | Scraper mode (`direct_api` or `playwright`) |
 
 ### Extension Pattern
 
-To add a new field to the Firecrawl extraction output:
-1. Add the field to the appropriate Pydantic model in `CourtScraper.py`.
-2. Update `_build_firecrawl_prompt` to instruct the AI agent to extract the new field.
-3. Update `_normalize_firecrawl_payload` to map the new field into the returned dict.
-4. Add a unit test in `tests/unit/test_court_scraper.py` covering the normalisation logic.
+To add a new field to the scraper output:
+1. Update the direct API or Playwright extraction logic in `CourtScraper.py`.
+2. Map the new field into the returned dict shape.
+3. Add a unit test in `tests/unit/test_court_scraper.py` covering the normalization logic.
 
 
 

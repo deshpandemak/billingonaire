@@ -28,6 +28,7 @@ FAKE_ADMIN = {"uid": "admin_uid", "email": "admin@example.com", "role": "admin"}
 def mock_firebase_env(monkeypatch):
     """Set TESTING env var and mock Firebase for every BDD scenario."""
     monkeypatch.setenv("TESTING", "true")
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "localhost:8080")
 
     mock_client = MagicMock()
     mock_collection = MagicMock()

@@ -3,7 +3,6 @@
 Covers:
 - Auto-queue for analysis when order fetch succeeds but analysis fails
 - DEFAULT_MAX_SEQUENCE_RETRIES reduced to 10
-- Firecrawl wildcard URL usage
 - /jobs/retry-failed endpoint logic
 """
 
@@ -113,61 +112,7 @@ def test_env_var_overrides_max_sequence_retries(manager, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 2.  Firecrawl uses wildcard URL
-# ---------------------------------------------------------------------------
-
-
-def test_firecrawl_uses_wildcard_url(monkeypatch):
-    """_fetch_with_firecrawl must pass the eCourts starting URL and wildcard domains."""
-    scraper = BombayHighCourtScraper()
-    scraper.firecrawl_api_key = "test-key"
-    scraper.firecrawl_model = "spark-1-mini"
-
-    captured_urls = []
-
-    class FakeExtractResponse:
-        def model_dump(self):
-            return {
-                "data": {
-                    "case_details": {
-                        "petitioner_name": "Alice",
-                        "respondent_name": "Bob",
-                        "case_number": "WP/1/2025",
-                    },
-                    "court_orders": [],
-                }
-            }
-
-    class FakeFirecrawlApp:
-        def __init__(self, api_key):
-            self.api_key = api_key
-
-        def extract(self, urls=None, **kwargs):
-            captured_urls.extend(urls or [])
-            return FakeExtractResponse()
-
-    monkeypatch.setattr(
-        "billingonaire_backend.CourtScraper.FirecrawlApp", FakeFirecrawlApp
-    )
-
-    scraper._fetch_with_firecrawl("WP/1/2025")
-
-    assert (
-        len(captured_urls) == 3
-    ), f"Expected 3 URLs (start + 2 wildcards), got: {captured_urls}"
-    # Starting URL must be the eCourts case-number search page
-    assert any(
-        "case_no.php" in url for url in captured_urls
-    ), f"Expected case_no.php starting URL, got: {captured_urls}"
-    # Both domains must be present as wildcards
-    assert any("bombayhighcourt.nic.in" in url for url in captured_urls)
-    assert any(
-        "hcservices.ecourts.gov.in/ecourtindiaHC" in url for url in captured_urls
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
+# 2.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
 # ---------------------------------------------------------------------------
 
 

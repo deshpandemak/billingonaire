@@ -10,7 +10,6 @@ import BillGeneration from './BillGeneration';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import AdminOrderManagement from './AdminOrderManagement';
-import AdminOllamaManagement from './AdminOllamaManagement';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
@@ -172,13 +171,6 @@ const Layout = ({ children }) => {
                       >
                         🔄 Order Management
                       </Nav.Link>
-                      <Nav.Link
-                        as={Link}
-                        to="/admin/ollama"
-                        className={location.pathname === '/admin/ollama' ? 'active' : ''}
-                      >
-                        🦙 Ollama Models
-                      </Nav.Link>
                     </>
                   )}
                   <Nav.Link
@@ -255,7 +247,6 @@ const App = () => (
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<AdminUserManagement />} />
         <Route path="/admin/orders" element={<AdminOrderManagement />} />
-        <Route path="/admin/ollama" element={<AdminOllamaManagement />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

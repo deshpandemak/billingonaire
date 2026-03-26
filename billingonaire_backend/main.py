@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import posixpath
-import re
 import sys
 from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
@@ -18,8 +17,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
-from pydantic import BaseModel, field_validator
-from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel
 
 # Configure logging to show INFO level messages
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -29,7 +27,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from Board import Board  # noqa: E402
 from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
-from llm_extractor import LLMExtractor, get_llm_extractor  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
 from UserManager import UserManager  # noqa: E402
 from UserMatterMatcher import UserRole  # noqa: E402
@@ -66,10 +63,6 @@ app = FastAPI(
         {
             "name": "User Matter Mapping",
             "description": "Link users to their legal matters using AI-powered name matching",
-        },
-        {
-            "name": "LLM",
-            "description": "Local open-source LLM configuration and status (powered by Ollama)",
         },
     ],
 )
@@ -228,9 +221,9 @@ def get_user_matter_matcher():
 
 
 # In-memory queue for async order processing
-order_processing_queue = Queue()
+order_processing_queue: Queue[Any] = Queue()
 processing_active = False
-analysis_processing_queue = Queue()
+analysis_processing_queue: Queue[Any] = Queue()
 analysis_processing_active = False
 # Thread pool executor for blocking operations (configurable via env var)
 try:
@@ -692,7 +685,7 @@ async def read_root():
 async def upload_pdf(
     files: List[UploadFile] = File(...), current_user=Depends(require_admin)
 ):
-    results = []
+    results: List[Dict[str, Any]] = []
     for file in files:
         if file.content_type != "application/pdf":
             results.append(
@@ -1456,23 +1449,6 @@ def get_court_scraper():
     global court_scraper
     if court_scraper is None:
         court_scraper = BombayHighCourtScraper()
-    else:
-        configured_ollama_base_url = (
-            (
-                os.getenv("COURT_OLLAMA_BASE_URL")
-                or os.getenv("OLLAMA_BASE_URL")
-                or os.getenv("LLM_BASE_URL")
-                or ""
-            )
-            .strip()
-            .rstrip("/")
-        )
-        if (
-            configured_ollama_base_url
-            and configured_ollama_base_url != court_scraper.ollama_base_url
-            and court_scraper.ollama_base_url.rstrip("/") == "http://localhost:11434"
-        ):
-            court_scraper.ollama_base_url = configured_ollama_base_url
     return court_scraper
 
 
@@ -1493,52 +1469,6 @@ def _normalize_iso_date(value: Optional[str]) -> Optional[str]:
     if "T" in raw:
         raw = raw.split("T", 1)[0]
     return raw
-
-
-class ScraperProbeRequest(BaseModel):
-    case_ref: str
-    date: Optional[str] = None
-    bench: str = "mumbai"
-    compare_all: bool = False
-
-    @field_validator("case_ref")
-    @classmethod
-    def validate_case_ref(cls, value: str) -> str:
-        normalized = (value or "").strip().upper()
-        if not re.match(r"^[A-Z]+/\d+/\d{4}$", normalized):
-            raise ValueError(
-                "case_ref must be in TYPE/NUMBER/YEAR format (e.g. WP/3373/2025)"
-            )
-        return normalized
-
-    @field_validator("bench")
-    @classmethod
-    def validate_bench(cls, value: str) -> str:
-        normalized = (value or "").strip().lower()
-        supported_benches = {
-            "mumbai",
-            "mumbai_appellate",
-            "aurangabad",
-            "nagpur",
-            "goa",
-        }
-        if normalized not in supported_benches:
-            raise ValueError(
-                "bench must be one of: mumbai, mumbai_appellate, aurangabad, nagpur, goa"
-            )
-        return normalized
-
-    @field_validator("date")
-    @classmethod
-    def validate_date(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        raw = str(value).strip()
-        if not raw:
-            return None
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
-            raise ValueError("date must be in YYYY-MM-DD format")
-        return raw
 
 
 class OrderLinkAnalysisRequest(BaseModel):
@@ -3967,7 +3897,7 @@ async def generate_bill_data(
             all_cases = boards_ref.stream()
 
             unique_agp_names = set()
-            cases_by_agp = {}  # Map AGP names to their cases for efficient lookup
+            cases_by_agp: Dict[str, List[Any]] = {}
 
             for case_doc in all_cases:
                 case_data = case_doc.to_dict()
@@ -4934,7 +4864,7 @@ async def search_orders(
 ):
     """Search orders with petitioner, respondent, and order links"""
     try:
-        search_params = {}
+        search_params: Dict[str, Any] = {}
 
         if petitioner_search:
             search_params["petitioner_search"] = petitioner_search
@@ -5188,57 +5118,6 @@ async def get_order_tabular_data(
         )
 
 
-# ---------------------------------------------------------------------------
-# LLM endpoints (local open-source LLM via Ollama)
-# ---------------------------------------------------------------------------
-
-
-@app.get("/llm/status", tags=["LLM"])
-async def llm_status():
-    """
-    Return the status of the local LLM integration.
-
-    Reports whether Ollama is reachable, which model is configured,
-    and which models are currently available on the local machine.
-    """
-    extractor = get_llm_extractor()
-    return JSONResponse(content=extractor.get_status())
-
-
-@app.post("/llm/configure", tags=["LLM"])
-async def llm_configure(
-    model: Optional[str] = None,
-    base_url: Optional[str] = None,
-):
-    """
-    Reconfigure the local LLM model and/or Ollama base URL at runtime.
-
-    Pass ``model`` to switch to a different Ollama model (e.g. ``mistral``,
-    ``llama3.2``, ``gemma2``).  Pass ``base_url`` to point to a non-default
-    Ollama server (e.g. running on another host in the same network).
-
-    The change applies to all subsequent requests in this process.
-    """
-    import llm_extractor as _llm_mod
-
-    current = get_llm_extractor()
-    new_base_url = base_url or current.base_url
-    new_model = model or current.model
-
-    # Replace the module-level singleton so all code paths pick up the change
-    new_extractor = LLMExtractor(base_url=new_base_url, model=new_model)
-    _llm_mod._extractor_instance = new_extractor
-
-    return JSONResponse(
-        content={
-            "message": "LLM configuration updated",
-            "base_url": new_extractor.base_url,
-            "model": new_extractor.model,
-            "available": new_extractor.is_available(),
-        }
-    )
-
-
 @app.get("/scraper/status", tags=["Case Orders"])
 async def scraper_status(current_user: dict = Depends(require_admin_active)):
     """Return current Bombay High Court scraper configuration and provider status."""
@@ -5250,10 +5129,6 @@ async def scraper_status(current_user: dict = Depends(require_admin_active)):
 @app.post("/scraper/configure", tags=["Case Orders"])
 async def scraper_configure(
     provider: Optional[str] = None,
-    allow_firecrawl_fallback: Optional[bool] = None,
-    ollama_base_url: Optional[str] = None,
-    ollama_model: Optional[str] = None,
-    ollama_timeout_seconds: Optional[int] = None,
     current_user: dict = Depends(require_admin_active),
 ):
     """Update scraper provider settings at runtime without redeploying the backend."""
@@ -5262,10 +5137,6 @@ async def scraper_configure(
     try:
         updated = scraper.configure_scraper(
             provider=provider,
-            allow_firecrawl_fallback=allow_firecrawl_fallback,
-            ollama_base_url=ollama_base_url,
-            ollama_model=ollama_model,
-            ollama_timeout_seconds=ollama_timeout_seconds,
         )
         return JSONResponse(
             content={
@@ -5275,138 +5146,6 @@ async def scraper_configure(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-
-@app.post("/admin/ollama/test-case", tags=["Case Orders"])
-async def admin_ollama_test_case(
-    request: ScraperProbeRequest,
-    current_user: dict = Depends(require_admin_active),
-):
-    """
-    Run a scraper probe for one case and return HTTP trace, Ollama request/response, and final scraper output.
-
-    Times out after 120 seconds if scraper does not complete.
-    """
-    _ = current_user
-    try:
-        scraper = get_court_scraper()
-        result = scraper.debug_case_orders(
-            case_ref=request.case_ref,
-            date=request.date,
-            bench=request.bench,
-            compare_all=request.compare_all,
-        )
-    except Exception as exc:
-        logging.exception("Unexpected error in scraper probe for %s", request.case_ref)
-        result = {
-            "ok": False,
-            "error": str(exc),
-            "request": {
-                "case_ref": request.case_ref,
-                "date": request.date,
-                "bench": request.bench,
-            },
-        }
-    # Always return 200 with the full result so the frontend can display
-    # request/response details even when the probe encountered an error.
-    return JSONResponse(content=result)
-
-
-@app.post("/admin/ollama-pull-model", tags=["Case Orders"])
-async def admin_ollama_pull_model(
-    model_name: Optional[str] = None,
-    current_user: dict = Depends(require_admin_active),
-):
-    """
-    Trigger an asynchronous model pull on the configured Ollama instance.
-
-    **Admin-only endpoint.** Initiates model download without waiting for completion.
-    Download may take several minutes. Check Ollama endpoint directly for pull progress.
-
-    Query Parameters:
-    - model_name: Model identifier (e.g., 'llama3.1:8b').
-                  If omitted, uses configured COURT_OLLAMA_MODEL.
-
-    Returns 200 with pull status (status='pulling') if initiated successfully.
-    Returns 400 if model name is missing or Ollama is unreachable.
-    """
-    _ = current_user  # Explicitly keep dependency for admin-only access.
-    scraper = get_court_scraper()
-    try:
-        result = scraper.pull_ollama_model(model_name=model_name)
-        return JSONResponse(content=result, status_code=200)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        logging.error(f"Unexpected error pulling Ollama model: {exc}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Server error while initiating model pull: {str(exc)}",
-        )
-
-
-@app.get("/admin/ollama/health", tags=["Case Orders"])
-async def admin_ollama_health(current_user: dict = Depends(require_admin_active)):
-    """
-    Check Ollama service health and responsiveness.
-
-    **Admin-only endpoint.** Returns detailed health check information.
-    Times out after 5 seconds if Ollama is unreachable.
-
-    Returns:
-    - healthy: bool indicating if service is up and responding
-    - status: 'ok' for healthy, or error description
-    - base_url: The Ollama endpoint being monitored
-    - response_time_ms: Milliseconds to complete health check
-    """
-    _ = current_user  # Explicitly keep dependency for admin-only access.
-    scraper = get_court_scraper()
-    try:
-        # Use a shorter timeout (5 sec) to prevent UI from hanging indefinitely
-        health = await asyncio.wait_for(
-            run_in_threadpool(scraper.get_ollama_health), timeout=5.0
-        )
-        return JSONResponse(content=health)
-    except asyncio.TimeoutError:
-        return JSONResponse(
-            content={
-                "healthy": False,
-                "status": "timeout",
-                "base_url": scraper.ollama_base_url or "not configured",
-                "response_time_ms": 5000,
-            }
-        )
-    except Exception as e:
-        logging.error(f"Error fetching Ollama health: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "healthy": False,
-                "status": str(e),
-                "base_url": scraper.ollama_base_url or "not configured",
-                "response_time_ms": 0,
-            },
-        )
-
-
-@app.get("/admin/ollama/models", tags=["Case Orders"])
-async def admin_ollama_models(current_user: dict = Depends(require_admin_active)):
-    """
-    Get list of available models on Ollama instance.
-
-    **Admin-only endpoint.** Returns detailed model information from Ollama.
-
-    Returns:
-    - models: Array of model objects with name, size, digest, etc.
-    - healthy: bool indicating if Ollama is reachable
-    - status: 'ok' for success, or error description
-    - configured_model: The model Billingonaire is set to use
-    - available_model_names: Simple list of model names only
-    """
-    _ = current_user  # Explicitly keep dependency for admin-only access.
-    scraper = get_court_scraper()
-    models = await run_in_threadpool(scraper.get_ollama_models)
-    return JSONResponse(content=models)
 
 
 # Cloud Run entry point - uvicorn will run the app directly

@@ -1,7 +1,6 @@
 ---
 name: code-quality-linting
 description: Check and enforce code quality standards (linting, formatting, type checking) on Python backend and React frontend before committing changes.
-tags: [backend, frontend, linting, formatting, quality, python, javascript, testing]
 ---
 
 ## Overview
@@ -126,7 +125,7 @@ cd billingonaire-ui
 npx eslint . --no-fix
 
 # Check specific file
-npx eslint src/AdminOllamaManagement.jsx --no-fix
+npx eslint src/Layout.jsx --no-fix
 
 # Auto-fix fixable issues
 npx eslint . --fix

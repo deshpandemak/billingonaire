@@ -166,6 +166,7 @@ def mock_order_analyzer():
 def setup_test_env(monkeypatch):
     """Setup test environment variables and mock Firebase"""
     monkeypatch.setenv("TESTING", "true")
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "localhost:8080")
     monkeypatch.setenv("ORDER_MAX_SEQUENCE_RETRIES", "5")  # Reduce for faster tests
 
     # Mock Firebase firestore.client() globally

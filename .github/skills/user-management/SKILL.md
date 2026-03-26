@@ -1,7 +1,6 @@
 ---
 name: user-management
 description: Manage Firebase Auth users, their Firestore profiles, and their AGP role configuration including name-variation-based matter matching.
-tags: [backend, auth, users, roles, firebase, firestore]
 ---
 
 ## Overview

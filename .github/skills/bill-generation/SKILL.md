@@ -1,7 +1,6 @@
 ---
 name: bill-generation
 description: Generate AGP-compliant billing reports covering all matched court appearances in a date range, and export them as Excel workbooks.
-tags: [backend, billing, excel, agp, firestore]
 ---
 
 ## Overview

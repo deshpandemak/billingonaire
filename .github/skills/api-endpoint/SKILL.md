@@ -1,7 +1,6 @@
 ---
 name: api-endpoint
 description: Add a new FastAPI endpoint to the Billingonaire backend following project conventions for routing, authentication, Firestore access, error handling, and testing.
-tags: [backend, fastapi, python, conventions, testing]
 ---
 
 ## Overview

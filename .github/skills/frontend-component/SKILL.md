@@ -1,7 +1,6 @@
 ---
 name: frontend-component
 description: Add a new React component or page to the Billingonaire frontend following project conventions for hooks, styling, API calls, and testing.
-tags: [frontend, react, vite, javascript, testing, eslint]
 ---
 
 ## Overview

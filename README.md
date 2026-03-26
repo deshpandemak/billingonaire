@@ -104,9 +104,8 @@ This script:
 - CD deployment workflow: [.github/workflows/cd.yml](.github/workflows/cd.yml)
 - Full deploy script: [firebase/deploy-all.sh](firebase/deploy-all.sh)
 - Backend deploy script: [firebase/backend-cloudrun-deploy.sh](firebase/backend-cloudrun-deploy.sh)
-- Optional Ollama deploy scripts:
-	- GKE (preferred): [firebase/ollama-gke-deploy.sh](firebase/ollama-gke-deploy.sh)
-	- Cloud Run (alternate): [firebase/ollama-cloudrun-deploy.sh](firebase/ollama-cloudrun-deploy.sh)
+
+The backend now uses the Bombay High Court direct API by default with Playwright as the fallback scraper.
 
 ## 🧪 Testing
 

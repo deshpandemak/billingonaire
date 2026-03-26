@@ -23,8 +23,8 @@ In scope:
 - Frontend app at billingonaire-ui
 - GitHub workflows under .github/workflows
 - Deployment scripts under firebase
-- Firecrawl extraction integration
-- Optional Ollama fallback using dedicated GKE or Cloud Run
+- Bombay High Court direct API extraction
+- Playwright fallback for structured court scraping
 
 Out of scope:
 - Non-production sandbox prototypes
@@ -40,9 +40,6 @@ Defined environments:
 Deployment targets:
 - Backend: Cloud Run
 - Frontend: Firebase Hosting
-- Optional LLM service:
-  - Preferred: Dedicated GKE Ollama service
-  - Alternate: Cloud Run Ollama service
 
 ## 4. Branch and Release Strategy
 
@@ -83,7 +80,6 @@ Acceptance criteria:
 Development standards:
 - Follow existing project style and module boundaries.
 - Keep deterministic extraction as primary path.
-- Keep LLM fallback optional and confidence-gated.
 - Do not hardcode secrets.
 
 Code quality requirements:
@@ -117,8 +113,6 @@ Deployment scripts:
 - firebase/backend-cloudrun-deploy.sh
 - firebase/deploy-all.sh
 - firebase/setup-secrets.sh
-- firebase/ollama-gke-deploy.sh
-- firebase/ollama-cloudrun-deploy.sh
 
 Deployment policy:
 - Deploy backend and frontend only after CI pass.
@@ -126,26 +120,19 @@ Deployment policy:
 - Use Secret Manager for sensitive keys.
 - Use environment variables for operational controls.
 
-LLM deployment policy:
-- Preferred production LLM target is dedicated GKE Ollama.
-- Cloud Run Ollama may be used for low-volume or temporary usage.
-- Backend must resolve OLLAMA_BASE_URL from explicit env or discovered deployment URL.
+Scraper deployment policy:
+- Production backend deploys with `COURT_SCRAPER_PROVIDER=direct_api`.
+- Playwright remains the runtime fallback when direct API extraction is unavailable.
 
 ### Phase E: Post-Deploy Verification
 
 Required backend checks:
 - Backend health endpoint responds: GET /
 - Core endpoint smoke test: court order extraction path returns valid payload shape
-- Firecrawl key availability validated at runtime
 
 Required frontend checks:
 - Frontend URL responds with successful HTTP status
 - Basic navigation renders without runtime failure
-
-Required LLM checks when enabled:
-- Ollama health endpoint responds: GET /api/tags
-- Fallback trigger path validated on low-confidence sample
-- Analyzer metadata persisted with fallback diagnostics
 
 Verification evidence:
 - Capture deployment URLs
@@ -161,7 +148,6 @@ Operational controls:
 
 Continuous improvement loop:
 - Weekly review of fallback metrics
-- Monthly threshold tuning for fallback triggers
 - Quarterly dependency and security baseline review
 
 ## 6. Secrets and Configuration Management
@@ -173,17 +159,9 @@ Secret storage requirements:
 
 Required secrets:
 - GCLOUD_SERVICE_ACCOUNT_KEY
-- FIRECRAWL_API_KEY
 
-Config controls for LLM fallback:
-- ORDER_ENABLE_LLM_FALLBACK
-- ORDER_LLM_PROVIDER
-- ORDER_LLM_MODEL
-- OLLAMA_BASE_URL
-- ORDER_LLM_TIMEOUT_SECONDS
-- ORDER_LLM_FALLBACK_MIN_QUALITY
-- ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE
-- ORDER_LLM_FALLBACK_MIN_CASES
+Config controls for scraper mode:
+- COURT_SCRAPER_PROVIDER
 
 ## 7. Deployment Verification Checklist
 
@@ -193,7 +171,6 @@ A release is complete only when all items pass:
 - Frontend deployed successfully
 - Backend health check passed
 - Frontend health check passed
-- LLM health check passed when fallback enabled
 - Smoke test for order processing passed
 - Release created with commit traceability
 
@@ -208,7 +185,7 @@ Rollback triggers:
 Rollback approach:
 - Backend: redeploy previous known-good image tag on Cloud Run
 - Frontend: redeploy previous build on Firebase Hosting
-- LLM service: switch OLLAMA_BASE_URL to known-good service endpoint or disable fallback
+- Scraper mode: switch to Playwright fallback if direct API is temporarily unavailable
 
 Rollback verification:
 - Re-run backend and frontend health checks
@@ -261,5 +238,3 @@ Primary deployment scripts:
 - firebase/setup-secrets.sh
 - firebase/backend-cloudrun-deploy.sh
 - firebase/deploy-all.sh
-- firebase/ollama-gke-deploy.sh
-- firebase/ollama-cloudrun-deploy.sh

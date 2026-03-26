@@ -6,17 +6,15 @@ This module provides machine learning capabilities for analyzing court order doc
 1. Classification of orders as ADJOURNED, HEARD & ADJOURNED, or DISPOSED OFF
 2. Entity extraction for petitioners, respondents, AGP names, and dates
 3. Integration with existing ML-enhanced parser infrastructure
-4. Optional LLM-based extraction via Ollama for richer unstructured-text parsing
+4. Rule-based extraction tailored to Bombay High Court order documents
 
 Author: Billingonaire Legal Billing System
 Date: September 2025
 """
 
-import json
 import logging
-import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,9 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     import pdfplumber
 except ImportError:
-    pdfplumber = None
-
-import requests
+    pdfplumber = None  # type: ignore[assignment]
 
 # Firebase imports
 from firebase_admin import firestore
@@ -34,33 +30,35 @@ from firebase_admin import firestore
 # Import existing ML parser for base functionality
 from ml_enhanced_parser import MLEnhancedParser
 
-# Import LLM Extractor (optional – gracefully disabled when Ollama is absent)
-try:
-    from llm_extractor import LLMExtractor
-
-    LLM_EXTRACTOR_AVAILABLE = True
-except ImportError:
-    try:
-        from .llm_extractor import LLMExtractor
-
-        LLM_EXTRACTOR_AVAILABLE = True
-    except ImportError:
-        LLM_EXTRACTOR_AVAILABLE = False
-        logging.warning(
-            "LLM Extractor not available in order_analyzer - continuing without LLM"
-        )
-
 
 @dataclass
 class CaseInfo:
     """Information about a single case within an order - simplified structure"""
 
-    case_type: str
-    case_number: int
-    case_year: int
-    petitioner: str
-    respondent: str
-    government_pleader: List[str]
+    case_type: str = ""
+    case_number: Optional[Any] = None
+    case_year: Optional[Any] = None
+    petitioner: str = ""
+    respondent: str = ""
+    government_pleader: List[str] = field(default_factory=list)
+    petitioners: List[str] = field(default_factory=list)
+    respondents: List[str] = field(default_factory=list)
+    agp_names: List[str] = field(default_factory=list)
+    advocates: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.petitioners and self.petitioner:
+            self.petitioners = [self.petitioner]
+        if not self.respondents and self.respondent:
+            self.respondents = [self.respondent]
+        if not self.petitioner and self.petitioners:
+            self.petitioner = self.petitioners[0]
+        if not self.respondent and self.respondents:
+            self.respondent = self.respondents[0]
+        if not self.government_pleader and self.agp_names:
+            self.government_pleader = list(self.agp_names)
+        if not self.agp_names and self.government_pleader:
+            self.agp_names = list(self.government_pleader)
 
 
 @dataclass
@@ -85,57 +83,16 @@ class OrderDocumentAnalyzer:
         """Initialize Order Document Analyzer"""
         self.db = firestore.client()
         self.ml_parser = MLEnhancedParser()
-
-        # Optional confidence-gated LLM fallback controls.
-        self.enable_llm_fallback = (
-            os.getenv("ORDER_ENABLE_LLM_FALLBACK", "false").strip().lower() == "true"
-        )
-        self.llm_provider = os.getenv("ORDER_LLM_PROVIDER", "ollama").strip().lower()
-        self.llm_model = os.getenv("ORDER_LLM_MODEL", "llama3.1:8b").strip()
-        self.ollama_base_url = os.getenv(
-            "OLLAMA_BASE_URL", "http://localhost:11434"
-        ).rstrip("/")
-        self.ollama_timeout_seconds = int(os.getenv("ORDER_LLM_TIMEOUT_SECONDS", "60"))
-        self.min_extraction_quality = float(
-            os.getenv("ORDER_LLM_FALLBACK_MIN_QUALITY", "0.70")
-        )
-        self.min_category_confidence = float(
-            os.getenv("ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE", "0.70")
-        )
-        self.min_cases_count = int(os.getenv("ORDER_LLM_FALLBACK_MIN_CASES", "1"))
-
-        self.fallback_metrics = {
-            "total_documents": 0,
-            "fallback_triggered": 0,
-            "fallback_succeeded": 0,
-            "fallback_failed": 0,
-        }
-
-        # Initialize LLM Extractor if available
-        self.llm_extractor = None
-        if LLM_EXTRACTOR_AVAILABLE:
-            try:
-                self.llm_extractor = LLMExtractor()
-                logging.info("LLM Extractor initialised in OrderDocumentAnalyzer")
-            except Exception as exc:
-                logging.warning("Could not initialise LLM Extractor: %s", exc)
-
-        # Order classification patterns
         self.order_patterns = self._create_order_patterns()
-
-        # Entity extraction patterns
         self.entity_patterns = self._create_entity_patterns()
-
-        # Date extraction patterns
         self.date_patterns = self._create_date_patterns()
 
         logging.info("Order Document Analyzer initialized successfully")
 
     def _create_order_patterns(self) -> Dict[str, List[str]]:
-        """Create patterns for order classification"""
+        """Create patterns for order classification."""
         return {
             "DISPOSED_OFF": [
-                # Direct disposal phrases
                 r"\bdisposed?\s+off?\b",
                 r"\bdisposal\b",
                 r"\binfructuous\b",
@@ -146,13 +103,11 @@ class OrderDocumentAnalyzer:
                 r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
                 r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
                 r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
-                # Final orders
                 r"\bfinal\s+order\b",
                 r"\bfinal\s+judgment\b",
                 r"\bsuit\s+dismissed?\b",
                 r"\bpetition\s+dismissed?\b",
                 r"\bwrit\s+dismissed?\b",
-                # Conclusive language
                 r"\bpetition\s+(?:is\s+)?allowed\b",
                 r"\bpetition\s+(?:is\s+)?granted\b",
                 r"\brelief\s+(?:is\s+)?granted\b",
@@ -162,7 +117,6 @@ class OrderDocumentAnalyzer:
                 r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
                 r"\baccordingly\b.*?\bdisposed\b",
                 r"\bhence\b.*?\bdisposed\b",
-                # Closed/Closure language (esp. for contempt petitions)
                 r"\bcase\s+(?:is\s+)?closed\b",
                 r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
                 r"\bmatter\s+(?:is\s+)?closed\b",
@@ -170,7 +124,6 @@ class OrderDocumentAnalyzer:
                 r"\b(?:case|matter|petition)\b.*?\bclos(?:ed|ure)\b",
             ],
             "ADJOURNED": [
-                # Adjournment phrases
                 r"\bstands?\s+over\s+to\b",
                 r"\badjourned?\s+to\b",
                 r"\blist(?:ed)?\s+(?:the\s+same\s+)?on\b",
@@ -178,7 +131,6 @@ class OrderDocumentAnalyzer:
                 r"\bpost(?:poned?)?\s+to\b",
                 r"\breschedule[d]?\s+(?:to|for)\b",
                 r"\bdeferred?\s+to\b",
-                # Administrative adjournments
                 r"\bwrongly\s+on\s+board\b",
                 r"\bremove\s+from\s+(?:the\s+)?board\b",
                 r"\bpaucity\s+of\s+time\b",
@@ -186,14 +138,12 @@ class OrderDocumentAnalyzer:
                 r"\btime\s+(?:sought|requested)\b",
                 r"\bseeks?\s+time\b",
                 r"\btake\s+instructions\b",
-                # Future hearing indicators
                 r"\bto\s+be\s+listed\s+on\b",
                 r"\bfor\s+(?:final\s+)?hearing\s+(?:at|on)\b",
                 r"\bnext\s+date\s+(?:is\s+)?fixed\b",
                 r"\binterim\s+order.*?to\s+continue\b",
             ],
             "HEARD_AND_ADJOURNED": [
-                # Explicit hearing phrases
                 r"\bheard?\s+and\s+adjourned?\b",
                 r"\bpartly\s+heard?\b",
                 r"\bpartial\s+hearing\b",
@@ -202,13 +152,11 @@ class OrderDocumentAnalyzer:
                 r"\bafter\s+hearing.*?adjourned?\b",
                 r"\bmatter\s+heard?\s+and\s+(?:kept\s+for|posted\s+to)\b",
                 r"\bheard?\s+(?:the\s+)?(?:parties?|counsel)\s+and\s+adjourned?\b",
-                # On hearing / Upon hearing patterns
                 r"\bon\s+hearing\b",
                 r"\bupon\s+hearing\b",
                 r"\bhaving\s+heard?\b",
                 r"\bafter\s+hearing\s+(?:the\s+)?(?:learned\s+)?(?:counsel|counsels?|advocates?)\b",
                 r"\bafter\s+hearing\s+(?:learned\s+)?(?:counsel|advocate)\s+for\s+(?:the\s+)?(?:petitioner|respondent)\b",
-                # Counsel submissions patterns (indicates hearing)
                 r"\b(?:learned\s+)?counsel.*?submits?\b",
                 r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
@@ -216,12 +164,10 @@ class OrderDocumentAnalyzer:
                 r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?)\b",
                 r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
-                # Court observations after hearing
                 r"\bcourt.*?observes?\s+that\b",
                 r"\b(?:having\s+)?perused\s+(?:the\s+)?(?:papers?|records?|pleadings?)\b",
                 r"\bconsidering\s+(?:the\s+)?submissions?\b",
                 r"\bin\s+view\s+of\s+(?:the\s+)?(?:above|submissions?)\b",
-                # Enhanced patterns for implicit hearing + adjournment
                 r"\blist(?:ed)?\s+(?:the\s+same\s+)?on.*?for.*?(?:final\s+)?hearing\b",
                 r"\bproceedings\s+are\s+pending.*?list.*?for.*?hearing\b",
                 r"\bmatter[s]?\s+(?:would\s+be\s+)?called\s+out.*?after\b",
@@ -231,76 +177,54 @@ class OrderDocumentAnalyzer:
         }
 
     def _create_entity_patterns(self) -> Dict[str, List[str]]:
-        """Create patterns for entity extraction"""
+        """Create patterns for entity extraction."""
         return {
             "PETITIONER": [
-                # Standard petitioner patterns with dots
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Appellants?",
-                # Without title prefixes - more flexible to handle middle initials and dots
                 r"([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Petitioners?",
                 r"([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Applicants?",
-                # Colon format
                 r"Petitioners?\s*:\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)",
-                # Versus format (before vs/versus)
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+(?:\s+And\s+Ors\.?)?)(?:\s+vs?\.|\s+versus)",
-                # Newline separated format (handles multiline)
                 r"^((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Petitioner|Applicant)",
-                # In the matter of format
                 r"In\s+the\s+matter\s+of\s*:?\s*((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+)",
-                # Direct name pattern for cases like "Ramchandra B. Sathe & Ors."
                 r"^([A-Z][a-zA-Z\.]+(?:\s+[A-Z][a-zA-Z\.]+)+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)\s*\.{2,}\s*Petitioners?",
             ],
             "RESPONDENT": [
-                # Standard respondent patterns with dots - more specific to avoid false matches
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|The\s+)?[A-Z][a-zA-Z\s\.]+?(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?(?=\s|$)",
                 r"((?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?)\s+[A-Z][a-zA-Z\s\.]+?(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Defendants?",
-                # Without dots - more specific to avoid matching across versus
                 r"(?:versus|vs\.?)\s+([A-Z][a-zA-Z\s]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
-                # State patterns - multiple variations (case insensitive)
                 r"(The\s+State\s+Of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
                 r"(State\s+Of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
                 r"(State\s+of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
                 r"The\s+State\s+Of\s+Maharashtra.*?(?=\s*\.{2,}\s*Respondents?)",
-                # Versus patterns (after vs/versus) - more specific
                 r"(?:vs?\.|\bversus\b)\s+((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)?\s*[A-Z][a-zA-Z\s\.]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)(?:\s*\.{2,}\s*)?\.{2,}\s*Respondents?",
-                # Colon format
                 r"Respondents?\s*:\s*((?:The\s+)?[A-Z][a-zA-Z\s\.]+(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)",
-                # Newline separated format
                 r"^((?:The\s+)?(?:Shri?\.?|Smt\.?|Ms\.?|Mr\.?|State)\s+[A-Z][a-zA-Z\s\.]+?)$\s*(?:Respondent|Defendant)",
-                # Direct state pattern for "State of Maharashtra"
                 r"^(State\s+of\s+Maharashtra(?:\s+&\s+Ors\.?|\s+And\s+Ors\.?)?)\s*\.{2,}\s*Respondents?",
             ],
             "AGP_ENHANCED": [
-                # Enhanced AGP patterns with titles - capture full name including title
                 r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)",
                 r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z]+(?:\s+[A-Z]\.?)?\s+[A-Za-z]+)\s*,?\s*(?:AGP|A\.?\s*G\.?\s*P\.?)",
-                # Without titles - only match when no title is present (use word boundaries)
                 r"\b([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)(?!\s*(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?))",
-                # GP patterns with titles
                 r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)",
-                # GP patterns without titles
                 r"\b([A-Z]\.?\s*[A-Z]\.?\s*[A-Za-z]+(?:\s+[A-Za-z]+)?)\s*,?\s*(?:Addl\.?\s*)?(?:GP|G\.?\s*P\.?)(?!\s*(?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?))",
-                # "for State" patterns
                 r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z\s\.]+?)\s+for\s+(?:the\s+)?State",
                 r"((?:Smt\.?|Shri?\.?|Ms\.?|Mr\.?|Adv\.?)\s+[A-Z][a-zA-Z\s\.]+?)\s+for\s+Respondent.*?State",
             ],
         }
 
     def _create_date_patterns(self) -> List[str]:
-        """Create patterns for date extraction"""
+        """Create patterns for date extraction."""
         return [
-            # Standard date formats
             r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})\b",
             r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b",
             r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b",
             r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b",
-            # Legal document specific date formats
             r"\bDATE\s*:\s*(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})",
             r"\bon\s+(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})",
             r"\bto\s+(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})",
-            # Numeric formats
             r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b",
             r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b",
         ]
@@ -308,19 +232,9 @@ class OrderDocumentAnalyzer:
     def analyze_order_document(
         self, filename: str, file_content: bytes
     ) -> OrderAnalysisResult:
-        """
-        Enhanced method to analyze order document using structured approach
-
-        Args:
-            filename: Name of the PDF file
-            file_content: Raw PDF file content
-
-        Returns:
-            OrderAnalysisResult with clean case-by-case extraction
-        """
+        """Analyze an order document using the structured parser flow."""
         logging.info(f"Starting enhanced order document analysis for {filename}")
 
-        # First, extract text using existing ML parser
         extraction_result = self.ml_parser.enhance_pdf_extraction(
             filename, file_content
         )
@@ -329,363 +243,45 @@ class OrderDocumentAnalyzer:
             raise ValueError(f"Could not extract text from order document: {filename}")
 
         text = extraction_result.text
-
-        # 1. Parse document structure (4 parts: case numbers, parties, advocates, date+order)
         document_structure = self._parse_document_structure(text)
-
-        # 2. Extract order date specifically
         order_date = self._extract_order_date(text, document_structure)
-
-        # 3. Classify order category with enhanced logic based on structure
         order_category, category_confidence = self._classify_order_enhanced(
             text, document_structure
         )
-
-        # 4. Extract structured case information (simplified)
         cases = self._extract_structured_cases_simplified(
             document_structure, text, order_date
         )
 
-        # 5. Optionally enrich with local LLM when Ollama is running
-        if self.llm_extractor and self.llm_extractor.is_available():
-            try:
-                llm_data = self.llm_extractor.extract_order_data(text)
-                (
-                    order_date,
-                    order_category,
-                    category_confidence,
-                    cases,
-                ) = self._merge_llm_order_data(
-                    llm_data,
-                    order_date,
-                    order_category,
-                    category_confidence,
-                    cases,
-                )
-            except Exception as exc:
-                logging.warning("LLM order enrichment failed: %s", exc)
-
-        result = OrderAnalysisResult(
+        logging.info(
+            "Enhanced order analysis completed. Category: %s, Cases: %s, Confidence: %.2f",
+            order_category,
+            len(cases),
+            category_confidence,
+        )
+        return OrderAnalysisResult(
             order_category=order_category,
             category_confidence=category_confidence,
             order_date=order_date,
             cases=cases,
             order_text=text,
             analysis_metadata={
-                "llm_fallback_enabled": self.enable_llm_fallback,
-                "used_llm_fallback": False,
-                "fallback_reason": [],
-                "fallback_provider": self.llm_provider,
-                "fallback_model": self.llm_model,
                 "primary_category_confidence": category_confidence,
                 "extraction_quality_score": extraction_result.quality_score,
                 "extraction_confidence": extraction_result.confidence,
             },
         )
 
-        result = self._apply_confidence_gated_fallback(
-            result=result,
-            extraction_result=extraction_result,
-            text=text,
-        )
-
-        logging.info(
-            f"Enhanced order analysis completed. Category: {order_category}, Cases: {len(cases)}, Confidence: {category_confidence:.2f}"
-        )
-        return result
-
     def get_fallback_metrics(self) -> Dict[str, int]:
-        """Return cumulative LLM fallback metrics for observability."""
-        return dict(self.fallback_metrics)
-
-    def _apply_confidence_gated_fallback(
-        self,
-        result: OrderAnalysisResult,
-        extraction_result,
-        text: str,
-    ) -> OrderAnalysisResult:
-        self.fallback_metrics["total_documents"] += 1
-
-        should_fallback, reasons = self._should_trigger_llm_fallback(
-            result=result,
-            extraction_result=extraction_result,
-        )
-        result.analysis_metadata["fallback_reason"] = reasons
-
-        if not should_fallback:
-            return result
-
-        self.fallback_metrics["fallback_triggered"] += 1
-
-        llm_result = self._run_ollama_fallback(text)
-        if not llm_result:
-            self.fallback_metrics["fallback_failed"] += 1
-            return result
-
-        parsed_cases = self._parse_llm_cases(llm_result.get("cases", []))
-        if not parsed_cases:
-            self.fallback_metrics["fallback_failed"] += 1
-            return result
-
-        llm_category = llm_result.get("order_category") or result.order_category
-        llm_order_date = llm_result.get("order_date") or result.order_date
-        llm_confidence = self._safe_float(
-            llm_result.get("category_confidence"), result.category_confidence
-        )
-
-        self.fallback_metrics["fallback_succeeded"] += 1
-        return OrderAnalysisResult(
-            order_category=str(llm_category),
-            category_confidence=llm_confidence,
-            order_date=str(llm_order_date) if llm_order_date else None,
-            cases=parsed_cases,
-            order_text=result.order_text,
-            analysis_metadata={
-                **result.analysis_metadata,
-                "used_llm_fallback": True,
-                "fallback_status": "success",
-                "fallback_response_confidence": llm_confidence,
-            },
-        )
-
-    def _should_trigger_llm_fallback(
-        self,
-        result: OrderAnalysisResult,
-        extraction_result,
-    ) -> Tuple[bool, List[str]]:
-        reasons: List[str] = []
-
-        if not self.enable_llm_fallback:
-            return False, reasons
-
-        if self.llm_provider != "ollama":
-            reasons.append("unsupported_llm_provider")
-            return False, reasons
-
-        if extraction_result.quality_score < self.min_extraction_quality:
-            reasons.append("low_extraction_quality")
-        if result.category_confidence < self.min_category_confidence:
-            reasons.append("low_category_confidence")
-        if len(result.cases) < self.min_cases_count:
-            reasons.append("insufficient_case_extraction")
-        if not result.order_date:
-            reasons.append("missing_order_date")
-
-        return len(reasons) > 0, reasons
-
-    def _run_ollama_fallback(self, text: str) -> Optional[Dict[str, Any]]:
-        """Run optional local Ollama fallback for low-confidence documents."""
-        try:
-            prompt = (
-                "Extract structured court order data as strict JSON with keys: "
-                "order_category, category_confidence, order_date, cases. "
-                "Each item in cases must contain case_type, case_number, case_year, petitioner, respondent, government_pleader. "
-                "Only output JSON."
-            )
-            response = requests.post(
-                f"{self.ollama_base_url}/api/generate",
-                json={
-                    "model": self.llm_model,
-                    "prompt": f"{prompt}\n\n{text[:12000]}",
-                    "stream": False,
-                    "format": "json",
-                },
-                timeout=self.ollama_timeout_seconds,
-            )
-            if response.status_code != 200:
-                logging.warning(f"Ollama fallback returned HTTP {response.status_code}")
-                return None
-
-            payload = response.json()
-            raw_response = payload.get("response")
-            if isinstance(raw_response, dict):
-                return raw_response
-            if not isinstance(raw_response, str) or not raw_response.strip():
-                return None
-
-            return self._extract_json_object(raw_response)
-        except Exception as e:
-            logging.warning(f"Ollama fallback failed: {e}")
-            return None
-
-    def _extract_json_object(self, text: str) -> Optional[Dict[str, Any]]:
-        try:
-            return json.loads(text)
-        except Exception:
-            pass
-
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-
-        try:
-            return json.loads(text[start : end + 1])
-        except Exception:
-            return None
-
-    def _parse_llm_cases(self, cases_payload: Any) -> List[CaseInfo]:
-        if not isinstance(cases_payload, list):
-            return []
-
-        parsed_cases: List[CaseInfo] = []
-        for case_item in cases_payload:
-            if not isinstance(case_item, dict):
-                continue
-
-            case_type = str(case_item.get("case_type", "")).strip().upper()
-            case_number = self._safe_int(case_item.get("case_number"))
-            case_year = self._safe_int(case_item.get("case_year"))
-            petitioner = str(case_item.get("petitioner", "")).strip()
-            respondent = str(case_item.get("respondent", "")).strip()
-            government_pleader = case_item.get("government_pleader") or []
-            if isinstance(government_pleader, str):
-                government_pleader = [government_pleader]
-            if not isinstance(government_pleader, list):
-                government_pleader = []
-
-            if not case_type or case_number is None or case_year is None:
-                continue
-
-            parsed_cases.append(
-                CaseInfo(
-                    case_type=case_type,
-                    case_number=case_number,
-                    case_year=case_year,
-                    petitioner=petitioner,
-                    respondent=respondent,
-                    government_pleader=[
-                        str(x).strip() for x in government_pleader if x
-                    ],
-                )
-            )
-
-        return parsed_cases
-
-    def _safe_int(self, value: Any) -> Optional[int]:
-        try:
-            if value is None:
-                return None
-            return int(str(value).strip())
-        except Exception:
-            return None
-
-    def _safe_float(self, value: Any, default_value: float) -> float:
-        try:
-            if value is None:
-                return default_value
-            parsed = float(value)
-            if parsed < 0:
-                return 0.0
-            if parsed > 1:
-                return 1.0
-            return parsed
-        except Exception:
-            return default_value
-
-    def _merge_llm_order_data(
-        self,
-        llm_data: Dict[str, Any],
-        order_date: Optional[str],
-        order_category: str,
-        category_confidence: float,
-        cases: List[CaseInfo],
-    ) -> Tuple[Optional[str], str, float, List[CaseInfo]]:
-        """
-        Merge LLM extraction results with pattern-based results.
-
-        LLM results fill in missing values; they do not overwrite high-confidence
-        pattern-based classifications.
-        """
-        if not isinstance(llm_data, dict):
-            return order_date, order_category, category_confidence, cases
-
-        # Use LLM order date only when pattern-based extraction found nothing
-        if not order_date and llm_data.get("order_date"):
-            order_date = llm_data["order_date"]
-            logging.info("LLM supplied order date: %s", order_date)
-
-        # Use LLM category only when confidence is low
-        if category_confidence < 0.5 and llm_data.get("order_category"):
-            llm_cat = llm_data["order_category"]
-            if llm_cat in ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
-                order_category = llm_cat
-                category_confidence = 0.7  # Moderate confidence from LLM
-                logging.info("LLM supplied order category: %s", order_category)
-
-        # Enrich existing CaseInfo objects with LLM-extracted parties/govt_pleader
-        llm_cases = llm_data.get("cases", [])
-        if llm_cases and cases:
-            # Build a lookup from case_number -> LLM case entry
-            llm_by_ref: Dict[str, Dict] = {}
-            for lc in llm_cases:
-                cn = str(lc.get("case_number", "")).strip()
-                if cn:
-                    llm_by_ref[cn] = lc
-
-            for i, ci in enumerate(cases):
-                case_ref = f"{ci.case_type}/{ci.case_number}/{ci.case_year}"
-                lc = llm_by_ref.get(case_ref)
-                if not lc:
-                    continue
-                # Collect all updated fields first, then build one new CaseInfo
-                petitioner = (
-                    ci.petitioner or lc.get("petitioner_name", "") or ci.petitioner
-                )
-                respondent = (
-                    ci.respondent or lc.get("respondent_name", "") or ci.respondent
-                )
-                govt_pleader = (
-                    ci.government_pleader
-                    if ci.government_pleader
-                    else ([lc["govt_pleader"]] if lc.get("govt_pleader") else [])
-                )
-                if (
-                    petitioner != ci.petitioner
-                    or respondent != ci.respondent
-                    or govt_pleader != ci.government_pleader
-                ):
-                    cases[i] = CaseInfo(
-                        case_type=ci.case_type,
-                        case_number=ci.case_number,
-                        case_year=ci.case_year,
-                        petitioner=petitioner,
-                        respondent=respondent,
-                        government_pleader=govt_pleader,
-                    )
-        elif llm_cases and not cases:
-            # No pattern-based cases – use LLM cases as-is
-            for lc in llm_cases:
-                cn = str(lc.get("case_number", ""))
-                parts = cn.split("/")
-                if len(parts) == 3:
-                    try:
-                        case_no = int(parts[1])
-                        case_year = int(parts[2])
-                    except ValueError:
-                        continue
-                    cases.append(
-                        CaseInfo(
-                            case_type=parts[0],
-                            case_number=case_no,
-                            case_year=case_year,
-                            petitioner=lc.get("petitioner_name", ""),
-                            respondent=lc.get("respondent_name", ""),
-                            government_pleader=(
-                                [lc["govt_pleader"]] if lc.get("govt_pleader") else []
-                            ),
-                        )
-                    )
-
-        return order_date, order_category, category_confidence, cases
+        """LLM fallback metrics are retired and kept empty for compatibility."""
+        return {}
 
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""
-        scores = {}
+        scores: Dict[str, Dict[str, float]] = {}
         logging.info(f"🔍 Classifying order text (length: {len(text)} chars)")
 
         for category, patterns in self.order_patterns.items():
-            score = 0
+            score = 0.0
             matches = 0
             matched_patterns = []
 
@@ -1133,7 +729,7 @@ class OrderDocumentAnalyzer:
 
     def _extract_case_specific_agps(self, text: str) -> Dict[str, List[Dict[str, str]]]:
         """Extract AGP/GP names with their case associations - ONLY State advocates"""
-        case_agp_mapping = {}
+        case_agp_mapping: Dict[str, List[Dict[str, str]]] = {}
 
         # REFINED patterns - ONLY for State advocates (AGP/GP)
         patterns = [
@@ -1433,16 +1029,18 @@ class OrderDocumentAnalyzer:
         full_text = document_structure.get("full_text", "")
 
         # Extract case-specific AGP/GP mappings
-        case_agp_mapping = (
+        case_agp_mapping: Dict[str, List[Dict[str, str]]] = (
             self._extract_case_specific_agps(full_text) if full_text else {}
         )
-        case_parties_mapping = (
+        case_parties_mapping: Dict[str, Dict[str, List[str]]] = (
             self._extract_case_specific_parties(full_text) if full_text else {}
         )
 
         # Extract common/fallback data
-        common_petitioners, common_respondents = [], []
-        common_advocates, common_agp_names = [], []
+        common_petitioners: List[str] = []
+        common_respondents: List[str] = []
+        common_advocates: List[str] = []
+        common_agp_names: List[str] = []
 
         if document_structure["has_parties"]:
             common_petitioners, common_respondents = self._parse_parties_section(
@@ -1480,10 +1078,7 @@ class OrderDocumentAnalyzer:
                     agp_names_list.append(agp_info["name"])
             else:
                 # Fall back to common AGP names
-                agp_names_list = [
-                    agp["name"] if isinstance(agp, dict) else agp
-                    for agp in common_agp_names
-                ]
+                agp_names_list = list(common_agp_names)
 
             case_info = CaseInfo(
                 case_number=case_number,
@@ -1527,7 +1122,7 @@ class OrderDocumentAnalyzer:
 
         return None
 
-    def _format_date_dd_mmm_yyyy(self, date_str: str) -> str:
+    def _format_date_dd_mmm_yyyy(self, date_str: str) -> Optional[str]:
         """Format date to YYYY-MM-DD format for validation (e.g., 2024-07-24)"""
         # Month name to number mapping
         month_to_num = {
@@ -1622,7 +1217,10 @@ class OrderDocumentAnalyzer:
         return category, confidence
 
     def _extract_structured_cases_simplified(
-        self, document_structure: Dict[str, Any], full_text: str, order_date: str
+        self,
+        document_structure: Dict[str, Any],
+        full_text: str,
+        order_date: Optional[str],
     ) -> List[CaseInfo]:
         """
         Extract case information in simplified format
@@ -1982,8 +1580,8 @@ class OrderDocumentAnalyzer:
             ]
 
             # Process patterns with priority (Adv. patterns first, then filter general matches)
-            adv_matches = []
-            general_matches = []
+            adv_matches: List[str] = []
+            general_matches: List[str] = []
 
             for i, pattern in enumerate(agp_patterns):
                 matches = re.findall(pattern, text, re.IGNORECASE)
@@ -2054,9 +1652,11 @@ class OrderDocumentAnalyzer:
             aw_pattern = (
                 r"a/w\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b"
             )
-            aw_matches = re.findall(aw_pattern, text, re.IGNORECASE)
-            for match in aw_matches:
-                name, role = match
+            aw_matches: List[Tuple[str, str]] = re.findall(
+                aw_pattern, text, re.IGNORECASE
+            )
+            for aw_match in aw_matches:
+                name, role = aw_match
                 name = name.strip()
                 role = role.strip()
 

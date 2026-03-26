@@ -53,13 +53,6 @@ Feature: ML-Powered Court Order Analysis
     Then the response status should be 200
     And the job should be queued for background processing
 
-  Scenario: Low-confidence analysis triggers LLM fallback when enabled
-    Given the LLM fallback is enabled via ORDER_ENABLE_LLM_FALLBACK=true
-    And a court order with ambiguous content that scores below confidence threshold
-    When I POST the order to /analyze-order
-    Then the response status should be 200
-    And the analysis result is returned with an order_category
-
   Scenario: Analysis gracefully handles corrupt or empty PDF
     Given an empty or unreadable court order PDF
     When I POST the order to /analyze-order

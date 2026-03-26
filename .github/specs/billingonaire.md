@@ -30,8 +30,7 @@ billingonaire/
 │   ├── UserManager.py         # Firebase Auth + Firestore user/role management
 │   ├── UserMatterMatcher.py   # Name-variation based AGP→case matching
 │   ├── order_analyzer.py      # ML rule-based order classification
-│   ├── ml_enhanced_parser.py  # LLM-assisted fallback parsing
-│   ├── llm_extractor.py       # LLM extraction via Ollama (used by order_analyzer.py)
+│   ├── ml_enhanced_parser.py  # PDF text extraction and parsing utilities
 │   ├── case_data_store.py     # Firestore read/write helpers
 │   └── specs/                 # BDD feature specs and step definitions
 │       ├── features/          # Gherkin .feature files
@@ -75,8 +74,7 @@ billingonaire/
 | CI/CD | GitHub Actions |
 | Backend hosting | Google Cloud Run (asia-south1) |
 | Frontend hosting | Firebase Hosting |
-| LLM fallback | Ollama (GKE preferred, Cloud Run alternate) |
-| Court website scraper | Firecrawl (`CourtScraper.py`) — AI-powered scraping of `bombayhighcourt.nic.in` to discover court order download URLs |
+| Court website scraper | Direct API first with Playwright fallback (`CourtScraper.py`) |
 
 ## Case Lifecycle State Machine
 
@@ -181,16 +179,7 @@ Manual override is available from any terminal state.
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `GCLOUD_SERVICE_ACCOUNT_KEY` | Production | Google Cloud auth for Cloud Run deployment |
-| `FIRECRAWL_API_KEY` | Production | Firecrawl API key — required for `CourtScraper` to scrape Bombay High Court for order download URLs |
-| `FIRECRAWL_MODEL` | Optional | Firecrawl AI model for structured extraction (default: `spark-1-mini`) |
-| `ORDER_ENABLE_LLM_FALLBACK` | Optional | Enable LLM fallback for low-confidence analysis |
-| `ORDER_LLM_PROVIDER` | Optional | LLM provider (e.g. `ollama`) |
-| `ORDER_LLM_MODEL` | Optional | LLM model name |
-| `OLLAMA_BASE_URL` | Optional | Ollama service endpoint URL |
-| `ORDER_LLM_TIMEOUT_SECONDS` | Optional | LLM request timeout |
-| `ORDER_LLM_FALLBACK_MIN_QUALITY` | Optional | Minimum quality score to accept LLM result |
-| `ORDER_LLM_FALLBACK_MIN_CATEGORY_CONFIDENCE` | Optional | Confidence threshold to skip LLM fallback |
-| `ORDER_LLM_FALLBACK_MIN_CASES` | Optional | Minimum case count to attempt LLM fallback |
+| `COURT_SCRAPER_PROVIDER` | Optional | Scraper mode (`direct_api` default, `playwright` fallback) |
 | `TESTING` | Test only | Set to `true` to activate test mocks |
 
 ## Development Commands

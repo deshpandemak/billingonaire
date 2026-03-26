@@ -33,28 +33,9 @@ else
   echo "$GCLOUD_SERVICE_ACCOUNT_KEY" | gcloud secrets create GCLOUD_SERVICE_ACCOUNT_KEY --data-file=-
 fi
 
-# Create or update FIRECRAWL_API_KEY secret from env var
-if [ -z "$FIRECRAWL_API_KEY" ]; then
-  echo "❌ Error: FIRECRAWL_API_KEY environment variable not set"
-  echo "Please set it before running this script"
-  exit 1
-fi
-
-if gcloud secrets describe FIRECRAWL_API_KEY >/dev/null 2>&1; then
-  echo "🔄 Adding new version to FIRECRAWL_API_KEY"
-  echo -n "$FIRECRAWL_API_KEY" | gcloud secrets versions add FIRECRAWL_API_KEY --data-file=-
-else
-  echo "🔑 Creating FIRECRAWL_API_KEY secret..."
-  echo -n "$FIRECRAWL_API_KEY" | gcloud secrets create FIRECRAWL_API_KEY --data-file=-
-fi
-
-# Grant the Cloud Run service account access to both secrets
+# Grant the Cloud Run service account access to the backend secret
 echo "🔒 Granting secret access to service account..."
 gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
-  --member="serviceAccount:$SERVICE_ACCOUNT" \
-  --role="roles/secretmanager.secretAccessor"
-
-gcloud secrets add-iam-policy-binding FIRECRAWL_API_KEY \
   --member="serviceAccount:$SERVICE_ACCOUNT" \
   --role="roles/secretmanager.secretAccessor"
 
