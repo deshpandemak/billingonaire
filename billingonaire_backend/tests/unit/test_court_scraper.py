@@ -305,7 +305,10 @@ def test_enrich_case_orders_result_builds_title_when_missing():
             "title": None,
         },
         "court_orders": [
-            {"listing_date": "01/01/2025", "download_url": "http://example.com/order.pdf"},
+            {
+                "listing_date": "01/01/2025",
+                "download_url": "http://example.com/order.pdf",
+            },
             {"listing_date": "02/01/2025", "download_url": None},
         ],
     }
