@@ -1561,69 +1561,68 @@ HTML text:
             timeout_ms = self.playwright_timeout_seconds * 1000
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=self.playwright_headless)
-                page = browser.new_page()
-
-                # Step 1: Navigate to the BHC case status portal
                 try:
-                    page.goto(
-                        self.bhc_case_status_url,
-                        wait_until="domcontentloaded",
-                        timeout=timeout_ms,
+                    page = browser.new_page()
+
+                    # Step 1: Navigate to the BHC case status portal
+                    try:
+                        page.goto(
+                            self.bhc_case_status_url,
+                            wait_until="domcontentloaded",
+                            timeout=timeout_ms,
+                        )
+                    except PlaywrightTimeoutError:
+                        return None
+                    except Exception as exc:
+                        logging.warning(
+                            "Playwright: failed to load BHC portal for %s: %s",
+                            case_ref,
+                            exc,
+                        )
+                        return None
+
+                    # Step 2: Fill the search form
+                    self._playwright_fill_bhc_form(
+                        page,
+                        side_code=side_code,
+                        stamp_regn=stamp_regn,
+                        case_type=base_case_type,
+                        case_number=case_number,
+                        case_year=case_year,
                     )
-                except PlaywrightTimeoutError:
-                    browser.close()
-                    return None
-                except Exception as exc:
-                    logging.warning(
-                        "Playwright: failed to load BHC portal for %s: %s",
-                        case_ref,
-                        exc,
+
+                    # Step 3: Submit the form
+                    self._playwright_click_search(page, timeout_ms)
+
+                    # Step 4: Extract case details from the result page
+                    html = page.content()
+                    current_url = page.url
+
+                    parties = self._playwright_extract_parties(page, html, case_ref)
+                    case_details["petitioner_name"] = parties.get("petitioner_name")
+                    case_details["respondent_name"] = parties.get("respondent_name")
+                    case_details["case_summary"] = (
+                        self._playwright_extract_case_summary(page, html)
                     )
+                    case_details["case_status_url"] = (
+                        self._extract_case_status_url(current_url)
+                        or self.bhc_case_status_url
+                    )
+
+                    # Step 5: Navigate to the Orders/Judgements tab
+                    self._playwright_click_orders_tab(page, timeout_ms)
+
+                    # Step 6: Collect all order rows
+                    html = page.content()
+                    current_url = page.url
+                    for row in self._playwright_extract_orders_from_table(
+                        page, html, current_url
+                    ):
+                        row_url = (row.get("download_url") or "").strip()
+                        if row_url:
+                            aggregated_orders[row_url] = row
+                finally:
                     browser.close()
-                    return None
-
-                # Step 2: Fill the search form
-                self._playwright_fill_bhc_form(
-                    page,
-                    side_code=side_code,
-                    stamp_regn=stamp_regn,
-                    case_type=base_case_type,
-                    case_number=case_number,
-                    case_year=case_year,
-                )
-
-                # Step 3: Submit the form
-                self._playwright_click_search(page, timeout_ms)
-
-                # Step 4: Extract case details from the result page
-                html = page.content()
-                current_url = page.url
-
-                parties = self._playwright_extract_parties(page, html, case_ref)
-                case_details["petitioner_name"] = parties.get("petitioner_name")
-                case_details["respondent_name"] = parties.get("respondent_name")
-                case_details["case_summary"] = self._playwright_extract_case_summary(
-                    page, html
-                )
-                case_details["case_status_url"] = (
-                    self._extract_case_status_url(current_url)
-                    or self.bhc_case_status_url
-                )
-
-                # Step 5: Navigate to the Orders/Judgements tab
-                self._playwright_click_orders_tab(page, timeout_ms)
-
-                # Step 6: Collect all order rows
-                html = page.content()
-                current_url = page.url
-                for row in self._playwright_extract_orders_from_table(
-                    page, html, current_url
-                ):
-                    row_url = (row.get("download_url") or "").strip()
-                    if row_url:
-                        aggregated_orders[row_url] = row
-
-                browser.close()
 
             # Build the short title from extracted parties
             petitioner = case_details.get("petitioner_name")
@@ -2094,12 +2093,16 @@ Rules:
                 return {
                     "status": "error",
                     "error": "Invalid case reference format",
+                    "case_summary": None,
+                    "petitioner": None,
+                    "respondent": None,
+                    "title": None,
+                    "case_orders": [],
                     "case_details": {
                         "case_number": case_ref,
                         "case_number_citation": self.bombay_high_court_url,
                     },
                     "court_orders": [],
-                    "case_orders": [],
                 }
 
             provider_result = self._fetch_with_provider(

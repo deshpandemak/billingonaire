@@ -198,15 +198,18 @@ To diagnose:
 
 The scraper provider is controlled by `COURT_SCRAPER_PROVIDER` (default: `playwright_first`):
 
-| Provider | Behaviour |
-|----------|-----------|
-| `playwright_first` | Try Playwright; fall back to Ollama then Firecrawl |
-| `playwright_only` | Only use Playwright; return `captcha_required` if unavailable |
-| `playwright_then_ollama` | Try Playwright, then Ollama |
-| `firecrawl_first` | Try Firecrawl; fall back to Playwright then Ollama |
-| `firecrawl_only` | Only use Firecrawl; return `captcha_required` if unavailable |
-| `ollama_first` | Try Ollama HTML scraping first; fall back to Playwright |
-| `ollama_only` | Only use Ollama; return `captcha_required` if extraction yields nothing |
+| Provider | Attempt sequence | Behaviour |
+|----------|-----------------|-----------|
+| `playwright_first` *(default)* | playwright → ollama → firecrawl | Try Playwright; fall back to Ollama, then Firecrawl |
+| `playwright_only` | playwright | Only use Playwright; return `captcha_required` if it fails |
+| `playwright_then_ollama` | playwright → ollama | Try Playwright, then Ollama |
+| `firecrawl_first` | playwright → firecrawl → ollama | Try Playwright first (as the best-effort browser path), then Firecrawl, then Ollama |
+| `firecrawl_only` | firecrawl | Only use Firecrawl; return `captcha_required` if unavailable |
+| `ollama_then_playwright` | ollama → playwright | Try Ollama first, then Playwright |
+| `ollama_first` | ollama → playwright → firecrawl | Try Ollama first, fall back to Playwright, then Firecrawl |
+| `ollama_only` | ollama | Only use Ollama; return `captcha_required` if extraction yields nothing |
+
+> The sequences above reflect the actual implementation in `_provider_attempt_sequence()` in `CourtScraper.py`.
 
 Change at runtime (admin only):
 ```

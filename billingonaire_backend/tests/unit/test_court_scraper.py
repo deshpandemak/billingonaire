@@ -912,13 +912,21 @@ def test_get_case_orders_fallback_includes_new_fields(monkeypatch):
 
 
 def test_get_case_orders_invalid_case_ref_includes_new_fields():
-    """Error response for invalid case ref must include the new output fields."""
+    """Error response for invalid case ref must include all new output fields."""
     scraper = BombayHighCourtScraper()
     result = scraper.get_case_orders("INVALID", None, "mumbai")
 
     assert result["status"] == "error"
     assert "case_orders" in result
     assert isinstance(result["case_orders"], list)
+    assert "case_summary" in result
+    assert result["case_summary"] is None
+    assert "petitioner" in result
+    assert result["petitioner"] is None
+    assert "respondent" in result
+    assert result["respondent"] is None
+    assert "title" in result
+    assert result["title"] is None
 
 
 def test_playwright_scraper_uses_bhc_portal_url():

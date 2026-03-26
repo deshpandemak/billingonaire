@@ -1398,9 +1398,9 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         if hasattr(board, "ml_parser") and board.ml_parser:
             status = board.ml_parser.get_enhancement_status()
             status["ml_parser_available"] = True
-            status[
-                "message"
-            ] = "ML Enhanced Parser is active and improving PDF processing quality"
+            status["message"] = (
+                "ML Enhanced Parser is active and improving PDF processing quality"
+            )
         else:
             status = {
                 "ml_parser_available": False,
@@ -1701,15 +1701,37 @@ def _get_cached_case_orders_payload(
     if not normalized_orders:
         return None
 
+    petitioner = str(case_details.get("petitioner") or "").strip() or None
+    respondent = str(case_details.get("respondent") or "").strip() or None
+    title: Optional[str] = None
+    if petitioner and respondent:
+        title = f"{petitioner} against {respondent}"
+    elif petitioner or respondent:
+        title = petitioner or respondent
+
+    case_orders = [
+        {
+            "date": o.get("listing_date"),
+            "download_link": o.get("download_url"),
+        }
+        for o in normalized_orders
+        if o.get("download_url")
+    ]
+
     return {
         "status": "found",
         "source": "case_store_cached",
         "case_ref": normalized_case_ref,
         "date": requested_date,
+        "case_summary": None,
+        "petitioner": petitioner,
+        "respondent": respondent,
+        "title": title,
+        "case_orders": case_orders,
         "case_details": {
             "case_number": normalized_case_ref,
-            "petitioner_name": case_details.get("petitioner"),
-            "respondent_name": case_details.get("respondent"),
+            "petitioner_name": petitioner,
+            "respondent_name": respondent,
         },
         "court_orders": normalized_orders,
     }
@@ -1905,9 +1927,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
                         if analysis_result.get("success"):
                             result["analysis_completed"] = True
-                            result[
-                                "analysis_message"
-                            ] = "Order linked and analyzed successfully"
+                            result["analysis_message"] = (
+                                "Order linked and analyzed successfully"
+                            )
                             logging.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
@@ -4063,7 +4085,9 @@ async def generate_bill_data(
                 logging.info(
                     f"📊 Collected {len(matched_variants)} AGP variants matching '{user_name}'"
                 )
-                logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
+                logging.info(
+                    f"📁 Total cases across all variants: {len(matched_cases)}"
+                )
 
                 # Track filtering for debugging
                 date_filtered = 0
@@ -4665,26 +4689,26 @@ async def export_bill_excel(
         # Header Section
         # Title
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        ws[f"A{current_row}"] = (
+            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        )
         ws[f"A{current_row}"].font = title_font
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        ws[f"A{current_row}"] = (
+            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        ws[f"A{current_row}"] = (
+            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
