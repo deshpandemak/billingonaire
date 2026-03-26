@@ -57,28 +57,23 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
         case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"},
     )
 
-    # Home-page navigation: agent starts from the Bombay High Court home page
-    assert "bombayhighcourt.nic.in" in prompt
-    # Menu navigation steps must be present
-    assert "Case Status" in prompt
-    assert "Case Number Wise" in prompt
-    # Fallback direct URL must also be present
-    assert "case_no.php" in prompt
+    # Portal navigation: agent navigates to the new BHC case status portal
+    assert "bombayhighcourt.gov.in" in prompt
+    assert "bhc/casestatus/casenumber" in prompt
     # Form field values injected
     assert "WP" in prompt
     assert "3373" in prompt
     assert "2025" in prompt
-    # Stamp/Regn dropdown is a separate form field with a specific value
+    # Side dropdown (new field in the BHC portal)
+    assert "AS" in prompt
+    # Stamp/Regn. dropdown with "Register" (BHC portal uses "Register" not "Registration")
     assert "Stamp/Regn" in prompt
-    # For a plain WP type, value should be "Registration"
-    assert "Registration" in prompt
+    assert "Register" in prompt
     # Petitioner and respondent extraction after form submission
     assert "petitioner" in prompt.lower() or "Petitioner" in prompt
     assert "respondent" in prompt.lower() or "Respondent" in prompt
-    # Critical: agent must click "Listing Dates/Order" button
-    assert "Listing Dates/Order" in prompt
-    # Critical: table column name so agent knows where to look
-    assert "Order/Judgement" in prompt
+    # Critical: agent must click "Orders/Judgements" button/tab
+    assert "Orders/Judgements" in prompt
     # Critical: agent must read href, not click the link
     assert "Order/Judg-1" in prompt
     # No-download restriction is prominent
@@ -88,6 +83,9 @@ def test_firecrawl_prompt_includes_listing_navigation_steps():
     assert "NO date filter" in prompt
     # All rows collected
     assert "ALL rows" in prompt or "ALL" in prompt
+    # New fields: case_summary and title in the output schema
+    assert "case_summary" in prompt
+    assert "title" in prompt
 
 
 def test_ollama_extraction_prompt_describes_navigation_sequence():
@@ -97,30 +95,31 @@ def test_ollama_extraction_prompt_describes_navigation_sequence():
         html_chunks=["<html><body>Test HTML</body></html>"],
     )
 
-    # Navigation sequence must be described
-    assert "Case Status" in prompt
-    assert "Case Number Wise" in prompt
-    assert "Listing Dates/Order" in prompt
-    # Form fields described
-    assert "CAPTCHA" in prompt or "captcha" in prompt.lower()
-    # Stamp/Regn value included
-    assert "Registration" in prompt  # WP type → Registration
+    # Navigation sequence must describe the new BHC portal
+    assert "bombayhighcourt.gov.in" in prompt
+    assert "bhc/casestatus/casenumber" in prompt
+    assert "Orders/Judgements" in prompt
+    # Form fields described (Side is new in the BHC portal)
+    assert "AS" in prompt
+    # Stamp/Regn value: "Register" for WP type (new portal)
+    assert "Register" in prompt
     # Extraction rules
     assert "petitioner" in prompt.lower()
     assert "respondent" in prompt.lower()
-    assert "Order/Judgement" in prompt
+    assert "case_summary" in prompt
+    assert "title" in prompt
     # Case ref injected
     assert "WP/3373/2025" in prompt
 
 
-def test_build_candidate_urls_starts_with_home_page():
+def test_build_candidate_urls_starts_with_bhc_portal():
     scraper = BombayHighCourtScraper()
     case_parts = {"case_type": "WP", "case_number": "3373", "year": "2025"}
     urls = scraper._build_candidate_urls(case_parts, court_code="2")
 
-    # Home page must be the first URL (navigation entry point)
-    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
-    # Case search page must be present
+    # New BHC portal must be the first URL (primary navigation entry point)
+    assert urls[0] == "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+    # Legacy eCourts search page must still be present as fallback
     assert any("case_no.php" in u for u in urls)
     # Direct case detail URLs must still be present as fallbacks
     assert any("case_detail.php" in u for u in urls)
@@ -148,6 +147,57 @@ def test_get_stamp_regn_type_stamp_for_st_suffix():
     assert scraper._get_stamp_regn_type("wp(st)") == "Stamp"  # case-insensitive
 
 
+def test_get_stamp_regn_bhc_register_default():
+    """BHC portal uses 'Register' (not 'Registration') for regular case types."""
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_stamp_regn_bhc("WP") == "Register"
+    assert scraper._get_stamp_regn_bhc("PIL") == "Register"
+    assert scraper._get_stamp_regn_bhc("APL") == "Register"
+
+
+def test_get_stamp_regn_bhc_stamp_for_st_suffix():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_stamp_regn_bhc("WP(ST)") == "Stamp"
+    assert scraper._get_stamp_regn_bhc("wp(st)") == "Stamp"  # case-insensitive
+
+
+def test_get_side_code_defaults_to_as():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_side_code("mumbai") == "AS"
+    assert scraper._get_side_code("aurangabad") == "AS"
+    assert scraper._get_side_code("nagpur") == "AS"
+    assert scraper._get_side_code("goa") == "AS"
+    assert scraper._get_side_code("unknown_bench") == "AS"
+
+
+def test_get_side_code_original_side():
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_side_code("mumbai_original") == "OS"
+
+
+def test_build_short_title_with_both_parties():
+    scraper = BombayHighCourtScraper()
+    title = scraper._build_short_title(
+        "MOTILAL OSWAL HOME FINANCE LTD THROUGH OFFICER",
+        "THE STATE OF MAHARASHTRA THROUGH G.P. AND ORS",
+    )
+    assert title == (
+        "MOTILAL OSWAL HOME FINANCE LTD THROUGH OFFICER"
+        " against "
+        "THE STATE OF MAHARASHTRA THROUGH G.P. AND ORS"
+    )
+
+
+def test_build_short_title_petitioner_only():
+    scraper = BombayHighCourtScraper()
+    assert scraper._build_short_title("Petitioner A", None) == "Petitioner A"
+
+
+def test_build_short_title_neither():
+    scraper = BombayHighCourtScraper()
+    assert scraper._build_short_title(None, None) is None
+
+
 def test_get_base_case_type_strips_st_suffix():
     scraper = BombayHighCourtScraper()
     assert scraper._get_base_case_type("WP(ST)") == "WP"
@@ -155,17 +205,17 @@ def test_get_base_case_type_strips_st_suffix():
     assert scraper._get_base_case_type("PIL") == "PIL"
 
 
-def test_firecrawl_prompt_uses_registration_for_normal_case_type():
+def test_firecrawl_prompt_uses_register_for_normal_case_type():
+    """BHC portal prompt should use 'Register' (not 'Registration')."""
     scraper = BombayHighCourtScraper()
     prompt = scraper._build_firecrawl_prompt(
         "WP/3373/2025",
         case_parts={"case_type": "WP", "case_number": "3373", "year": "2025"},
     )
-    assert "Registration" in prompt
-    # Stamp/Regn is a dropdown field — it should be distinct from the Case Number field
+    # New portal uses "Register", not "Registration"
+    assert "Register" in prompt
     assert "Stamp/Regn" in prompt
-    assert "Case Number" in prompt
-    # Case number value appears in the Case Number field
+    # Number field
     assert "3373" in prompt
 
 
@@ -177,20 +227,20 @@ def test_firecrawl_prompt_uses_stamp_for_st_case_type():
     )
     # Stamp/Regn dropdown should be "Stamp"
     assert "Stamp" in prompt
-    # Base case type WP (not WP(ST)) should appear in the Case Type field
+    # Base case type WP (not WP(ST)) should appear in the Type field
     assert "WP" in prompt
-    # Case Number field has the number
+    # Number field has the number
     assert "294" in prompt
 
 
 def test_ollama_prompt_uses_stamp_regn_type():
     scraper = BombayHighCourtScraper()
-    # Regular case type → Registration
+    # Regular case type → Register (new BHC portal value)
     prompt_reg = scraper._build_ollama_extraction_prompt(
         "WP/3373/2025",
         html_chunks=["<html><body>Test</body></html>"],
     )
-    assert "Registration" in prompt_reg
+    assert "Register" in prompt_reg
 
     # (ST) case type → Stamp
     prompt_st = scraper._build_ollama_extraction_prompt(
@@ -248,6 +298,58 @@ def test_get_case_details_uses_firecrawl_result(monkeypatch):
     assert isinstance(result["court_orders"], list)
 
 
+def test_normalize_firecrawl_payload_includes_title_and_case_summary():
+    """_normalize_firecrawl_payload must propagate title and case_summary."""
+    scraper = BombayHighCourtScraper()
+    payload = {
+        "case_details": {
+            "petitioner_name": "Petitioner A",
+            "respondent_name": "Respondent B",
+            "case_number": "WP/3373/2025",
+            "case_summary": "Case No. WP/3373/2025 was filed on 26/02/2025...",
+            "title": "Petitioner A against Respondent B",
+        },
+        "court_orders": [
+            {
+                "listing_date": "09/04/2025",
+                "download_url": "https://example.com/order-1.pdf",
+            },
+        ],
+    }
+
+    result = scraper._normalize_firecrawl_payload(payload, case_ref="WP/3373/2025")
+
+    assert (
+        result["case_details"]["case_summary"]
+        == "Case No. WP/3373/2025 was filed on 26/02/2025..."
+    )
+    assert result["case_details"]["title"] == "Petitioner A against Respondent B"
+
+
+def test_normalize_firecrawl_payload_builds_title_when_absent():
+    """_normalize_firecrawl_payload must build title from petitioner/respondent
+    and set case_summary to None when it is not present in the payload."""
+    scraper = BombayHighCourtScraper()
+    payload = {
+        "case_details": {
+            "petitioner_name": "Petitioner A",
+            "respondent_name": "Respondent B",
+            "case_number": "WP/3373/2025",
+        },
+        "court_orders": [
+            {
+                "listing_date": "09/04/2025",
+                "download_url": "https://example.com/order-1.pdf",
+            },
+        ],
+    }
+
+    result = scraper._normalize_firecrawl_payload(payload, case_ref="WP/3373/2025")
+    assert result["case_details"]["title"] == "Petitioner A against Respondent B"
+    # case_summary must be None when the payload does not include it
+    assert result["case_details"]["case_summary"] is None
+
+
 def test_normalize_firecrawl_payload_returns_all_order_links_even_with_date():
     scraper = BombayHighCourtScraper()
     payload = {
@@ -292,15 +394,37 @@ def test_get_case_orders_uses_firecrawl_result(monkeypatch):
     mocked = {
         "status": "found",
         "source": "firecrawl",
-        "case_details": {"case_number": "WP/3373/2025"},
-        "court_orders": [{"listing_date": "09/04/2025"}],
+        "case_details": {
+            "case_number": "WP/3373/2025",
+            "petitioner_name": "Petitioner A",
+            "respondent_name": "Respondent B",
+        },
+        "court_orders": [
+            {
+                "listing_date": "09/04/2025",
+                "download_url": "https://example.com/order-1.pdf",
+            }
+        ],
     }
     monkeypatch.setattr(
         scraper, "_fetch_with_firecrawl", lambda case_ref, date=None: mocked
     )
 
     result = scraper.get_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
-    assert result == mocked
+    # The result must include the new top-level fields
+    assert result["status"] == "found"
+    assert result["source"] == "firecrawl"
+    assert result["petitioner"] == "Petitioner A"
+    assert result["respondent"] == "Respondent B"
+    assert result["title"] == "Petitioner A against Respondent B"
+    assert isinstance(result["case_orders"], list)
+    assert result["case_orders"][0]["date"] == "09/04/2025"
+    assert (
+        result["case_orders"][0]["download_link"] == "https://example.com/order-1.pdf"
+    )
+    # Backward-compat fields still present
+    assert result["case_details"]["case_number"] == "WP/3373/2025"
+    assert isinstance(result["court_orders"], list)
 
 
 def test_get_case_orders_fallback_shape_when_firecrawl_unavailable(monkeypatch):
@@ -456,10 +580,9 @@ def test_fetch_with_firecrawl_agent_sdk_compat(monkeypatch):
     assert call_kwargs.get("prompt")
     assert call_kwargs.get("model") == "spark-1-mini"
     urls = call_kwargs.get("urls") or []
-    # Home page must be first (navigation entry point)
-    assert urls[0] == "https://www.bombayhighcourt.nic.in/"
-    assert any("case_no.php" in u for u in urls)
-    assert any("bombayhighcourt.nic.in" in u for u in urls)
+    # New BHC portal must be the first URL (primary navigation entry point)
+    assert urls[0] == "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+    assert any("bombayhighcourt.gov.in" in u for u in urls)
     assert any("hcservices.ecourts.gov.in/ecourtindiaHC" in u for u in urls)
 
     assert isinstance(result, dict)
@@ -711,3 +834,105 @@ def test_debug_case_orders_unexpected_exception_returns_ok_false(monkeypatch):
     assert result["ok"] is False
     assert "unexpected scraper failure" in result["error"]
     assert result["request"]["case_ref"] == "WP/3373/2025"
+
+
+def test_enrich_case_orders_result_adds_new_fields():
+    """_enrich_case_orders_result must add case_summary, petitioner, respondent,
+    title, and case_orders to the provider result dict."""
+    scraper = BombayHighCourtScraper()
+    provider_result = {
+        "status": "found",
+        "source": "playwright_scraper",
+        "case_details": {
+            "petitioner_name": "MOTILAL OSWAL HOME FINANCE LTD THROUGH OFFICER",
+            "respondent_name": "THE STATE OF MAHARASHTRA THROUGH G.P. AND ORS",
+            "case_number": "WP/3373/2025",
+            "case_status_url": "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber",
+            "case_summary": (
+                "Case No. WP/3373/2025 with CNR No. HCBM010116572025, "
+                "was filed on 26/02/2025 at Bombay High Court"
+            ),
+            "title": None,
+        },
+        "court_orders": [
+            {
+                "listing_date": "09/04/2025",
+                "download_url": "https://example.com/order-1.pdf",
+            },
+            {
+                "listing_date": "08/04/2025",
+                "download_url": "https://example.com/order-2.pdf",
+            },
+        ],
+    }
+
+    enriched = scraper._enrich_case_orders_result(provider_result)
+
+    assert enriched["petitioner"] == "MOTILAL OSWAL HOME FINANCE LTD THROUGH OFFICER"
+    assert enriched["respondent"] == "THE STATE OF MAHARASHTRA THROUGH G.P. AND ORS"
+    assert enriched["title"] == (
+        "MOTILAL OSWAL HOME FINANCE LTD THROUGH OFFICER"
+        " against "
+        "THE STATE OF MAHARASHTRA THROUGH G.P. AND ORS"
+    )
+    assert "Case No. WP/3373/2025" in enriched["case_summary"]
+    assert len(enriched["case_orders"]) == 2
+    assert enriched["case_orders"][0]["date"] == "09/04/2025"
+    assert (
+        enriched["case_orders"][0]["download_link"] == "https://example.com/order-1.pdf"
+    )
+    assert enriched["case_orders"][1]["date"] == "08/04/2025"
+    # Backward-compat fields must still be present
+    assert enriched["court_orders"] == provider_result["court_orders"]
+    assert enriched["case_details"] == provider_result["case_details"]
+
+
+def test_get_case_orders_fallback_includes_new_fields(monkeypatch):
+    """Fallback captcha_required response must include the new fields."""
+    scraper = BombayHighCourtScraper()
+    monkeypatch.setattr(
+        scraper, "_fetch_with_firecrawl", lambda case_ref, date=None: None
+    )
+    # Force playwright + firecrawl to return nothing
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_playwright",
+        lambda case_ref, date=None, bench="mumbai": None,
+    )
+
+    result = scraper.get_case_orders("WP/3373/2025", None, "mumbai")
+
+    assert result["status"] == "captcha_required"
+    assert "case_orders" in result
+    assert isinstance(result["case_orders"], list)
+    assert "petitioner" in result
+    assert "respondent" in result
+    assert "title" in result
+    assert "case_summary" in result
+
+
+def test_get_case_orders_invalid_case_ref_includes_new_fields():
+    """Error response for invalid case ref must include all new output fields."""
+    scraper = BombayHighCourtScraper()
+    result = scraper.get_case_orders("INVALID", None, "mumbai")
+
+    assert result["status"] == "error"
+    assert "case_orders" in result
+    assert isinstance(result["case_orders"], list)
+    assert "case_summary" in result
+    assert result["case_summary"] is None
+    assert "petitioner" in result
+    assert result["petitioner"] is None
+    assert "respondent" in result
+    assert result["respondent"] is None
+    assert "title" in result
+    assert result["title"] is None
+
+
+def test_playwright_scraper_uses_bhc_portal_url():
+    """BHC portal URL constant must point to the new case status portal."""
+    scraper = BombayHighCourtScraper()
+    assert scraper.bhc_case_status_url == (
+        "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+    )
+    assert "bombayhighcourt.gov.in" in scraper.bombay_high_court_url

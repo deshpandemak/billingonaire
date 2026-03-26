@@ -1701,15 +1701,37 @@ def _get_cached_case_orders_payload(
     if not normalized_orders:
         return None
 
+    petitioner = str(case_details.get("petitioner") or "").strip() or None
+    respondent = str(case_details.get("respondent") or "").strip() or None
+    title: Optional[str] = None
+    if petitioner and respondent:
+        title = f"{petitioner} against {respondent}"
+    elif petitioner or respondent:
+        title = petitioner or respondent
+
+    case_orders = [
+        {
+            "date": o.get("listing_date"),
+            "download_link": o.get("download_url"),
+        }
+        for o in normalized_orders
+        if o.get("download_url")
+    ]
+
     return {
         "status": "found",
         "source": "case_store_cached",
         "case_ref": normalized_case_ref,
         "date": requested_date,
+        "case_summary": None,
+        "petitioner": petitioner,
+        "respondent": respondent,
+        "title": title,
+        "case_orders": case_orders,
         "case_details": {
             "case_number": normalized_case_ref,
-            "petitioner_name": case_details.get("petitioner"),
-            "respondent_name": case_details.get("respondent"),
+            "petitioner_name": petitioner,
+            "respondent_name": respondent,
         },
         "court_orders": normalized_orders,
     }
