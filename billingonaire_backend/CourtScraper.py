@@ -821,9 +821,9 @@ HTML text:
                 )
                 ollama_response["status_code"] = response.status_code
                 if response.status_code != 200:
-                    ollama_response["error"] = (
-                        f"Ollama returned HTTP {response.status_code}"
-                    )
+                    ollama_response[
+                        "error"
+                    ] = f"Ollama returned HTTP {response.status_code}"
                 else:
                     llm_text = (response.json() or {}).get("response", "").strip()
                     ollama_response["raw_response"] = llm_text[:8000]
@@ -1387,7 +1387,8 @@ HTML text:
 
         # Pattern 3: Try JavaScript to get relevant text visible on the page
         try:
-            summary_js = page.evaluate("""() => {
+            summary_js = page.evaluate(
+                """() => {
                     const selectors = [
                         '[class*="case-summary" i]',
                         '[class*="casedetail" i]',
@@ -1400,7 +1401,8 @@ HTML text:
                         if (el) return el.innerText.trim();
                     }
                     return null;
-                }""")
+                }"""
+            )
             if summary_js and len(summary_js) > 20:
                 return summary_js.strip()
         except Exception:
@@ -1424,7 +1426,8 @@ HTML text:
         if not (petitioner and respondent):
             # Try JS evaluation for Angular/React rendered content
             try:
-                parties_js = page.evaluate("""() => {
+                parties_js = page.evaluate(
+                    """() => {
                         const getText = (sel) => {
                             const el = document.querySelector(sel);
                             return el ? el.innerText.trim() : null;
@@ -1437,7 +1440,8 @@ HTML text:
                                 || getText('[id*="respondent" i]')
                                 || getText('[class*="defendant" i]'),
                         };
-                    }""")
+                    }"""
+                )
                 if parties_js:
                     petitioner = petitioner or parties_js.get("petitioner")
                     respondent = respondent or parties_js.get("respondent")
@@ -1463,7 +1467,8 @@ HTML text:
 
         # Attempt 1: JS-based extraction of rendered table rows
         try:
-            rows_js = page.evaluate("""() => {
+            rows_js = page.evaluate(
+                """() => {
                     const results = [];
                     // Look for table rows that contain order links
                     const rows = document.querySelectorAll('tr');
@@ -1493,7 +1498,8 @@ HTML text:
                         }
                     }
                     return results;
-                }""")
+                }"""
+            )
             for item in rows_js or []:
                 href = (item.get("href") or "").strip()
                 if not href:
@@ -1601,9 +1607,9 @@ HTML text:
                     parties = self._playwright_extract_parties(page, html, case_ref)
                     case_details["petitioner_name"] = parties.get("petitioner_name")
                     case_details["respondent_name"] = parties.get("respondent_name")
-                    case_details["case_summary"] = (
-                        self._playwright_extract_case_summary(page, html)
-                    )
+                    case_details[
+                        "case_summary"
+                    ] = self._playwright_extract_case_summary(page, html)
                     case_details["case_status_url"] = (
                         self._extract_case_status_url(current_url)
                         or self.bhc_case_status_url
