@@ -364,8 +364,8 @@ async def process_order_queue_worker(worker_id: int):
             try:
                 loop = asyncio.get_event_loop()
                 max_sequences = case_info.get(
-                    "max_sequences", 50
-                )  # Get max_sequences from case_info, default to 50
+                    "max_sequences", 5
+                )  # Get max_sequences from case_info, default to 5
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
@@ -3114,7 +3114,7 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
     try:
         body = await request.json()
         case_ids = body.get("case_ids", [])
-        max_sequences = body.get("max_sequences", 50)
+        max_sequences = body.get("max_sequences", 5)
 
         if not case_ids:
             return JSONResponse(
@@ -3393,7 +3393,7 @@ async def admin_bulk_order_processing(
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
         "limit": 100,  // Maximum cases to process
         "days_back": 30,  // Only process cases from last N days (optional)
-        "max_sequences": 50  // Maximum sequence numbers to try per case (optional, default: 50)
+        "max_sequences": 5  // Maximum sequence numbers to try per case (optional, default: 5)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
@@ -3407,9 +3407,7 @@ async def admin_bulk_order_processing(
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
-        max_sequences = body.get("max_sequences", 50)
-
-        # Build query
+        max_sequences = body.get("max_sequences", 5)
         query = db.collection("daily-boards")
 
         # Filter by date if specified (board_date is stored as datetime object)

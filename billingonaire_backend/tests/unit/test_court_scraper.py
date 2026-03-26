@@ -432,11 +432,21 @@ def test_get_case_orders_fallback_shape_when_firecrawl_unavailable(monkeypatch):
     monkeypatch.setattr(
         scraper, "_fetch_with_firecrawl", lambda case_ref, date=None: None
     )
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_playwright",
+        lambda case_ref, date=None, bench="mumbai": None,
+    )
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_ollama_scraper",
+        lambda case_ref, date=None, bench="mumbai": None,
+    )
 
     result = scraper.get_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
 
     assert isinstance(result, dict)
-    assert result["status"] == "captcha_required"
+    assert result["status"] == "not_found"
     assert "case_details" in result
     assert "court_orders" in result
     assert isinstance(result["court_orders"], list)
@@ -492,7 +502,7 @@ def test_get_case_orders_ollama_only_skips_firecrawl(monkeypatch):
     )
 
     result = scraper.get_case_orders("WP/3373/2025", "2025-04-09", "mumbai")
-    assert result["status"] in {"captcha_required", "error"}
+    assert result["status"] in {"not_found", "error"}
 
 
 def test_fetch_with_firecrawl_extract_sdk_compat(monkeypatch):
@@ -808,7 +818,7 @@ def test_debug_case_orders_ollama_500_captured_in_response(monkeypatch):
     monkeypatch.setattr(
         scraper,
         "get_case_orders",
-        lambda case_ref, date=None, bench="mumbai": {"status": "captcha_required"},
+        lambda case_ref, date=None, bench="mumbai": {"status": "not_found"},
     )
 
     result = scraper.debug_case_orders("WP/3373/2025", None, "mumbai")
@@ -888,21 +898,26 @@ def test_enrich_case_orders_result_adds_new_fields():
 
 
 def test_get_case_orders_fallback_includes_new_fields(monkeypatch):
-    """Fallback captcha_required response must include the new fields."""
+    """Fallback not_found response must include the new fields."""
     scraper = BombayHighCourtScraper()
     monkeypatch.setattr(
         scraper, "_fetch_with_firecrawl", lambda case_ref, date=None: None
     )
-    # Force playwright + firecrawl to return nothing
+    # Force playwright + firecrawl + ollama to return nothing
     monkeypatch.setattr(
         scraper,
         "_fetch_with_playwright",
         lambda case_ref, date=None, bench="mumbai": None,
     )
+    monkeypatch.setattr(
+        scraper,
+        "_fetch_with_ollama_scraper",
+        lambda case_ref, date=None, bench="mumbai": None,
+    )
 
     result = scraper.get_case_orders("WP/3373/2025", None, "mumbai")
 
-    assert result["status"] == "captcha_required"
+    assert result["status"] == "not_found"
     assert "case_orders" in result
     assert isinstance(result["case_orders"], list)
     assert "petitioner" in result
