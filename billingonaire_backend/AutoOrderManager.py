@@ -359,12 +359,19 @@ class AutoOrderManager:
     def _upload_order_to_gcs(
         self, pdf_content: bytes, case_ref: str, order_date: str
     ) -> Optional[str]:
-        """Upload a PDF to Google Cloud Storage and return its gs:// URI.
+        """Upload a PDF to Google Cloud Storage and return a permanent public HTTPS URL.
 
         Returns None when GCS is not configured or the upload fails.
         The blob is stored at:
             court-orders/<case_ref_dashes>/<order_date>.pdf
         e.g. court-orders/WP-294-2025/2025-03-01.pdf
+
+        The returned URL is in the form
+        ``https://storage.googleapis.com/<bucket>/<blob_name>`` so that it can
+        be used as an ``<a href>`` target and with ``requests.get`` — unlike a
+        ``gs://`` URI which neither browsers nor the ``requests`` library can
+        fetch.  The bucket must have the uploaded objects readable (public or
+        via an IAM binding appropriate for the deployment).
         """
         if not self._gcs_bucket_name or gcs_storage is None:
             return None
@@ -374,14 +381,17 @@ class AutoOrderManager:
             blob_name = f"court-orders/{case_ref.replace('/', '-')}/{order_date}.pdf"
             blob = bucket.blob(blob_name)
             blob.upload_from_string(pdf_content, content_type="application/pdf")
-            gcs_uri = f"gs://{self._gcs_bucket_name}/{blob_name}"
+            # Return a public HTTPS URL; callers (UI, requests.get) cannot use gs://
+            https_url = (
+                f"https://storage.googleapis.com/{self._gcs_bucket_name}/{blob_name}"
+            )
             logger.info(
                 "_upload_order_to_gcs: uploaded %s for case_ref=%s date=%s",
                 blob_name,
                 case_ref,
                 order_date,
             )
-            return gcs_uri
+            return https_url
         except Exception as exc:
             logger.warning(
                 "_upload_order_to_gcs failed for case_ref=%s date=%s: %s",
@@ -391,17 +401,50 @@ class AutoOrderManager:
             )
             return None
 
+    def _normalise_order_date(self, value: Optional[str]) -> Optional[str]:
+        """Normalise various date string formats to a canonical ``YYYY-MM-DD`` string.
+
+        Handles the formats commonly seen from CourtScraper/Firestore:
+        ``YYYY-MM-DD``, ``DD/MM/YYYY``, ``DD-MM-YYYY``, ``YYYY/MM/DD``.
+        Returns ``None`` if the value cannot be parsed as a date.
+        """
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        # Strip time component if present (e.g. 2025-04-09T12:34:56)
+        if "T" in raw:
+            raw = raw.split("T", 1)[0]
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(raw, fmt).date().isoformat()
+            except ValueError:
+                continue
+        return None
+
     def _is_order_already_analysed(self, case_ref: str, order_date: str) -> bool:
-        """Return True when case-details already contains an analysed order for *order_date*."""
+        """Return True when case-details already contains an analysed order for *order_date*.
+
+        Both the incoming *order_date* and stored order dates are normalised to
+        ``YYYY-MM-DD`` before comparison so that ``DD/MM/YYYY`` values from the
+        court API match ISO-formatted dates stored in Firestore.
+        """
         case_detail = self.case_store.get_case_details(case_ref) or {}
         orders = case_detail.get("orders") or []
+        normalised_target = self._normalise_order_date(order_date)
         for order in orders:
             if not isinstance(order, dict):
                 continue
-            if (
-                order.get("order_status") == "analysed"
-                and order.get("order_date") == order_date
-            ):
+            if order.get("order_status") != "analysed":
+                continue
+            stored_date = order.get("order_date")
+            normalised_stored = self._normalise_order_date(stored_date)
+            if normalised_target is not None and normalised_stored is not None:
+                if normalised_stored == normalised_target:
+                    return True
+            elif stored_date == order_date:
+                # Fallback: raw string comparison when neither side could be parsed
                 return True
         return False
 
@@ -510,7 +553,10 @@ class AutoOrderManager:
         Key behaviours
         --------------
         * Uses the date provided in the API array for every order — PDF text is not
-          used for date extraction.
+          used for date extraction.  The API date is normalised to ``YYYY-MM-DD``
+          immediately so that skip checks, GCS blob names, and Firestore storage
+          all use a single canonical format regardless of the format emitted by
+          the court scraper (which commonly uses ``DD/MM/YYYY``).
         * Uses petitioner/respondent names from the API response.
         * Each PDF is uploaded to GCS with a stable name
           ``court-orders/<case-ref-dashes>/<order-date>.pdf`` so that the stored URL
@@ -549,15 +595,21 @@ class AutoOrderManager:
             api_petitioner: str = str(api_response.get("petitioner") or "").strip()
             api_respondent: str = str(api_response.get("respondent") or "").strip()
 
-            # Eagerly persist party names so they are available even before analysis
+            # Eagerly persist party names directly on the case document without
+            # creating a dummy order entry (which would corrupt latest_order_*).
             if api_petitioner or api_respondent:
-                self.case_store.append_case_order(
-                    case_ref,
+                case_doc_id = self.case_store._case_doc_id(case_ref)
+                now = datetime.now().isoformat()
+                self.case_store.db.collection(self.case_store.case_collection).document(
+                    case_doc_id
+                ).set(
                     {
+                        "case_ref": case_ref,
                         "petitioner": api_petitioner,
                         "respondent": api_respondent,
-                        "order_status": "fetch_in_progress",
+                        "updated_at": now,
                     },
+                    merge=True,
                 )
 
             last_order_link: Optional[str] = None
@@ -566,7 +618,10 @@ class AutoOrderManager:
                 if not isinstance(order_entry, dict):
                     continue
 
-                order_date_str: str = str(order_entry.get("date") or "").strip()
+                raw_date: str = str(order_entry.get("date") or "").strip()
+                # Normalise to YYYY-MM-DD immediately — the scraper commonly emits
+                # DD/MM/YYYY which would break skip checks and GCS blob naming.
+                order_date_str: str = self._normalise_order_date(raw_date) or raw_date
                 download_link: str = str(order_entry.get("download_link") or "").strip()
 
                 if not download_link:
@@ -622,11 +677,11 @@ class AutoOrderManager:
                     )
                     continue
 
-                # Upload PDF to GCS for permanent storage (URL never expires)
+                # Upload PDF to GCS for permanent storage (returns HTTPS URL).
+                # Fall back to the (expiring) API link if GCS is not configured.
                 stored_url = self._upload_order_to_gcs(
                     pdf_bytes, case_ref, order_date_str
                 )
-                # Prefer the permanent GCS URI; fall back to the (expiring) API link
                 final_order_link: str = stored_url or download_link
 
                 # Analyse and persist
@@ -662,6 +717,12 @@ class AutoOrderManager:
 
             if result["orders_processed"] > 0 or result["orders_skipped"] > 0:
                 result["success"] = True
+                # When only skips occurred (all orders already analysed), surface the
+                # last known order link from case-details so callers are not left with
+                # order_link=None on a pure no-op run.
+                if last_order_link is None and result["orders_skipped"] > 0:
+                    case_detail = self.case_store.get_case_details(case_ref) or {}
+                    last_order_link = case_detail.get("latest_order_link")
                 result["order_link"] = last_order_link
             else:
                 result["error"] = "No orders could be downloaded or processed"
@@ -759,7 +820,7 @@ class AutoOrderManager:
         )
         if api_result.get("success"):
             result["download_success"] = True
-            result["analysis_success"] = api_result.get("orders_processed", 0) > 0
+            result["analysis_success"] = bool(api_result.get("success"))
             result["order_link"] = api_result.get("order_link")
             logger.info(
                 "✅ _process_single_case: direct-API path succeeded for %s "

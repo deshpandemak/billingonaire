@@ -1,6 +1,7 @@
 import sys
 import types
 from datetime import datetime
+from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -605,7 +606,7 @@ def test_upload_order_to_gcs_disabled_when_no_bucket(auto_order_manager):
 
 
 def test_upload_order_to_gcs_success(auto_order_manager):
-    """Upload PDF and return gs:// URI when GCS is configured."""
+    """Upload PDF and return a public HTTPS URL when GCS is configured."""
     auto_order_manager._gcs_bucket_name = "test-bucket"
 
     mock_blob = Mock()
@@ -620,7 +621,10 @@ def test_upload_order_to_gcs_success(auto_order_manager):
             b"%PDF-1.4", "WP/123/2025", "2025-03-01"
         )
 
-    assert result == "gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf"
+    assert result == (
+        "https://storage.googleapis.com/test-bucket"
+        "/court-orders/WP-123-2025/2025-03-01.pdf"
+    )
     mock_blob.upload_from_string.assert_called_once_with(
         b"%PDF-1.4", content_type="application/pdf"
     )
@@ -653,6 +657,11 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
         )
     )
 
+    # Use an HTTPS URL (as returned by _upload_order_to_gcs after the fix)
+    https_url = (
+        "https://storage.googleapis.com/test-bucket"
+        "/court-orders/WP-123-2025/2025-03-01.pdf"
+    )
     result = auto_order_manager._analyze_order_with_api_metadata(
         case_id="board-abc",
         case_ref="WP/123/2025",
@@ -660,7 +669,7 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
         api_order_date="2025-03-01",
         api_petitioner="Petitioner Co",
         api_respondent="State of Maharashtra",
-        order_link="gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf",
+        order_link=https_url,
     )
 
     assert result["success"] is True
@@ -696,7 +705,12 @@ def test_process_all_orders_from_api_success(auto_order_manager):
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         return_value={"success": True, "data": {"order_category": "interim"}}
     )
-    auto_order_manager.case_store.append_case_order = Mock()
+    # Mock the Firestore document set used for eager petitioner/respondent update
+    mock_doc_ref = Mock()
+    auto_order_manager.case_store.db = Mock()
+    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
+        mock_doc_ref
+    )
 
     with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
         mock_resp = Mock()
@@ -714,15 +728,11 @@ def test_process_all_orders_from_api_success(auto_order_manager):
     assert result["success"] is True
     assert result["orders_processed"] == 2
     assert result["orders_skipped"] == 0
-    # Party names eagerly persisted via append_case_order
-    auto_order_manager.case_store.append_case_order.assert_called_once_with(
-        "WP/123/2025",
-        {
-            "petitioner": "ABC Corp",
-            "respondent": "Govt of MH",
-            "order_status": "fetch_in_progress",
-        },
-    )
+    # Party names written directly to case doc via set(merge=True), NOT via append_case_order
+    mock_doc_ref.set.assert_called_once()
+    set_payload = mock_doc_ref.set.call_args[0][0]
+    assert set_payload["petitioner"] == "ABC Corp"
+    assert set_payload["respondent"] == "Govt of MH"
     assert auto_order_manager._analyze_order_with_api_metadata.call_count == 2
 
 
@@ -740,6 +750,18 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=True)
     auto_order_manager._analyze_order_with_api_metadata = Mock()
+    # Mock Firestore set for eager party-name update
+    mock_doc_ref = Mock()
+    auto_order_manager.case_store.db = Mock()
+    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
+        mock_doc_ref
+    )
+    # Provide a latest_order_link so the skipped-only result has an order_link
+    auto_order_manager.case_store.get_case_details = Mock(
+        return_value={
+            "latest_order_link": "https://storage.googleapis.com/b/court-orders/WP-123-2025/2025-03-01.pdf"
+        }
+    )
 
     result = auto_order_manager._process_all_orders_from_api(
         case_ref="WP/123/2025",
@@ -749,6 +771,8 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
     assert result["success"] is True
     assert result["orders_skipped"] == 1
     assert result["orders_processed"] == 0
+    # order_link surfaced from case-details when all orders were skipped
+    assert result["order_link"] is not None
     auto_order_manager._analyze_order_with_api_metadata.assert_not_called()
 
 
@@ -782,12 +806,16 @@ def test_process_single_case_uses_direct_api_first(auto_order_manager):
         "board_date": "2025-03-01",
     }
 
+    https_url = (
+        "https://storage.googleapis.com/bucket"
+        "/court-orders/WP-123-2025/2025-03-01.pdf"
+    )
     auto_order_manager._process_all_orders_from_api = Mock(
         return_value={
             "success": True,
             "orders_processed": 2,
             "orders_skipped": 0,
-            "order_link": "gs://bucket/court-orders/WP-123-2025/2025-03-01.pdf",
+            "order_link": https_url,
         }
     )
     auto_order_manager._download_order_for_case = Mock(
@@ -798,13 +826,13 @@ def test_process_single_case_uses_direct_api_first(auto_order_manager):
 
     assert result["download_success"] is True
     assert result["analysis_success"] is True
-    assert "gs://bucket" in (result["order_link"] or "")
+    assert result["order_link"] == https_url
     # Sequence-number fallback must NOT be invoked
     auto_order_manager._download_order_for_case.assert_not_called()
 
 
 def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_manager):
-    """When GCS upload succeeds, the GCS URI is persisted instead of the expiring API link."""
+    """When GCS upload succeeds, the HTTPS GCS URL is persisted instead of the expiring API link."""
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
             "status": "found",
@@ -819,13 +847,21 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
-    gcs_uri = "gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf"
-    auto_order_manager._upload_order_to_gcs = Mock(return_value=gcs_uri)
+    https_url = (
+        "https://storage.googleapis.com/test-bucket"
+        "/court-orders/WP-123-2025/2025-03-01.pdf"
+    )
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=https_url)
     capture = {}
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         side_effect=lambda **kw: capture.update(kw) or {"success": True, "data": {}}
     )
-    auto_order_manager.case_store.append_case_order = Mock()
+    # Mock the Firestore document set used for eager petitioner/respondent update
+    mock_doc_ref = Mock()
+    auto_order_manager.case_store.db = Mock()
+    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
+        mock_doc_ref
+    )
 
     with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
         mock_resp = Mock()
@@ -840,7 +876,123 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
         )
 
     assert result["success"] is True
-    # order_link in result must be the GCS URI
-    assert result["order_link"] == gcs_uri
-    # _analyze_order_with_api_metadata must receive the GCS URI
-    assert capture.get("order_link") == gcs_uri
+    # order_link must be the HTTPS GCS URL, not the expiring API link or a gs:// URI
+    assert result["order_link"] == https_url
+    assert result["order_link"].startswith("https://")
+    # _analyze_order_with_api_metadata must receive the HTTPS GCS URL
+    assert capture.get("order_link") == https_url
+
+
+def test_normalise_order_date_iso_format(auto_order_manager):
+    """ISO dates are returned unchanged."""
+    assert auto_order_manager._normalise_order_date("2025-03-01") == "2025-03-01"
+
+
+def test_normalise_order_date_ddmmyyyy(auto_order_manager):
+    """DD/MM/YYYY format is converted to YYYY-MM-DD."""
+    assert auto_order_manager._normalise_order_date("09/04/2025") == "2025-04-09"
+
+
+def test_normalise_order_date_none(auto_order_manager):
+    """None input returns None."""
+    assert auto_order_manager._normalise_order_date(None) is None
+
+
+def test_normalise_order_date_unparseable(auto_order_manager):
+    """Unparseable value returns None."""
+    assert auto_order_manager._normalise_order_date("not-a-date") is None
+
+
+def test_is_order_already_analysed_normalises_date_formats(auto_order_manager):
+    """An API date in DD/MM/YYYY matches an ISO-stored analysed order."""
+    auto_order_manager.case_store.get_case_details = Mock(
+        return_value={
+            "orders": [
+                # Stored as ISO in Firestore
+                {"order_status": "analysed", "order_date": "2025-04-09"},
+            ]
+        }
+    )
+    # API emits DD/MM/YYYY — should still match
+    assert (
+        auto_order_manager._is_order_already_analysed("WP/123/2025", "09/04/2025")
+        is True
+    )
+
+
+def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manager):
+    """Dates in DD/MM/YYYY from the API are normalised to YYYY-MM-DD before use."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                {
+                    "date": "09/04/2025",  # DD/MM/YYYY from court scraper
+                    "download_link": "https://court.example/o1.pdf",
+                }
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+    captured_args: Dict[str, Any] = {}
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        side_effect=lambda **kw: captured_args.update(kw)
+        or {"success": True, "data": {}}
+    )
+    mock_doc_ref = Mock()
+    auto_order_manager.case_store.db = Mock()
+    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
+        mock_doc_ref
+    )
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/123/2025",
+            case_id="board-abc",
+        )
+
+    assert result["success"] is True
+    # The normalised ISO date must be passed to the analyser and used for GCS naming
+    assert captured_args.get("api_order_date") == "2025-04-09"
+    # Skip check must have been called with the normalised date
+    auto_order_manager._is_order_already_analysed.assert_called_with(
+        "WP/123/2025", "2025-04-09"
+    )
+
+
+def test_process_single_case_analysis_success_when_all_orders_skipped(
+    auto_order_manager,
+):
+    """analysis_success is True even when all orders were already analysed (no-op run)."""
+    case_data = {
+        "id": "board-abc",
+        "case_ref": "WP/123/2025",
+        "case_type": "WP",
+        "case_no": 123,
+        "case_year": 2025,
+        "board_date": "2025-03-01",
+    }
+
+    auto_order_manager._process_all_orders_from_api = Mock(
+        return_value={
+            "success": True,
+            "orders_processed": 0,
+            "orders_skipped": 1,
+            "order_link": "https://storage.googleapis.com/b/o.pdf",
+        }
+    )
+
+    result = auto_order_manager._process_single_case(case_data)
+
+    assert result["download_success"] is True
+    # Must be True even though orders_processed == 0 because success is True
+    assert result["analysis_success"] is True
