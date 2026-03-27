@@ -10,6 +10,11 @@ from urllib.parse import urlparse
 import requests
 from firebase_admin import firestore
 
+try:
+    from google.cloud import storage as gcs_storage  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover
+    gcs_storage = None  # type: ignore[assignment]
+
 from CourtScraper import BombayHighCourtScraper
 
 try:
@@ -47,6 +52,9 @@ class AutoOrderManager:
         # Collections - consolidated order status into daily-boards
         self.boards_collection = "daily-boards"
         self.search_index_collection = "order-search-index"
+
+        # GCS bucket for permanent PDF storage (empty string → GCS upload disabled)
+        self._gcs_bucket_name: str = os.getenv("ORDER_PDF_BUCKET", "")
 
         # Case type mappings for court lookup
         self.casetype_dict = {
@@ -348,14 +356,412 @@ class AutoOrderManager:
         except ValueError:
             return None
 
+    def _upload_order_to_gcs(
+        self, pdf_content: bytes, case_ref: str, order_date: str
+    ) -> Optional[str]:
+        """Upload a PDF to Google Cloud Storage and return a permanent public HTTPS URL.
+
+        Returns None when GCS is not configured or the upload fails.
+        The blob is stored at:
+            court-orders/<case_ref_dashes>/<order_date>.pdf
+        e.g. court-orders/WP-294-2025/2025-03-01.pdf
+
+        The returned URL is in the form
+        ``https://storage.googleapis.com/<bucket>/<blob_name>`` so that it can
+        be used as an ``<a href>`` target and with ``requests.get`` — unlike a
+        ``gs://`` URI which neither browsers nor the ``requests`` library can
+        fetch.  The bucket must have the uploaded objects readable (public or
+        via an IAM binding appropriate for the deployment).
+        """
+        if not self._gcs_bucket_name or gcs_storage is None:
+            return None
+        try:
+            client = gcs_storage.Client()
+            bucket = client.bucket(self._gcs_bucket_name)
+            blob_name = f"court-orders/{case_ref.replace('/', '-')}/{order_date}.pdf"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(pdf_content, content_type="application/pdf")
+            # Return a public HTTPS URL; callers (UI, requests.get) cannot use gs://
+            https_url = (
+                f"https://storage.googleapis.com/{self._gcs_bucket_name}/{blob_name}"
+            )
+            logger.info(
+                "_upload_order_to_gcs: uploaded %s for case_ref=%s date=%s",
+                blob_name,
+                case_ref,
+                order_date,
+            )
+            return https_url
+        except Exception as exc:
+            logger.warning(
+                "_upload_order_to_gcs failed for case_ref=%s date=%s: %s",
+                case_ref,
+                order_date,
+                exc,
+            )
+            return None
+
+    def _normalise_order_date(self, value: Optional[str]) -> Optional[str]:
+        """Normalise various date string formats to a canonical ``YYYY-MM-DD`` string.
+
+        Handles the formats commonly seen from CourtScraper/Firestore:
+        ``YYYY-MM-DD``, ``DD/MM/YYYY``, ``DD-MM-YYYY``, ``YYYY/MM/DD``.
+        Returns ``None`` if the value cannot be parsed as a date.
+        """
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        # Strip time component if present (e.g. 2025-04-09T12:34:56)
+        if "T" in raw:
+            raw = raw.split("T", 1)[0]
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(raw, fmt).date().isoformat()
+            except ValueError:
+                continue
+        return None
+
+    def _is_order_already_analysed(self, case_ref: str, order_date: str) -> bool:
+        """Return True when case-details already contains an analysed order for *order_date*.
+
+        Both the incoming *order_date* and stored order dates are normalised to
+        ``YYYY-MM-DD`` before comparison so that ``DD/MM/YYYY`` values from the
+        court API match ISO-formatted dates stored in Firestore.
+        """
+        case_detail = self.case_store.get_case_details(case_ref) or {}
+        orders = case_detail.get("orders") or []
+        normalised_target = self._normalise_order_date(order_date)
+        if normalised_target is None:
+            logger.warning(
+                "_is_order_already_analysed: cannot normalise incoming date %r "
+                "for case_ref=%s; falling back to raw string comparison",
+                order_date,
+                case_ref,
+            )
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            if order.get("order_status") != "analysed":
+                continue
+            stored_date = order.get("order_date")
+            normalised_stored = self._normalise_order_date(stored_date)
+            if normalised_stored is None and stored_date is not None:
+                logger.warning(
+                    "_is_order_already_analysed: cannot normalise stored date %r "
+                    "for case_ref=%s; falling back to raw string comparison",
+                    stored_date,
+                    case_ref,
+                )
+            if normalised_target is not None and normalised_stored is not None:
+                if normalised_stored == normalised_target:
+                    return True
+            elif stored_date == order_date:
+                # Fallback: raw string comparison when neither side could be parsed
+                return True
+        return False
+
+    def _analyze_order_with_api_metadata(
+        self,
+        case_id: str,
+        case_ref: str,
+        pdf_content: bytes,
+        api_order_date: str,
+        api_petitioner: str,
+        api_respondent: str,
+        order_link: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Analyse a PDF using the court API-provided date and party names.
+
+        Unlike ``_analyze_order_with_date_validation``, this method trusts the
+        *api_order_date*, *api_petitioner*, and *api_respondent* values from the
+        direct API response rather than extracting them from the PDF text.  The PDF
+        is still analysed so that ``order_category`` and related metadata are
+        populated.
+        """
+        try:
+            temp_filename = f"{case_ref.replace('/', '-')}.pdf"
+            analysis_result = self.order_analyzer.analyze_order_document(
+                temp_filename, pdf_content
+            )
+            analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
+
+            order_analysis: Dict[str, Any] = {
+                "order_category": analysis_result.order_category,
+                "order_category_confidence": analysis_result.category_confidence,
+                "order_date": api_order_date,
+                "order_petitioner": api_petitioner,
+                "order_respondent": api_respondent,
+                "government_pleader": [],
+                "order_link": order_link,
+                "order_status": "analysed",
+                "order_analysis_timestamp": datetime.now().isoformat(),
+                "order_last_updated": datetime.now().isoformat(),
+                "order_analysis_metadata": analysis_metadata,
+                "date_source": "api",
+            }
+
+            self.case_store.transition_lifecycle(
+                case_ref,
+                "analysis_in_progress",
+                metadata={"source": "auto_order_manager", "case_id": case_id},
+                event_type="analysis_started",
+            )
+            self.case_store.append_case_order(
+                case_ref,
+                {
+                    "order_link": order_analysis["order_link"],
+                    "order_status": order_analysis["order_status"],
+                    "order_category": order_analysis["order_category"],
+                    "order_date": order_analysis["order_date"],
+                    "order_category_confidence": order_analysis[
+                        "order_category_confidence"
+                    ],
+                    "petitioner": order_analysis["order_petitioner"],
+                    "respondent": order_analysis["order_respondent"],
+                    "government_pleader": order_analysis["government_pleader"],
+                    "order_analysis_timestamp": order_analysis[
+                        "order_analysis_timestamp"
+                    ],
+                    "order_analysis_metadata": order_analysis[
+                        "order_analysis_metadata"
+                    ],
+                    "date_source": "api",
+                },
+            )
+            self.case_store.transition_lifecycle(
+                case_ref,
+                "analysed",
+                metadata={
+                    "source": "auto_order_manager",
+                    "case_id": case_id,
+                    "order_category": order_analysis["order_category"],
+                },
+                event_type="analysis_succeeded",
+            )
+            logger.info(
+                "_analyze_order_with_api_metadata: analysed case_ref=%s date=%s category=%s",
+                case_ref,
+                api_order_date,
+                order_analysis["order_category"],
+            )
+            return {"success": True, "data": order_analysis}
+        except Exception as exc:
+            logger.error(
+                "_analyze_order_with_api_metadata failed for case_ref=%s date=%s: %s",
+                case_ref,
+                api_order_date,
+                exc,
+            )
+            return {"success": False, "error": str(exc)}
+
+    def _process_all_orders_from_api(
+        self,
+        case_ref: str,
+        case_id: str,
+        board_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fetch **all** orders for a case from the court direct API and process each.
+
+        Key behaviours
+        --------------
+        * Uses the date provided in the API array for every order — PDF text is not
+          used for date extraction.  The API date is normalised to ``YYYY-MM-DD``
+          immediately so that skip checks, GCS blob names, and Firestore storage
+          all use a single canonical format regardless of the format emitted by
+          the court scraper (which commonly uses ``DD/MM/YYYY``).
+        * Uses petitioner/respondent names from the API response.
+        * Each PDF is uploaded to GCS with a stable name
+          ``court-orders/<case-ref-dashes>/<order-date>.pdf`` so that the stored URL
+          never expires.  If GCS is not configured the original download link is kept.
+        * Orders whose date is already ``analysed`` in ``case-details`` are skipped
+          without re-downloading.
+        * Orders are stored in ``case-details`` regardless of whether a matching
+          board entry exists (board matching happens at query time).
+        """
+        result: Dict[str, Any] = {
+            "success": False,
+            "orders_processed": 0,
+            "orders_skipped": 0,
+            "order_link": None,
+            "error": None,
+        }
+        try:
+            api_response = self.court_scraper.get_case_orders(
+                case_ref=case_ref,
+                date=board_date,
+                bench="mumbai",
+            )
+
+            if not isinstance(api_response, dict):
+                result["error"] = "Direct API returned non-dict response"
+                return result
+
+            case_orders = api_response.get("case_orders") or []
+            if not case_orders:
+                result["error"] = api_response.get(
+                    "message", "Direct API returned no orders"
+                )
+                return result
+
+            # Party names from the API — preferred over PDF extraction
+            api_petitioner: str = str(api_response.get("petitioner") or "").strip()
+            api_respondent: str = str(api_response.get("respondent") or "").strip()
+
+            # Eagerly persist party names directly on the case document without
+            # creating a dummy order entry (which would corrupt latest_order_*).
+            if api_petitioner or api_respondent:
+                self.case_store.update_case_party_names(
+                    case_ref, api_petitioner, api_respondent
+                )
+
+            last_order_link: Optional[str] = None
+
+            for order_entry in case_orders:
+                if not isinstance(order_entry, dict):
+                    continue
+
+                raw_date: str = str(order_entry.get("date") or "").strip()
+                # Normalise to YYYY-MM-DD immediately — the scraper commonly emits
+                # DD/MM/YYYY which would break skip checks and GCS blob naming.
+                order_date_str: str = self._normalise_order_date(raw_date) or raw_date
+                download_link: str = str(order_entry.get("download_link") or "").strip()
+
+                if not download_link:
+                    continue
+
+                # Skip orders already fully analysed for this date
+                if order_date_str and self._is_order_already_analysed(
+                    case_ref, order_date_str
+                ):
+                    result["orders_skipped"] += 1
+                    logger.info(
+                        "_process_all_orders_from_api: skipping already-analysed "
+                        "order for case_ref=%s date=%s",
+                        case_ref,
+                        order_date_str,
+                    )
+                    continue
+
+                # Download the PDF
+                try:
+                    headers = {
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36"
+                        )
+                    }
+                    dl_response = requests.get(
+                        download_link, headers=headers, timeout=30
+                    )
+                    content_type = dl_response.headers.get("Content-Type", "")
+                    pdf_bytes = dl_response.content or b""
+                    is_pdf = (
+                        "application/pdf" in content_type.lower()
+                        or pdf_bytes.startswith(b"%PDF")
+                    )
+                    if dl_response.status_code != 200 or not is_pdf:
+                        logger.warning(
+                            "_process_all_orders_from_api: non-PDF for "
+                            "case_ref=%s date=%s HTTP=%d content_type=%s",
+                            case_ref,
+                            order_date_str,
+                            dl_response.status_code,
+                            content_type,
+                        )
+                        continue
+                except Exception as dl_err:
+                    logger.warning(
+                        "_process_all_orders_from_api: download failed for "
+                        "case_ref=%s date=%s: %s",
+                        case_ref,
+                        order_date_str,
+                        dl_err,
+                    )
+                    continue
+
+                # Upload PDF to GCS for permanent storage (returns HTTPS URL).
+                # Fall back to the (expiring) API link if GCS is not configured.
+                stored_url = self._upload_order_to_gcs(
+                    pdf_bytes, case_ref, order_date_str
+                )
+                final_order_link: str = stored_url or download_link
+
+                # Analyse and persist
+                try:
+                    anal = self._analyze_order_with_api_metadata(
+                        case_id=case_id,
+                        case_ref=case_ref,
+                        pdf_content=pdf_bytes,
+                        api_order_date=order_date_str,
+                        api_petitioner=api_petitioner,
+                        api_respondent=api_respondent,
+                        order_link=final_order_link,
+                    )
+                    if anal.get("success"):
+                        result["orders_processed"] += 1
+                        last_order_link = final_order_link
+                    else:
+                        logger.warning(
+                            "_process_all_orders_from_api: analysis failed for "
+                            "case_ref=%s date=%s: %s",
+                            case_ref,
+                            order_date_str,
+                            anal.get("error"),
+                        )
+                except Exception as anal_err:
+                    logger.warning(
+                        "_process_all_orders_from_api: analysis exception for "
+                        "case_ref=%s date=%s: %s",
+                        case_ref,
+                        order_date_str,
+                        anal_err,
+                    )
+
+            if result["orders_processed"] > 0 or result["orders_skipped"] > 0:
+                result["success"] = True
+                # When only skips occurred (all orders already analysed), surface the
+                # last known order link from case-details so callers are not left with
+                # order_link=None on a pure no-op run.
+                if last_order_link is None and result["orders_skipped"] > 0:
+                    case_detail = self.case_store.get_case_details(case_ref) or {}
+                    last_order_link = case_detail.get("latest_order_link")
+                result["order_link"] = last_order_link
+            else:
+                result["error"] = "No orders could be downloaded or processed"
+
+        except Exception as exc:
+            logger.error(
+                "_process_all_orders_from_api failed for case_ref=%s: %s",
+                case_ref,
+                exc,
+            )
+            result["error"] = str(exc)
+
+        return result
+
     def _process_single_case(
         self, case_data: Dict[str, Any], max_sequences: Optional[int] = None
     ) -> Dict[str, Any]:
-        """Process a single case with retry logic - try up to N sequence numbers
+        """Process a single case: download and analyse all orders.
+
+        Strategy (in priority order)
+        -----------------------------
+        1. **Direct API** – call ``court_scraper.get_case_orders`` to obtain the
+           full array of orders (each with an explicit date and download link).
+           All orders that are not yet analysed are downloaded, uploaded to GCS for
+           permanent storage, and analysed.  The date and party names come from
+           the API, not from PDF text extraction.
+        2. **Cached existing order** – if the case already has status ``linked`` and
+           the direct API yielded nothing, re-analyse the stored order link.
+        3. **Sequence-number fallback** – brute-force trial of sequence numbers 1..N,
+           used only when both the direct API and the cached link are unavailable.
 
         Args:
             case_data: Dictionary containing case information
-            max_sequences: Maximum number of sequence numbers to try (default: from env or 50)
+            max_sequences: Maximum number of sequence numbers to try in the
+                fallback path (default: from env or 10)
         """
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
@@ -403,7 +809,42 @@ class AutoOrderManager:
             event_type="fetch_started",
         )
 
-        # If case has status "linked", skip download and analyze existing order
+        # ---------------------------------------------------------------
+        # Path 1: Direct API — fetch all orders with explicit dates.
+        # This is attempted regardless of whether the case already has a
+        # stored order link because:
+        #  (a) new orders may have been published since the last run, and
+        #  (b) previously stored download URLs may have expired.
+        # ---------------------------------------------------------------
+        board_date_str = str(case_data.get("board_date") or "")
+        api_result = self._process_all_orders_from_api(
+            case_ref=case_ref,
+            case_id=case_id,
+            board_date=board_date_str or None,
+        )
+        if api_result.get("success"):
+            result["download_success"] = True
+            result["analysis_success"] = bool(api_result.get("success"))
+            result["order_link"] = api_result.get("order_link")
+            logger.info(
+                "✅ _process_single_case: direct-API path succeeded for %s "
+                "(processed=%d skipped=%d)",
+                case_ref,
+                api_result.get("orders_processed", 0),
+                api_result.get("orders_skipped", 0),
+            )
+            return result
+
+        logger.info(
+            "_process_single_case: direct-API path failed for %s (%s), "
+            "trying fallback paths",
+            case_ref,
+            api_result.get("error"),
+        )
+
+        # ---------------------------------------------------------------
+        # Path 2: Re-analyse a previously stored (linked) order link.
+        # ---------------------------------------------------------------
         if order_status == "linked" and has_existing_order_link:
             logger.info(f"📋 {case_ref} - Status is 'linked', analyzing existing order")
             try:
@@ -413,6 +854,9 @@ class AutoOrderManager:
                 result["error"] = f"Failed to analyze existing order: {str(e)}"
                 return result
 
+        # ---------------------------------------------------------------
+        # Path 3: Brute-force sequence-number fallback.
+        # ---------------------------------------------------------------
         # Configurable max retries - use parameter, env var, or default to 10
         if max_sequences is not None and max_sequences > 0:
             MAX_RETRIES = max_sequences
