@@ -4,6 +4,8 @@ from typing import Dict, List, Optional
 
 from firebase_admin import firestore
 
+logger = logging.getLogger(__name__)
+
 
 class CaseDataStore:
     """Maintains a normalized case master and board assignment documents."""
@@ -214,7 +216,7 @@ class CaseDataStore:
             force or to_status == from_status or to_status in allowed_targets
         )
         if not can_transition:
-            logging.warning(
+            logger.warning(
                 "Rejected lifecycle transition for %s: %s -> %s",
                 case_ref,
                 from_status,
@@ -248,6 +250,14 @@ class CaseDataStore:
             update_data["created_at"] = now
 
         case_doc_ref.set(update_data, merge=True)
+        logger.info(
+            "Lifecycle transition applied for %s: %s -> %s (event_type=%s, reason=%s)",
+            case_ref,
+            from_status,
+            to_status,
+            event_type,
+            reason or "none",
+        )
         return {
             "applied": True,
             "from_status": from_status,
@@ -269,6 +279,13 @@ class CaseDataStore:
         board_date = self._to_iso_date(row.get("board_date"))
         assigned_pleaders = self._collect_assigned_pleaders(row)
         now = datetime.now().isoformat()
+
+        logger.info(
+            "Upserting board entry for case_ref=%s board_doc_id=%s board_date=%s",
+            case_ref,
+            board_doc_id,
+            board_date,
+        )
 
         assignment_doc = {
             "board_doc_id": board_doc_id,
@@ -347,12 +364,26 @@ class CaseDataStore:
             case_doc["created_at"] = existing.get("created_at") or now
 
         case_doc_ref.set(case_doc, merge=True)
+        logger.info(
+            "Board entry upserted for case_ref=%s (new=%s, pleaders=%d, boards=%d)",
+            case_ref,
+            not snapshot.exists,
+            len(merged_pleaders),
+            len(board_ids),
+        )
         return case_ref
 
     def append_case_order(self, case_ref: str, order_payload: Dict) -> None:
         """Append or update an order event under case-details.orders."""
         if not case_ref:
             return
+
+        logger.info(
+            "append_case_order called for case_ref=%s order_status=%s order_link=%s",
+            case_ref,
+            order_payload.get("order_status"),
+            order_payload.get("order_link"),
+        )
 
         case_doc_ref = self.db.collection(self.case_collection).document(
             self._case_doc_id(case_ref)
@@ -428,12 +459,23 @@ class CaseDataStore:
             update_data["created_at"] = update_data["updated_at"]
 
         case_doc_ref.set(update_data, merge=True)
+        logger.info(
+            "Order appended/updated for case_ref=%s (replaced=%s total_orders=%d)",
+            case_ref,
+            replaced,
+            len(orders),
+        )
 
     def get_case_details_map(self, case_refs: List[str]) -> Dict[str, Dict]:
         refs = [ref for ref in case_refs if ref]
         if not refs:
             return {}
 
+        logger.info(
+            "get_case_details_map fetching %d case refs in %d chunk(s)",
+            len(refs),
+            (len(refs) + 9) // 10,
+        )
         result: Dict[str, Dict] = {}
         for i in range(0, len(refs), 10):
             chunk = refs[i : i + 10]
@@ -447,6 +489,11 @@ class CaseDataStore:
                 case_ref = data.get("case_ref")
                 if case_ref:
                     result[case_ref] = data
+        logger.info(
+            "get_case_details_map resolved %d of %d requested case refs",
+            len(result),
+            len(refs),
+        )
         return result
 
     def get_case_details(self, case_ref: str) -> Optional[Dict]:
