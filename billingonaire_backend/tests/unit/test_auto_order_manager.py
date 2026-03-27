@@ -1,7 +1,6 @@
 import sys
 import types
 from datetime import datetime
-from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -705,12 +704,8 @@ def test_process_all_orders_from_api_success(auto_order_manager):
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         return_value={"success": True, "data": {"order_category": "interim"}}
     )
-    # Mock the Firestore document set used for eager petitioner/respondent update
-    mock_doc_ref = Mock()
-    auto_order_manager.case_store.db = Mock()
-    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
-        mock_doc_ref
-    )
+    # Mock the public update_case_party_names method
+    auto_order_manager.case_store.update_case_party_names = Mock()
 
     with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
         mock_resp = Mock()
@@ -728,11 +723,10 @@ def test_process_all_orders_from_api_success(auto_order_manager):
     assert result["success"] is True
     assert result["orders_processed"] == 2
     assert result["orders_skipped"] == 0
-    # Party names written directly to case doc via set(merge=True), NOT via append_case_order
-    mock_doc_ref.set.assert_called_once()
-    set_payload = mock_doc_ref.set.call_args[0][0]
-    assert set_payload["petitioner"] == "ABC Corp"
-    assert set_payload["respondent"] == "Govt of MH"
+    # Party names written via the encapsulated public method, NOT via append_case_order
+    auto_order_manager.case_store.update_case_party_names.assert_called_once_with(
+        "WP/123/2025", "ABC Corp", "Govt of MH"
+    )
     assert auto_order_manager._analyze_order_with_api_metadata.call_count == 2
 
 
@@ -750,12 +744,8 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=True)
     auto_order_manager._analyze_order_with_api_metadata = Mock()
-    # Mock Firestore set for eager party-name update
-    mock_doc_ref = Mock()
-    auto_order_manager.case_store.db = Mock()
-    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
-        mock_doc_ref
-    )
+    # Mock the public update_case_party_names method
+    auto_order_manager.case_store.update_case_party_names = Mock()
     # Provide a latest_order_link so the skipped-only result has an order_link
     auto_order_manager.case_store.get_case_details = Mock(
         return_value={
@@ -856,12 +846,8 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         side_effect=lambda **kw: capture.update(kw) or {"success": True, "data": {}}
     )
-    # Mock the Firestore document set used for eager petitioner/respondent update
-    mock_doc_ref = Mock()
-    auto_order_manager.case_store.db = Mock()
-    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
-        mock_doc_ref
-    )
+    # Mock the public update_case_party_names method
+    auto_order_manager.case_store.update_case_party_names = Mock()
 
     with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
         mock_resp = Mock()
@@ -937,16 +923,12 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
-    captured_args: Dict[str, Any] = {}
+    captured_args: dict = {}
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         side_effect=lambda **kw: captured_args.update(kw)
         or {"success": True, "data": {}}
     )
-    mock_doc_ref = Mock()
-    auto_order_manager.case_store.db = Mock()
-    auto_order_manager.case_store.db.collection.return_value.document.return_value = (
-        mock_doc_ref
-    )
+    auto_order_manager.case_store.update_case_party_names = Mock()
 
     with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
         mock_resp = Mock()

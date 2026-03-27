@@ -385,6 +385,33 @@ class CaseDataStore:
         )
         return case_ref
 
+    def update_case_party_names(
+        self, case_ref: str, petitioner: str, respondent: str
+    ) -> None:
+        """Persist petitioner/respondent on the case document without touching the orders array.
+
+        Unlike ``append_case_order``, this method does not create or modify any
+        order entry, so ``latest_order_*`` fields and the orders list are left intact.
+        """
+        if not case_ref:
+            return
+        now = datetime.now().isoformat()
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        case_doc_ref.set(
+            {
+                "case_ref": case_ref,
+                "petitioner": petitioner,
+                "respondent": respondent,
+                "updated_at": now,
+            },
+            merge=True,
+        )
+        logger.info(
+            "update_case_party_names: persisted parties for case_ref=%s", case_ref
+        )
+
     def append_case_order(self, case_ref: str, order_payload: Dict) -> None:
         """Append or update an order event under case-details.orders."""
         if not case_ref:

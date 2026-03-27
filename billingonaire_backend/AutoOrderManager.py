@@ -433,6 +433,13 @@ class AutoOrderManager:
         case_detail = self.case_store.get_case_details(case_ref) or {}
         orders = case_detail.get("orders") or []
         normalised_target = self._normalise_order_date(order_date)
+        if normalised_target is None:
+            logger.warning(
+                "_is_order_already_analysed: cannot normalise incoming date %r "
+                "for case_ref=%s; falling back to raw string comparison",
+                order_date,
+                case_ref,
+            )
         for order in orders:
             if not isinstance(order, dict):
                 continue
@@ -440,6 +447,13 @@ class AutoOrderManager:
                 continue
             stored_date = order.get("order_date")
             normalised_stored = self._normalise_order_date(stored_date)
+            if normalised_stored is None and stored_date is not None:
+                logger.warning(
+                    "_is_order_already_analysed: cannot normalise stored date %r "
+                    "for case_ref=%s; falling back to raw string comparison",
+                    stored_date,
+                    case_ref,
+                )
             if normalised_target is not None and normalised_stored is not None:
                 if normalised_stored == normalised_target:
                     return True
@@ -598,18 +612,8 @@ class AutoOrderManager:
             # Eagerly persist party names directly on the case document without
             # creating a dummy order entry (which would corrupt latest_order_*).
             if api_petitioner or api_respondent:
-                case_doc_id = self.case_store._case_doc_id(case_ref)
-                now = datetime.now().isoformat()
-                self.case_store.db.collection(self.case_store.case_collection).document(
-                    case_doc_id
-                ).set(
-                    {
-                        "case_ref": case_ref,
-                        "petitioner": api_petitioner,
-                        "respondent": api_respondent,
-                        "updated_at": now,
-                    },
-                    merge=True,
+                self.case_store.update_case_party_names(
+                    case_ref, api_petitioner, api_respondent
                 )
 
             last_order_link: Optional[str] = None
