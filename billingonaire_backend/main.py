@@ -27,15 +27,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Integrate with Google Cloud Logging when running on GCP
-try:
-    import google.cloud.logging as gcp_logging
-
-    _gcp_log_client = gcp_logging.Client()
-    _gcp_log_client.setup_logging(log_level=logging.INFO)
-    logger.info("Google Cloud Logging integration enabled")
-except Exception:
-    pass  # Running locally or google-cloud-logging not installed — use basicConfig above
+# Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
+if os.getenv("K_SERVICE"):
+    try:
+        import google.cloud.logging as gcp_logging
+    except ImportError:
+        logger.info(
+            "google-cloud-logging not installed; using standard logging only.",
+        )
+    else:
+        try:
+            _gcp_log_client = gcp_logging.Client()
+            _gcp_log_client.setup_logging(log_level=logging.INFO)
+            logger.info("Google Cloud Logging integration enabled")
+        except Exception:
+            logger.warning(
+                "Failed to initialize Google Cloud Logging; falling back to standard logging.",
+                exc_info=True,
+            )
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 

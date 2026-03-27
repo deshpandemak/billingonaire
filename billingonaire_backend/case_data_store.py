@@ -1,10 +1,22 @@
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from firebase_admin import firestore
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: Optional[str]) -> str:
+    """Return only the scheme+host+path of a URL, stripping query params that may contain auth tokens."""
+    if not url:
+        return "<none>"
+    try:
+        parsed = urlparse(str(url))
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    except Exception:
+        return "<redacted>"
 
 
 class CaseDataStore:
@@ -382,7 +394,7 @@ class CaseDataStore:
             "append_case_order called for case_ref=%s order_status=%s order_link=%s",
             case_ref,
             order_payload.get("order_status"),
-            order_payload.get("order_link"),
+            _redact_url(order_payload.get("order_link")),
         )
 
         case_doc_ref = self.db.collection(self.case_collection).document(

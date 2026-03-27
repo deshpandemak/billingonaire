@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 from firebase_admin import firestore
@@ -18,6 +19,17 @@ except ImportError:
 from order_analyzer import OrderDocumentAnalyzer
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: Optional[str]) -> str:
+    """Return only the scheme+host+path of a URL, stripping query params that may contain auth tokens."""
+    if not url:
+        return "<none>"
+    try:
+        parsed = urlparse(str(url))
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    except Exception:
+        return "<redacted>"
 
 
 class AutoOrderManager:
@@ -667,7 +679,11 @@ class AutoOrderManager:
         order_link = case_data.get("order_link")
 
         try:
-            logger.info(f"Attempting to re-download existing order from {order_link}")
+            logger.info(
+                "Attempting to re-download existing order from %s for case_ref=%s",
+                _redact_url(order_link),
+                case_ref,
+            )
 
             # Re-download the PDF from the stored link
             response = requests.get(order_link, timeout=30)
@@ -1240,8 +1256,8 @@ class AutoOrderManager:
             download_url = order_entry["download_url"]
             structured_source = str(response.get("source") or "direct_api")
             logger.info(
-                "_download_order_via_scraper: downloading PDF from url=%s source=%s for case_ref=%s",
-                download_url,
+                "_download_order_via_scraper: downloading PDF from %s source=%s for case_ref=%s",
+                _redact_url(download_url),
                 structured_source,
                 case_ref,
             )
