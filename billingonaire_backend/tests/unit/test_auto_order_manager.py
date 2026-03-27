@@ -548,3 +548,299 @@ def test_download_order_for_case_cached_link_failure_uses_scraper(auto_order_man
     assert result["source"] == "direct_api_structured"
     auto_order_manager._download_order_via_scraper.assert_called_once()
     auto_order_manager._download_pdf_bombay_hc_simple.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for new API-driven order processing (order downloads & management)
+# ---------------------------------------------------------------------------
+
+
+def test_is_order_already_analysed_true(auto_order_manager):
+    """Return True when an analysed order for the same date already exists."""
+    auto_order_manager.case_store.get_case_details = Mock(
+        return_value={
+            "orders": [
+                {"order_status": "analysed", "order_date": "2025-03-01"},
+                {"order_status": "linked", "order_date": "2025-03-02"},
+            ]
+        }
+    )
+    assert (
+        auto_order_manager._is_order_already_analysed("WP/123/2025", "2025-03-01")
+        is True
+    )
+
+
+def test_is_order_already_analysed_false_different_date(auto_order_manager):
+    """Return False when no analysed order exists for that date."""
+    auto_order_manager.case_store.get_case_details = Mock(
+        return_value={
+            "orders": [
+                {"order_status": "analysed", "order_date": "2025-03-02"},
+            ]
+        }
+    )
+    assert (
+        auto_order_manager._is_order_already_analysed("WP/123/2025", "2025-03-01")
+        is False
+    )
+
+
+def test_is_order_already_analysed_no_orders(auto_order_manager):
+    """Return False when case has no orders at all."""
+    auto_order_manager.case_store.get_case_details = Mock(return_value={"orders": []})
+    assert (
+        auto_order_manager._is_order_already_analysed("WP/123/2025", "2025-03-01")
+        is False
+    )
+
+
+def test_upload_order_to_gcs_disabled_when_no_bucket(auto_order_manager):
+    """Return None when ORDER_PDF_BUCKET is not set."""
+    auto_order_manager._gcs_bucket_name = ""
+    result = auto_order_manager._upload_order_to_gcs(
+        b"%PDF-1.4", "WP/123/2025", "2025-03-01"
+    )
+    assert result is None
+
+
+def test_upload_order_to_gcs_success(auto_order_manager):
+    """Upload PDF and return gs:// URI when GCS is configured."""
+    auto_order_manager._gcs_bucket_name = "test-bucket"
+
+    mock_blob = Mock()
+    mock_bucket = Mock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_client = Mock()
+    mock_client.bucket.return_value = mock_bucket
+
+    with patch("billingonaire_backend.AutoOrderManager.gcs_storage") as mock_gcs:
+        mock_gcs.Client.return_value = mock_client
+        result = auto_order_manager._upload_order_to_gcs(
+            b"%PDF-1.4", "WP/123/2025", "2025-03-01"
+        )
+
+    assert result == "gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf"
+    mock_blob.upload_from_string.assert_called_once_with(
+        b"%PDF-1.4", content_type="application/pdf"
+    )
+
+
+def test_upload_order_to_gcs_failure_returns_none(auto_order_manager):
+    """Return None (not raise) when GCS upload fails."""
+    auto_order_manager._gcs_bucket_name = "test-bucket"
+
+    with patch("billingonaire_backend.AutoOrderManager.gcs_storage") as mock_gcs:
+        mock_gcs.Client.side_effect = Exception("connection refused")
+        result = auto_order_manager._upload_order_to_gcs(
+            b"%PDF-1.4", "WP/123/2025", "2025-03-01"
+        )
+
+    assert result is None
+
+
+def test_analyze_order_with_api_metadata_success(auto_order_manager):
+    """Persist order using API-provided date and party names."""
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="interim",
+            category_confidence=0.9,
+            analysis_metadata={},
+        )
+    )
+
+    result = auto_order_manager._analyze_order_with_api_metadata(
+        case_id="board-abc",
+        case_ref="WP/123/2025",
+        pdf_content=b"%PDF-1.4",
+        api_order_date="2025-03-01",
+        api_petitioner="Petitioner Co",
+        api_respondent="State of Maharashtra",
+        order_link="gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf",
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["order_date"] == "2025-03-01"
+    assert data["order_petitioner"] == "Petitioner Co"
+    assert data["order_respondent"] == "State of Maharashtra"
+    assert data["date_source"] == "api"
+    assert data["order_category"] == "interim"
+    # Party names must NOT come from PDF - verify append_case_order received API values
+    call_kwargs = auto_order_manager.case_store.append_case_order.call_args[0][1]
+    assert call_kwargs["petitioner"] == "Petitioner Co"
+    assert call_kwargs["respondent"] == "State of Maharashtra"
+    assert call_kwargs["order_date"] == "2025-03-01"
+
+
+def test_process_all_orders_from_api_success(auto_order_manager):
+    """Download and analyse all orders returned by the direct API."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "ABC Corp",
+            "respondent": "Govt of MH",
+            "case_orders": [
+                {"date": "2025-02-01", "download_link": "https://court.example/o1.pdf"},
+                {"date": "2025-03-01", "download_link": "https://court.example/o2.pdf"},
+            ],
+        }
+    )
+    # No orders already analysed
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        return_value={"success": True, "data": {"order_category": "interim"}}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/123/2025",
+            case_id="board-abc",
+            board_date="2025-03-01",
+        )
+
+    assert result["success"] is True
+    assert result["orders_processed"] == 2
+    assert result["orders_skipped"] == 0
+    # Party names eagerly persisted via append_case_order
+    auto_order_manager.case_store.append_case_order.assert_called_once_with(
+        "WP/123/2025",
+        {
+            "petitioner": "ABC Corp",
+            "respondent": "Govt of MH",
+            "order_status": "fetch_in_progress",
+        },
+    )
+    assert auto_order_manager._analyze_order_with_api_metadata.call_count == 2
+
+
+def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
+    """Already-analysed orders are skipped without re-downloading."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                {"date": "2025-03-01", "download_link": "https://court.example/o1.pdf"},
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=True)
+    auto_order_manager._analyze_order_with_api_metadata = Mock()
+
+    result = auto_order_manager._process_all_orders_from_api(
+        case_ref="WP/123/2025",
+        case_id="board-abc",
+    )
+
+    assert result["success"] is True
+    assert result["orders_skipped"] == 1
+    assert result["orders_processed"] == 0
+    auto_order_manager._analyze_order_with_api_metadata.assert_not_called()
+
+
+def test_process_all_orders_from_api_no_orders_returns_failure(auto_order_manager):
+    """Return failure when API returns an empty order list."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "not_found",
+            "message": "No orders found",
+            "case_orders": [],
+        }
+    )
+
+    result = auto_order_manager._process_all_orders_from_api(
+        case_ref="WP/999/2025",
+        case_id="board-xyz",
+    )
+
+    assert result["success"] is False
+    assert result["orders_processed"] == 0
+
+
+def test_process_single_case_uses_direct_api_first(auto_order_manager):
+    """_process_single_case returns early when the direct-API path succeeds."""
+    case_data = {
+        "id": "board-abc",
+        "case_ref": "WP/123/2025",
+        "case_type": "WP",
+        "case_no": 123,
+        "case_year": 2025,
+        "board_date": "2025-03-01",
+    }
+
+    auto_order_manager._process_all_orders_from_api = Mock(
+        return_value={
+            "success": True,
+            "orders_processed": 2,
+            "orders_skipped": 0,
+            "order_link": "gs://bucket/court-orders/WP-123-2025/2025-03-01.pdf",
+        }
+    )
+    auto_order_manager._download_order_for_case = Mock(
+        return_value={"success": False, "error": "should not be called"}
+    )
+
+    result = auto_order_manager._process_single_case(case_data)
+
+    assert result["download_success"] is True
+    assert result["analysis_success"] is True
+    assert "gs://bucket" in (result["order_link"] or "")
+    # Sequence-number fallback must NOT be invoked
+    auto_order_manager._download_order_for_case.assert_not_called()
+
+
+def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_manager):
+    """When GCS upload succeeds, the GCS URI is persisted instead of the expiring API link."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                {
+                    "date": "2025-03-01",
+                    "download_link": "https://court.example/o1.pdf?token=abc",
+                },
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    gcs_uri = "gs://test-bucket/court-orders/WP-123-2025/2025-03-01.pdf"
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=gcs_uri)
+    capture = {}
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        side_effect=lambda **kw: capture.update(kw) or {"success": True, "data": {}}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/123/2025",
+            case_id="board-abc",
+        )
+
+    assert result["success"] is True
+    # order_link in result must be the GCS URI
+    assert result["order_link"] == gcs_uri
+    # _analyze_order_with_api_metadata must receive the GCS URI
+    assert capture.get("order_link") == gcs_uri
