@@ -18,6 +18,8 @@ except ImportError:
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 class BombayHighCourtScraper:
     """Bombay High Court scraper using direct API by default with Playwright fallback."""
@@ -115,7 +117,7 @@ class BombayHighCourtScraper:
                 "year": match.group(3),
             }
         except Exception as exc:
-            logging.error("Error parsing case number %s: %s", case_ref, exc)
+            logger.error("Error parsing case number %s: %s", case_ref, exc)
             return {}
 
     def _provider_attempt_sequence(self, provider: str) -> List[str]:
@@ -135,8 +137,21 @@ class BombayHighCourtScraper:
         attempts: List[Dict[str, Any]] = []
         final_result: Optional[Dict[str, Any]] = None
 
+        logger.info(
+            "Provider attempt sequence starting for case_ref=%s provider=%s sequence=%s",
+            case_ref,
+            provider,
+            sequence,
+        )
         for index, attempt_provider in enumerate(sequence, start=1):
             started = time.time()
+            logger.info(
+                "Trying provider=%s (step %d/%d) for case_ref=%s",
+                attempt_provider,
+                index,
+                len(sequence),
+                case_ref,
+            )
             try:
                 if attempt_provider == "playwright":
                     result = self._fetch_with_playwright_new(
@@ -149,6 +164,13 @@ class BombayHighCourtScraper:
 
                 duration_ms = int((time.time() - started) * 1000)
                 if result:
+                    logger.info(
+                        "Provider=%s succeeded for case_ref=%s in %dms orders_found=%d",
+                        attempt_provider,
+                        case_ref,
+                        duration_ms,
+                        len(result.get("court_orders") or []),
+                    )
                     attempts.append(
                         {
                             "step": index,
@@ -163,6 +185,12 @@ class BombayHighCourtScraper:
                     final_result = result
                     break
 
+                logger.warning(
+                    "Provider=%s returned no result for case_ref=%s in %dms",
+                    attempt_provider,
+                    case_ref,
+                    duration_ms,
+                )
                 attempts.append(
                     {
                         "step": index,
@@ -172,6 +200,14 @@ class BombayHighCourtScraper:
                     }
                 )
             except Exception as exc:
+                duration_ms = int((time.time() - started) * 1000)
+                logger.error(
+                    "Provider=%s raised exception for case_ref=%s in %dms: %s",
+                    attempt_provider,
+                    case_ref,
+                    duration_ms,
+                    exc,
+                )
                 attempts.append(
                     {
                         "step": index,
@@ -341,7 +377,7 @@ class BombayHighCourtScraper:
                 "case_status_url": self.case_status_url,
             }
         except Exception as exc:
-            logging.error("Error extracting case details from HTML: %s", exc)
+            logger.error("Error extracting case details from HTML: %s", exc)
             return None
 
     def _extract_listing_date_from_text(self, text: str) -> Optional[str]:
@@ -407,7 +443,7 @@ class BombayHighCourtScraper:
                     unique_orders.append(order)
             return unique_orders
         except Exception as exc:
-            logging.error("Error extracting orders from HTML: %s", exc)
+            logger.error("Error extracting orders from HTML: %s", exc)
             return []
 
     def _fetch_with_direct_api(
@@ -421,6 +457,7 @@ class BombayHighCourtScraper:
         if not case_parts:
             return None
 
+        logger.info("Direct API fetch starting for case_ref=%s", case_ref)
         headers = self._browser_headers()
         session = requests.Session()
 
@@ -431,6 +468,11 @@ class BombayHighCourtScraper:
                 timeout=self.request_timeout_seconds,
             )
             if initial_response.status_code != 200:
+                logger.warning(
+                    "Direct API initial GET returned HTTP %d for case_ref=%s",
+                    initial_response.status_code,
+                    case_ref,
+                )
                 return None
 
             ajax_response = session.get(
@@ -453,6 +495,11 @@ class BombayHighCourtScraper:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
             headers["Referer"] = self.case_status_url
 
+            logger.info(
+                "Direct API POST submitting case search for case_ref=%s case_type=%s",
+                case_ref,
+                form_data.get("case_type"),
+            )
             response = session.post(
                 self.case_status_url,
                 data=form_data,
@@ -461,6 +508,11 @@ class BombayHighCourtScraper:
                 allow_redirects=True,
             )
             if response.status_code not in {200, 302}:
+                logger.warning(
+                    "Direct API POST returned HTTP %d for case_ref=%s",
+                    response.status_code,
+                    case_ref,
+                )
                 return None
 
             try:
@@ -469,17 +521,31 @@ class BombayHighCourtScraper:
                 data = {"status": True, "page": response.text}
 
             if not data.get("status"):
+                logger.warning(
+                    "Direct API response status=False for case_ref=%s", case_ref
+                )
                 return None
 
             html_content = data.get("page", "")
             if not html_content:
+                logger.warning(
+                    "Direct API returned empty page content for case_ref=%s", case_ref
+                )
                 return None
 
             case_details = self._extract_case_details_from_html(html_content, case_ref)
             if not case_details:
+                logger.warning(
+                    "Could not extract case details from HTML for case_ref=%s", case_ref
+                )
                 return None
 
             court_orders = self._extract_orders_from_html(html_content, response.url)
+            logger.info(
+                "Direct API fetch succeeded for case_ref=%s orders_found=%d",
+                case_ref,
+                len(court_orders),
+            )
             return {
                 "status": "found",
                 "source": "direct_api",
@@ -487,10 +553,10 @@ class BombayHighCourtScraper:
                 "court_orders": court_orders,
             }
         except requests.exceptions.RequestException as exc:
-            logging.error("HTTP request failed for %s: %s", case_ref, exc)
+            logger.error("HTTP request failed for %s: %s", case_ref, exc)
             return None
         except Exception as exc:
-            logging.error("Direct API scraper failed for %s: %s", case_ref, exc)
+            logger.error("Direct API scraper failed for %s: %s", case_ref, exc)
             return None
 
     def _extract_case_details_new(
@@ -541,18 +607,30 @@ class BombayHighCourtScraper:
     ) -> Optional[Dict[str, Any]]:
         del date, bench
         if sync_playwright is None:
+            logger.warning(
+                "Playwright not available for case_ref=%s; skipping Playwright fetch",
+                case_ref,
+            )
             return None
 
         case_parts = self.parse_case_number(case_ref)
         if not case_parts:
             return None
 
+        logger.info(
+            "Playwright fetch starting for case_ref=%s timeout_seconds=%d",
+            case_ref,
+            self.playwright_timeout_seconds,
+        )
         timeout_ms = self.playwright_timeout_seconds * 1000
 
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=self.playwright_headless)
                 page = browser.new_page()
+                logger.info(
+                    "Playwright navigating to case status URL for case_ref=%s", case_ref
+                )
                 page.goto(
                     self.case_status_url,
                     wait_until="domcontentloaded",
@@ -584,11 +662,20 @@ class BombayHighCourtScraper:
 
                 case_details = self._extract_case_details_new(page, case_ref)
                 if not case_details:
+                    logger.warning(
+                        "Playwright could not extract case details for case_ref=%s",
+                        case_ref,
+                    )
                     browser.close()
                     return None
 
                 court_orders = self._extract_orders_new(page, self.case_status_url)
                 browser.close()
+                logger.info(
+                    "Playwright fetch succeeded for case_ref=%s orders_found=%d",
+                    case_ref,
+                    len(court_orders),
+                )
                 return {
                     "status": "found",
                     "source": "playwright",
@@ -596,10 +683,15 @@ class BombayHighCourtScraper:
                     "court_orders": court_orders,
                 }
         except PlaywrightTimeoutError as exc:
-            logging.error("Playwright timed out for %s: %s", case_ref, exc)
+            logger.error(
+                "Playwright timed out for %s (timeout=%ds): %s",
+                case_ref,
+                self.playwright_timeout_seconds,
+                exc,
+            )
             return None
         except Exception as exc:
-            logging.error("Playwright scraper failed for %s: %s", case_ref, exc)
+            logger.error("Playwright scraper failed for %s: %s", case_ref, exc)
             return None
 
     def debug_case_orders(
@@ -650,7 +742,7 @@ class BombayHighCourtScraper:
                 ),
             }
         except Exception as exc:
-            logging.error(
+            logger.error(
                 "Unexpected error in debug_case_orders for %s: %s", case_ref, exc
             )
             return {
@@ -660,12 +752,18 @@ class BombayHighCourtScraper:
             }
 
     def get_case_details(self, case_ref: str, bench: str = "mumbai") -> Dict[str, Any]:
+        logger.info("get_case_details called for case_ref=%s bench=%s", case_ref, bench)
         try:
             provider_result = self._fetch_with_provider(
                 case_ref=case_ref, date=None, bench=bench
             )
             if provider_result:
                 case_details = provider_result.get("case_details") or {}
+                logger.info(
+                    "get_case_details succeeded for case_ref=%s source=%s",
+                    case_ref,
+                    provider_result.get("source"),
+                )
                 return {
                     "status": provider_result.get("status") or "found",
                     "source": provider_result.get("source") or "unknown",
@@ -682,6 +780,11 @@ class BombayHighCourtScraper:
             if not case_parts:
                 return {"error": "Invalid case reference format", "case_ref": case_ref}
 
+            logger.warning(
+                "get_case_details: case not found for case_ref=%s provider=%s",
+                case_ref,
+                self.scraper_provider,
+            )
             return {
                 "status": "not_found",
                 "message": "Case details not found via configured scraper provider",
@@ -690,7 +793,7 @@ class BombayHighCourtScraper:
                 "case_status_url": self.case_status_url,
             }
         except Exception as exc:
-            logging.error("Error fetching case details for %s: %s", case_ref, exc)
+            logger.error("Error fetching case details for %s: %s", case_ref, exc)
             return {"error": str(exc), "case_ref": case_ref}
 
     def get_case_orders(
@@ -699,9 +802,20 @@ class BombayHighCourtScraper:
         date: Optional[str] = None,
         bench: str = "mumbai",
     ) -> Dict[str, Any]:
+        logger.info(
+            "get_case_orders called for case_ref=%s date=%s bench=%s provider=%s",
+            case_ref,
+            date,
+            bench,
+            self.scraper_provider,
+        )
         try:
             case_parts = self.parse_case_number(case_ref)
             if not case_parts:
+                logger.warning(
+                    "get_case_orders: invalid case reference format for case_ref=%s",
+                    case_ref,
+                )
                 return {
                     "status": "error",
                     "error": "Invalid case reference format",
@@ -721,8 +835,20 @@ class BombayHighCourtScraper:
                 case_ref=case_ref, date=date, bench=bench
             )
             if provider_result:
-                return self._enrich_case_orders_result(provider_result)
+                enriched = self._enrich_case_orders_result(provider_result)
+                logger.info(
+                    "get_case_orders succeeded for case_ref=%s source=%s orders=%d",
+                    case_ref,
+                    provider_result.get("source"),
+                    len(enriched.get("case_orders") or []),
+                )
+                return enriched
 
+            logger.warning(
+                "get_case_orders: no orders found for case_ref=%s provider=%s",
+                case_ref,
+                self.scraper_provider,
+            )
             return {
                 "status": "not_found",
                 "source": self.scraper_provider,
@@ -743,6 +869,7 @@ class BombayHighCourtScraper:
                 "court_code": self._get_bench_code(bench),
             }
         except Exception as exc:
+            logger.error("get_case_orders failed for case_ref=%s: %s", case_ref, exc)
             return {
                 "status": "error",
                 "error": f"Failed to fetch orders: {exc}",

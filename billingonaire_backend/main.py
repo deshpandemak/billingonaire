@@ -19,8 +19,32 @@ from fastapi.responses import JSONResponse
 from firebase_admin import auth, credentials, firestore
 from pydantic import BaseModel
 
-# Configure logging to show INFO level messages
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+# Configure logging to show INFO level messages with timestamps for Cloud Log Viewer
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S%z",
+)
+logger = logging.getLogger(__name__)
+
+# Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
+if os.getenv("K_SERVICE"):
+    try:
+        import google.cloud.logging as gcp_logging
+    except ImportError:
+        logger.info(
+            "google-cloud-logging not installed; using standard logging only.",
+        )
+    else:
+        try:
+            _gcp_log_client = gcp_logging.Client()
+            _gcp_log_client.setup_logging(log_level=logging.INFO)
+            logger.info("Google Cloud Logging integration enabled")
+        except Exception:
+            logger.warning(
+                "Failed to initialize Google Cloud Logging; falling back to standard logging.",
+                exc_info=True,
+            )
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -80,14 +104,14 @@ def ensure_firebase():
             import json
 
             # Log environment info for debugging
-            logging.info("🔍 Firebase initialization - Environment check:")
-            logging.info(
+            logger.info("🔍 Firebase initialization - Environment check:")
+            logger.info(
                 f"   - Running in Cloud: {os.environ.get('K_SERVICE') is not None}"
             )
-            logging.info(
+            logger.info(
                 f"   - Service account key available: {bool(os.environ.get('GCLOUD_SERVICE_ACCOUNT_KEY'))}"
             )
-            logging.info(
+            logger.info(
                 f"   - Google credentials env: {bool(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))}"
             )
 
@@ -98,21 +122,21 @@ def ensure_firebase():
                     cred_dict = json.loads(gcloud_key)
                     cred = credentials.Certificate(cred_dict)
                     firebase_admin.initialize_app(cred)
-                    logging.info(
+                    logger.info(
                         "✅ Firebase Admin SDK initialized with service account key"
                     )
                 except json.JSONDecodeError as e:
                     _firebase_init_error = (
                         f"Invalid JSON in GCLOUD_SERVICE_ACCOUNT_KEY: {str(e)}"
                     )
-                    logging.error(f"❌ {_firebase_init_error}")
+                    logger.error(f"❌ {_firebase_init_error}")
                     raise HTTPException(
                         status_code=500,
                         detail="Server configuration error: Invalid Firebase service account JSON. Contact administrator.",
                     )
                 except Exception as e:
                     _firebase_init_error = f"Failed to initialize Firebase with service account key: {str(e)}"
-                    logging.error(f"❌ {_firebase_init_error}")
+                    logger.error(f"❌ {_firebase_init_error}")
                     raise HTTPException(
                         status_code=500,
                         detail="Server configuration error: Firebase credentials invalid. Contact administrator.",
@@ -120,19 +144,17 @@ def ensure_firebase():
             else:
                 # Try Application Default Credentials (Cloud Run, Compute Engine, etc.)
                 try:
-                    logging.info(
+                    logger.info(
                         "🔄 Attempting to initialize with Application Default Credentials..."
                     )
                     firebase_admin.initialize_app()
-                    logging.info(
+                    logger.info(
                         "✅ Firebase Admin SDK initialized with Application Default Credentials"
                     )
                 except Exception as e:
                     # Final attempt: try with explicit project ID
                     try:
-                        logging.info(
-                            "🔄 Retrying with explicit project configuration..."
-                        )
+                        logger.info("🔄 Retrying with explicit project configuration...")
                         project_id = os.environ.get(
                             "GCP_PROJECT",
                             os.environ.get("GOOGLE_CLOUD_PROJECT", "billingonaire"),
@@ -141,7 +163,7 @@ def ensure_firebase():
                             "projectId": project_id,
                         }
                         firebase_admin.initialize_app(config)
-                        logging.info(
+                        logger.info(
                             f"✅ Firebase Admin SDK initialized with project ID: {project_id}"
                         )
                     except Exception as e2:
@@ -150,11 +172,11 @@ def ensure_firebase():
                             f"ADC Error: {str(e)}. Project Config Error: {str(e2)}. "
                             f"Missing GCLOUD_SERVICE_ACCOUNT_KEY environment variable."
                         )
-                        logging.error(f"❌ {_firebase_init_error}")
-                        logging.error(
+                        logger.error(f"❌ {_firebase_init_error}")
+                        logger.error(
                             "💡 To fix: Set GCLOUD_SERVICE_ACCOUNT_KEY environment variable with Firebase service account JSON"
                         )
-                        logging.error(
+                        logger.error(
                             "💡 Or ensure Cloud Run service account has Firebase Admin permissions"
                         )
                         raise HTTPException(
@@ -231,7 +253,7 @@ analysis_processing_active = False
 try:
     MAX_WORKERS = max(1, int(os.environ.get("ORDER_PROCESSING_WORKERS", "5")))
 except (ValueError, TypeError):
-    logging.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 5")
+    logger.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 5")
     MAX_WORKERS = 5
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
@@ -248,14 +270,12 @@ def get_current_user(request: Request):
 
     try:
         # Verify the Firebase ID token with more detailed error logging
-        logging.info("Attempting to verify ID token for authentication")
+        logger.info("Attempting to verify ID token for authentication")
         decoded_token = auth.verify_id_token(id_token)
-        logging.info(
-            f"Token verified successfully for user: {decoded_token.get('uid')}"
-        )
+        logger.info(f"Token verified successfully for user: {decoded_token.get('uid')}")
         return decoded_token
     except Exception as e:
-        logging.error(f"Token verification failed: {str(e)}")
+        logger.error(f"Token verification failed: {str(e)}")
         # SECURITY: Do not log token details to prevent leakage
         raise HTTPException(status_code=401, detail="Invalid authentication token")
 
@@ -329,27 +349,25 @@ async def trigger_async_order_processing(df: pd.DataFrame):
         # Add cases to processing queue
         for case_info in case_list:
             await order_processing_queue.put(case_info)
-            logging.info(
-                f"Added case {case_info['case_ref']} to order processing queue"
-            )
+            logger.info(f"Added case {case_info['case_ref']} to order processing queue")
 
         # Start background processing if not already active
         await ensure_background_processing_active()
 
     except Exception as e:
-        logging.error(f"Error adding cases to processing queue: {e}")
+        logger.error(f"Error adding cases to processing queue: {e}")
 
 
 async def process_order_queue_worker(worker_id: int):
     """Background worker to process order queue - one task per worker"""
-    logging.info(f"🚀 Order processing worker {worker_id} started")
+    logger.info(f"🚀 Order processing worker {worker_id} started")
 
     while True:
         try:
             # Get case from queue (wait indefinitely for new items)
             case_info = await order_processing_queue.get()
 
-            logging.info(
+            logger.info(
                 f"[Worker {worker_id}] 📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})"
             )
 
@@ -372,18 +390,18 @@ async def process_order_queue_worker(worker_id: int):
                 )
 
                 if result.get("analysis_success"):
-                    logging.info(
+                    logger.info(
                         f"[Worker {worker_id}] ✅ Successfully processed order for {case_info['case_ref']} - Status should be 'analysed' in database"
                     )
 
                     # Automatically map case to users after successful analysis
                     try:
                         await auto_map_case_to_users(case_info.get("id"), case_info)
-                        logging.info(
+                        logger.info(
                             f"✅ Successfully mapped case {case_info['case_ref']} to users"
                         )
                     except Exception as mapping_error:
-                        logging.error(
+                        logger.error(
                             f"❌ Error mapping case {case_info['case_ref']} to users: {mapping_error}"
                         )
 
@@ -392,7 +410,7 @@ async def process_order_queue_worker(worker_id: int):
                     # Auto-queue for the analysis worker so it will be retried without
                     # admin intervention — this prevents cases from getting stuck at
                     # "linked" status indefinitely.
-                    logging.warning(
+                    logger.warning(
                         f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')} — auto-queuing for analysis retry"
                     )
                     try:
@@ -404,35 +422,35 @@ async def process_order_queue_worker(worker_id: int):
                             }
                         )
                         await ensure_background_analysis_processing_active()
-                        logging.info(
+                        logger.info(
                             f"📋 Auto-queued {case_info['case_ref']} for analysis retry"
                         )
                     except Exception as queue_error:
-                        logging.error(
+                        logger.error(
                             f"❌ Failed to auto-queue {case_info['case_ref']} for analysis: {queue_error}"
                         )
                 else:
-                    logging.warning(
+                    logger.warning(
                         f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}"
                     )
 
             except asyncio.TimeoutError:
-                logging.error(
+                logger.error(
                     f"❌ [Worker {worker_id}] TIMEOUT after 5 minutes processing {case_info['case_ref']} - moving to next case"
                 )
             except Exception as e:
-                logging.error(
+                logger.error(
                     f"❌ Error processing order for {case_info['case_ref']}: {e}"
                 )
                 import traceback
 
-                logging.error(f"Full traceback: {traceback.format_exc()}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
 
             # Mark task as done
             order_processing_queue.task_done()
 
         except Exception as e:
-            logging.error(f"Background order processing error: {e}")
+            logger.error(f"Background order processing error: {e}")
             await asyncio.sleep(5)  # Wait before retrying
 
 
@@ -499,20 +517,20 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
                         )
 
             except Exception as user_error:
-                logging.error(
+                logger.error(
                     f"Error processing user {user_doc.id} for case mapping: {user_error}"
                 )
                 continue
 
         if mapped_users:
-            logging.info(
+            logger.info(
                 f"Case {case_info.get('case_ref')} mapped to {len(mapped_users)} users: {[u['user_id'] for u in mapped_users]}"
             )
         else:
-            logging.info(f"No user matches found for case {case_info.get('case_ref')}")
+            logger.info(f"No user matches found for case {case_info.get('case_ref')}")
 
     except Exception as e:
-        logging.error(f"Error in auto_map_case_to_users: {e}")
+        logger.error(f"Error in auto_map_case_to_users: {e}")
         raise
 
 
@@ -525,9 +543,9 @@ async def ensure_background_processing_active():
         # Start multiple worker tasks (one per thread pool worker)
         for worker_id in range(MAX_WORKERS):
             asyncio.create_task(process_order_queue_worker(worker_id))
-        logging.info(f"🚀 Started {MAX_WORKERS} background order processing worker(s)")
+        logger.info(f"🚀 Started {MAX_WORKERS} background order processing worker(s)")
     else:
-        logging.info(
+        logger.info(
             f"✅ Background processing already active with {MAX_WORKERS} workers"
         )
 
@@ -579,7 +597,7 @@ def _run_case_analysis_job(case_info: Dict) -> Dict:
 
 async def process_analysis_queue_worker(worker_id: int):
     """Background worker to process analysis queue."""
-    logging.info(f"🚀 Analysis queue worker {worker_id} started")
+    logger.info(f"🚀 Analysis queue worker {worker_id} started")
 
     while True:
         try:
@@ -587,7 +605,7 @@ async def process_analysis_queue_worker(worker_id: int):
             case_ref = case_info.get("case_ref")
             case_id = case_info.get("id")
 
-            logging.info(
+            logger.info(
                 f"[Analysis Worker {worker_id}] 🔎 Processing analysis for {case_ref}"
             )
 
@@ -606,13 +624,13 @@ async def process_analysis_queue_worker(worker_id: int):
                 )
 
                 if result.get("analysis_success"):
-                    logging.info(
+                    logger.info(
                         f"[Analysis Worker {worker_id}] ✅ Analysis completed for {case_ref}"
                     )
                     try:
                         await auto_map_case_to_users(case_id, case_info)
                     except Exception as mapping_error:
-                        logging.error(
+                        logger.error(
                             f"Error mapping users after analysis for {case_ref}: {mapping_error}"
                         )
                 else:
@@ -624,7 +642,7 @@ async def process_analysis_queue_worker(worker_id: int):
                         metadata={"source": "analysis_queue", "case_id": case_id},
                         event_type="analysis_queue_failed",
                     )
-                    logging.warning(
+                    logger.warning(
                         f"[Analysis Worker {worker_id}] ⚠️ Analysis failed for {case_ref}: {error_msg}"
                     )
 
@@ -636,7 +654,7 @@ async def process_analysis_queue_worker(worker_id: int):
                     metadata={"source": "analysis_queue", "case_id": case_id},
                     event_type="analysis_queue_timeout",
                 )
-                logging.error(
+                logger.error(
                     f"[Analysis Worker {worker_id}] ❌ Timeout while analyzing {case_ref}"
                 )
             except Exception as e:
@@ -647,14 +665,14 @@ async def process_analysis_queue_worker(worker_id: int):
                     metadata={"source": "analysis_queue", "case_id": case_id},
                     event_type="analysis_queue_exception",
                 )
-                logging.error(
+                logger.error(
                     f"[Analysis Worker {worker_id}] ❌ Error analyzing {case_ref}: {e}"
                 )
 
             analysis_processing_queue.task_done()
 
         except Exception as e:
-            logging.error(f"Analysis queue worker error: {e}")
+            logger.error(f"Analysis queue worker error: {e}")
             await asyncio.sleep(5)
 
 
@@ -666,9 +684,9 @@ async def ensure_background_analysis_processing_active():
         analysis_processing_active = True
         for worker_id in range(MAX_WORKERS):
             asyncio.create_task(process_analysis_queue_worker(worker_id))
-        logging.info(f"🚀 Started {MAX_WORKERS} background analysis worker(s)")
+        logger.info(f"🚀 Started {MAX_WORKERS} background analysis worker(s)")
     else:
-        logging.info(
+        logger.info(
             f"✅ Background analysis processing already active with {MAX_WORKERS} workers"
         )
 
@@ -700,17 +718,17 @@ async def upload_pdf(
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                logging.info(f"Starting upload processing for file: {file.filename}")
+                logger.info(f"Starting upload processing for file: {file.filename}")
                 board = Board()
                 df = board.readFile(file.filename, file.file)
                 record_count = len(df) if df is not None else 0
-                logging.info(
+                logger.info(
                     f"PDF processed successfully. Records found: {record_count}"
                 )
 
                 if record_count > 0:
                     board.saveData(df)
-                    logging.info(f"Data saved successfully for {file.filename}")
+                    logger.info(f"Data saved successfully for {file.filename}")
 
                     # Trigger async order processing for uploaded cases
                     await trigger_async_order_processing(df)
@@ -723,7 +741,7 @@ async def upload_pdf(
                         }
                     )
                 else:
-                    logging.warning(f"No records found in {file.filename}")
+                    logger.warning(f"No records found in {file.filename}")
                     results.append(
                         {
                             "filename": file.filename,
@@ -733,9 +751,7 @@ async def upload_pdf(
                     )
                 break
             except ConnectionResetError as e:
-                logging.error(
-                    f"ConnectionResetError on attempt {attempt + 1}: {str(e)}"
-                )
+                logger.error(f"ConnectionResetError on attempt {attempt + 1}: {str(e)}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1)
                     continue
@@ -748,8 +764,8 @@ async def upload_pdf(
                     )
                     break
             except Exception as e:
-                logging.error(f"Error processing {file.filename}: {str(e)}")
-                logging.error("Stack trace:", exc_info=True)
+                logger.error(f"Error processing {file.filename}: {str(e)}")
+                logger.error("Stack trace:", exc_info=True)
                 results.append({"filename": file.filename, "error": str(e)})
                 break
     return {"results": results}
@@ -784,7 +800,7 @@ async def get_data(
         data = board.getData(search_criteria, agp_filter)
         return data
     except Exception as e:
-        logging.error(f"Error in data retrieval: {str(e)}")
+        logger.error(f"Error in data retrieval: {str(e)}")
         raise HTTPException(status_code=500, detail="Error retrieving data")
 
 
@@ -906,7 +922,7 @@ async def get_cases_lifecycle(
         }
 
     except Exception as e:
-        logging.error(f"Error building lifecycle view: {e}")
+        logger.error(f"Error building lifecycle view: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving lifecycle data")
 
 
@@ -941,7 +957,7 @@ async def get_case_timeline(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching case timeline for {case_ref}: {e}")
+        logger.error(f"Error fetching case timeline for {case_ref}: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving case timeline")
 
 
@@ -1039,7 +1055,7 @@ async def create_or_update_profile(
             # Update existing profile with safe fields only
             return get_user_manager().update_user_profile(uid, safe_updates)
     except Exception as e:
-        logging.warning(f"Profile update failed, creating new profile: {e}")
+        logger.warning(f"Profile update failed, creating new profile: {e}")
         # Create new profile with user role and legal category
         return get_user_manager().create_user_profile(
             uid=uid,
@@ -1065,11 +1081,11 @@ async def change_password(password_data: dict, current_user=Depends(get_current_
         # Update password in Firebase Auth
         auth.update_user(uid, password=new_password)
 
-        logging.info(f"Password changed for user {uid}")
+        logger.info(f"Password changed for user {uid}")
         return {"message": "Password changed successfully"}
 
     except Exception as e:
-        logging.error(f"Error changing password: {str(e)}")
+        logger.error(f"Error changing password: {str(e)}")
         raise HTTPException(status_code=500, detail="Error changing password")
 
 
@@ -1170,7 +1186,7 @@ async def create_new_user(user_data: dict, current_user=Depends(require_admin_ac
                 full_name=full_name,
             )
 
-            logging.info(f"Admin {admin_uid} created new user {email} with role {role}")
+            logger.info(f"Admin {admin_uid} created new user {email} with role {role}")
 
             return {
                 "message": "User created successfully",
@@ -1184,7 +1200,7 @@ async def create_new_user(user_data: dict, current_user=Depends(require_admin_ac
                 status_code=400, detail="Email already exists in the system"
             )
         except Exception as e:
-            logging.error(f"Error creating Firebase user: {str(e)}")
+            logger.error(f"Error creating Firebase user: {str(e)}")
             raise HTTPException(
                 status_code=500, detail=f"Error creating user account: {str(e)}"
             )
@@ -1192,7 +1208,7 @@ async def create_new_user(user_data: dict, current_user=Depends(require_admin_ac
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error in create_new_user: {str(e)}")
+        logger.error(f"Error in create_new_user: {str(e)}")
         raise HTTPException(status_code=500, detail="Error creating user")
 
 
@@ -1410,7 +1426,7 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
             }
         return JSONResponse(content=status)
     except Exception as e:
-        logging.error(f"Error fetching ML status: {e}")
+        logger.error(f"Error fetching ML status: {e}")
         raise HTTPException(
             status_code=500, detail="Failed to fetch ML enhancement status"
         )
@@ -1438,7 +1454,7 @@ async def learn_from_correction(
                 content={"message": "ML Enhanced Parser not available for learning"}
             )
     except Exception as e:
-        logging.error(f"Error storing learning data: {e}")
+        logger.error(f"Error storing learning data: {e}")
         raise HTTPException(status_code=500, detail="Failed to store learning data")
 
 
@@ -1690,7 +1706,7 @@ async def get_case_details(
         case_details = get_court_scraper().get_case_details(case_ref, bench)
         return JSONResponse(content=case_details)
     except Exception as e:
-        logging.error(f"Error fetching case details for {case_ref}: {e}")
+        logger.error(f"Error fetching case details for {case_ref}: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1739,7 +1755,7 @@ async def get_case_orders(
             content={"case_ref": case_ref, "date": date, "orders": case_orders}
         )
     except Exception as e:
-        logging.error(f"Error fetching case orders for {case_ref}: {e}")
+        logger.error(f"Error fetching case orders for {case_ref}: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1780,7 +1796,7 @@ async def batch_case_lookup(
             content={"total_cases": len(case_refs), "results": results, "bench": bench}
         )
     except Exception as e:
-        logging.error(f"Error in batch case lookup: {e}")
+        logger.error(f"Error in batch case lookup: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1805,7 +1821,7 @@ async def get_cases_without_orders(
         result = get_order_manager().get_cases_without_orders(limit, offset)
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"Error fetching cases without orders: {e}")
+        logger.error(f"Error fetching cases without orders: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to fetch cases: {str(e)}"}
         )
@@ -1862,7 +1878,7 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
                             result[
                                 "analysis_message"
                             ] = "Order linked and analyzed successfully"
-                            logging.info(
+                            logger.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
                         else:
@@ -1873,7 +1889,7 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
                         result["analysis_error"] = "Could not download PDF from link"
 
             except Exception as analysis_error:
-                logging.error(
+                logger.error(
                     f"Auto-analysis failed for manual link {case_id}: {analysis_error}"
                 )
                 result["analysis_completed"] = False
@@ -1881,7 +1897,7 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"Error creating order link: {e}")
+        logger.error(f"Error creating order link: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to create order link: {str(e)}"}
         )
@@ -1902,7 +1918,7 @@ async def update_order_status(
         result = get_order_manager().update_order_status(case_id, status, notes)
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"Error updating order status: {e}")
+        logger.error(f"Error updating order status: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to update status: {str(e)}"}
         )
@@ -1919,7 +1935,7 @@ async def get_orders_by_status(
         orders = get_order_manager().get_orders_by_status(status, limit)
         return JSONResponse(content={"orders": orders, "count": len(orders)})
     except Exception as e:
-        logging.error(f"Error fetching orders by status: {e}")
+        logger.error(f"Error fetching orders by status: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to fetch orders: {str(e)}"}
         )
@@ -1934,7 +1950,7 @@ async def get_case_with_order_info(
         result = get_order_manager().get_case_with_order_info(case_id)
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"Error fetching case with order info: {e}")
+        logger.error(f"Error fetching case with order info: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to fetch case details: {str(e)}"},
@@ -1975,7 +1991,7 @@ async def analyze_order_document(
                 status_code=400, content={"error": "Uploaded file is empty"}
             )
 
-        logging.info(f"Starting order analysis for file: {filename}")
+        logger.info(f"Starting order analysis for file: {filename}")
 
         # Analyze the order document
         analysis_result = get_order_analyzer().analyze_order_document(
@@ -1983,9 +1999,9 @@ async def analyze_order_document(
         )
 
         # DEBUG: Log the actual category being returned
-        logging.info(f"🔍 CATEGORY DEBUG for {filename}:")
-        logging.info(f"   order_category: '{analysis_result.order_category}'")
-        logging.info(f"   category_confidence: {analysis_result.category_confidence}")
+        logger.info(f"🔍 CATEGORY DEBUG for {filename}:")
+        logger.info(f"   order_category: '{analysis_result.order_category}'")
+        logger.info(f"   category_confidence: {analysis_result.category_confidence}")
 
         # Save analysis result to database
         doc_id = get_order_analyzer().save_analysis_result(filename, analysis_result)
@@ -1996,14 +2012,14 @@ async def analyze_order_document(
             analysis_id=doc_id,
         )
 
-        logging.info(f"Order analysis completed successfully for {filename}")
+        logger.info(f"Order analysis completed successfully for {filename}")
         return JSONResponse(content=response_data)
 
     except HTTPException as he:
-        logging.error(f"HTTP error in order analysis: {he.detail}")
+        logger.error(f"HTTP error in order analysis: {he.detail}")
         return JSONResponse(status_code=he.status_code, content={"error": he.detail})
     except Exception as e:
-        logging.error(f"Unexpected error in order analysis: {str(e)}")
+        logger.error(f"Unexpected error in order analysis: {str(e)}")
         return JSONResponse(
             status_code=500, content={"error": f"Order analysis failed: {str(e)}"}
         )
@@ -2047,7 +2063,7 @@ async def analyze_order_document_from_link(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        logging.error(f"Unexpected error analyzing order from link: {exc}")
+        logger.error(f"Unexpected error analyzing order from link: {exc}")
         raise HTTPException(
             status_code=500,
             detail=f"Order analysis failed for link: {str(exc)}",
@@ -2125,7 +2141,7 @@ async def get_analysis_history(
         )
 
     except Exception as e:
-        logging.error(f"Error fetching analysis history: {e}")
+        logger.error(f"Error fetching analysis history: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to fetch analysis history: {str(e)}"},
@@ -2186,7 +2202,7 @@ async def get_analysis_details(
         return JSONResponse(content=analysis_data)
 
     except Exception as e:
-        logging.error(f"Error fetching analysis details: {e}")
+        logger.error(f"Error fetching analysis details: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to fetch analysis details: {str(e)}"},
@@ -2257,7 +2273,7 @@ async def get_analysis_statistics(current_user=Depends(get_current_user)):
         return JSONResponse(content=stats)
 
     except Exception as e:
-        logging.error(f"Error fetching analysis statistics: {e}")
+        logger.error(f"Error fetching analysis statistics: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to fetch statistics: {str(e)}"}
         )
@@ -2300,7 +2316,7 @@ async def auto_process_orders(request: Request, current_user=Depends(get_current
             )
 
     except Exception as e:
-        logging.error(f"Error in auto-process-orders: {e}")
+        logger.error(f"Error in auto-process-orders: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to process orders: {str(e)}"}
         )
@@ -2419,7 +2435,7 @@ async def queue_fetch_orders_jobs(
             }
         )
     except Exception as e:
-        logging.error(f"Error queueing fetch jobs: {e}")
+        logger.error(f"Error queueing fetch jobs: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to queue fetch jobs: {str(e)}"},
@@ -2536,7 +2552,7 @@ async def queue_analysis_jobs(
             }
         )
     except Exception as e:
-        logging.error(f"Error queueing analysis jobs: {e}")
+        logger.error(f"Error queueing analysis jobs: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to queue analysis jobs: {str(e)}"},
@@ -2681,7 +2697,7 @@ async def retry_failed_cases(
         )
 
     except Exception as e:
-        logging.error(f"Error in retry-failed: {e}")
+        logger.error(f"Error in retry-failed: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to retry failed cases: {str(e)}"},
@@ -2733,7 +2749,7 @@ async def mark_case_for_manual_review(
             }
         )
     except Exception as e:
-        logging.error(f"Error marking manual review for {case_ref}: {e}")
+        logger.error(f"Error marking manual review for {case_ref}: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to mark manual review: {str(e)}"},
@@ -2803,7 +2819,7 @@ async def manual_override_case_outcome(
             }
         )
     except Exception as e:
-        logging.error(f"Error applying manual override for {case_ref}: {e}")
+        logger.error(f"Error applying manual override for {case_ref}: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to apply manual override: {str(e)}"},
@@ -2860,7 +2876,7 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         return JSONResponse(content=result)
 
     except Exception as e:
-        logging.error(f"Error processing single case: {e}")
+        logger.error(f"Error processing single case: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to process case: {str(e)}"}
         )
@@ -2918,7 +2934,7 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
             import requests
 
             order_link = latest_order_link
-            logging.info(f"Downloading order from: {order_link}")
+            logger.info(f"Downloading order from: {order_link}")
 
             try:
                 response = requests.get(order_link, timeout=30)
@@ -2935,7 +2951,7 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                 ):
                     # Stored link failed - fallback to fresh download
                     reason = f"Stored link failed: status={response.status_code}, content_type={content_type}, size={len(response.content) if response.content else 0}"
-                    logging.warning(
+                    logger.warning(
                         f"⚠️ {reason}. Attempting fresh download from court website..."
                     )
 
@@ -2976,7 +2992,7 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                         )
 
                 # Stored link is valid - proceed with analysis
-                logging.info(f"Analyzing order for case: {case_ref}")
+                logger.info(f"Analyzing order for case: {case_ref}")
 
                 analysis_result = (
                     get_auto_order_manager()._analyze_order_with_date_validation(
@@ -2993,7 +3009,7 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
 
             except requests.RequestException as req_error:
                 # Network error accessing stored link - try fresh download
-                logging.warning(
+                logger.warning(
                     f"Network error accessing stored link: {req_error}. Attempting fresh download..."
                 )
 
@@ -3028,13 +3044,13 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                     )
 
         except Exception as e:
-            logging.error(f"Unexpected error in download/analyze: {e}", exc_info=True)
+            logger.error(f"Unexpected error in download/analyze: {e}", exc_info=True)
             return JSONResponse(
                 status_code=500, content={"error": f"Failed to analyze order: {str(e)}"}
             )
 
     except Exception as e:
-        logging.error(f"Error in analyze-case: {e}")
+        logger.error(f"Error in analyze-case: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to analyze case: {str(e)}"}
         )
@@ -3080,7 +3096,7 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
             )
 
     except Exception as e:
-        logging.error(f"Error in bulk-process-orders: {e}")
+        logger.error(f"Error in bulk-process-orders: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to bulk process orders: {str(e)}"},
@@ -3142,7 +3158,7 @@ async def upload_manual_order(
                     case_id, case_data, analysis_result["data"]
                 )
             except Exception as index_error:
-                logging.warning(f"Failed to create search index: {index_error}")
+                logger.warning(f"Failed to create search index: {index_error}")
 
             return JSONResponse(
                 content={
@@ -3177,7 +3193,7 @@ async def upload_manual_order(
             )
 
     except Exception as e:
-        logging.error(f"Error uploading manual order: {e}")
+        logger.error(f"Error uploading manual order: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to upload order: {str(e)}"}
         )
@@ -3247,7 +3263,7 @@ async def scheduled_retry_orders(
         # Ensure background processing is active
         await ensure_background_processing_active()
 
-        logging.info(
+        logger.info(
             f"Scheduled retry: Added {len(case_list)} cases to processing queue"
         )
 
@@ -3264,7 +3280,7 @@ async def scheduled_retry_orders(
         )
 
     except Exception as e:
-        logging.error(f"Error in scheduled retry: {e}")
+        logger.error(f"Error in scheduled retry: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Scheduled retry failed: {str(e)}"}
         )
@@ -3322,7 +3338,7 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting order status overview: {e}")
+        logger.error(f"Error getting order status overview: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to get order status overview: {str(e)}"},
@@ -3432,7 +3448,7 @@ async def admin_bulk_order_processing(
             await order_processing_queue.put(case_info)
 
         queue_size_after = order_processing_queue.qsize()
-        logging.info(
+        logger.info(
             f"Admin bulk processing: Added {len(case_list)} cases to queue, current queue size: {queue_size_after}"
         )
 
@@ -3447,7 +3463,7 @@ async def admin_bulk_order_processing(
         )
 
     except Exception as e:
-        logging.error(f"Error in admin bulk order processing: {e}")
+        logger.error(f"Error in admin bulk order processing: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Admin bulk processing failed: {str(e)}"},
@@ -3490,7 +3506,7 @@ def _get_distributed_queue_metrics(scan_limit: int = 10000) -> Dict:
             "sampled_case_count": len(docs),
         }
     except Exception as e:
-        logging.error(f"Error building distributed queue metrics: {e}")
+        logger.error(f"Error building distributed queue metrics: {e}")
         return {
             "fetch_pending_cases": 0,
             "analysis_pending_cases": 0,
@@ -3540,7 +3556,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting queue status: {e}")
+        logger.error(f"Error getting queue status: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get queue status: {str(e)}"}
         )
@@ -3567,7 +3583,7 @@ async def restart_queue_processing(current_user=Depends(require_admin)):
         )
 
     except Exception as e:
-        logging.error(f"Error restarting queue processing: {e}")
+        logger.error(f"Error restarting queue processing: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to restart queue processing: {str(e)}"},
@@ -3610,7 +3626,7 @@ async def get_my_matters(
         )
 
     except Exception as e:
-        logging.error(f"Error getting user matters: {e}")
+        logger.error(f"Error getting user matters: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get user matters: {str(e)}"}
         )
@@ -3626,7 +3642,7 @@ async def get_my_matters_summary(current_user=Depends(get_current_user)):
         return JSONResponse(content={"user_id": user_id, "summary": summary})
 
     except Exception as e:
-        logging.error(f"Error getting matters summary: {e}")
+        logger.error(f"Error getting matters summary: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to get matters summary: {str(e)}"},
@@ -3664,7 +3680,7 @@ async def get_user_role_config(current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting user role config: {e}")
+        logger.error(f"Error getting user role config: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get role config: {str(e)}"}
         )
@@ -3737,7 +3753,7 @@ async def configure_user_role(request: Request, current_user=Depends(get_current
             )
 
     except Exception as e:
-        logging.error(f"Error configuring user role: {e}")
+        logger.error(f"Error configuring user role: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to configure role: {str(e)}"}
         )
@@ -3768,7 +3784,7 @@ async def generate_name_variations(
         )
 
     except Exception as e:
-        logging.error(f"Error generating name variations: {e}")
+        logger.error(f"Error generating name variations: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to generate name variations: {str(e)}"},
@@ -3823,7 +3839,7 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting order overview stats: {e}")
+        logger.error(f"Error getting order overview stats: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to get overview stats: {str(e)}"},
@@ -3860,7 +3876,7 @@ async def get_orders_queue_status(current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting queue status: {e}")
+        logger.error(f"Error getting queue status: {e}")
         return JSONResponse(content={"active": False, "pending": 0, "error": str(e)})
 
 
@@ -3897,7 +3913,7 @@ async def get_recent_activity(
         return JSONResponse(content=recent_activity[:limit])
 
     except Exception as e:
-        logging.error(f"Error getting recent activity: {e}")
+        logger.error(f"Error getting recent activity: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to get recent activity: {str(e)}"},
@@ -3943,7 +3959,7 @@ async def generate_bill_data(
         # Determine which cases to include
         if user_name:
             # Admin generating bill for specific user - use ENHANCED fuzzy matching
-            logging.info(f"Admin {user_id} generating bill for user: {user_name}")
+            logger.info(f"Admin {user_id} generating bill for user: {user_name}")
 
             # Step 1: Collect all unique AGP names with PRIORITY ORDER
             # Priority: 1) government_pleader (from order analysis)
@@ -4010,14 +4026,14 @@ async def generate_bill_data(
                                     cases_by_agp[lawyer_name] = []
                                 cases_by_agp[lawyer_name].append((case_id, case_data))
 
-            logging.info(
+            logger.info(
                 f"📚 Collected {len(unique_agp_names)} unique AGP names (PRIORITY: government_pleader > respondent_lawyer > additional_respondent_lawyers)"
             )
 
             # Log sample of AGP names for debugging
             agp_names_list = sorted(list(unique_agp_names))
-            logging.info(f"📝 Sample AGP names (first 10): {agp_names_list[:10]}")
-            logging.info(f"📝 Sample AGP names (last 10): {agp_names_list[-10:]}")
+            logger.info(f"📝 Sample AGP names (first 10): {agp_names_list[:10]}")
+            logger.info(f"📝 Sample AGP names (last 10): {agp_names_list[-10:]}")
 
             # Step 2: Use ENHANCED fuzzy matching with initials support
             # Changed: Instead of finding only the BEST match, find ALL AGP names that match with >= 50% confidence
@@ -4038,7 +4054,7 @@ async def generate_bill_data(
                         variant_cases = cases_by_agp[agp_variant]
                         matched_cases.extend(variant_cases)
                         matched_variants.append(agp_variant)
-                        logging.info(
+                        logger.info(
                             f"   📁 '{agp_variant}' ({confidence:.0%}): {len(variant_cases)} cases"
                         )
 
@@ -4046,10 +4062,10 @@ async def generate_bill_data(
                 matched_agp = all_matching_agps[0][0] if all_matching_agps else None
                 confidence = all_matching_agps[0][1] if all_matching_agps else 0.0
 
-                logging.info(
+                logger.info(
                     f"📊 Collected {len(matched_variants)} AGP variants matching '{user_name}'"
                 )
-                logging.info(f"📁 Total cases across all variants: {len(matched_cases)}")
+                logger.info(f"📁 Total cases across all variants: {len(matched_cases)}")
 
                 # Track filtering for debugging
                 date_filtered = 0
@@ -4103,24 +4119,24 @@ async def generate_bill_data(
                                 }
                                 bill_entries.append(bill_entry)
                         except ValueError:
-                            logging.warning(
+                            logger.warning(
                                 f"Invalid date format for case {case_id}: {board_date_str}"
                             )
                             continue
 
-                logging.info(
+                logger.info(
                     f"📊 Filtering summary: {len(matched_cases)} total cases → {len(bill_entries)} included"
                 )
-                logging.info(f"   - Date range: {start_date} to {end_date}")
-                logging.info(
+                logger.info(f"   - Date range: {start_date} to {end_date}")
+                logger.info(
                     f"   - Cases outside date range: {len(matched_cases) - len(bill_entries)}"
                 )
-                logging.info(
+                logger.info(
                     f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'"
                 )
             else:
                 error_msg = f"No matching AGP found for user '{user_name}' with sufficient confidence (best match: '{matched_agp}' at {confidence:.1%}). Need at least 50%."
-                logging.warning(f"⚠️ {error_msg}")
+                logger.warning(f"⚠️ {error_msg}")
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -4196,7 +4212,7 @@ async def generate_bill_data(
                                 bill_entries.append(bill_entry)
 
                         except ValueError:
-                            logging.warning(
+                            logger.warning(
                                 f"Invalid date format for case {case_id}: {board_date_str}"
                             )
                             continue
@@ -4227,7 +4243,7 @@ async def generate_bill_data(
         return JSONResponse(content=response_data)
 
     except Exception as e:
-        logging.error(f"Error generating bill data: {e}")
+        logger.error(f"Error generating bill data: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to generate bill data: {str(e)}"},
@@ -4273,11 +4289,11 @@ def generate_bill_number_safe(db, user_id: str, year: int) -> tuple:
         # Format: BILL/YEAR/SEQUENCE (e.g., BILL/2025/001)
         bill_number = f"BILL/{year}/{next_sequence:03d}"
 
-        logging.info(f"✨ Generated bill number: {bill_number} for user {user_id}")
+        logger.info(f"✨ Generated bill number: {bill_number} for user {user_id}")
         return bill_number, next_sequence
 
     except Exception as e:
-        logging.error(f"Error generating bill number: {e}")
+        logger.error(f"Error generating bill number: {e}")
         # Fallback to timestamp-based number (should rarely happen)
         import time
 
@@ -4302,7 +4318,7 @@ def generate_month_description(start_date: str, end_date: str) -> str:
         # Different years
         return f"{start_dt.strftime('%B %Y')} - {end_dt.strftime('%B %Y')}"
     except Exception as e:
-        logging.error(f"Error generating month description: {e}")
+        logger.error(f"Error generating month description: {e}")
         return f"{start_date} to {end_date}"
 
 
@@ -4363,7 +4379,7 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
         bill_ref.set(bill_data)
         bill_id = bill_ref.id
 
-        logging.info(
+        logger.info(
             f"✅ Bill saved: {bill_number} for user {user_id}, {month_description}"
         )
 
@@ -4380,7 +4396,7 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
         )
 
     except Exception as e:
-        logging.error(f"Error saving bill entries: {e}")
+        logger.error(f"Error saving bill entries: {e}")
         import traceback
 
         traceback.print_exc()
@@ -4454,7 +4470,7 @@ async def get_my_bills(
         )
 
     except Exception as e:
-        logging.error(f"Error getting user bills: {e}")
+        logger.error(f"Error getting user bills: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get user bills: {str(e)}"}
         )
@@ -4514,7 +4530,7 @@ def calculate_case_fee(case_data: Dict) -> Dict:
                 return {"result": "*ADJOURNED*", "fee": 1250}
 
     except Exception as e:
-        logging.error(f"Error calculating case fee for case: {e}")
+        logger.error(f"Error calculating case fee for case: {e}")
         return {"result": "*ADJOURNED*", "fee": 1250}
 
 
@@ -4534,7 +4550,7 @@ def extract_parties_info(case_data: Dict) -> str:
         return f"Matter in {case_ref}"
 
     except Exception as e:
-        logging.error(f"Error extracting parties info: {e}")
+        logger.error(f"Error extracting parties info: {e}")
         return "Parties information not available"
 
 
@@ -4828,7 +4844,7 @@ async def export_bill_excel(
         )
 
     except Exception as e:
-        logging.error(f"Error exporting bill to Excel: {e}")
+        logger.error(f"Error exporting bill to Excel: {e}")
         import traceback
 
         traceback.print_exc()
@@ -4868,7 +4884,7 @@ async def get_bill_details(bill_id: str, current_user=Depends(get_current_user))
         return JSONResponse(content=bill_data)
 
     except Exception as e:
-        logging.error(f"Error getting bill details: {e}")
+        logger.error(f"Error getting bill details: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get bill details: {str(e)}"}
         )
@@ -4902,7 +4918,7 @@ async def delete_bill(bill_id: str, current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error deleting bill: {e}")
+        logger.error(f"Error deleting bill: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to delete bill: {str(e)}"}
         )
@@ -4946,7 +4962,7 @@ async def search_orders(
             )
 
     except Exception as e:
-        logging.error(f"Error in search-orders: {e}")
+        logger.error(f"Error in search-orders: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to search orders: {str(e)}"}
         )
@@ -4992,7 +5008,7 @@ async def get_search_index_stats(current_user=Depends(get_current_user)):
         )
 
     except Exception as e:
-        logging.error(f"Error getting search index stats: {e}")
+        logger.error(f"Error getting search index stats: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get search stats: {str(e)}"}
         )
@@ -5061,7 +5077,7 @@ async def rebuild_search_index(
                     break
 
             except Exception as e:
-                logging.error(f"Error rebuilding search index for {doc.id}: {e}")
+                logger.error(f"Error rebuilding search index for {doc.id}: {e}")
                 errors.append({"case_id": doc.id, "error": str(e)})
 
         return JSONResponse(
@@ -5074,7 +5090,7 @@ async def rebuild_search_index(
         )
 
     except Exception as e:
-        logging.error(f"Error rebuilding search index: {e}")
+        logger.error(f"Error rebuilding search index: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to rebuild search index: {str(e)}"},
@@ -5169,7 +5185,7 @@ async def get_order_tabular_data(
         )
 
     except Exception as e:
-        logging.error(f"Error getting tabular data: {e}")
+        logger.error(f"Error getting tabular data: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get tabular data: {str(e)}"}
         )

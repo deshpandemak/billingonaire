@@ -9,6 +9,8 @@ try:
 except ImportError:
     from .case_data_store import CaseDataStore
 
+logger = logging.getLogger(__name__)
+
 
 class OrderManager:
     """
@@ -57,6 +59,9 @@ class OrderManager:
         Returns:
             Dictionary with cases and pagination info
         """
+        logger.info(
+            "get_cases_without_orders called with limit=%d offset=%d", limit, offset
+        )
         try:
             # Get board cases efficiently
             board_query = (
@@ -114,6 +119,11 @@ class OrderManager:
                 if len(cases_without_orders) >= limit:
                     break
 
+            logger.info(
+                "get_cases_without_orders returned %d cases (processed %d docs)",
+                len(cases_without_orders),
+                total_processed,
+            )
             return {
                 "cases": cases_without_orders,
                 "total_returned": len(cases_without_orders),
@@ -123,7 +133,7 @@ class OrderManager:
             }
 
         except Exception as e:
-            logging.error(f"Error fetching cases without orders: {e}")
+            logger.error("Error fetching cases without orders: %s", e)
             return {"error": str(e), "cases": []}
 
     def create_order_link(self, case_id: str, order_data: Dict) -> Dict:
@@ -138,11 +148,19 @@ class OrderManager:
         Returns:
             Result of the operation
         """
+        logger.info(
+            "create_order_link called for case_id=%s status=%s",
+            case_id,
+            order_data.get("status"),
+        )
         try:
             board_doc = (
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
             if not board_doc.exists:
+                logger.warning(
+                    "create_order_link: case_id=%s not found in boards", case_id
+                )
                 return {"error": "Case not found", "case_id": case_id}
 
             board_data = board_doc.to_dict() or {}
@@ -160,6 +178,12 @@ class OrderManager:
                 },
             )
 
+            logger.info(
+                "create_order_link succeeded for case_id=%s case_ref=%s status=%s",
+                case_id,
+                case_ref,
+                status,
+            )
             return {
                 "success": True,
                 "case_id": case_id,
@@ -167,7 +191,7 @@ class OrderManager:
             }
 
         except Exception as e:
-            logging.error(f"Error creating order link for case {case_id}: {e}")
+            logger.error("Error creating order link for case %s: %s", case_id, e)
             return {"error": str(e), "case_id": case_id}
 
     def update_order_status(self, case_id: str, status: str, notes: str = "") -> Dict:
@@ -183,11 +207,17 @@ class OrderManager:
         Returns:
             Result of the operation
         """
+        logger.info(
+            "update_order_status called for case_id=%s new_status=%s", case_id, status
+        )
         try:
             board_doc = (
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
             if not board_doc.exists:
+                logger.warning(
+                    "update_order_status: case_id=%s not found in boards", case_id
+                )
                 return {"error": "Case not found", "case_id": case_id}
 
             board_data = board_doc.to_dict() or {}
@@ -201,26 +231,42 @@ class OrderManager:
                 },
             )
 
+            logger.info(
+                "update_order_status succeeded for case_id=%s case_ref=%s new_status=%s",
+                case_id,
+                case_ref,
+                status,
+            )
             return {"success": True, "case_id": case_id, "new_status": status}
 
         except Exception as e:
-            logging.error(f"Error updating order status for case {case_id}: {e}")
+            logger.error("Error updating order status for case %s: %s", case_id, e)
             return {"error": str(e), "case_id": case_id}
 
     def get_order_details(self, case_id: str) -> Dict:
         """Get order details for a specific case from case-details collection"""
+        logger.info("get_order_details called for case_id=%s", case_id)
         try:
             board_doc = (
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
 
             if not board_doc.exists:
+                logger.warning(
+                    "get_order_details: case_id=%s not found in boards", case_id
+                )
                 return {"status": "not_linked", "case_id": case_id}
 
             board_data = board_doc.to_dict() or {}
             case_ref = self._case_ref_from_board(board_data)
             latest = self._latest_order_from_case(case_ref)
             latest_order = latest["latest_order"] or {}
+            logger.info(
+                "get_order_details returning status=%s for case_id=%s case_ref=%s",
+                latest["status"],
+                case_id,
+                case_ref,
+            )
             return {
                 "case_id": case_id,
                 "status": latest["status"],
@@ -234,11 +280,12 @@ class OrderManager:
             }
 
         except Exception as e:
-            logging.error(f"Error fetching order details for case {case_id}: {e}")
+            logger.error("Error fetching order details for case %s: %s", case_id, e)
             return {"error": str(e), "case_id": case_id}
 
     def get_orders_by_status(self, status: str, limit: int = 100) -> List[Dict]:
         """Get all orders with a specific status from case-details collection"""
+        logger.info("get_orders_by_status called status=%s limit=%d", status, limit)
         try:
             query = (
                 self.db.collection("case-details")
@@ -271,20 +318,29 @@ class OrderManager:
                 }
                 orders.append(order_data)
 
+            logger.info(
+                "get_orders_by_status returned %d orders for status=%s",
+                len(orders),
+                status,
+            )
             return orders
 
         except Exception as e:
-            logging.error(f"Error fetching orders by status {status}: {e}")
+            logger.error("Error fetching orders by status %s: %s", status, e)
             return []
 
     def get_case_with_order_info(self, case_id: str) -> Dict:
         """Get complete case information including order status"""
+        logger.info("get_case_with_order_info called for case_id=%s", case_id)
         try:
             # Get board case data
             case_doc = (
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
             if not case_doc.exists:
+                logger.warning(
+                    "get_case_with_order_info: case_id=%s not found in boards", case_id
+                )
                 return {"error": "Case not found", "case_id": case_id}
 
             case_data = case_doc.to_dict()
@@ -315,8 +371,14 @@ class OrderManager:
                 "updated_at": latest_order.get("updated_at"),
             }
 
+            logger.info(
+                "get_case_with_order_info returning order_status=%s for case_id=%s case_ref=%s",
+                latest["status"],
+                case_id,
+                case_ref,
+            )
             return case_data
 
         except Exception as e:
-            logging.error(f"Error fetching case with order info for {case_id}: {e}")
+            logger.error("Error fetching case with order info for %s: %s", case_id, e)
             return {"error": str(e), "case_id": case_id}

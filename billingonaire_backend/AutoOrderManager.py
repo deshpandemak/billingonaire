@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 from firebase_admin import firestore
@@ -16,6 +17,19 @@ try:
 except ImportError:
     from .case_data_store import CaseDataStore
 from order_analyzer import OrderDocumentAnalyzer
+
+logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: Optional[str]) -> str:
+    """Return only the scheme+host+path of a URL, stripping query params that may contain auth tokens."""
+    if not url:
+        return "<none>"
+    try:
+        parsed = urlparse(str(url))
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    except Exception:
+        return "<redacted>"
 
 
 class AutoOrderManager:
@@ -75,12 +89,22 @@ class AutoOrderManager:
             filtered_cases = self._get_filtered_matters(case_filters, limit)
 
             if not filtered_cases:
+                logger.info(
+                    "get_orders_for_cases: no cases found matching filters=%s",
+                    case_filters,
+                )
                 return {
                     "success": True,
                     "message": "No cases found matching criteria",
                     "processed": 0,
                 }
 
+            logger.info(
+                "get_orders_for_cases: processing %d cases (filters=%s max_sequences=%s)",
+                len(filtered_cases),
+                case_filters,
+                max_sequences,
+            )
             results: Dict[str, Any] = {
                 "total_cases": len(filtered_cases),
                 "successful_downloads": 0,
@@ -108,14 +132,23 @@ class AutoOrderManager:
 
                 except Exception as e:
                     error_msg = f"Error processing case {case_data.get('case_ref', 'unknown')}: {str(e)}"
-                    logging.error(error_msg)
+                    logger.error(error_msg)
                     results["errors"].append(error_msg)
                     results["failed_downloads"] += 1
 
+            logger.info(
+                "get_orders_for_cases completed: total=%d success_dl=%d failed_dl=%d "
+                "success_analysis=%d failed_analysis=%d",
+                results["total_cases"],
+                results["successful_downloads"],
+                results["failed_downloads"],
+                results["successful_analyses"],
+                results["failed_analyses"],
+            )
             return {"success": True, "results": results}
 
         except Exception as e:
-            logging.error(f"Error in get_orders_for_cases: {e}")
+            logger.error("Error in get_orders_for_cases: %s", e)
             return {"success": False, "error": str(e)}
 
     def bulk_process_orders(
@@ -135,6 +168,11 @@ class AutoOrderManager:
             if not case_ids:
                 return {"success": False, "error": "No case IDs provided"}
 
+            logger.info(
+                "bulk_process_orders starting: case_count=%d max_sequences=%d",
+                len(case_ids),
+                max_sequences,
+            )
             results: Dict[str, Any] = {
                 "total_cases": len(case_ids),
                 "successful": 0,
@@ -152,6 +190,9 @@ class AutoOrderManager:
                     doc = doc_ref.get()
 
                     if not doc.exists:
+                        logger.warning(
+                            "bulk_process_orders: case_id=%s not found", case_id
+                        )
                         results["errors"].append(f"Case {case_id} not found")
                         results["failed"] += 1
                         continue
@@ -174,21 +215,30 @@ class AutoOrderManager:
 
                 except Exception as e:
                     error_msg = f"Error processing case {case_id}: {str(e)}"
-                    logging.error(error_msg)
+                    logger.error(error_msg)
                     results["errors"].append(error_msg)
                     results["failed"] += 1
 
+            logger.info(
+                "bulk_process_orders completed: total=%d successful=%d failed=%d",
+                results["total_cases"],
+                results["successful"],
+                results["failed"],
+            )
             results["success"] = True
             return results
 
         except Exception as e:
-            logging.error(f"Error in bulk_process_orders: {e}")
+            logger.error("Error in bulk_process_orders: %s", e)
             return {"success": False, "error": str(e)}
 
     def _get_filtered_matters(
         self, filters: Optional[Dict[str, Any]] = None, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Get cases that need order processing based on filters"""
+        logger.info(
+            "_get_filtered_matters called with filters=%s limit=%d", filters, limit
+        )
         try:
             query = self.db.collection(self.boards_collection)
 
@@ -230,10 +280,13 @@ class AutoOrderManager:
                     if len(cases) >= limit:
                         break
 
+            logger.info(
+                "_get_filtered_matters returned %d actionable cases", len(cases)
+            )
             return cases
 
         except Exception as e:
-            logging.error(f"Error getting filtered matters: {e}")
+            logger.error("Error getting filtered matters: %s", e)
             return []
 
     def _get_case_order_context(self, case_ref: str) -> Dict[str, Any]:
@@ -253,6 +306,12 @@ class AutoOrderManager:
     def _record_case_order_status(
         self, case_ref: str, status: str, reason: Optional[str] = None
     ) -> None:
+        logger.info(
+            "_record_case_order_status: case_ref=%s status=%s reason=%s",
+            case_ref,
+            status,
+            reason,
+        )
         payload = {
             "order_status": status,
             "order_status_updated_at": datetime.now().isoformat(),
@@ -346,11 +405,11 @@ class AutoOrderManager:
 
         # If case has status "linked", skip download and analyze existing order
         if order_status == "linked" and has_existing_order_link:
-            logging.info(f"📋 {case_ref} - Status is 'linked', analyzing existing order")
+            logger.info(f"📋 {case_ref} - Status is 'linked', analyzing existing order")
             try:
                 return self._analyze_existing_order(case_data, result, max_sequences)
             except Exception as e:
-                logging.error(f"Failed to analyze existing order for {case_ref}: {e}")
+                logger.error(f"Failed to analyze existing order for {case_ref}: {e}")
                 result["error"] = f"Failed to analyze existing order: {str(e)}"
                 return result
 
@@ -359,7 +418,7 @@ class AutoOrderManager:
             MAX_RETRIES = max_sequences
         else:
             MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "10"))
-        logging.info(
+        logger.info(
             f"Processing {case_ref} - will try up to {MAX_RETRIES} sequence numbers"
         )
 
@@ -375,7 +434,7 @@ class AutoOrderManager:
                     or sequence_num == MAX_RETRIES
                     or sequence_num % 5 == 0
                 ):
-                    logging.info(
+                    logger.info(
                         f"{case_ref} - trying sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
@@ -425,7 +484,7 @@ class AutoOrderManager:
                             "message"
                         ] = f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
                         result["retry_attempts"].append(attempt_log)
-                        logging.info(
+                        logger.info(
                             f"Case {case_ref} seq {sequence_num}: {attempt_log['message']}"
                         )
                         continue
@@ -439,7 +498,7 @@ class AutoOrderManager:
                     result["download_success"] = True
                     result["order_link"] = order_info.get("order_link")
 
-                    logging.info(
+                    logger.info(
                         f"✅ Case {case_ref} - SUCCESS at sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
@@ -447,7 +506,7 @@ class AutoOrderManager:
                     try:
                         self._create_order_link(case_id, order_info)
                     except Exception as link_error:
-                        logging.error(
+                        logger.error(
                             f"Failed to create order link for {case_ref}: {link_error}"
                         )
                         result[
@@ -470,7 +529,7 @@ class AutoOrderManager:
                         if not analysis_result.get("success"):
                             # Analysis failed but order download succeeded
                             # Keep the order link and mark status as order_analysis_failed
-                            logging.warning(
+                            logger.warning(
                                 f"Analysis failed for {case_ref} seq {sequence_num}: {analysis_result.get('error')}"
                             )
                             attempt_log["status"] = "analysis_failed"
@@ -490,7 +549,7 @@ class AutoOrderManager:
                                     result["error"],
                                 )
                             except Exception as status_error:
-                                logging.error(
+                                logger.error(
                                     f"Failed to update order_analysis_failed status: {status_error}"
                                 )
 
@@ -507,7 +566,7 @@ class AutoOrderManager:
                                 case_id, case_data, analysis_result["data"]
                             )
                         except Exception as index_error:
-                            logging.error(
+                            logger.error(
                                 f"Failed to create search index for {case_ref}: {index_error}"
                             )
                             # Not critical - we have the order and analysis
@@ -527,11 +586,11 @@ class AutoOrderManager:
                             )
                             if linked_cases:
                                 result["additional_cases_linked"] = linked_cases
-                                logging.info(
+                                logger.info(
                                     f"Linked order to {len(linked_cases)} additional cases: {linked_cases}"
                                 )
                         except Exception as multi_link_error:
-                            logging.warning(
+                            logger.warning(
                                 f"Failed to link order to additional cases for {case_ref}: {multi_link_error}"
                             )
                             # Not critical - primary case is already linked
@@ -542,7 +601,7 @@ class AutoOrderManager:
                     except Exception as analysis_error:
                         # Analysis threw an exception but order download succeeded
                         # Keep the order link and mark status as order_analysis_failed
-                        logging.warning(
+                        logger.warning(
                             f"Analysis exception for {case_ref} seq {sequence_num}: {analysis_error}"
                         )
                         attempt_log["status"] = "analysis_exception"
@@ -560,7 +619,7 @@ class AutoOrderManager:
                                 result["error"],
                             )
                         except Exception as status_error:
-                            logging.error(
+                            logger.error(
                                 f"Failed to update order_analysis_failed status: {status_error}"
                             )
 
@@ -572,7 +631,7 @@ class AutoOrderManager:
                     attempt_log["status"] = "error"
                     attempt_log["message"] = str(e)
                     result["retry_attempts"].append(attempt_log)
-                    logging.warning(f"Case {case_ref} seq {sequence_num} error: {e}")
+                    logger.warning(f"Case {case_ref} seq {sequence_num} error: {e}")
                     continue
 
             # If we get here, all attempts failed - provide detailed error
@@ -582,7 +641,7 @@ class AutoOrderManager:
             if date_mismatches > 0:
                 error_parts.append(f"{date_mismatches} orders had date mismatches.")
             result["error"] = " ".join(error_parts)
-            logging.warning(
+            logger.warning(
                 f"❌ Case {case_ref} - FAILED after {MAX_RETRIES} sequences: {result['error']}"
             )
 
@@ -592,13 +651,13 @@ class AutoOrderManager:
                     case_ref, "order_failed", result["error"]
                 )
             except Exception as status_error:
-                logging.error(
+                logger.error(
                     f"Failed to update order_failed status for {case_id}: {status_error}"
                 )
 
         except Exception as e:
             result["error"] = str(e)
-            logging.error(f"Error processing case {case_ref}: {e}")
+            logger.error(f"Error processing case {case_ref}: {e}")
 
         return result
 
@@ -620,14 +679,18 @@ class AutoOrderManager:
         order_link = case_data.get("order_link")
 
         try:
-            logging.info(f"Attempting to re-download existing order from {order_link}")
+            logger.info(
+                "Attempting to re-download existing order from %s for case_ref=%s",
+                _redact_url(order_link),
+                case_ref,
+            )
 
             # Re-download the PDF from the stored link
             response = requests.get(order_link, timeout=30)
 
             # Validate response status
             if response.status_code != 200:
-                logging.warning(
+                logger.warning(
                     f"Order link returned HTTP {response.status_code} for {case_ref}, falling back to fresh download"
                 )
                 return self._fallback_to_fresh_download(
@@ -640,7 +703,7 @@ class AutoOrderManager:
             # Validate content type
             content_type = response.headers.get("Content-Type", "")
             if "application/pdf" not in content_type:
-                logging.warning(
+                logger.warning(
                     f"Order link returned {content_type} instead of PDF for {case_ref}, falling back to fresh download"
                 )
                 return self._fallback_to_fresh_download(
@@ -654,7 +717,7 @@ class AutoOrderManager:
 
             # Validate PDF content size
             if not pdf_content or len(pdf_content) < 100:
-                logging.warning(
+                logger.warning(
                     f"Order link returned empty/small content for {case_ref}, falling back to fresh download"
                 )
                 return self._fallback_to_fresh_download(
@@ -664,7 +727,7 @@ class AutoOrderManager:
                     max_sequences,
                 )
 
-            logging.info(
+            logger.info(
                 f"Successfully re-downloaded order for {case_ref}, size: {len(pdf_content)} bytes"
             )
 
@@ -691,7 +754,7 @@ class AutoOrderManager:
                         case_id, case_data, analysis_result["data"]
                     )
                 except Exception as index_error:
-                    logging.error(
+                    logger.error(
                         f"Failed to create search index for {case_ref}: {index_error}"
                     )
 
@@ -708,18 +771,18 @@ class AutoOrderManager:
                     )
                     if linked_cases:
                         result["additional_cases_linked"] = linked_cases
-                        logging.info(
+                        logger.info(
                             f"Linked order to {len(linked_cases)} additional cases: {linked_cases}"
                         )
                 except Exception as multi_link_error:
-                    logging.warning(
+                    logger.warning(
                         f"Failed to link order to additional cases for {case_ref}: {multi_link_error}"
                     )
 
-                logging.info(f"✅ Successfully analyzed existing order for {case_ref}")
+                logger.info(f"✅ Successfully analyzed existing order for {case_ref}")
             else:
                 result["error"] = f"Analysis failed: {analysis_result.get('error')}"
-                logging.error(
+                logger.error(
                     f"Analysis failed for existing order {case_ref}: {result['error']}"
                 )
 
@@ -731,7 +794,7 @@ class AutoOrderManager:
                         result["error"],
                     )
                 except Exception as status_error:
-                    logging.error(
+                    logger.error(
                         f"Failed to update order_analysis_failed status: {status_error}"
                     )
 
@@ -740,7 +803,7 @@ class AutoOrderManager:
         except Exception as e:
             error_msg = f"Failed to analyze existing order: {str(e)}"
             result["error"] = error_msg
-            logging.error(f"Error analyzing existing order for {case_ref}: {e}")
+            logger.error(f"Error analyzing existing order for {case_ref}: {e}")
 
             # Update status to order_analysis_failed
             try:
@@ -748,7 +811,7 @@ class AutoOrderManager:
                     case_ref, "order_analysis_failed", error_msg
                 )
             except Exception as status_error:
-                logging.error(
+                logger.error(
                     f"Failed to update order_analysis_failed status: {status_error}"
                 )
 
@@ -772,7 +835,7 @@ class AutoOrderManager:
         case_id = case_data["id"]
         case_ref = case_data["case_ref"]
 
-        logging.info(f"Initiating fresh download for {case_ref} due to: {reason}")
+        logger.info(f"Initiating fresh download for {case_ref} due to: {reason}")
 
         try:
             # Reset status to not_linked to trigger fresh download
@@ -790,7 +853,7 @@ class AutoOrderManager:
             else:
                 MAX_RETRIES = int(os.getenv("ORDER_MAX_SEQUENCE_RETRIES", "10"))
 
-            logging.info(
+            logger.info(
                 f"Processing {case_ref} with fresh download (trying up to {MAX_RETRIES} sequence numbers)"
             )
 
@@ -804,7 +867,7 @@ class AutoOrderManager:
                     or sequence_num == MAX_RETRIES
                     or sequence_num % 5 == 0
                 ):
-                    logging.info(
+                    logger.info(
                         f"Fresh download {case_ref}: trying sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
@@ -844,7 +907,7 @@ class AutoOrderManager:
                                     case_id, case_data_fresh, analysis_result["data"]
                                 )
                             except Exception as index_error:
-                                logging.error(
+                                logger.error(
                                     f"Failed to create search index: {index_error}"
                                 )
 
@@ -864,17 +927,17 @@ class AutoOrderManager:
                                 if linked_cases:
                                     result["additional_cases_linked"] = linked_cases
                             except Exception as multi_link_error:
-                                logging.warning(
+                                logger.warning(
                                     f"Multi-case linking failed: {multi_link_error}"
                                 )
 
-                            logging.info(
+                            logger.info(
                                 f"✅ Fresh download and analysis succeeded for {case_ref}"
                             )
                             return result
                         else:
                             result["error"] = analysis_result.get("error")
-                            logging.error(
+                            logger.error(
                                 f"Analysis failed after fresh download: {result['error']}"
                             )
                             return result
@@ -887,7 +950,7 @@ class AutoOrderManager:
                         continue
 
                 except Exception as e:
-                    logging.warning(f"Fresh download seq {sequence_num} error: {e}")
+                    logger.warning(f"Fresh download seq {sequence_num} error: {e}")
                     download_failures += 1
                     continue
 
@@ -903,7 +966,7 @@ class AutoOrderManager:
         except Exception as e:
             error_msg = f"Fallback fresh download failed: {str(e)}"
             result["error"] = error_msg
-            logging.error(f"Error in fallback fresh download for {case_ref}: {e}")
+            logger.error(f"Error in fallback fresh download for {case_ref}: {e}")
 
             # Update to order_analysis_failed
             try:
@@ -911,7 +974,7 @@ class AutoOrderManager:
                     case_ref, "order_analysis_failed", error_msg
                 )
             except Exception as status_error:
-                logging.error(f"Failed to update status: {status_error}")
+                logger.error(f"Failed to update status: {status_error}")
 
             return result
 
@@ -926,8 +989,10 @@ class AutoOrderManager:
             sequence_number: Specific sequence number to try (0-49)
         """
         case_ref = case_data.get("case_ref", "UNKNOWN")
-        logging.warning(
-            f"🔵 _download_order_for_case ENTERED for {case_ref}, seq={sequence_number}"
+        logger.info(
+            "_download_order_for_case called for case_ref=%s seq=%d",
+            case_ref,
+            sequence_number,
         )
         try:
             case_ref = case_data["case_ref"]
@@ -940,19 +1005,29 @@ class AutoOrderManager:
 
             # Parse case reference
             case_parts = self._parse_case_reference(case_ref_for_parsing)
-            logging.warning(f"🔵 After parse: case_parts={case_parts}")
+            logger.info(
+                "_download_order_for_case: parsed case_ref=%s -> %s",
+                case_ref,
+                case_parts,
+            )
             if not case_parts:
-                logging.warning("🔵 EARLY RETURN: Invalid case reference format")
+                logger.warning(
+                    "_download_order_for_case: invalid case reference format for case_ref=%s",
+                    case_ref,
+                )
                 return {"success": False, "error": "Invalid case reference format"}
 
             case_type, case_number, year = case_parts
-            logging.warning(
-                f"🔵 Before zfill: case_number={case_number}, type={type(case_number)}"
+            logger.info(
+                "_download_order_for_case: case_type=%s case_number=%s year=%s stamp=%s",
+                case_type,
+                case_number,
+                year,
+                search_stamp_no,
             )
 
             # Format case number with leading zeros
             case_number_str = str(case_number).zfill(7)
-            logging.warning(f"🔵 After zfill: case_number={case_number_str}")
 
             # Convert board_date to datetime object for comparison
             case_board_date = None
@@ -988,7 +1063,7 @@ class AutoOrderManager:
                 )
                 if structured_result.get("success"):
                     return structured_result
-                logging.info(
+                logger.info(
                     f"Structured order lookup unavailable for {case_ref}: {structured_result.get('error')}"
                 )
 
@@ -1068,7 +1143,7 @@ class AutoOrderManager:
         if not cached_link:
             return {"success": False, "error": "no_matching_cached_order_link"}
 
-        logging.info(
+        logger.info(
             "Using cached order link for %s on board date %s; skipping structured scraper",
             case_ref,
             board_date.isoformat(),
@@ -1118,6 +1193,11 @@ class AutoOrderManager:
         self, case_ref: str, board_date: Optional[str], order_filename: str
     ) -> Dict:
         """Use structured scraper output to fetch exact order URL before brute-force sequence attempts."""
+        logger.info(
+            "_download_order_via_scraper called for case_ref=%s board_date=%s",
+            case_ref,
+            board_date,
+        )
         try:
             response = self.court_scraper.get_case_orders(
                 case_ref=case_ref,
@@ -1126,12 +1206,21 @@ class AutoOrderManager:
             )
 
             if not isinstance(response, dict):
+                logger.warning(
+                    "_download_order_via_scraper: non-dict response for case_ref=%s",
+                    case_ref,
+                )
                 return {
                     "success": False,
                     "error": "Structured scraper returned non-dict response",
                 }
 
             if response.get("status") != "found":
+                logger.warning(
+                    "_download_order_via_scraper: status=%s for case_ref=%s",
+                    response.get("status"),
+                    case_ref,
+                )
                 return {
                     "success": False,
                     "error": response.get(
@@ -1141,6 +1230,10 @@ class AutoOrderManager:
 
             court_orders = response.get("court_orders") or []
             if not court_orders:
+                logger.warning(
+                    "_download_order_via_scraper: no court_orders returned for case_ref=%s",
+                    case_ref,
+                )
                 return {
                     "success": False,
                     "error": "Structured scraper returned no court orders",
@@ -1162,6 +1255,12 @@ class AutoOrderManager:
 
             download_url = order_entry["download_url"]
             structured_source = str(response.get("source") or "direct_api")
+            logger.info(
+                "_download_order_via_scraper: downloading PDF from %s source=%s for case_ref=%s",
+                _redact_url(download_url),
+                structured_source,
+                case_ref,
+            )
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
@@ -1174,6 +1273,12 @@ class AutoOrderManager:
             )
 
             if download_response.status_code != 200 or not is_pdf:
+                logger.warning(
+                    "_download_order_via_scraper: non-PDF response HTTP %d content_type=%s for case_ref=%s",
+                    download_response.status_code,
+                    content_type,
+                    case_ref,
+                )
                 return {
                     "success": False,
                     "error": (
@@ -1182,6 +1287,11 @@ class AutoOrderManager:
                     ),
                 }
 
+            logger.info(
+                "_download_order_via_scraper: PDF downloaded successfully size=%d bytes for case_ref=%s",
+                len(pdf_bytes),
+                case_ref,
+            )
             return {
                 "success": True,
                 "order_link": download_url,
@@ -1192,6 +1302,9 @@ class AutoOrderManager:
                 "order_description": order_entry.get("order_description"),
             }
         except Exception as e:
+            logger.error(
+                "_download_order_via_scraper failed for case_ref=%s: %s", case_ref, e
+            )
             return {
                 "success": False,
                 "error": f"Structured scraper lookup failed: {str(e)}",
@@ -1217,9 +1330,14 @@ class AutoOrderManager:
             order_filename: Filename for the order
             sequence_number: Specific sequence number to try (0-49)
         """
-        # DEBUG: Log function entry
-        logging.warning(
-            f"🔍 ENTERING _download_pdf_bombay_hc_simple: seq={sequence_number}, case_type={case_type}, case_number={case_number}"
+        # Log function entry at info level
+        logger.info(
+            "_download_pdf_bombay_hc_simple: case_type=%s case_number=%s year=%s seq=%d stamp=%s",
+            case_type,
+            case_number,
+            year,
+            sequence_number,
+            search_stamp_no,
         )
         try:
             base_url = "https://bombayhighcourt.nic.in/"
@@ -1260,14 +1378,14 @@ class AutoOrderManager:
 
                 # Log response details for debugging
                 content_type = response.headers.get("Content-Type", "unknown")
-                logging.info(
+                logger.info(
                     f"Sequence {sequence_number}: HTTP {response.status_code}, "
                     f"Content-Type: {content_type}, Size: {len(response.content)} bytes"
                 )
 
                 # Check if response is a PDF
                 if content_type == "application/pdf":
-                    logging.info(
+                    logger.info(
                         f"✅ PDF found for: {order_filename} (seq: {sequence_number})"
                     )
                     return {
@@ -1284,7 +1402,7 @@ class AutoOrderManager:
                         if len(response.text) < 500
                         else response.text[:500] + "..."
                     )
-                    logging.warning(
+                    logger.warning(
                         f"⚠️ Sequence {sequence_number} returned non-PDF: "
                         f"Status={response.status_code}, "
                         f"Content-Type={content_type}, "
@@ -1301,19 +1419,34 @@ class AutoOrderManager:
                 error_msg = (
                     f"Timeout after 30s for sequence {sequence_number}: {str(e)}"
                 )
-                logging.error(f"🔴 {error_msg}")
+                logger.error(
+                    "_download_pdf_bombay_hc_simple timeout: case_type=%s seq=%d error=%s",
+                    case_type,
+                    sequence_number,
+                    e,
+                )
                 return {"success": False, "error": error_msg}
             except requests.ConnectionError as e:
                 error_msg = f"Connection error for sequence {sequence_number}: {str(e)}"
-                logging.error(f"🔴 {error_msg}")
+                logger.error(
+                    "_download_pdf_bombay_hc_simple connection error: case_type=%s seq=%d error=%s",
+                    case_type,
+                    sequence_number,
+                    e,
+                )
                 return {"success": False, "error": error_msg}
             except requests.RequestException as e:
                 error_msg = f"Request failed for sequence {sequence_number}: {str(e)}"
-                logging.error(f"🔴 {error_msg}")
+                logger.error(
+                    "_download_pdf_bombay_hc_simple request failed: case_type=%s seq=%d error=%s",
+                    case_type,
+                    sequence_number,
+                    e,
+                )
                 return {"success": False, "error": error_msg}
 
         except Exception as e:
-            logging.error(f"Error downloading PDF from Bombay HC: {e}")
+            logger.error("Error downloading PDF from Bombay HC: %s", e)
             return {"success": False, "error": str(e)}
 
     def _analyze_order_with_date_validation(
@@ -1360,7 +1493,7 @@ class AutoOrderManager:
                         )
                         cases_as_dicts.append(case_dict)
                     except Exception as e:
-                        logging.warning(f"Could not convert case object to dict: {e}")
+                        logger.warning(f"Could not convert case object to dict: {e}")
                         continue
 
             # Find the data for THIS specific case from the cases array
@@ -1454,13 +1587,13 @@ class AutoOrderManager:
                     event_type="analysis_succeeded",
                 )
             except Exception as case_sync_error:
-                logging.warning(
+                logger.warning(
                     f"Failed to sync normalized order history for {case_ref}: {case_sync_error}"
                 )
 
             # Also persist for additional cases extracted from the same order.
             if additional_cases:
-                logging.info(
+                logger.info(
                     f"Found {len(additional_cases)} additional cases in order for {case_ref}, syncing case-details"
                 )
                 for add_case in additional_cases:
@@ -1484,11 +1617,11 @@ class AutoOrderManager:
                                 "order_date_validation": date_validation,
                             },
                         )
-                        logging.info(
+                        logger.info(
                             f"  ✅ Synced order analysis for additional case: {add_case_ref}"
                         )
                     except Exception as e:
-                        logging.warning(
+                        logger.warning(
                             f"  ❌ Failed to sync additional case {add_case.get('case_type')}/{add_case.get('case_number')}: {e}"
                         )
 
@@ -1507,13 +1640,13 @@ class AutoOrderManager:
             }
 
         except Exception as e:
-            logging.error(f"Error analyzing order for case {case_id}: {e}")
+            logger.error(f"Error analyzing order for case {case_id}: {e}")
             try:
                 self._record_case_order_status(
                     case_ref, "order_analysis_failed", str(e)
                 )
             except Exception as update_error:
-                logging.error(
+                logger.error(
                     f"Failed to update order status for {case_id}: {update_error}"
                 )
             return {"success": False, "error": str(e)}
@@ -1597,7 +1730,7 @@ class AutoOrderManager:
                 }
 
         except Exception as e:
-            logging.error(f"Error validating order date: {e}")
+            logger.error(f"Error validating order date: {e}")
             return {
                 "valid": False,
                 "reason": f"Validation error: {str(e)}",
@@ -1669,7 +1802,7 @@ class AutoOrderManager:
             )
 
         except Exception as e:
-            logging.error(f"Error creating search index for case {case_id}: {e}")
+            logger.error(f"Error creating search index for case {case_id}: {e}")
 
     def _create_order_link(self, case_id: str, order_info: Dict) -> None:
         """Create order link in case-details for the board case."""
@@ -1678,7 +1811,7 @@ class AutoOrderManager:
                 self.db.collection(self.boards_collection).document(case_id).get()
             )
             if not board_doc.exists:
-                logging.error(f"Board document not found for {case_id}")
+                logger.error(f"Board document not found for {case_id}")
                 return
 
             board_data = board_doc.to_dict() or {}
@@ -1708,10 +1841,10 @@ class AutoOrderManager:
                 },
                 event_type="fetch_succeeded",
             )
-            logging.info(f"Order link created in case-details for {case_ref}")
+            logger.info(f"Order link created in case-details for {case_ref}")
 
         except Exception as e:
-            logging.error(f"Error creating order link for case {case_id}: {e}")
+            logger.error(f"Error creating order link for case {case_id}: {e}")
 
     def _link_order_to_additional_cases(
         self,
@@ -1737,7 +1870,7 @@ class AutoOrderManager:
                 # No additional cases to link
                 return linked_cases
 
-            logging.info(
+            logger.info(
                 f"Found {len(order_cases)} cases in order for {primary_case_ref}, attempting multi-case linking"
             )
 
@@ -1751,7 +1884,7 @@ class AutoOrderManager:
 
                     # Skip if missing required fields
                     if not case_type or not case_number or not case_year:
-                        logging.warning(f"Missing required case fields in {case_info}")
+                        logger.warning(f"Missing required case fields in {case_info}")
                         continue
 
                     # Build case reference in standard format
@@ -1767,7 +1900,7 @@ class AutoOrderManager:
                     )
 
                     if not matching_case_id:
-                        logging.info(
+                        logger.info(
                             f"No matching case found in database for {case_ref} on date {board_date}"
                         )
                         continue
@@ -1777,7 +1910,7 @@ class AutoOrderManager:
                         "order_status", "not_linked"
                     )
                     if existing_order in {"linked", "analysed", "manually_uploaded"}:
-                        logging.info(
+                        logger.info(
                             f"Case {case_ref} already has an order linked, skipping"
                         )
                         continue
@@ -1823,16 +1956,16 @@ class AutoOrderManager:
                     )
 
                     linked_cases.append(case_ref)
-                    logging.info(
+                    logger.info(
                         f"Successfully linked order to additional case: {case_ref}"
                     )
 
                 except Exception as e:
-                    logging.error(f"Error linking order to case {case_number}: {e}")
+                    logger.error(f"Error linking order to case {case_number}: {e}")
                     continue
 
         except Exception as e:
-            logging.error(f"Error in multi-case linking for {primary_case_ref}: {e}")
+            logger.error(f"Error in multi-case linking for {primary_case_ref}: {e}")
 
         return linked_cases
 
@@ -1867,7 +2000,7 @@ class AutoOrderManager:
 
             return None
         except Exception as e:
-            logging.error(f"Error finding case_id for {case_ref}: {e}")
+            logger.error(f"Error finding case_id for {case_ref}: {e}")
             return None
 
     def _create_case_specific_analysis(
@@ -1913,7 +2046,7 @@ class AutoOrderManager:
                 return (case_type, case_no, case_year)
             return None
         except (ValueError, AttributeError) as e:
-            logging.warning(f"Error parsing case reference {case_ref}: {e}")
+            logger.warning(f"Error parsing case reference {case_ref}: {e}")
             return None
 
     def search_orders(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1962,5 +2095,5 @@ class AutoOrderManager:
             return {"success": True, "results": results, "total_found": len(results)}
 
         except Exception as e:
-            logging.error(f"Error searching orders: {e}")
+            logger.error(f"Error searching orders: {e}")
             return {"success": False, "error": str(e)}
