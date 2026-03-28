@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table, Alert, Modal, Spinner } from 'react-bootstrap';
-import { authenticatedFetchJSON } from './lib/api.js';
+import { authenticatedFetchJSON, authenticatedFetch } from './lib/api.js';
 import { auth } from './lib/firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -354,39 +354,20 @@ const BillGeneration = () => {
                 excelUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
 
-            // Get auth token from Firebase
-            const currentUser = auth.currentUser;
-            if (!currentUser) {
-                alert('Please log in to export bills');
-                return;
-            }
+            // Download Excel file using authenticatedFetch (respects VITE_API_URL)
+            const response = await authenticatedFetch(excelUrl);
 
-            const token = await currentUser.getIdToken();
-
-            // Download Excel file using fetch with auth
-            const response = await fetch(`/api${excelUrl}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `AGP_Bill_${dateRange.startDate}_to_${dateRange.endDate}.xlsx`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-                console.log('✅ Excel bill exported successfully in AGP format');
-                alert('✅ Bill exported successfully as Excel file!');
-            } else {
-                const errorText = await response.text();
-                console.error('Failed to export Excel:', response.statusText, errorText);
-                alert(`Failed to export Excel: ${response.statusText}`);
-            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `AGP_Bill_${dateRange.startDate}_to_${dateRange.endDate}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            console.log('✅ Excel bill exported successfully in AGP format');
+            alert('✅ Bill exported successfully as Excel file!');
         } catch (err) {
             console.error('Excel export error:', err);
             alert(`Error exporting Excel: ${err.message}`);
