@@ -978,3 +978,62 @@ def test_process_single_case_analysis_success_when_all_orders_skipped(
     assert result["download_success"] is True
     # Must be True even though orders_processed == 0 because success is True
     assert result["analysis_success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for IA(ST) case type mapping and parsing (Issue: IA code not mapped)
+# ---------------------------------------------------------------------------
+
+
+def test_casetype_dict_contains_ia_st(auto_order_manager):
+    """IA(ST) must map to the same code as plain IA for court downloads."""
+    assert "IA(ST)" in auto_order_manager.casetype_dict
+    assert auto_order_manager.casetype_dict["IA(ST)"] == auto_order_manager.casetype_dict["IA"]
+
+
+def test_parse_case_reference_ia_st(auto_order_manager):
+    """_parse_case_reference should correctly parse IA(ST)/123/2025."""
+    result = auto_order_manager._parse_case_reference("IA(ST)/123/2025")
+    assert result is not None
+    case_type, case_no, case_year = result
+    assert case_type == "IA(ST)"
+    assert case_no == 123
+    assert case_year == 2025
+
+
+def test_parse_case_reference_plain_ia(auto_order_manager):
+    """_parse_case_reference should still parse plain IA/456/2024."""
+    result = auto_order_manager._parse_case_reference("IA/456/2024")
+    assert result is not None
+    case_type, case_no, case_year = result
+    assert case_type == "IA"
+    assert case_no == 456
+    assert case_year == 2024
+
+
+def test_download_order_for_case_ia_st_not_unsupported(auto_order_manager):
+    """IA(ST) cases should not be rejected as unsupported case type."""
+    case_data = {
+        "id": "board-ia-st",
+        "case_ref": "IA(ST)/100/2025",
+        "case_type": "IA(ST)",
+        "case_no": 100,
+        "case_year": 2025,
+        "board_date": "2025-01-01",
+    }
+    # Structured scraper returns failure so we fall through to legacy path
+    auto_order_manager._download_order_via_structured_scraper = Mock(
+        return_value={"success": False, "error": "not found"}
+    )
+    # Make the legacy PDF download succeed
+    auto_order_manager._download_pdf_bombay_hc_simple = Mock(
+        return_value={"success": True, "download_url": "https://example.com/order.pdf"}
+    )
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+
+    result = auto_order_manager._download_order_for_case(case_data, sequence_number=1)
+
+    # Must NOT return the "Case type not supported" error
+    assert result.get("error") != "Case type IA(ST) not supported for automated download"
+    # Legacy download path should have been attempted
+    auto_order_manager._download_pdf_bombay_hc_simple.assert_called()

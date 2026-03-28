@@ -797,7 +797,17 @@ async def get_data(
             uid
         )  # This will raise 403 if invalid
 
-        data = board.getData(search_criteria, agp_filter)
+        # Compute name variations so the search screen uses the same
+        # case-matching algorithm as bill generation (checks
+        # government_pleader, respondent_lawyer and
+        # additional_respondent_lawyers with name-variation matching).
+        agp_name_variations = None
+        if agp_filter and isinstance(agp_filter, str):
+            agp_name_variations = get_user_matter_matcher().generate_name_variations(
+                agp_filter
+            )
+
+        data = board.getData(search_criteria, agp_filter, agp_name_variations)
         return data
     except Exception as e:
         logger.error(f"Error in data retrieval: {str(e)}")
@@ -835,7 +845,15 @@ async def get_cases_lifecycle(
 
         uid = current_user_with_profile.get("uid")
         agp_filter = get_user_manager().get_user_agp_filter(uid)
-        rows = board.getData(search_criteria, agp_filter)
+
+        # Use the same name-variation algorithm as bill generation
+        agp_name_variations = None
+        if agp_filter and isinstance(agp_filter, str):
+            agp_name_variations = get_user_matter_matcher().generate_name_variations(
+                agp_filter
+            )
+
+        rows = board.getData(search_criteria, agp_filter, agp_name_variations)
 
         case_store = get_auto_order_manager().case_store
         items = []

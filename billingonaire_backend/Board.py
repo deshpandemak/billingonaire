@@ -673,9 +673,11 @@ class Board:
             record["order_link"] = case_detail.get(
                 "latest_order_link"
             ) or latest_order.get("order_link")
-            record["order_status"] = case_detail.get(
-                "latest_order_status"
-            ) or latest_order.get("order_status")
+            record["order_status"] = (
+                case_detail.get("latest_order_status")
+                or latest_order.get("order_status")
+                or "not_linked"
+            )
             record["order_category"] = case_detail.get(
                 "latest_order_category"
             ) or latest_order.get("order_category")
@@ -701,7 +703,61 @@ class Board:
 
         return records
 
-    def getData(self, search_criteria, agp_filter=None):
+    def _record_matches_agp(self, record: Dict, agp_name_variations: List[str]) -> bool:
+        """
+        Check whether a hydrated record belongs to any of the given AGP name variations.
+
+        Uses the same priority order as bill generation:
+          1. government_pleader (from order analysis – most accurate)
+          2. respondent_lawyer  (from board data)
+          3. additional_respondent_lawyers (from board data)
+
+        Matching is case-insensitive substring / token comparison so that
+        abbreviations and minor formatting differences are handled.
+
+        Returns:
+            bool: True if the record matches any AGP name variation, False otherwise.
+        """
+        if not agp_name_variations:
+            return True
+
+        # Normalize every variation to lowercase for comparison
+        normalized_variations = [v.lower().strip() for v in agp_name_variations if v]
+
+        def _name_matches(candidate: str) -> bool:
+            if not candidate:
+                return False
+            candidate_lower = candidate.lower().strip()
+            for variation in normalized_variations:
+                if variation and (
+                    variation in candidate_lower or candidate_lower in variation
+                ):
+                    return True
+            return False
+
+        # Priority 1: government_pleader (list or string from case-details)
+        government_pleader = record.get("government_pleader") or []
+        if isinstance(government_pleader, str):
+            government_pleader = [government_pleader]
+        for gp in government_pleader:
+            if _name_matches(str(gp)):
+                return True
+
+        # Priority 2: respondent_lawyer (string from board data)
+        if _name_matches(record.get("respondent_lawyer", "")):
+            return True
+
+        # Priority 3: additional_respondent_lawyers (list from board data)
+        additional = record.get("additional_respondent_lawyers") or []
+        if isinstance(additional, str):
+            additional = [additional]
+        for lawyer in additional:
+            if _name_matches(str(lawyer)):
+                return True
+
+        return False
+
+    def getData(self, search_criteria, agp_filter=None, agp_name_variations=None):
         # SECURITY: Removed debug logging to prevent data leakage
         logging.info("Processing search request")
 
@@ -720,14 +776,18 @@ class Board:
             else:
                 query = self.db.collection("daily-boards")
 
-            # Apply AGP filter if user is restricted to specific AGPs
-            if agp_filter:
-                logging.info("Applying AGP access filter")
+            # Apply AGP filter if user is restricted to specific AGPs.
+            # When agp_name_variations are provided we apply a richer Python-side
+            # filter after hydration (same algorithm as bill generation).  We
+            # still push an optimistic Firestore filter for performance so that
+            # we can narrow the result set early; the precise Python-side check
+            # after hydration guarantees correctness.
+            if agp_filter and not agp_name_variations:
+                # Legacy path: exact/list match on respondent_lawyer only
+                logging.info("Applying AGP access filter (exact, legacy)")
                 if isinstance(agp_filter, list):
-                    # Handle multiple AGP names - use 'in' operator
                     query = query.where("respondent_lawyer", "in", agp_filter)
                 else:
-                    # Handle single AGP name (backward compatibility)
                     query = query.where("respondent_lawyer", "==", agp_filter)
 
             # Apply search criteria - this should work for ALL users, not just those with AGP filters
@@ -884,11 +944,28 @@ class Board:
 
             hydrated_data = self._hydrate_with_case_details(data)
 
+            # Apply AGP filter Python-side after hydration when name variations
+            # are provided.  This matches the bill-generation algorithm: it
+            # checks government_pleader (order analysis), respondent_lawyer
+            # (board data) and additional_respondent_lawyers (board data) in
+            # priority order.
+            if agp_filter and agp_name_variations:
+                logging.info(
+                    "Applying AGP filter post-hydration with %d name variations",
+                    len(agp_name_variations),
+                )
+                hydrated_data = [
+                    row
+                    for row in hydrated_data
+                    if self._record_matches_agp(row, agp_name_variations)
+                ]
+                logging.info("AGP filter retained %d records", len(hydrated_data))
+
             if order_status:
                 hydrated_data = [
                     row
                     for row in hydrated_data
-                    if row.get("order_status", "not_linked") == order_status
+                    if (row.get("order_status") or "not_linked") == order_status
                 ]
 
             if order_category:
