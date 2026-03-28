@@ -238,3 +238,253 @@ def test_validate_case_format(mock_firestore):
     assert result["case_type"] == "WP"
     assert result["case_no"] == "12345"
     assert result["case_year"] == "2024"
+
+
+# ---------------------------------------------------------------------------
+# Tests for order_status filtering fix and AGP filter alignment
+# ---------------------------------------------------------------------------
+
+
+@patch("Board.firestore.client")
+def test_hydrate_order_status_defaults_to_not_linked_when_none(mock_firestore):
+    """
+    When a case-details document exists but both latest_order_status and
+    latest_order.order_status are None, order_status must be 'not_linked'
+    rather than None so that status-based filtering works correctly.
+    """
+    from Board import Board
+
+    board = Board()
+
+    # Case detail with no order status set
+    board.case_store = MagicMock()
+    board.case_store.build_case_ref.return_value = "WP/1/2024"
+    board.case_store.get_case_details_map.return_value = {
+        "WP/1/2024": {
+            "latest_order_status": None,
+            "orders": [],
+        }
+    }
+
+    records = [
+        {
+            "case_ref": "WP/1/2024",
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2024",
+        }
+    ]
+    result = board._hydrate_with_case_details(records)
+    assert result[0]["order_status"] == "not_linked"
+
+
+@patch("Board.firestore.client")
+def test_getData_order_status_filter_matches_not_linked_correctly(mock_firestore):
+    """
+    Filtering by orderStatus='not_linked' must include records where
+    order_status resolved to None in the case-details (treated as not_linked).
+    """
+    from Board import Board
+
+    board = Board()
+
+    # Firestore returns one record
+    mock_doc = MagicMock()
+    mock_doc.id = "2024-10-01-WP-1-2024"
+    mock_doc.to_dict.return_value = {
+        "board_date": "2024-10-01",
+        "case_type": "WP",
+        "case_no": "1",
+        "case_year": "2024",
+        "respondent_lawyer": "Test Lawyer",
+    }
+    mock_query = MagicMock()
+    mock_query.stream.return_value = [mock_doc]
+    mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = [
+        mock_doc
+    ]
+    mock_firestore.return_value.collection.return_value.stream.return_value = [mock_doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    # Case detail has no order status (None → should be treated as not_linked)
+    board.case_store = MagicMock()
+    board.case_store.build_case_ref.return_value = "WP/1/2024"
+    board.case_store.get_case_details_map.return_value = {
+        "WP/1/2024": {"latest_order_status": None, "orders": []}
+    }
+
+    result = board.getData({"orderStatus": "not_linked"})
+    assert len(result) == 1
+    assert result[0]["order_status"] == "not_linked"
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_checks_government_pleader(mock_firestore):
+    """
+    _record_matches_agp should return True when agp name is found in
+    government_pleader (case-details field) even if not in respondent_lawyer.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Some Other Lawyer",
+        "government_pleader": ["Pooja Joshi Deshpande"],
+        "additional_respondent_lawyers": [],
+    }
+    # Variation that is a substring of the government_pleader value
+    assert board._record_matches_agp(record, ["Pooja Joshi Deshpande"]) is True
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_checks_additional_respondent_lawyers(mock_firestore):
+    """
+    _record_matches_agp should return True when agp name is in
+    additional_respondent_lawyers.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Primary Lawyer",
+        "government_pleader": [],
+        "additional_respondent_lawyers": ["Pooja Deshpande"],
+    }
+    assert board._record_matches_agp(record, ["Pooja Deshpande"]) is True
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_returns_false_no_match(mock_firestore):
+    """
+    _record_matches_agp should return False when agp name is not found
+    in any of the three priority fields.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Different Lawyer",
+        "government_pleader": ["Another AGP"],
+        "additional_respondent_lawyers": ["Third Lawyer"],
+    }
+    assert board._record_matches_agp(record, ["Pooja Deshpande"]) is False
+
+
+@patch("Board.firestore.client")
+def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
+    """
+    When agp_name_variations is supplied, getData filters records using
+    government_pleader, respondent_lawyer, and additional_respondent_lawyers
+    (same algorithm as bill generation).
+    """
+    from Board import Board
+
+    board = Board()
+
+    # Two board records: one with matching government_pleader, one unrelated
+    matching_doc = MagicMock()
+    matching_doc.id = "match-doc"
+    matching_doc.to_dict.return_value = {
+        "board_date": "2024-10-01",
+        "case_type": "WP",
+        "case_no": "1",
+        "case_year": "2024",
+        "respondent_lawyer": "Other Lawyer",
+    }
+    unrelated_doc = MagicMock()
+    unrelated_doc.id = "unrelated-doc"
+    unrelated_doc.to_dict.return_value = {
+        "board_date": "2024-10-01",
+        "case_type": "WP",
+        "case_no": "2",
+        "case_year": "2024",
+        "respondent_lawyer": "Unrelated Lawyer",
+    }
+
+    # Wire up the mock collection chain; no limit(10) is applied when an AGP
+    # filter is active (regardless of whether search criteria are empty).
+    mock_firestore.return_value.collection.return_value.stream.return_value = [
+        matching_doc,
+        unrelated_doc,
+    ]
+    # Also wire the limit path so the initial collection-size probe doesn't fail
+    mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = [
+        matching_doc,
+        unrelated_doc,
+    ]
+
+    # Hydration: matching case has government_pleader set; unrelated does not
+    board.case_store = MagicMock()
+
+    def build_ref_side_effect(case_type, case_no, case_year):
+        return f"{case_type}/{case_no}/{case_year}"
+
+    board.case_store.build_case_ref.side_effect = build_ref_side_effect
+    board.case_store.get_case_details_map.return_value = {
+        "WP/1/2024": {
+            "government_pleader": ["Pooja M. Joshi Deshpande"],
+            "latest_order_status": "analysed",
+            "orders": [],
+        },
+        "WP/2/2024": {
+            "government_pleader": [],
+            "latest_order_status": None,
+            "orders": [],
+        },
+    }
+
+    result = board.getData(
+        {},
+        agp_filter="Pooja Deshpande",
+        agp_name_variations=[
+            "Pooja Deshpande",
+            "P. Deshpande",
+            "Pooja M. Joshi Deshpande",
+        ],
+    )
+
+    # Only the matching record should remain
+    assert len(result) == 1
+    assert result[0]["case_no"] == "1"
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_single_token_variation_not_over_broad(mock_firestore):
+    """
+    Single-token variations (e.g. first name only) should NOT match records
+    where a different lawyer shares the same first name.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Pooja Kumbhakarna",  # Different lawyer, same first name
+        "government_pleader": [],
+        "additional_respondent_lawyers": [],
+    }
+    # Single-token "pooja" must NOT cause a match
+    assert board._record_matches_agp(record, ["Pooja"]) is False
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_multi_token_still_matches(mock_firestore):
+    """
+    Multi-token variations (e.g. first + last name) should still match correctly.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Pooja Joshi Deshpande",
+        "government_pleader": [],
+        "additional_respondent_lawyers": [],
+    }
+    assert (
+        board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"])
+        is True
+    )

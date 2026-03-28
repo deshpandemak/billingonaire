@@ -60,6 +60,7 @@ class AutoOrderManager:
         self.casetype_dict = {
             "WP": "2001",
             "IA": "2069",
+            "IA(ST)": "2069",
             "CP": "2010",
             "RPW": "2019",
             "PIL": "2002",
@@ -2479,9 +2480,9 @@ class AutoOrderManager:
         return case_analysis
 
     def _parse_case_reference(self, case_ref: str) -> Optional[Tuple[str, int, int]]:
-        """Parse case reference like 'WP/294/2025' into components (type, number, year)"""
+        """Parse case reference like 'WP/294/2025' or 'IA(ST)/123/2025' into components (type, number, year)"""
         try:
-            pattern = r"([A-Z]+)/(\d+)/(\d+)"
+            pattern = r"([A-Z]+(?:\([A-Z]+\))?)/(\d+)/(\d+)"
             match = re.match(pattern, case_ref)
             if match:
                 case_type = match.group(1)
