@@ -105,6 +105,10 @@ class BombayHighCourtScraper:
     def _get_base_case_type(self, case_type: str) -> str:
         return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
 
+    def _get_stampreg_value(self, case_type: str) -> str:
+        """Return the stampreg form value: 'S' for Stamp cases (ST suffix), 'R' otherwise."""
+        return "S" if case_type.upper().endswith("(ST)") else "R"
+
     def parse_case_number(self, case_ref: str) -> Dict[str, str]:
         try:
             normalized = str(case_ref or "").strip().upper()
@@ -297,10 +301,24 @@ class BombayHighCourtScraper:
                 if str(item.get("type_flag", "1")) == "1":
                     break
 
+        if resolved_case_type == target_label and case_type_options:
+            available = [
+                item.get("type_name")
+                for item in case_type_options
+                if isinstance(item, dict)
+            ]
+            logger.warning(
+                "Case type %s not found in API type list; using label as-is. "
+                "Available types: %s",
+                target_label,
+                available,
+            )
+
+        stampreg = self._get_stampreg_value(case_parts["case_type"])
         form_data.update(
             {
                 "side": "1",
-                "stampreg": "R",
+                "stampreg": stampreg,
                 "case_type": resolved_case_type,
                 "case_no": case_parts["case_number"],
                 "year": case_parts["year"],
@@ -638,7 +656,10 @@ class BombayHighCourtScraper:
                 )
 
                 page.select_option("select[name='side']", value="1")
-                page.select_option("select[name='stampreg']", value="R")
+                page.select_option(
+                    "select[name='stampreg']",
+                    value=self._get_stampreg_value(case_parts["case_type"]),
+                )
                 page.wait_for_timeout(2000)
 
                 base_case_type = self._get_base_case_type(case_parts["case_type"])
