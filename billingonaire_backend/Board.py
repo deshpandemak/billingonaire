@@ -712,8 +712,11 @@ class Board:
           2. respondent_lawyer  (from board data)
           3. additional_respondent_lawyers (from board data)
 
-        Matching is case-insensitive substring / token comparison so that
-        abbreviations and minor formatting differences are handled.
+        Only multi-token variations (at least two space-separated words) are used
+        for matching.  Single-token variants such as a bare first name or last name
+        are intentionally skipped to prevent over-broad matches that could expose
+        cases belonging to a different government pleader who happens to share one
+        name token.
 
         Returns:
             bool: True if the record matches any AGP name variation, False otherwise.
@@ -721,17 +724,26 @@ class Board:
         if not agp_name_variations:
             return True
 
-        # Normalize every variation to lowercase for comparison
-        normalized_variations = [v.lower().strip() for v in agp_name_variations if v]
+        # Only keep multi-token variations to avoid false positives from
+        # single-word variants (e.g. "Pooja" or "Deshpande" matching unrelated
+        # lawyers).  Variations with at least two space-separated words are
+        # specific enough to be used safely.  If the list contains no multi-token
+        # entry, return False rather than falling back to single-token matching.
+        safe_variations = [
+            v.lower().strip() for v in agp_name_variations if v and len(v.split()) >= 2
+        ]
+        if not safe_variations:
+            return False
 
         def _name_matches(candidate: str) -> bool:
             if not candidate:
                 return False
             candidate_lower = candidate.lower().strip()
-            for variation in normalized_variations:
-                if variation and (
-                    variation in candidate_lower or candidate_lower in variation
-                ):
+            for variation in safe_variations:
+                # Only check whether the variation appears inside the candidate.
+                # The reverse direction (candidate inside variation) is intentionally
+                # omitted to prevent short/partial candidate strings from matching.
+                if variation and variation in candidate_lower:
                     return True
             return False
 
@@ -769,19 +781,19 @@ class Board:
             if not all_docs:
                 logging.warning("No documents found in database")
 
-            if not any(search_criteria.values()):
-                # If no search criteria, return first 10 records
+            if not any(search_criteria.values()) and not agp_filter:
+                # No criteria at all and no access restriction: return first 10 records
                 logging.info("No search criteria provided, returning first 10 records")
                 query = self.db.collection("daily-boards").limit(10)
             else:
                 query = self.db.collection("daily-boards")
 
             # Apply AGP filter if user is restricted to specific AGPs.
-            # When agp_name_variations are provided we apply a richer Python-side
-            # filter after hydration (same algorithm as bill generation).  We
-            # still push an optimistic Firestore filter for performance so that
-            # we can narrow the result set early; the precise Python-side check
-            # after hydration guarantees correctness.
+            # When agp_name_variations are provided, the access control check is
+            # applied Python-side after hydration (so that government_pleader and
+            # additional_respondent_lawyers are also considered — matching the
+            # bill-generation algorithm).  No Firestore pre-filter is pushed in
+            # that path; the full collection is fetched and then filtered.
             if agp_filter and not agp_name_variations:
                 # Legacy path: exact/list match on respondent_lawyer only
                 logging.info("Applying AGP access filter (exact, legacy)")

@@ -404,8 +404,13 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
         "respondent_lawyer": "Unrelated Lawyer",
     }
 
-    mock_collection = MagicMock()
-    mock_collection.stream.return_value = [matching_doc, unrelated_doc]
+    # Wire up the mock collection chain; no limit(10) is applied when an AGP
+    # filter is active (regardless of whether search criteria are empty).
+    mock_firestore.return_value.collection.return_value.stream.return_value = [
+        matching_doc,
+        unrelated_doc,
+    ]
+    # Also wire the limit path so the initial collection-size probe doesn't fail
     mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = [
         matching_doc,
         unrelated_doc,
@@ -440,3 +445,39 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
     # Only the matching record should remain
     assert len(result) == 1
     assert result[0]["case_no"] == "1"
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_single_token_variation_not_over_broad(mock_firestore):
+    """
+    Single-token variations (e.g. first name only) should NOT match records
+    where a different lawyer shares the same first name.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Pooja Kumbhakarna",  # Different lawyer, same first name
+        "government_pleader": [],
+        "additional_respondent_lawyers": [],
+    }
+    # Single-token "pooja" must NOT cause a match
+    assert board._record_matches_agp(record, ["Pooja"]) is False
+
+
+@patch("Board.firestore.client")
+def test_record_matches_agp_multi_token_still_matches(mock_firestore):
+    """
+    Multi-token variations (e.g. first + last name) should still match correctly.
+    """
+    from Board import Board
+
+    board = Board()
+
+    record = {
+        "respondent_lawyer": "Pooja Joshi Deshpande",
+        "government_pleader": [],
+        "additional_respondent_lawyers": [],
+    }
+    assert board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"]) is True
