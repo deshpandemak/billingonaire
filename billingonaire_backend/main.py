@@ -15,7 +15,7 @@ import pandas as pd
 import requests
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from firebase_admin import auth, credentials, firestore
 from pydantic import BaseModel
 
@@ -4587,7 +4587,6 @@ async def export_bill_excel(
         import io
         from datetime import datetime
 
-        from fastapi.responses import StreamingResponse
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, Side
 
@@ -4846,18 +4845,16 @@ async def export_bill_excel(
         ws.column_dimensions["G"].width = 50  # PARTIES NAME
         ws.column_dimensions["H"].width = 15  # FEES (RS.)
 
-        # Save to BytesIO
+        # Save to BytesIO and extract raw bytes for response
         output = io.BytesIO()
         wb.save(output)
-        output.seek(0)
 
         # Return as downloadable file with proper headers
-        return StreamingResponse(
-            output,
+        return Response(
+            content=output.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             },
         )
 
