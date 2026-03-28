@@ -439,7 +439,11 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
     result = board.getData(
         {},
         agp_filter="Pooja Deshpande",
-        agp_name_variations=["Pooja Deshpande", "P. Deshpande", "Pooja M. Joshi Deshpande"],
+        agp_name_variations=[
+            "Pooja Deshpande",
+            "P. Deshpande",
+            "Pooja M. Joshi Deshpande",
+        ],
     )
 
     # Only the matching record should remain
@@ -480,4 +484,7 @@ def test_record_matches_agp_multi_token_still_matches(mock_firestore):
         "government_pleader": [],
         "additional_respondent_lawyers": [],
     }
-    assert board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"]) is True
+    assert (
+        board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"])
+        is True
+    )

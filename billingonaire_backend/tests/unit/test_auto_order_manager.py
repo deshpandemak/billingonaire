@@ -988,7 +988,10 @@ def test_process_single_case_analysis_success_when_all_orders_skipped(
 def test_casetype_dict_contains_ia_st(auto_order_manager):
     """IA(ST) must map to the same code as plain IA for court downloads."""
     assert "IA(ST)" in auto_order_manager.casetype_dict
-    assert auto_order_manager.casetype_dict["IA(ST)"] == auto_order_manager.casetype_dict["IA"]
+    assert (
+        auto_order_manager.casetype_dict["IA(ST)"]
+        == auto_order_manager.casetype_dict["IA"]
+    )
 
 
 def test_parse_case_reference_ia_st(auto_order_manager):
@@ -1034,6 +1037,8 @@ def test_download_order_for_case_ia_st_not_unsupported(auto_order_manager):
     result = auto_order_manager._download_order_for_case(case_data, sequence_number=1)
 
     # Must NOT return the "Case type not supported" error
-    assert result.get("error") != "Case type IA(ST) not supported for automated download"
+    assert (
+        result.get("error") != "Case type IA(ST) not supported for automated download"
+    )
     # Legacy download path should have been attempted
     auto_order_manager._download_pdf_bombay_hc_simple.assert_called()
