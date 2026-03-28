@@ -99,9 +99,6 @@ class BombayHighCourtScraper:
         }
         return bench_codes.get((bench or "mumbai").lower(), "2")
 
-    def _get_stamp_regn_type(self, case_type: str) -> str:
-        return "Stamp" if case_type.upper().endswith("(ST)") else "Registration"
-
     def _get_base_case_type(self, case_type: str) -> str:
         return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
 
