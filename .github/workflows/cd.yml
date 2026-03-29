@@ -299,6 +299,11 @@ jobs:
           credentials_json: '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}'
           project_id: '${{ env.GCP_PROJECT_ID }}'
 
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: '${{ env.GCP_PROJECT_ID }}'
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -306,6 +311,23 @@ jobs:
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
+
+      - name: Grant Firestore Index Admin permissions
+        run: |
+          if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ] || [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+            echo "❌ ERROR: GOOGLE_APPLICATION_CREDENTIALS not set or file not found"
+            exit 1
+          fi
+          SA_EMAIL=$(python3 -c "import json,sys; data=json.load(open('$GOOGLE_APPLICATION_CREDENTIALS')); print(data['client_email'])" 2>&1) || {
+            echo "❌ ERROR: Failed to read service account email from credentials file: ${SA_EMAIL}"
+            exit 1
+          }
+          echo "📋 Granting roles/datastore.indexAdmin to: ${SA_EMAIL}"
+          gcloud projects add-iam-policy-binding ${{ env.GCP_PROJECT_ID }} \
+            --member="serviceAccount:${SA_EMAIL}" \
+            --role="roles/datastore.indexAdmin" \
+            --condition=None
+          echo "✅ IAM role granted successfully"
 
       - name: Deploy Firestore indexes and rules
         run: |
