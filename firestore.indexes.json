@@ -1,4 +1,72 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "daily-boards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "board_date", "order": "ASCENDING" },
+        { "fieldPath": "case_ref", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily-boards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "respondent_lawyer", "order": "ASCENDING" },
+        { "fieldPath": "board_date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily-boards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "case_type", "order": "ASCENDING" },
+        { "fieldPath": "case_no", "order": "ASCENDING" },
+        { "fieldPath": "case_year", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily-boards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "case_type", "order": "ASCENDING" },
+        { "fieldPath": "case_year", "order": "ASCENDING" },
+        { "fieldPath": "board_date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "case-details",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "latest_order_status", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "user-bills",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "email", "order": "ASCENDING" },
+        { "fieldPath": "role", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "order-search-index",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "order_category", "order": "ASCENDING" },
+        { "fieldPath": "date_validation_valid", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }
+

@@ -34,11 +34,67 @@ jobs:
       contents: read
       pull-requests: read
 
+  detect-changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      backend_changed: ${{ steps.changes.outputs.backend_changed }}
+      frontend_changed: ${{ steps.changes.outputs.frontend_changed }}
+      firestore_changed: ${{ steps.changes.outputs.firestore_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed files
+        id: changes
+        run: |
+          BACKEND_CHANGED=false
+          FRONTEND_CHANGED=false
+          FIRESTORE_CHANGED=false
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "⚡ Manual dispatch: marking all components as changed"
+            BACKEND_CHANGED=true
+            FRONTEND_CHANGED=true
+            FIRESTORE_CHANGED=true
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            echo "📂 Changed files:"
+            echo "$CHANGED_FILES"
+            while IFS= read -r file; do
+              case "$file" in
+                billingonaire_backend/*) BACKEND_CHANGED=true ;;
+                billingonaire-ui/*) FRONTEND_CHANGED=true ;;
+                firestore.indexes.json|firestore.rules|firebase.json) FIRESTORE_CHANGED=true ;;
+                firebase/*|.github/workflows/*|package.json)
+                  BACKEND_CHANGED=true
+                  FRONTEND_CHANGED=true
+                  FIRESTORE_CHANGED=true
+                  ;;
+              esac
+            done <<< "$CHANGED_FILES"
+          else
+            echo "⚡ No previous commit: marking all components as changed"
+            BACKEND_CHANGED=true
+            FRONTEND_CHANGED=true
+            FIRESTORE_CHANGED=true
+          fi
+
+          echo "backend_changed=$BACKEND_CHANGED" >> $GITHUB_OUTPUT
+          echo "frontend_changed=$FRONTEND_CHANGED" >> $GITHUB_OUTPUT
+          echo "firestore_changed=$FIRESTORE_CHANGED" >> $GITHUB_OUTPUT
+
+          echo "📊 Change detection results:"
+          echo "  Backend changed: $BACKEND_CHANGED"
+          echo "  Frontend changed: $FRONTEND_CHANGED"
+          echo "  Firestore changed: $FIRESTORE_CHANGED"
+
   deploy-backend:
     name: Deploy Backend to Cloud Run
     runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/main'
+    needs: [test, detect-changes]
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.backend_changed == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -188,8 +244,8 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend to Firebase Hosting
     runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/main'
+    needs: [test, detect-changes]
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.frontend_changed == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -228,11 +284,40 @@ jobs:
           sleep 15
           curl -f https://billingonaire.web.app/ || echo "⚠️ Frontend verification failed, but deployment may still be processing"
 
+  deploy-firestore:
+    name: Deploy Firestore Indexes
+    runs-on: ubuntu-latest
+    needs: [test, detect-changes]
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.firestore_changed == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}'
+          project_id: '${{ env.GCP_PROJECT_ID }}'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy Firestore indexes and rules
+        run: |
+          echo "🔥 Deploying Firestore configuration..."
+          firebase deploy --only firestore --project ${{ env.GCP_PROJECT_ID }}
+          echo "✅ Firestore deployed successfully"
+
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [deploy-backend, deploy-frontend]
-    if: github.ref == 'refs/heads/main' && success()
+    needs: [deploy-backend, deploy-frontend, deploy-firestore]
+    if: github.ref == 'refs/heads/main' && !failure() && !cancelled()
     permissions:
       contents: write
 
