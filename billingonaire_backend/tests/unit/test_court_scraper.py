@@ -14,14 +14,34 @@ def test_scraper_initialization_defaults_to_direct_api():
     ]
 
 
-def test_parse_case_number():
+@pytest.mark.parametrize(
+    "case_ref, expected",
+    [
+        (
+            "WP/10460/2023",
+            {"case_type": "WP", "case_number": "10460", "year": "2023"},
+        ),
+        (
+            "PIL/294/2025",
+            {"case_type": "PIL", "case_number": "294", "year": "2025"},
+        ),
+        (
+            "IA/500/2024",
+            {"case_type": "IA", "case_number": "500", "year": "2024"},
+        ),
+        (
+            "WP(ST)/100/2025",
+            {"case_type": "WP(ST)", "case_number": "100", "year": "2025"},
+        ),
+        (
+            "PIL(ST)/77/2024",
+            {"case_type": "PIL(ST)", "case_number": "77", "year": "2024"},
+        ),
+    ],
+)
+def test_parse_case_number(case_ref, expected):
     scraper = BombayHighCourtScraper()
-    result = scraper.parse_case_number("WP/10460/2023")
-    assert result == {
-        "case_type": "WP",
-        "case_number": "10460",
-        "year": "2023",
-    }
+    assert scraper.parse_case_number(case_ref) == expected
 
 
 @pytest.mark.parametrize("case_ref", ["INVALID", "WP-123-2024", "WP/123"])
@@ -317,3 +337,189 @@ def test_enrich_case_orders_result_builds_title_when_missing():
     assert enriched["case_orders"] == [
         {"date": "01/01/2025", "download_link": "http://example.com/order.pdf"}
     ]
+
+
+HIDDEN_HTML_TOKENS = (
+    '<input type="hidden" name="_token" value="csrf123">'
+    '<input type="hidden" name="form_secret" value="secret1">'
+)
+
+
+@pytest.mark.parametrize(
+    "case_type, type_options, expected_case_type_id, expected_stampreg",
+    [
+        # WP resolved via type list
+        (
+            "WP",
+            [{"case_type": 1, "type_name": "WP", "type_flag": "1"}],
+            "1",
+            "R",
+        ),
+        # PIL resolved via type list
+        (
+            "PIL",
+            [
+                {"case_type": 1, "type_name": "WP", "type_flag": "1"},
+                {"case_type": 5, "type_name": "PIL", "type_flag": "1"},
+            ],
+            "5",
+            "R",
+        ),
+        # IA resolved via type list
+        (
+            "IA",
+            [
+                {"case_type": 1, "type_name": "WP", "type_flag": "1"},
+                {"case_type": 8, "type_name": "IA", "type_flag": "1"},
+            ],
+            "8",
+            "R",
+        ),
+        # WP(ST) — stamp case: base type "WP" resolved, stampreg="S"
+        (
+            "WP(ST)",
+            [{"case_type": 1, "type_name": "WP", "type_flag": "1"}],
+            "1",
+            "S",
+        ),
+        # PIL(ST) — stamp PIL: base type "PIL" resolved, stampreg="S"
+        (
+            "PIL(ST)",
+            [
+                {"case_type": 1, "type_name": "WP", "type_flag": "1"},
+                {"case_type": 5, "type_name": "PIL", "type_flag": "1"},
+            ],
+            "5",
+            "S",
+        ),
+        # Unknown case type falls back to label string, stampreg still correct
+        (
+            "MISC",
+            [{"case_type": 1, "type_name": "WP", "type_flag": "1"}],
+            "MISC",
+            "R",
+        ),
+    ],
+)
+def test_build_form_data_case_type_and_stampreg(
+    case_type, type_options, expected_case_type_id, expected_stampreg
+):
+    scraper = BombayHighCourtScraper()
+    case_parts = {"case_type": case_type, "case_number": "100", "year": "2025"}
+    form_data = scraper._build_form_data(case_parts, HIDDEN_HTML_TOKENS, type_options)
+    assert form_data["case_type"] == expected_case_type_id
+    assert form_data["stampreg"] == expected_stampreg
+    assert form_data["case_no"] == "100"
+    assert form_data["year"] == "2025"
+    assert form_data["side"] == "1"
+
+
+def _make_mock_session(initial_html, type_options, page_html):
+    """Return a mock requests.Session capturing POST form data in submitted_data."""
+    mock_session = Mock()
+
+    mock_initial = Mock()
+    mock_initial.status_code = 200
+    mock_initial.text = initial_html
+
+    mock_ajax = Mock()
+    mock_ajax.status_code = 200
+    mock_ajax.json.return_value = type_options
+
+    mock_post = Mock()
+    mock_post.status_code = 200
+    mock_post.url = "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+    mock_post.json.return_value = {"status": True, "page": page_html}
+
+    mock_session.get.side_effect = [mock_initial, mock_ajax]
+
+    submitted_data = {}
+    original_post = mock_session.post
+    original_post.return_value = mock_post
+
+    def capture_post(url, data=None, **kwargs):
+        submitted_data.update(data or {})
+        return original_post(url, data=data, **kwargs)
+
+    mock_session.post = capture_post
+    return mock_session, submitted_data
+
+
+def test_fetch_with_direct_api_uses_correct_stampreg_for_pil(monkeypatch):
+    """PIL case should submit with stampreg=R and resolve PIL numeric type id."""
+    scraper = BombayHighCourtScraper()
+
+    page_html = """
+    <section>
+        <div class="tab-content">
+            <div class="card tab-pane active" id="cn_CaseNoUpdates">
+                <div class="card-header">
+                    Case No. <b>PIL/294/2025</b>
+                    was filed on <b>01/01/2025</b>
+                    by <b>PIL Petitioner</b>
+                    against <b>State of Maharashtra</b>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="cn_CaseNoOrders">
+                <div class="card-body">
+                    <table class="table"><tbody></tbody></table>
+                </div>
+            </div>
+        </div>
+    </section>
+    """
+    type_options = [
+        {"case_type": 1, "type_name": "WP", "type_flag": "1"},
+        {"case_type": 5, "type_name": "PIL", "type_flag": "1"},
+    ]
+    mock_session, submitted_data = _make_mock_session(
+        HIDDEN_HTML_TOKENS, type_options, page_html
+    )
+    monkeypatch.setattr(
+        "billingonaire_backend.CourtScraper.requests.Session", lambda: mock_session
+    )
+
+    result = scraper._fetch_with_direct_api("PIL/294/2025")
+
+    assert result is not None
+    assert result["status"] == "found"
+    assert submitted_data.get("case_type") == "5"
+    assert submitted_data.get("stampreg") == "R"
+
+
+def test_fetch_with_direct_api_uses_stamp_stampreg_for_st_case(monkeypatch):
+    """WP(ST) case should submit with stampreg=S."""
+    scraper = BombayHighCourtScraper()
+
+    page_html = """
+    <section>
+        <div class="tab-content">
+            <div class="card tab-pane active" id="cn_CaseNoUpdates">
+                <div class="card-header">
+                    Case No. <b>WP(ST)/100/2025</b>
+                    was filed on <b>15/03/2025</b>
+                    by <b>Stamp Petitioner</b>
+                    against <b>State</b>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="cn_CaseNoOrders">
+                <div class="card-body">
+                    <table class="table"><tbody></tbody></table>
+                </div>
+            </div>
+        </div>
+    </section>
+    """
+    type_options = [{"case_type": 1, "type_name": "WP", "type_flag": "1"}]
+    mock_session, submitted_data = _make_mock_session(
+        HIDDEN_HTML_TOKENS, type_options, page_html
+    )
+    monkeypatch.setattr(
+        "billingonaire_backend.CourtScraper.requests.Session", lambda: mock_session
+    )
+
+    result = scraper._fetch_with_direct_api("WP(ST)/100/2025")
+
+    assert result is not None
+    assert submitted_data.get("stampreg") == "S"
+    assert submitted_data.get("case_type") == "1"
