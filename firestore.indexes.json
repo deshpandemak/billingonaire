@@ -30,7 +30,8 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "case_type", "order": "ASCENDING" },
-        { "fieldPath": "case_year", "order": "ASCENDING" }
+        { "fieldPath": "case_year", "order": "ASCENDING" },
+        { "fieldPath": "board_date", "order": "ASCENDING" }
       ]
     },
     {
