@@ -86,6 +86,10 @@ class OrderDocumentAnalyzer:
         self.order_patterns = self._create_order_patterns()
         self.entity_patterns = self._create_entity_patterns()
         self.date_patterns = self._create_date_patterns()
+        # Pre-compile strong disposal patterns once to avoid per-call overhead.
+        self._compiled_strong_disposal = [
+            re.compile(p, re.IGNORECASE) for p in self.STRONG_DISPOSAL_PATTERNS
+        ]
 
         logging.info("Order Document Analyzer initialized successfully")
 
@@ -293,7 +297,8 @@ class OrderDocumentAnalyzer:
     # High-confidence disposal patterns that unambiguously signal a final order.
     # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker
     # patterns (e.g. standalone "dismissed") participate in score comparison only.
-    _STRONG_DISPOSAL_PATTERNS: List[str] = [
+    # Defined as a class constant and pre-compiled in __init__ for performance.
+    STRONG_DISPOSAL_PATTERNS: List[str] = [
         r"\bdisposed?\s+off?\b",
         r"\binfructuous\b",
         r"\ballowed?\s+and\s+disposed?\s+off?\b",
@@ -410,7 +415,7 @@ class OrderDocumentAnalyzer:
         # "dismissed" from an IA dismissal, or "relief is granted" for interim
         # relief) should not override clear ADJOURNED/HEARD_AND_ADJOURNED evidence.
         has_strong_disposal = any(
-            re.search(p, text, re.IGNORECASE) for p in self._STRONG_DISPOSAL_PATTERNS
+            p.search(text) for p in self._compiled_strong_disposal
         )
         if has_strong_disposal:
             best_category = "DISPOSED_OFF"
