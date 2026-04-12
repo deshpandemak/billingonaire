@@ -127,10 +127,16 @@ def case_with_fetched_order(ctx, mock_firestore_client, case_id):
 @when("I POST the order to /analyze-order")
 def post_analyze_order(ctx, api_client, auth_headers):
     order_text = ctx.get("order_text", "The matter is adjourned")
-    # Mock the order analysis to return a predictable result
+    # Use the real classifier so BDD scenarios exercise actual classification logic.
+    # Firebase is already mocked by the autouse mock_firebase_env fixture.
+    from order_analyzer import OrderDocumentAnalyzer
+
+    analyzer = OrderDocumentAnalyzer()
+    inferred_category, _ = analyzer._classify_order(order_text)
+
     mock_result = MagicMock()
-    mock_result.order_category = _infer_category(order_text)
-    mock_result.category_confidence = 0.92
+    mock_result.order_category = inferred_category
+    mock_result.category_confidence = 0.92  # fixed for API-level confidence assertions
     mock_result.order_date = "01/10/2024"
     mock_result.next_hearing_date = _extract_next_date(order_text)
     mock_result.agp_names = _extract_agp(order_text)
@@ -313,15 +319,6 @@ def lifecycle_updated(ctx, status):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _infer_category(text: str) -> str:
-    t = text.lower()
-    if "dismiss" in t or "disposed" in t:
-        return "DISPOSED_OFF"
-    if "heard and adjourned" in t:
-        return "HEARD_AND_ADJOURNED"
-    return "ADJOURNED"
 
 
 def _extract_next_date(text: str) -> str:
