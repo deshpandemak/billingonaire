@@ -86,6 +86,13 @@ class OrderDocumentAnalyzer:
         self.order_patterns = self._create_order_patterns()
         self.entity_patterns = self._create_entity_patterns()
         self.date_patterns = self._create_date_patterns()
+        # Pre-compile strong disposal patterns once to avoid per-call overhead.
+        self._compiled_strong_disposal = [
+            re.compile(p, re.IGNORECASE) for p in self.STRONG_DISPOSAL_PATTERNS
+        ]
+        # Build an explicit per-pattern weight map.  Keyed by the exact pattern
+        # string so lookups are O(1) and immune to substring-matching bugs.
+        self._pattern_weights = self._build_pattern_weights()
 
         logging.info("Order Document Analyzer initialized successfully")
 
@@ -96,32 +103,37 @@ class OrderDocumentAnalyzer:
                 r"\bdisposed?\s+off?\b",
                 r"\bdisposal\b",
                 r"\binfructuous\b",
-                r"\bwithdrawn?\b",
-                r"\bdismissed?\b",
+                # Withdrawal patterns — only match when petition is actually/formally
+                # withdrawn (past tense), not when a petitioner merely "seeks to withdraw".
+                r"\bpetition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
+                r"\bwrit\s+petition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
                 r"\ballowed?\s+and\s+disposed?\s+off?\b",
                 r"\bfinal\s+disposal\b",
                 r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
                 r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
                 r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
-                r"\bfinal\s+order\b",
+                # "final judgment" is specific enough; "final order" is too broad
+                # (appears in compliance contexts: "in compliance of the final order")
                 r"\bfinal\s+judgment\b",
-                r"\bsuit\s+dismissed?\b",
-                r"\bpetition\s+dismissed?\b",
-                r"\bwrit\s+dismissed?\b",
-                r"\bpetition\s+(?:is\s+)?allowed\b",
+                r"\bsuit\s+(?:is\s+)?dismissed?\b",
+                r"\bpetition\s+(?:is\s+)?dismissed?\b",
+                r"\bwrit\s+(?:is\s+)?dismissed?\b",
+                # Standalone \bdismissed?\b removed — it fires on "application for time
+                # dismissed" inside an otherwise ADJOURNED order.
+                # Keep petition/writ/suit dismissed patterns above.
                 r"\bpetition\s+(?:is\s+)?granted\b",
-                r"\brelief\s+(?:is\s+)?granted\b",
+                # \brelief\s+(?:is\s+)?granted\b removed — "interim relief is granted"
+                # legitimately appears in ADJOURNED orders.
                 r"\bwrit\s+(?:is\s+)?allowed\b",
                 r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
                 r"\bconclusion\b.*?\bdisposed\b",
                 r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
                 r"\baccordingly\b.*?\bdisposed\b",
                 r"\bhence\b.*?\bdisposed\b",
-                r"\bcase\s+(?:is\s+)?closed\b",
                 r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
-                r"\bmatter\s+(?:is\s+)?closed\b",
-                r"\bclos(?:ed|ure)\b.*?\b(?:case|matter|petition)\b",
-                r"\b(?:case|matter|petition)\b.*?\bclos(?:ed|ure)\b",
+                r"\bmatter\s+(?:is\s+)?finally\s+closed\b",
+                # Broad "case/matter closed" patterns removed — "case is closed for
+                # arguments" is not a disposal.
             ],
             "ADJOURNED": [
                 r"\bstands?\s+over\s+to\b",
@@ -160,8 +172,8 @@ class OrderDocumentAnalyzer:
                 r"\b(?:learned\s+)?counsel.*?submits?\b",
                 r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
-                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?)\b",
-                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?)\b",
+                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
+                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
                 r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 r"\bcourt.*?observes?\s+that\b",
@@ -173,8 +185,127 @@ class OrderDocumentAnalyzer:
                 r"\bmatter[s]?\s+(?:would\s+be\s+)?called\s+out.*?after\b",
                 r"\bConsidering\s+that.*?pending.*?(?:final\s+)?hearing\b",
                 r"\badmission\s+stage.*?after.*?board\b",
+                # Court-directive patterns — when the court issues substantive orders
+                # (directions, affidavit filings, deprecations) the matter was heard.
+                r"\bwe\s+(?:hereby\s+)?direct\b",
+                r"\bcourt\s+directs?\b",
+                r"\bdirected?\s+to\s+(?:file|place|communicate|submit|issue|produce|swear|take|pay)\b",
+                r"\baffidavit\s+(?:to\s+be|be)\s+(?:filed|sworn|duly\s+sworn|placed)\b",
+                r"\bdeprecated?\s+in\s+strong\s+words\b",
+                r"\bcorrective\s+instructions?\b",
+                r"\bpursuant\s+to\s+(?:the\s+)?(?:compliance|aforesaid|above|order)\b",
+                r"\bconduct\s+of\s+(?:the\s+)?(?:officials?|committee|department)\b",
             ],
         }
+
+    def _build_pattern_weights(self) -> Dict[str, float]:
+        """Return a mapping from every pattern string to its scoring weight.
+
+        Using an explicit map avoids the brittle substring-on-regex-text approach
+        that previously caused directive patterns to be mis-weighted.
+        Patterns not listed here default to 1.0.
+        """
+        weights: Dict[str, float] = {}
+
+        # --- DISPOSED_OFF weights -------------------------------------------
+        for p in [
+            r"\bdisposed?\s+off?\b",
+            r"\bdisposal\b",
+            r"\ballowed?\s+and\s+disposed?\s+off?\b",
+            r"\bfinal\s+disposal\b",
+            r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
+            r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
+            r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
+            r"\bconclusion\b.*?\bdisposed\b",
+            r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
+            r"\baccordingly\b.*?\bdisposed\b",
+            r"\bhence\b.*?\bdisposed\b",
+        ]:
+            weights[p] = 2.5  # Disposal is definitive
+
+        for p in [
+            r"\binfructuous\b",
+            r"\bpetition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
+            r"\bwrit\s+petition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
+            r"\bfinal\s+judgment\b",
+            r"\bsuit\s+(?:is\s+)?dismissed?\b",
+            r"\bpetition\s+(?:is\s+)?dismissed?\b",
+            r"\bwrit\s+(?:is\s+)?dismissed?\b",
+            r"\bpetition\s+(?:is\s+)?granted\b",
+            r"\bwrit\s+(?:is\s+)?allowed\b",
+            r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
+            r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
+            r"\bmatter\s+(?:is\s+)?finally\s+closed\b",
+        ]:
+            weights[p] = 2.0
+
+        # --- ADJOURNED weights ----------------------------------------------
+        for p in [
+            r"\bstands?\s+over\s+to\b",
+            r"\binterim\s+order.*?to\s+continue\b",
+        ]:
+            weights[p] = 1.5  # "stand over" is a reliable adjournment signal
+
+        # All other ADJOURNED patterns keep the default weight of 1.0
+
+        # --- HEARD_AND_ADJOURNED weights ------------------------------------
+        # Very strong hearing indicators
+        for p in [
+            r"\bheard?\s+and\s+adjourned?\b",
+            r"\bon\s+hearing\b",
+            r"\bupon\s+hearing\b",
+            r"\bhaving\s+heard?\b",
+            r"\bwe\s+(?:hereby\s+)?direct\b",
+            r"\bcourt\s+directs?\b",
+            r"\bdirected?\s+to\s+(?:file|place|communicate|submit|issue|produce|swear|take|pay)\b",
+        ]:
+            weights[p] = 2.5
+
+        # Strong hearing indicators
+        for p in [
+            r"\bpartly\s+heard?\b",
+            r"\bpartial\s+hearing\b",
+            r"\bheard?\s+partially\b",
+            r"\barguments?\s+(?:heard?|concluded?)\s+(?:and\s+)?adjourned?\b",
+            r"\bafter\s+hearing.*?adjourned?\b",
+            r"\bmatter\s+heard?\s+and\s+(?:kept\s+for|posted\s+to)\b",
+            r"\bheard?\s+(?:the\s+)?(?:parties?|counsel)\s+and\s+adjourned?\b",
+            r"\bafter\s+hearing\s+(?:the\s+)?(?:learned\s+)?(?:counsel|counsels?|advocates?)\b",
+            r"\bafter\s+hearing\s+(?:learned\s+)?(?:counsel|advocate)\s+for\s+(?:the\s+)?(?:petitioner|respondent)\b",
+            r"\b(?:learned\s+)?counsel.*?submits?\b",
+            r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
+            r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
+            r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
+            r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
+            r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
+            r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
+            r"\baffidavit\s+(?:to\s+be|be)\s+(?:filed|sworn|duly\s+sworn|placed)\b",
+            r"\bdeprecated?\s+in\s+strong\s+words\b",
+            r"\bcorrective\s+instructions?\b",
+            r"\bpursuant\s+to\s+(?:the\s+)?(?:compliance|aforesaid|above|order)\b",
+        ]:
+            weights[p] = 2.0
+
+        # Moderate hearing indicators
+        for p in [
+            r"\bcourt.*?observes?\s+that\b",
+            r"\b(?:having\s+)?perused\s+(?:the\s+)?(?:papers?|records?|pleadings?)\b",
+            r"\bconsidering\s+(?:the\s+)?submissions?\b",
+            r"\bin\s+view\s+of\s+(?:the\s+)?(?:above|submissions?)\b",
+            r"\bconduct\s+of\s+(?:the\s+)?(?:officials?|committee|department)\b",
+        ]:
+            weights[p] = 1.8
+
+        for p in [
+            r"\blist(?:ed)?\s+(?:the\s+same\s+)?on.*?for.*?(?:final\s+)?hearing\b",
+            r"\bproceedings\s+are\s+pending.*?list.*?for.*?hearing\b",
+            r"\bmatter[s]?\s+(?:would\s+be\s+)?called\s+out.*?after\b",
+            r"\bConsidering\s+that.*?pending.*?(?:final\s+)?hearing\b",
+            r"\badmission\s+stage.*?after.*?board\b",
+        ]:
+            weights[p] = 1.5
+
+        return weights
 
     def _create_entity_patterns(self) -> Dict[str, List[str]]:
         """Create patterns for entity extraction."""
@@ -275,6 +406,30 @@ class OrderDocumentAnalyzer:
         """LLM fallback metrics are retired and kept empty for compatibility."""
         return {}
 
+    # High-confidence disposal patterns that unambiguously signal a final order.
+    # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker
+    # patterns (e.g. standalone "dismissed") participate in score comparison only.
+    # Defined as a class constant and pre-compiled in __init__ for performance.
+    STRONG_DISPOSAL_PATTERNS: List[str] = [
+        r"\bdisposed?\s+off?\b",
+        r"\binfructuous\b",
+        r"\ballowed?\s+and\s+disposed?\s+off?\b",
+        r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
+        r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
+        r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
+        r"\baccordingly\b.*?\bdisposed\b",
+        r"\bhence\b.*?\bdisposed\b",
+        r"\bconclusion\b.*?\bdisposed\b",
+        r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
+        r"\bsuit\s+(?:is\s+)?dismissed?\b",
+        r"\bpetition\s+(?:is\s+)?dismissed?\b",
+        r"\bwrit\s+(?:is\s+)?dismissed?\b",
+        r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
+        r"\bwrit\s+(?:is\s+)?allowed\b",
+        r"\bfinal\s+disposal\b",
+        r"\bfinal\s+judgment\b",
+    ]
+
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""
         scores: Dict[str, Dict[str, float]] = {}
@@ -292,44 +447,10 @@ class OrderDocumentAnalyzer:
                     matched_patterns.append(
                         pattern[:50]
                     )  # Log first 50 chars of pattern
-                    # Weight patterns based on specificity and importance
-                    if "disposed" in pattern.lower():
-                        score += len(regex_matches) * 2.5  # Disposal is definitive
-                    elif "heard" in pattern.lower() and "adjourned" in pattern.lower():
-                        score += len(regex_matches) * 2.0  # Heard+adjourned is specific
-                    elif "partly" in pattern.lower() or "partial" in pattern.lower():
-                        score += len(regex_matches) * 2.0  # Partial hearing indicators
-                    elif "arguments" in pattern.lower() and "heard" in pattern.lower():
-                        score += (
-                            len(regex_matches) * 2.0
-                        )  # Arguments heard indicates hearing
-                    elif (
-                        "on\\s+hearing" in pattern.lower()
-                        or "upon\\s+hearing" in pattern.lower()
-                        or "having\\s+heard" in pattern.lower()
-                    ):
-                        score += (
-                            len(regex_matches) * 2.5
-                        )  # Very strong hearing indicators
-                    elif (
-                        "counsel.*?submits" in pattern.lower()
-                        or "counsel.*?appears" in pattern.lower()
-                        or "agp.*?submits" in pattern.lower()
-                        or "agp.*?appears" in pattern.lower()
-                    ):
-                        score += (
-                            len(regex_matches) * 2.0
-                        )  # Strong hearing indicators (counsel activity)
-                    elif (
-                        "considering\\s+.*?submissions" in pattern.lower()
-                        or "court.*?observes" in pattern.lower()
-                        or "perused" in pattern.lower()
-                    ):
-                        score += len(regex_matches) * 1.8  # Moderate hearing indicators
-                    elif "stand over" in pattern.lower():
-                        score += len(regex_matches) * 1.5
-                    else:
-                        score += len(regex_matches)
+                    # Look up the pre-defined weight; default to 1.0 for any
+                    # pattern not explicitly listed (e.g. future additions).
+                    weight = self._pattern_weights.get(pattern, 1.0)
+                    score += len(regex_matches) * weight
 
             scores[category] = {
                 "score": score,
@@ -351,14 +472,20 @@ class OrderDocumentAnalyzer:
             logging.warning("⚠️ No patterns matched - defaulting to ADJOURNED")
             return "ADJOURNED", 0.5  # Default assumption
 
-        # CRITICAL: Absolute priority to DISPOSED_OFF if any disposal indicators found
-        if scores.get("DISPOSED_OFF", {}).get("score", 0) > 0:
+        # CRITICAL: Give absolute priority to DISPOSED_OFF only when a strong,
+        # high-confidence disposal pattern matches.  Weak patterns (e.g. standalone
+        # "dismissed" from an IA dismissal, or "relief is granted" for interim
+        # relief) should not override clear ADJOURNED/HEARD_AND_ADJOURNED evidence.
+        has_strong_disposal = any(
+            p.search(text) for p in self._compiled_strong_disposal
+        )
+        if has_strong_disposal:
             best_category = "DISPOSED_OFF"
             confidence = scores["DISPOSED_OFF"]["confidence"]
             # Boost confidence for disposal - it's definitive
             confidence = min(confidence * 1.3, 1.0)
             logging.info(
-                f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - DISPOSAL DETECTED"
+                f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - STRONG DISPOSAL DETECTED"
             )
             return best_category, confidence
 

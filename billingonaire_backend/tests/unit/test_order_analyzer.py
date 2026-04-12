@@ -84,6 +84,10 @@ class TestCategoryClassification:
 
             return order_analyzer
 
+    @pytest.fixture
+    def analyzer(self, analyzer_module):
+        return analyzer_module.OrderDocumentAnalyzer()
+
     def test_detect_adjourned(self, analyzer_module):
         """Test detection of ADJOURNED category"""
         text = "The matter is adjourned to next date"
@@ -118,6 +122,89 @@ class TestCategoryClassification:
 
         confidence = min((heard_count + adjourned_count) / 3.0, 1.0)
         assert 0 <= confidence <= 1.0
+
+    # ------------------------------------------------------------------
+    # Tests for classification accuracy improvements (false-positive fixes)
+    # ------------------------------------------------------------------
+
+    def test_adjourned_not_classified_as_disposed_when_petitioner_seeks_withdrawal(
+        self, analyzer
+    ):
+        """Petitioner intending to withdraw should NOT trigger DISPOSED_OFF."""
+        text = (
+            "The petitioner seeks to withdraw the petition. "
+            "The matter is adjourned to 15/10/2024."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
+    def test_adjourned_not_classified_as_disposed_when_final_order_referenced(
+        self, analyzer
+    ):
+        """Compliance reference to a prior final order should not be DISPOSED_OFF."""
+        text = (
+            "In compliance of the final order dated 01/01/2024, "
+            "stand over to next date."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
+    def test_adjourned_not_classified_as_disposed_when_ia_dismissed(self, analyzer):
+        """Dismissal of an interlocutory application should not trigger DISPOSED_OFF
+        when the main matter is merely adjourned."""
+        text = (
+            "The application for time is dismissed. "
+            "The matter is adjourned to 15/10/2024."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
+    def test_adjourned_not_classified_as_disposed_when_interim_relief_granted(
+        self, analyzer
+    ):
+        """Granting interim relief does NOT make an adjournment order a disposal."""
+        text = (
+            "Interim relief is granted. Stand over to 15/10/2024. "
+            "Interim order to continue."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
+    def test_disposed_off_correctly_classified(self, analyzer):
+        """Disposal via 'disposed off as infructuous' must still be DISPOSED_OFF."""
+        text = "These Petitions are disposed off as being infructuous."
+        category, confidence = analyzer._classify_order(text)
+        assert category == "DISPOSED_OFF"
+        assert confidence >= 0.6
+
+    def test_petition_dismissed_classified_as_disposed(self, analyzer):
+        """'Petition is dismissed for want of prosecution' must be DISPOSED_OFF."""
+        text = "The petition is dismissed for want of prosecution."
+        category, _ = analyzer._classify_order(text)
+        assert category == "DISPOSED_OFF"
+
+    def test_heard_and_adjourned_with_court_directives(self, analyzer):
+        """Orders containing court directives ('We direct ...') should be
+        classified as HEARD_AND_ADJOURNED, not ADJOURNED."""
+        text = (
+            "Such conduct of the Committee Officials is deprecated in strong words. "
+            "We direct learned AGP to communicate this order to the Additional "
+            "Chief Secretary. "
+            "We further direct that an affidavit be filed within four weeks. "
+            "Stand over to 24th February, 2025. "
+            "Ad-interim order granted earlier to continue till then."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "HEARD_AND_ADJOURNED"
+
+    def test_paucity_of_time_classified_as_adjourned(self, analyzer):
+        """Paucity-of-time standover must be ADJOURNED, not HEARD_AND_ADJOURNED."""
+        text = (
+            "Due to paucity of time, stand over to 23/10/2024. "
+            "Interim order, if any, to continue till then."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
 
 
 class TestEntityExtraction:
