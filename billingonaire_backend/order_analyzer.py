@@ -96,32 +96,37 @@ class OrderDocumentAnalyzer:
                 r"\bdisposed?\s+off?\b",
                 r"\bdisposal\b",
                 r"\binfructuous\b",
-                r"\bwithdrawn?\b",
-                r"\bdismissed?\b",
+                # Withdrawal patterns — only match when petition is actually/formally
+                # withdrawn (past tense), not when a petitioner merely "seeks to withdraw".
+                r"\bpetition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
+                r"\bwrit\s+petition(?:s)?\s+(?:is\s+|are\s+)?withdrawn?\b",
                 r"\ballowed?\s+and\s+disposed?\s+off?\b",
                 r"\bfinal\s+disposal\b",
                 r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
                 r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
                 r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
-                r"\bfinal\s+order\b",
+                # "final judgment" is specific enough; "final order" is too broad
+                # (appears in compliance contexts: "in compliance of the final order")
                 r"\bfinal\s+judgment\b",
-                r"\bsuit\s+dismissed?\b",
-                r"\bpetition\s+dismissed?\b",
-                r"\bwrit\s+dismissed?\b",
-                r"\bpetition\s+(?:is\s+)?allowed\b",
+                r"\bsuit\s+(?:is\s+)?dismissed?\b",
+                r"\bpetition\s+(?:is\s+)?dismissed?\b",
+                r"\bwrit\s+(?:is\s+)?dismissed?\b",
+                # Standalone \bdismissed?\b removed — it fires on "application for time
+                # dismissed" inside an otherwise ADJOURNED order.
+                # Keep petition/writ/suit dismissed patterns above.
                 r"\bpetition\s+(?:is\s+)?granted\b",
-                r"\brelief\s+(?:is\s+)?granted\b",
+                # \brelief\s+(?:is\s+)?granted\b removed — "interim relief is granted"
+                # legitimately appears in ADJOURNED orders.
                 r"\bwrit\s+(?:is\s+)?allowed\b",
                 r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
                 r"\bconclusion\b.*?\bdisposed\b",
                 r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
                 r"\baccordingly\b.*?\bdisposed\b",
                 r"\bhence\b.*?\bdisposed\b",
-                r"\bcase\s+(?:is\s+)?closed\b",
                 r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
-                r"\bmatter\s+(?:is\s+)?closed\b",
-                r"\bclos(?:ed|ure)\b.*?\b(?:case|matter|petition)\b",
-                r"\b(?:case|matter|petition)\b.*?\bclos(?:ed|ure)\b",
+                r"\bmatter\s+(?:is\s+)?finally\s+closed\b",
+                # Broad "case/matter closed" patterns removed — "case is closed for
+                # arguments" is not a disposal.
             ],
             "ADJOURNED": [
                 r"\bstands?\s+over\s+to\b",
@@ -160,8 +165,8 @@ class OrderDocumentAnalyzer:
                 r"\b(?:learned\s+)?counsel.*?submits?\b",
                 r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
-                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?)\b",
-                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?)\b",
+                r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
+                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
                 r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 r"\bcourt.*?observes?\s+that\b",
@@ -173,6 +178,16 @@ class OrderDocumentAnalyzer:
                 r"\bmatter[s]?\s+(?:would\s+be\s+)?called\s+out.*?after\b",
                 r"\bConsidering\s+that.*?pending.*?(?:final\s+)?hearing\b",
                 r"\badmission\s+stage.*?after.*?board\b",
+                # Court-directive patterns — when the court issues substantive orders
+                # (directions, affidavit filings, deprecations) the matter was heard.
+                r"\bwe\s+(?:hereby\s+)?direct\b",
+                r"\bcourt\s+directs?\b",
+                r"\bdirected?\s+to\s+(?:file|place|communicate|submit|issue|produce|swear|take|pay)\b",
+                r"\baffidavit\s+(?:to\s+be|be)\s+(?:filed|sworn|duly\s+sworn|placed)\b",
+                r"\bdeprecated?\s+in\s+strong\s+words\b",
+                r"\bcorrective\s+instructions?\b",
+                r"\bpursuant\s+to\s+(?:the\s+)?(?:compliance|aforesaid|above|order)\b",
+                r"\bconduct\s+of\s+(?:the\s+)?(?:officials?|committee|department)\b",
             ],
         }
 
@@ -275,6 +290,29 @@ class OrderDocumentAnalyzer:
         """LLM fallback metrics are retired and kept empty for compatibility."""
         return {}
 
+    # High-confidence disposal patterns that unambiguously signal a final order.
+    # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker
+    # patterns (e.g. standalone "dismissed") participate in score comparison only.
+    _STRONG_DISPOSAL_PATTERNS: List[str] = [
+        r"\bdisposed?\s+off?\b",
+        r"\binfructuous\b",
+        r"\ballowed?\s+and\s+disposed?\s+off?\b",
+        r"\bpetitions?\s+(?:are\s+)?disposed?\s+off?\b",
+        r"\bmatter\s+(?:is\s+)?disposed?\s+off?\b",
+        r"\bcase\s+(?:is\s+)?disposed?\s+off?\b",
+        r"\baccordingly\b.*?\bdisposed\b",
+        r"\bhence\b.*?\bdisposed\b",
+        r"\bconclusion\b.*?\bdisposed\b",
+        r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
+        r"\bsuit\s+(?:is\s+)?dismissed?\b",
+        r"\bpetition\s+(?:is\s+)?dismissed?\b",
+        r"\bwrit\s+(?:is\s+)?dismissed?\b",
+        r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
+        r"\bwrit\s+(?:is\s+)?allowed\b",
+        r"\bfinal\s+disposal\b",
+        r"\bfinal\s+judgment\b",
+    ]
+
     def _classify_order(self, text: str) -> Tuple[str, float]:
         """Classify order into categories with confidence score"""
         scores: Dict[str, Dict[str, float]] = {}
@@ -328,6 +366,22 @@ class OrderDocumentAnalyzer:
                         score += len(regex_matches) * 1.8  # Moderate hearing indicators
                     elif "stand over" in pattern.lower():
                         score += len(regex_matches) * 1.5
+                    # Court directive patterns — strong evidence a hearing occurred
+                    elif (
+                        "we\\s+.*?direct" in pattern.lower()
+                        or "court\\s+directs" in pattern.lower()
+                        or "directed?\\s+to\\s+" in pattern.lower()
+                    ):
+                        score += len(regex_matches) * 2.5
+                    elif (
+                        "deprecated" in pattern.lower()
+                        or "affidavit" in pattern.lower()
+                        or "corrective\\s+instructions" in pattern.lower()
+                        or "pursuant\\s+to" in pattern.lower()
+                    ):
+                        score += len(regex_matches) * 2.0
+                    elif "conduct\\s+of" in pattern.lower():
+                        score += len(regex_matches) * 1.5
                     else:
                         score += len(regex_matches)
 
@@ -351,14 +405,20 @@ class OrderDocumentAnalyzer:
             logging.warning("⚠️ No patterns matched - defaulting to ADJOURNED")
             return "ADJOURNED", 0.5  # Default assumption
 
-        # CRITICAL: Absolute priority to DISPOSED_OFF if any disposal indicators found
-        if scores.get("DISPOSED_OFF", {}).get("score", 0) > 0:
+        # CRITICAL: Give absolute priority to DISPOSED_OFF only when a strong,
+        # high-confidence disposal pattern matches.  Weak patterns (e.g. standalone
+        # "dismissed" from an IA dismissal, or "relief is granted" for interim
+        # relief) should not override clear ADJOURNED/HEARD_AND_ADJOURNED evidence.
+        has_strong_disposal = any(
+            re.search(p, text, re.IGNORECASE) for p in self._STRONG_DISPOSAL_PATTERNS
+        )
+        if has_strong_disposal:
             best_category = "DISPOSED_OFF"
             confidence = scores["DISPOSED_OFF"]["confidence"]
             # Boost confidence for disposal - it's definitive
             confidence = min(confidence * 1.3, 1.0)
             logging.info(
-                f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - DISPOSAL DETECTED"
+                f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - STRONG DISPOSAL DETECTED"
             )
             return best_category, confidence
 

@@ -20,6 +20,12 @@ Feature: ML-Powered Court Order Analysis
     Then the response status should be 200
     And the analysis_category should be "HEARD_AND_ADJOURNED"
 
+  Scenario: Classify a court-directive heard and adjourned order
+    Given a court order PDF with text "We direct learned AGP to communicate this order. Stand over to 24th February, 2025."
+    When I POST the order to /analyze-order
+    Then the response status should be 200
+    And the analysis_category should be "HEARD_AND_ADJOURNED"
+
   Scenario: Classify a disposed court order
     Given a court order PDF with text "The petition is dismissed for want of prosecution"
     When I POST the order to /analyze-order
