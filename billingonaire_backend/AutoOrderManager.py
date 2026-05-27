@@ -825,8 +825,18 @@ class AutoOrderManager:
         )
         if api_result.get("success"):
             result["download_success"] = True
-            result["analysis_success"] = bool(api_result.get("success"))
             result["order_link"] = api_result.get("order_link")
+            if api_result.get("orders_processed", 0) > 0:
+                result["analysis_success"] = True
+            else:
+                # All orders were already analysed (skipped). Restore lifecycle so
+                # the case does not stay permanently stuck at fetch_in_progress.
+                self.case_store.transition_lifecycle(
+                    case_ref,
+                    "analysed",
+                    metadata={"source": "auto_order_manager", "reason": "already_analysed"},
+                    event_type="analysis_skipped",
+                )
             logger.info(
                 "✅ _process_single_case: direct-API path succeeded for %s "
                 "(processed=%d skipped=%d)",
