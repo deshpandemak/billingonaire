@@ -127,8 +127,27 @@ jobs:
 
           cd billingonaire_backend
 
-          echo "🔨 Building Docker image with tag: ${{ github.sha }}"
-          gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} .
+          echo "🔨 Submitting build with tag: ${{ github.sha }}"
+          BUILD_ID=$(gcloud builds submit \
+            --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
+            --async \
+            --format='value(id)' \
+            .)
+          echo "Build ID: $BUILD_ID"
+
+          echo "⏳ Polling build status..."
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format='value(status)')
+            echo "  Status: $STATUS"
+            case "$STATUS" in
+              SUCCESS) echo "✅ Build succeeded"; break ;;
+              FAILURE|CANCELLED|TIMEOUT|EXPIRED)
+                echo "❌ Build failed: $STATUS"
+                echo "Logs: https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=${{ env.GCP_PROJECT_ID }}"
+                exit 1 ;;
+              *) sleep 15 ;;
+            esac
+          done
 
           echo "🚀 Deploying to Cloud Run..."
 
