@@ -13,6 +13,7 @@ firebase/firebasetoken
 *.json
 # Allow Claude Code project settings (not credentials)
 !.claude/settings.json
+!.claude/lint.sh
 
 # Python coverage artifacts
 .coverage
