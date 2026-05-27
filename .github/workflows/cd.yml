@@ -25,6 +25,10 @@ env:
   GCP_PROJECT_ID: 'billingonaire'
   GCP_REGION: 'asia-south1'
   CLOUD_RUN_SERVICE: 'billingonaire-backend'
+  # CI/CD deployer service account (authenticates via WIF)
+  GCP_DEPLOY_SA: 'github-actions-deploy@billingonaire.iam.gserviceaccount.com'
+  # Runtime service account the Cloud Run service runs as
+  CLOUD_RUN_RUNTIME_SA: 'firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com'
 
 jobs:
   test:
@@ -95,108 +99,32 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, detect-changes]
     if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.backend_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write  # required for Workload Identity Federation
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate Service Account Secret Format
-        env:
-          SA_KEY: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
-        run: |
-          python3 - <<'EOF'
-          import os, sys, json
-
-          sa_key = os.environ.get('SA_KEY', '').strip()
-
-          # Check if secret exists
-          if not sa_key:
-              print('❌ ERROR: GCLOUD_SERVICE_ACCOUNT_KEY secret is empty or not set')
-              sys.exit(1)
-
-          # Check if it starts with HTML
-          if sa_key.startswith('<!') or sa_key.startswith('<html'):
-              print('❌ ERROR: Secret contains HTML instead of JSON')
-              print('   The secret appears to be an HTML page (starts with "<!doctype" or "<html>")')
-              print('   Please re-create the secret with the actual JSON service account key')
-              sys.exit(2)
-
-          # Check if it starts with JSON
-          if not sa_key.startswith('{'):
-              print('❌ ERROR: Secret does not start with "{" - not valid JSON format')
-              print('   First 50 chars:', sa_key[:50] if len(sa_key) > 50 else sa_key)
-              print('   Hint: If base64-encoded, decode it first or use credentials_file instead')
-              sys.exit(3)
-
-          # Try parsing as JSON
-          try:
-              parsed = json.loads(sa_key)
-          except json.JSONDecodeError as e:
-              print(f'❌ ERROR: Secret is not valid JSON: {e}')
-              sys.exit(4)
-
-          # Verify it's a service account key
-          if parsed.get('type') != 'service_account':
-              print('❌ ERROR: JSON parsed but "type" field is not "service_account"')
-              print(f'   Found type: {parsed.get("type")}')
-              sys.exit(5)
-
-          # Check required fields
-          required_fields = ['project_id', 'private_key_id', 'private_key', 'client_email']
-          missing = [f for f in required_fields if f not in parsed]
-          if missing:
-              print(f'❌ ERROR: Service account JSON missing required fields: {missing}')
-              sys.exit(6)
-
-          print('✅ Service account secret format is valid')
-          print(f'   Project: {parsed.get("project_id")}')
-          print(f'   Email: {parsed.get("client_email")}')
-          EOF
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          credentials_json: '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}'
-          project_id: '${{ env.GCP_PROJECT_ID }}'
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SA }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: '${{ env.GCP_PROJECT_ID }}'
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Configure Docker for GCR
-        run: |
-          gcloud auth configure-docker
-
-      - name: Set project configuration
-        run: |
-          gcloud config set project ${{ env.GCP_PROJECT_ID }}
-          gcloud config list
+        run: gcloud auth configure-docker
 
       - name: Enable Required APIs
         run: |
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
-
-      - name: Verify Service Account Permissions
-        run: |
-          echo "🔍 Verifying service account permissions..."
-
-          # Check if service account exists
-          if gcloud iam service-accounts describe firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com >/dev/null 2>&1; then
-            echo "✅ Service account exists"
-          else
-            echo "❌ Service account not found"
-            exit 1
-          fi
-
-          # List current IAM roles for the service account
-          echo "📋 Current IAM roles for service account:"
-          gcloud projects get-iam-policy ${{ env.GCP_PROJECT_ID }} \
-            --flatten="bindings[].members" \
-            --format="table(bindings.role)" \
-            --filter="bindings.members:firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
-
-          echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 
       - name: Build and Deploy to Cloud Run
         run: |
@@ -204,8 +132,6 @@ jobs:
 
           cd billingonaire_backend
 
-          # Build container image using Cloud Build with commit SHA tag
-          # This prevents reusing stale 'latest' images and ensures fresh builds
           echo "🔨 Building Docker image with tag: ${{ github.sha }}"
           gcloud builds submit --tag gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} .
 
@@ -213,10 +139,6 @@ jobs:
 
           BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }},COURT_SCRAPER_PROVIDER=direct_api"
 
-          # Deploy with Application Default Credentials (service account)
-          # Using commit SHA tag ensures we deploy exactly what was built
-          # --cpu-boost ensures full CPU during cold start so heavy Python/ML
-          # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \
             --region=${{ env.GCP_REGION }} \
@@ -228,7 +150,7 @@ jobs:
             --max-instances=10 \
             --min-instances=1 \
             --cpu-boost \
-            --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
+            --service-account=${{ env.CLOUD_RUN_RUNTIME_SA }} \
             --set-env-vars="$BACKEND_ENV_VARS"
 
       - name: Verify Deployment
@@ -237,7 +159,6 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --format 'value(status.url)')
           echo "✅ Backend deployed to: $SERVICE_URL"
-          # Wait a moment for deployment to be ready
           sleep 10
           curl -f "$SERVICE_URL/" || exit 1
 
@@ -246,9 +167,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, detect-changes]
     if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.frontend_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write  # required for Workload Identity Federation
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SA }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -270,13 +201,11 @@ jobs:
           NODE_ENV: production
           VITE_API_URL: https://billingonaire-backend-819125105651.asia-south1.run.app
 
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
       - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}
-          channelId: live
-          projectId: ${{ env.GCP_PROJECT_ID }}
+        run: firebase deploy --only hosting --project ${{ env.GCP_PROJECT_ID }}
 
       - name: Verify Frontend Deployment
         run: |
@@ -289,6 +218,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, detect-changes]
     if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.firestore_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write  # required for Workload Identity Federation
 
     steps:
       - uses: actions/checkout@v4
@@ -296,13 +228,14 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          credentials_json: '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}'
-          project_id: '${{ env.GCP_PROJECT_ID }}'
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SA }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: '${{ env.GCP_PROJECT_ID }}'
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -311,39 +244,6 @@ jobs:
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
-
-      - name: Verify Firestore Index Admin permissions
-        run: |
-          if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ] || [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-            echo "❌ ERROR: GOOGLE_APPLICATION_CREDENTIALS not set or file not found"
-            exit 1
-          fi
-          SA_EMAIL=$(python3 -c "import json,sys; data=json.load(open('$GOOGLE_APPLICATION_CREDENTIALS')); print(data['client_email'])" 2>&1) || {
-            echo "❌ ERROR: Failed to read service account email from credentials file: ${SA_EMAIL}"
-            exit 1
-          }
-          echo "🔍 Checking IAM roles for: ${SA_EMAIL}"
-          POLICY=$(gcloud projects get-iam-policy ${{ env.GCP_PROJECT_ID }} \
-            --flatten="bindings[].members" \
-            --format="table(bindings.role)" \
-            --filter="bindings.members:${SA_EMAIL}")
-          echo "📋 Current roles for ${SA_EMAIL}:"
-          echo "$POLICY"
-          if ! echo "$POLICY" | grep -q "roles/datastore.indexAdmin"; then
-            echo ""
-            echo "❌ ERROR: Service account '${SA_EMAIL}' is missing roles/datastore.indexAdmin"
-            echo "   This role is required to create and manage Firestore composite indexes."
-            echo ""
-            echo "   To fix this, run the following command once:"
-            echo "   gcloud projects add-iam-policy-binding ${{ env.GCP_PROJECT_ID }} \\"
-            echo "     --member='serviceAccount:${SA_EMAIL}' \\"
-            echo "     --role='roles/datastore.indexAdmin'"
-            echo ""
-            echo "   Or grant it via the GCP Console:"
-            echo "   https://console.cloud.google.com/iam-admin/iam?project=${{ env.GCP_PROJECT_ID }}"
-            exit 1
-          fi
-          echo "✅ Service account has roles/datastore.indexAdmin — ready to deploy Firestore indexes"
 
       - name: Deploy Firestore indexes and rules
         run: |
