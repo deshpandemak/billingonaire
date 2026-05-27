@@ -3374,6 +3374,73 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
         )
 
 
+@app.get("/admin/review-queue", tags=["Admin Order Management"])
+async def get_admin_review_queue(current_user=Depends(require_admin)):
+    """Return cases in the manual_review_required lifecycle state."""
+    try:
+        db = firestore.client()
+        docs = (
+            db.collection("case-details")
+            .where("lifecycle_status", "==", "manual_review_required")
+            .stream()
+        )
+        cases = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data.setdefault("id", doc.id)
+            cases.append(data)
+        return JSONResponse(content=cases)
+    except Exception as e:
+        logger.error(f"Error fetching review queue: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to fetch review queue: {str(e)}"},
+        )
+
+
+@app.post("/admin/orders/{doc_id}/override", tags=["Admin Order Management"])
+async def admin_override_order_category(
+    doc_id: str, request: Request, current_user=Depends(require_admin)
+):
+    """Override the order category for a case in the manual review queue."""
+    try:
+        body = await request.json()
+        order_category = body.get("order_category")
+        if not order_category:
+            return JSONResponse(
+                status_code=400, content={"error": "order_category is required"}
+            )
+
+        db = firestore.client()
+        doc_ref = db.collection("case-details").document(doc_id)
+        doc_snap = doc_ref.get()
+        if not doc_snap.exists:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        doc_ref.update(
+            {
+                "order_category": order_category,
+                "lifecycle_status": "analysed",
+                "order_manual_override": True,
+                "order_manual_override_by": current_user.get("uid"),
+                "order_analysis_timestamp": datetime.now().isoformat(),
+            }
+        )
+        return JSONResponse(
+            content={
+                "success": True,
+                "doc_id": doc_id,
+                "order_category": order_category,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error overriding order category for {doc_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to override order category: {str(e)}"},
+        )
+
+
 @app.post("/admin/bulk-order-processing", tags=["Admin Order Management"])
 async def admin_bulk_order_processing(
     request: Request, current_user=Depends(require_admin)
