@@ -121,11 +121,6 @@ jobs:
       - name: Configure Docker for GCR
         run: gcloud auth configure-docker
 
-      - name: Enable Required APIs
-        run: |
-          gcloud services enable cloudbuild.googleapis.com
-          gcloud services enable run.googleapis.com
-
       - name: Build and Deploy to Cloud Run
         run: |
           echo "🚀 Building and deploying backend to Google Cloud Run..."
