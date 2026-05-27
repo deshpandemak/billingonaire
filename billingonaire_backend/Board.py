@@ -332,8 +332,12 @@ class Board:
                     re.IGNORECASE,
                 )
                 if second_title:
-                    petitioner_lawyer = respondent_lawyer[: second_title.start()].strip()
-                    respondent_lawyer = respondent_lawyer[second_title.start() :].strip()
+                    petitioner_lawyer = respondent_lawyer[
+                        : second_title.start()
+                    ].strip()
+                    respondent_lawyer = respondent_lawyer[
+                        second_title.start() :
+                    ].strip()
                 else:
                     petitioner_lawyer = respondent_lawyer
                     respondent_lawyer = ""
@@ -589,7 +593,9 @@ class Board:
             # Normalise serial_number: replace empty strings with None so the
             # dedup check below treats missing and empty values consistently.
             if "serial_number" in matter_df.columns:
-                matter_df["serial_number"] = matter_df["serial_number"].replace("", None)
+                matter_df["serial_number"] = matter_df["serial_number"].replace(
+                    "", None
+                )
             # Drop duplicates based on case identifiers only (not array columns)
             # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
             # NOTE: Some boards may not have serial numbers for every entry. If

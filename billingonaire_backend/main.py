@@ -154,7 +154,9 @@ def ensure_firebase():
                 except Exception as e:
                     # Final attempt: try with explicit project ID
                     try:
-                        logger.info("🔄 Retrying with explicit project configuration...")
+                        logger.info(
+                            "🔄 Retrying with explicit project configuration..."
+                        )
                         project_id = os.environ.get(
                             "GCP_PROJECT",
                             os.environ.get("GOOGLE_CLOUD_PROJECT", "billingonaire"),
@@ -1438,9 +1440,9 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         if hasattr(board, "ml_parser") and board.ml_parser:
             status = board.ml_parser.get_enhancement_status()
             status["ml_parser_available"] = True
-            status[
-                "message"
-            ] = "ML Enhanced Parser is active and improving PDF processing quality"
+            status["message"] = (
+                "ML Enhanced Parser is active and improving PDF processing quality"
+            )
         else:
             status = {
                 "ml_parser_available": False,
@@ -1904,9 +1906,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
                         if analysis_result.get("success"):
                             result["analysis_completed"] = True
-                            result[
-                                "analysis_message"
-                            ] = "Order linked and analyzed successfully"
+                            result["analysis_message"] = (
+                                "Order linked and analyzed successfully"
+                            )
                             logger.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
@@ -4762,26 +4764,26 @@ async def export_bill_excel(
         # Header Section
         # Title
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        ws[f"A{current_row}"] = (
+            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        )
         ws[f"A{current_row}"].font = title_font
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        ws[f"A{current_row}"] = (
+            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        ws[f"A{current_row}"] = (
+            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 

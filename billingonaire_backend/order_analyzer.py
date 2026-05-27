@@ -542,7 +542,9 @@ class OrderDocumentAnalyzer:
         ):
             confidence = min(confidence * 1.2, 1.0)
 
-        logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})")
+        logging.info(
+            f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})"
+        )
         return best_category, confidence
 
     def _parse_document_structure(self, text: str) -> Dict[str, Any]:
@@ -1647,7 +1649,9 @@ class OrderDocumentAnalyzer:
         # Simpler, more robust pattern that handles both "a/w" and "with"
         # Match format: "Title Name, Role (a/w|with) Title Name, Role for Respondent"
         logging.info("      🔍 Testing Pattern 1 for AGP/GP extraction...")
-        logging.info(f"      📄 Text snippet being searched (100 chars): '{text[:100]}'")
+        logging.info(
+            f"      📄 Text snippet being searched (100 chars): '{text[:100]}'"
+        )
 
         # Ultra-simplified pattern - titles may or may not have periods, names can have spaces and periods
         # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent"
@@ -1700,11 +1704,15 @@ class OrderDocumentAnalyzer:
                     logging.info(f"      ✅ AGP Pattern 2a matched: '{formatted1}'")
                 if match2a.group(3) and match2a.group(3).strip():
                     name2 = match2a.group(3).strip()
-                    role2 = self._normalize_agp_role((match2a.group(4) or "AGP").strip())
+                    role2 = self._normalize_agp_role(
+                        (match2a.group(4) or "AGP").strip()
+                    )
                     formatted2 = f"Adv. {name2}, {role2}"
                     if formatted2 not in pleaders:
                         pleaders.append(formatted2)
-                        logging.info(f"      ✅ AGP Pattern 2a (a/w) matched: '{formatted2}'")
+                        logging.info(
+                            f"      ✅ AGP Pattern 2a (a/w) matched: '{formatted2}'"
+                        )
 
         # Pattern 2b: "Ms./Mr./Adv. Name for Respondent Nos.3 to 5-State in CASE_KEY"
         # Handles case-specific variant where role keyword is absent (WP-11347/WP-10601).
@@ -2085,7 +2093,9 @@ class OrderDocumentAnalyzer:
     ) -> List[Dict[str, Any]]:
         """Extract AGP names using enhanced patterns and existing ML results"""
         agp_names = []
-        logging.info(f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)")
+        logging.info(
+            f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)"
+        )
 
         # Use existing ML parser results
         ml_count = 0

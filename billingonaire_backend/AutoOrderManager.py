@@ -834,7 +834,10 @@ class AutoOrderManager:
                 self.case_store.transition_lifecycle(
                     case_ref,
                     "analysed",
-                    metadata={"source": "auto_order_manager", "reason": "already_analysed"},
+                    metadata={
+                        "source": "auto_order_manager",
+                        "reason": "already_analysed",
+                    },
                     event_type="analysis_skipped",
                 )
             logger.info(
@@ -935,9 +938,9 @@ class AutoOrderManager:
                         # Date mismatch - log and continue to next sequence
                         date_mismatches += 1
                         attempt_log["status"] = "date_mismatch"
-                        attempt_log[
-                            "message"
-                        ] = f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
+                        attempt_log["message"] = (
+                            f"Order date {date_validation.get('extracted_date')} does not match board date {date_validation.get('expected_date')}"
+                        )
                         result["retry_attempts"].append(attempt_log)
                         logger.info(
                             f"Case {case_ref} seq {sequence_num}: {attempt_log['message']}"
@@ -946,9 +949,9 @@ class AutoOrderManager:
 
                     # SUCCESS! Date matches - mark success and stop retrying
                     attempt_log["status"] = "success"
-                    attempt_log[
-                        "message"
-                    ] = f"Order found with matching date {date_validation.get('extracted_date')}"
+                    attempt_log["message"] = (
+                        f"Order found with matching date {date_validation.get('extracted_date')}"
+                    )
                     result["retry_attempts"].append(attempt_log)
                     result["download_success"] = True
                     result["order_link"] = order_info.get("order_link")
@@ -964,9 +967,9 @@ class AutoOrderManager:
                         logger.error(
                             f"Failed to create order link for {case_ref}: {link_error}"
                         )
-                        result[
-                            "error"
-                        ] = f"Order downloaded but link creation failed: {str(link_error)}"
+                        result["error"] = (
+                            f"Order downloaded but link creation failed: {str(link_error)}"
+                        )
                         result["download_success"] = True
                         result["order_link"] = order_info.get("order_link")
                         return result
@@ -988,13 +991,13 @@ class AutoOrderManager:
                                 f"Analysis failed for {case_ref} seq {sequence_num}: {analysis_result.get('error')}"
                             )
                             attempt_log["status"] = "analysis_failed"
-                            attempt_log[
-                                "message"
-                            ] = f"Analysis failed: {analysis_result.get('error')}"
+                            attempt_log["message"] = (
+                                f"Analysis failed: {analysis_result.get('error')}"
+                            )
                             result["retry_attempts"].append(attempt_log)
-                            result[
-                                "error"
-                            ] = f"Order downloaded but analysis failed: {analysis_result.get('error')}"
+                            result["error"] = (
+                                f"Order downloaded but analysis failed: {analysis_result.get('error')}"
+                            )
 
                             # Update status to order_analysis_failed
                             try:
@@ -1062,9 +1065,9 @@ class AutoOrderManager:
                         attempt_log["status"] = "analysis_exception"
                         attempt_log["message"] = str(analysis_error)
                         result["retry_attempts"].append(attempt_log)
-                        result[
-                            "error"
-                        ] = f"Order downloaded but analysis threw exception: {str(analysis_error)}"
+                        result["error"] = (
+                            f"Order downloaded but analysis threw exception: {str(analysis_error)}"
+                        )
 
                         # Update status to order_analysis_failed
                         try:
@@ -1335,9 +1338,9 @@ class AutoOrderManager:
                         order_link = download_result.get("order_link")
                         pdf_content = download_result.get("pdf_content")
                         if not isinstance(pdf_content, bytes):
-                            result[
-                                "error"
-                            ] = "Downloaded order did not contain PDF bytes"
+                            result["error"] = (
+                                "Downloaded order did not contain PDF bytes"
+                            )
                             continue
 
                         result["download_success"] = True
