@@ -46,6 +46,8 @@ const mockRows = [
   },
 ];
 
+const openSearchForm = () => fireEvent.click(screen.getByText('Show Filters'));
+
 describe('Table Component', () => {
   beforeEach(() => {
     api.authenticatedFetchJSON.mockResolvedValue(mockRows);
@@ -56,14 +58,19 @@ describe('Table Component', () => {
     expect(screen.getByText(/Search & Order Management/i)).toBeTruthy();
   });
 
-  it('renders the Search Criteria section toggle', () => {
+  it('renders the Search Criteria section title', () => {
     render(<Table />);
     expect(screen.getByText(/Search Criteria/i)).toBeTruthy();
   });
 
+  it('renders the Show Filters toggle button', () => {
+    render(<Table />);
+    expect(screen.getByText('Show Filters')).toBeTruthy();
+  });
+
   it('opens the search form and shows Search Cases button on toggle click', async () => {
     render(<Table />);
-    fireEvent.click(screen.getByText(/Search Criteria/i));
+    openSearchForm();
     await waitFor(() => {
       expect(screen.getByText(/Search Cases/i)).toBeTruthy();
     });
@@ -71,7 +78,7 @@ describe('Table Component', () => {
 
   it('opens the search form and shows Clear Filters button on toggle click', async () => {
     render(<Table />);
-    fireEvent.click(screen.getByText(/Search Criteria/i));
+    openSearchForm();
     await waitFor(() => {
       expect(screen.getByText('Clear Filters')).toBeTruthy();
     });
@@ -109,9 +116,11 @@ describe('Table Component', () => {
     });
   });
 
-  it('shows search error when the API throws', async () => {
+  it('shows search error inside the form when the API throws', async () => {
     api.authenticatedFetchJSON.mockRejectedValueOnce(new Error('Network error'));
     render(<Table />);
+    await waitFor(() => screen.getByText('Show Filters'));
+    openSearchForm();
     await waitFor(() => {
       expect(screen.getByText(/Search failed/i)).toBeTruthy();
     });
