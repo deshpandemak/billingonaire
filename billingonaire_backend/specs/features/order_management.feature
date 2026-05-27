@@ -68,3 +68,15 @@ Feature: Court Order Management and Lifecycle
     When an admin POST to /cases/{case_ref}/manual-override with order details
     Then the response status should be 200
     And a manual_override lifecycle event should be recorded
+
+  Scenario: Admin fetches the manual review queue
+    Given there are cases in Firestore with lifecycle_status "manual_review_required"
+    When an admin user GET /admin/review-queue
+    Then the response status should be 200
+    And the response should contain a list of cases needing review
+
+  Scenario: Admin overrides order category for a manual review case
+    Given a case requiring manual review with id "case_mr_01" exists
+    When an admin overrides order category of "case_mr_01" to "ADJOURNED"
+    Then the response status should be 200
+    And the response should confirm the category override

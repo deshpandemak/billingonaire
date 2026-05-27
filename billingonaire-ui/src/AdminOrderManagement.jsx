@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table, Modal } from 'react-bootstrap';
 import { auth } from './lib/firebase';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -22,6 +22,17 @@ const AdminOrderManagement = () => {
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
     const [maxSequences, setMaxSequences] = useState(10);
+    const [confirmState, setConfirmState] = useState({ show: false, title: '', body: '', onConfirm: null });
+
+    const requireConfirm = (title, body, onConfirm) => {
+        setConfirmState({ show: true, title, body, onConfirm });
+    };
+
+    const handleConfirm = () => {
+        const fn = confirmState.onConfirm;
+        setConfirmState(s => ({ ...s, show: false }));
+        fn?.();
+    };
 
     const statusLabels = {
         'not_linked': 'Not Linked',
@@ -55,8 +66,7 @@ const AdminOrderManagement = () => {
             if (data.success) {
                 setOverview(data);
             }
-        } catch (error) {
-            console.error('Error loading overview:', error);
+        } catch {
             setMessage({ type: 'danger', text: 'Failed to load overview' });
         } finally {
             setLoading(false);
@@ -76,8 +86,8 @@ const AdminOrderManagement = () => {
 
             const data = await response.json();
             setQueueStatus(data);
-        } catch (error) {
-            console.error('Error loading queue status:', error);
+        } catch {
+            // non-critical — queue status will retry on next interval
         }
     }, [currentUser]);
 
@@ -95,10 +105,6 @@ const AdminOrderManagement = () => {
     }, [currentUser, loadOverview, loadQueueStatus]);
 
     const rebuildSearchIndex = async () => {
-        if (!window.confirm('Rebuild search index for all analyzed orders? This will update the search results to show the latest petitioner/respondent data.')) {
-            return;
-        }
-
         try {
             setProcessing(true);
             setMessage(null);
@@ -127,11 +133,7 @@ const AdminOrderManagement = () => {
                 });
             }
         } catch (error) {
-            console.error('Error rebuilding search index:', error);
-            setMessage({
-                type: 'danger',
-                text: `Error rebuilding search index: ${error.message}`
-            });
+            setMessage({ type: 'danger', text: `Error rebuilding search index: ${error.message}` });
         } finally {
             setProcessing(false);
         }
@@ -199,9 +201,6 @@ const AdminOrderManagement = () => {
     };
 
     const retryFailedCases = async () => {
-        if (!window.confirm('Re-queue all order_failed and order_analysis_failed cases for retry? This will use the current Max Sequences setting.')) {
-            return;
-        }
         try {
             setProcessing(true);
             setMessage(null);
@@ -225,7 +224,6 @@ const AdminOrderManagement = () => {
                 setMessage({ type: 'danger', text: data.error || 'Retry failed' });
             }
         } catch (error) {
-            console.error('Error retrying failed cases:', error);
             setMessage({ type: 'danger', text: 'Failed to retry cases: ' + error.message });
         } finally {
             setProcessing(false);
@@ -233,9 +231,6 @@ const AdminOrderManagement = () => {
     };
 
     const queueLinkedForAnalysis = async () => {
-        if (!window.confirm('Queue all "linked" (downloaded but not yet analysed) cases for analysis? This will not re-download any orders.')) {
-            return;
-        }
         try {
             setProcessing(true);
             setMessage(null);
@@ -259,7 +254,6 @@ const AdminOrderManagement = () => {
                 setMessage({ type: 'danger', text: data.error || 'Failed to queue analysis jobs' });
             }
         } catch (error) {
-            console.error('Error queuing linked cases for analysis:', error);
             setMessage({ type: 'danger', text: 'Failed to queue analysis: ' + error.message });
         } finally {
             setProcessing(false);
@@ -424,19 +418,25 @@ const AdminOrderManagement = () => {
                         <Card.Body className="d-grid gap-2">
                             <Button
                                 variant="outline-warning"
-                                onClick={retryFailedCases}
+                                onClick={() => requireConfirm(
+                                    'Retry All Failed Cases',
+                                    'Re-queue all order_failed and order_analysis_failed cases for retry? This will use the current Max Sequences setting.',
+                                    retryFailedCases
+                                )}
                                 disabled={processing}
-                                title="Re-queue all order_failed and order_analysis_failed cases"
                             >
-                                🔁 Retry All Failed Cases
+                                Retry All Failed Cases
                             </Button>
                             <Button
                                 variant="outline-info"
-                                onClick={queueLinkedForAnalysis}
+                                onClick={() => requireConfirm(
+                                    'Queue Linked for Analysis',
+                                    'Queue all "linked" (downloaded but not yet analysed) cases for analysis? This will not re-download any orders.',
+                                    queueLinkedForAnalysis
+                                )}
                                 disabled={processing}
-                                title="Queue all linked (downloaded but not analysed) cases for analysis"
                             >
-                                🔬 Queue Linked for Analysis
+                                Queue Linked for Analysis
                             </Button>
                         </Card.Body>
                     </Card>
@@ -538,7 +538,11 @@ const AdminOrderManagement = () => {
                                         <Button
                                             variant="warning"
                                             size="lg"
-                                            onClick={rebuildSearchIndex}
+                                            onClick={() => requireConfirm(
+                                            'Rebuild Search Index',
+                                            'Rebuild search index for all analyzed orders? This updates petitioner/respondent data in search results.',
+                                            rebuildSearchIndex
+                                        )}
                                             disabled={processing}
                                             className="me-2"
                                             title="Rebuild search index to update petitioner/respondent data"
@@ -549,7 +553,7 @@ const AdminOrderManagement = () => {
                                                     Rebuilding...
                                                 </>
                                             ) : (
-                                                '🔄 Rebuild Search Index'
+                                                'Rebuild Search Index'
                                             )}
                                         </Button>
                                         <Button
@@ -579,6 +583,27 @@ const AdminOrderManagement = () => {
                     </Card>
                 </Col>
             </Row>
+            {/* Confirmation Modal */}
+            <Modal
+                show={confirmState.show}
+                onHide={() => setConfirmState(s => ({ ...s, show: false }))}
+                centered
+            >
+                <Modal.Header closeButton>
+                    <Modal.Title>{confirmState.title}</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <p>{confirmState.body}</p>
+                </Modal.Body>
+                <Modal.Footer>
+                    <Button variant="secondary" onClick={() => setConfirmState(s => ({ ...s, show: false }))}>
+                        Cancel
+                    </Button>
+                    <Button variant="primary" onClick={handleConfirm}>
+                        Confirm
+                    </Button>
+                </Modal.Footer>
+            </Modal>
         </Container>
     );
 };

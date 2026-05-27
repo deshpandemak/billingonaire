@@ -76,3 +76,15 @@ global.IntersectionObserver = class IntersectionObserver {
   }
   unobserve() {}
 };
+
+// Mock ResizeObserver (required by AG Grid)
+global.ResizeObserver = class ResizeObserver {
+  constructor(cb) { this._cb = cb; }
+  disconnect() {}
+  observe() {}
+  unobserve() {}
+};
+
+// Mock URL methods used by file download/blob flows
+window.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
+window.URL.revokeObjectURL = vi.fn();

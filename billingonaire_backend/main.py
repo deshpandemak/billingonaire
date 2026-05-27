@@ -733,11 +733,22 @@ async def upload_pdf(
                     # Trigger async order processing for uploaded cases
                     await trigger_async_order_processing(df)
 
+                    board_date = None
+                    try:
+                        board_date = (
+                            str(df["board_date"].iloc[0])
+                            if "board_date" in df.columns and len(df) > 0
+                            else None
+                        )
+                    except Exception:
+                        pass
+
                     results.append(
                         {
                             "filename": file.filename,
                             "message": "Data saved successfully - Order processing started in background",
                             "records_processed": record_count,
+                            "board_date": board_date,
                         }
                     )
                 else:

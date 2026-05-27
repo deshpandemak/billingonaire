@@ -5,6 +5,8 @@ import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { authenticatedFetchJSON } from './lib/api';
 import './styles/professional.css';
+import CaseDetailModal from './components/CaseDetailModal';
+import { getLifecycleConfig, getOrderStatusConfig } from './lib/lifecycleUtils';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -40,7 +42,10 @@ const Table = () => {
   const [processingOrders, setProcessingOrders] = useState(new Set());
   const [selectedRows, setSelectedRows] = useState([]);
   const [gridApi, setGridApi] = useState(null);
-  const [maxSequences, setMaxSequences] = useState(50); // Configurable max sequences for order download
+  const [maxSequences, setMaxSequences] = useState(50);
+  const [tableMessage, setTableMessage] = useState(null);
+  const [showCaseModal, setShowCaseModal] = useState(false);
+  const [selectedCaseRef, setSelectedCaseRef] = useState('');
 
   useEffect(() => {
     // By default, show last 3 months data
@@ -128,18 +133,12 @@ const Table = () => {
           orderCategory: criteria.orderCategory
         })
       });
-      console.log('🔍 API Response received:', result);
-      console.log('📊 Data type:', typeof result, 'Length:', Array.isArray(result) ? result.length : 'Not array');
-      console.log('📋 First 3 records:', Array.isArray(result) ? result.slice(0, 3) : result);
-      console.log('🎯 Applied search criteria:', criteria);
       const normalizedResult = Array.isArray(result)
         ? result.map((row) => normalizeCaseRecord(row))
         : [];
       setData(normalizedResult);
       setEditedData(JSON.parse(JSON.stringify(normalizedResult)));
-      console.log('✅ Data set to state. Current data length:', Array.isArray(result) ? result.length : 'Not array');
     } catch (e) {
-      console.error('Search failed:', e);
       setSearchError('Search failed. Please check your criteria and try again.');
     } finally {
       setIsSearching(false);
@@ -153,10 +152,9 @@ const Table = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData)
       });
-      alert('Data saved successfully!');
+      setTableMessage({ type: 'success', text: 'Changes saved successfully.' });
     } catch (e) {
-      console.error('Failed to save data:', e.message);
-      alert('Failed to save data. Please try again.');
+      setTableMessage({ type: 'error', text: `Failed to save data: ${e.message}` });
     }
   };
 
@@ -183,6 +181,18 @@ const Table = () => {
       sortable: false,
       editable: false,
       resizable: false
+    },
+    {
+      headerName: 'Case',
+      field: 'view_case',
+      width: 80,
+      minWidth: 80,
+      pinned: 'left',
+      sortable: false,
+      filter: false,
+      editable: false,
+      resizable: false,
+      cellRenderer: 'viewCaseRenderer'
     },
     {
       headerName: 'Board Date',
@@ -231,35 +241,36 @@ const Table = () => {
       }
     },
     {
-      headerName: 'AGP Name',
-      field: 'agp_name',
+      headerName: 'GP in Board',
+      field: 'gp_in_board',
       sortable: true,
       filter: 'agTextColumnFilter',
-      editable: true,
-      width: 250,
+      editable: false,
+      width: 220,
+      tooltipValueGetter: () => 'Government Pleader assigned on the daily board',
       valueGetter: params => {
-        // Show all AGP names from board data and normalized order data
-        const agpNames = [];
-
-        // Primary AGP from board
-        if (params.data?.respondent_lawyer) {
-          agpNames.push(params.data.respondent_lawyer);
+        const lawyers = [];
+        if (params.data?.respondent_lawyer) lawyers.push(params.data.respondent_lawyer);
+        if (Array.isArray(params.data?.additional_respondent_lawyers)) {
+          lawyers.push(...params.data.additional_respondent_lawyers);
         }
-
-        // Additional AGPs from board (now an array)
-        if (params.data?.additional_respondent_lawyers && Array.isArray(params.data.additional_respondent_lawyers)) {
-          agpNames.push(...params.data.additional_respondent_lawyers);
-        }
-
-        // Government pleaders from order analysis and normalized history
-        if (params.data?.government_pleader && Array.isArray(params.data.government_pleader)) {
-          agpNames.push(...params.data.government_pleader);
-        }
-        if (params.data?.assigned_government_pleaders && Array.isArray(params.data.assigned_government_pleaders)) {
-          agpNames.push(...params.data.assigned_government_pleaders);
-        }
-
-        return [...new Set(agpNames.filter(n => n))].join(', ');
+        return [...new Set(lawyers.filter(Boolean))].join(', ') || '-';
+      }
+    },
+    {
+      headerName: 'GP in Order',
+      field: 'gp_in_order',
+      sortable: true,
+      filter: 'agTextColumnFilter',
+      editable: false,
+      width: 220,
+      tooltipValueGetter: () => 'Government Pleader named in the downloaded court order',
+      valueGetter: params => {
+        const gps = [
+          ...asArray(params.data?.government_pleader),
+          ...asArray(params.data?.assigned_government_pleaders)
+        ];
+        return [...new Set(gps.filter(Boolean))].join(', ') || '-';
       }
     },
     {
@@ -287,6 +298,15 @@ const Table = () => {
       cellRenderer: 'orderStatusRenderer'
     },
     {
+      headerName: 'Lifecycle',
+      field: 'lifecycle_status',
+      sortable: true,
+      filter: 'agTextColumnFilter',
+      editable: false,
+      width: 160,
+      cellRenderer: 'lifecycleStatusRenderer'
+    },
+    {
       headerName: 'Order Analysis',
       field: 'order_category',
       sortable: true,
@@ -301,6 +321,46 @@ const Table = () => {
       }
     }
   ];
+
+  // Cell renderer for lifecycle status chips
+  const LifecycleStatusRenderer = (props) => {
+    const status = props.data?.lifecycle_status;
+    if (!status) return <span className="text-muted" style={{ fontSize: '0.75rem' }}>—</span>;
+    const cfg = getLifecycleConfig(status);
+    const variantColors = {
+      secondary: '#6c757d', info: '#17a2b8', success: '#28a745',
+      danger: '#dc3545', warning: '#fd7e14', primary: '#0d6efd',
+    };
+    const bg = variantColors[cfg.variant] || '#6c757d';
+    const color = cfg.variant === 'warning' ? '#212529' : 'white';
+    const tipText = cfg.tooltip + (cfg.next ? `\n→ ${cfg.next}` : '');
+    return (
+      <span
+        className="badge"
+        style={{ backgroundColor: bg, color, cursor: 'help', fontSize: '0.7rem' }}
+        title={tipText}
+      >
+        {cfg.icon} {cfg.label}
+      </span>
+    );
+  };
+
+  // Cell renderer for the View Case button
+  const ViewCaseRenderer = (props) => {
+    const { data } = props;
+    if (!data?.case_type && !data?.case_no) return null;
+    const caseRef = `${data.case_type}/${data.case_no}/${data.case_year}`;
+    return (
+      <button
+        className="btn btn-sm btn-outline-primary"
+        onClick={() => { setSelectedCaseRef(caseRef); setShowCaseModal(true); }}
+        style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+        title={`View full case history for ${caseRef}`}
+      >
+        View
+      </button>
+    );
+  };
 
   // Custom cell renderer for court order column
   const CourtOrderRenderer = (props) => {
@@ -339,35 +399,46 @@ const Table = () => {
     const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
     const isProcessing = processingOrders.has(caseId);
 
-    // Define status display properties
-    const statusConfig = {
-      'not_linked': { label: 'Not Linked', color: '#6c757d' },
-      'linked': { label: 'Order Linked', color: '#17a2b8' },
-      'analysed': { label: 'Analysed', color: '#28a745' },
-      'order_failed': { label: 'Order Failed', color: '#dc3545' },
-      'order_analysis_failed': { label: 'Analysis Failed', color: '#ffc107' }
+    const cfg = getOrderStatusConfig(orderStatus);
+    const variantColors = {
+      secondary: '#6c757d', info: '#17a2b8', success: '#28a745',
+      danger: '#dc3545', warning: '#fd7e14', primary: '#0d6efd',
     };
+    const bgColor = variantColors[cfg.variant] || '#6c757d';
+    const textColor = cfg.variant === 'warning' ? '#212529' : 'white';
 
-    const config = statusConfig[orderStatus] || statusConfig['not_linked'];
-
-    // For linked status, show analyze button
-    if (orderStatus === 'linked') {
+    if (orderStatus === 'linked' || orderStatus === 'order_analysis_failed') {
       return (
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span
+            className="badge"
+            style={{ backgroundColor: bgColor, color: textColor, cursor: 'help' }}
+            title={cfg.tooltip}
+          >
+            {cfg.label}
+          </span>
           <button
             className="btn btn-sm btn-warning"
             onClick={() => handleAnalyzeOrder(caseId, caseRef)}
             disabled={isProcessing}
-            style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+            style={{ fontSize: '0.7rem', padding: '1px 6px' }}
+            title="Run order analysis to extract case details"
           >
-            {isProcessing ? '...' : 'Analyze'}
+            {isProcessing ? '…' : 'Analyse'}
           </button>
         </div>
       );
     }
 
-    return <span className="badge" style={{ backgroundColor: config.color, color: 'white' }}>{config.label}</span>;
+    return (
+      <span
+        className="badge"
+        style={{ backgroundColor: bgColor, color: textColor, cursor: cfg.tooltip ? 'help' : 'default' }}
+        title={cfg.tooltip}
+      >
+        {cfg.label}
+      </span>
+    );
   };
 
   // Order management functions
@@ -378,31 +449,17 @@ const Table = () => {
         method: 'POST'
       });
 
-      console.log('Analysis response:', response);
-
       if (response.success) {
         const category = response.data?.order_category;
         const date = response.data?.order_date;
-
-        let message = `✅ Order analyzed successfully for ${caseRef}!\n\n`;
-
-        if (category) {
-          message += `📊 Category: ${category}\n`;
-        }
-        if (date) {
-          message += `📅 Order Date: ${date}\n`;
-        }
-
-        alert(message);
-
-        // Refresh the data to show analysis results
+        const detail = [category, date].filter(Boolean).join(' · ');
+        setTableMessage({ type: 'success', text: `Order analysed for ${caseRef}${detail ? `: ${detail}` : ''}.` });
         await fetchData();
       } else {
-        alert(`❌ Failed to analyze order for ${caseRef}:\n\n${response.error || 'Unknown error'}`);
+        setTableMessage({ type: 'error', text: `Analysis failed for ${caseRef}: ${response.error || 'Unknown error'}` });
       }
     } catch (error) {
-      console.error('Error analyzing order:', error);
-      alert(`❌ Error analyzing order for ${caseRef}:\n\n${error.message}`);
+      setTableMessage({ type: 'error', text: `Error analysing order for ${caseRef}: ${error.message}` });
     } finally {
       setProcessingOrders(prev => {
         const newSet = new Set(prev);
@@ -419,8 +476,7 @@ const Table = () => {
       return;
     }
 
-    const confirmMsg = `📥 Download orders for ${selectedRows.length} selected case(s)?\n\nThis may take some time.`;
-    if (!window.confirm(confirmMsg)) return;
+    setTableMessage({ type: 'info', text: `Downloading orders for ${selectedRows.length} case(s)... This may take a moment.` });
 
     let successCount = 0;
     let failCount = 0;
@@ -448,8 +504,7 @@ const Table = () => {
         } else {
           failCount++;
         }
-      } catch (error) {
-        console.error(`Error downloading order for ${caseRef}:`, error);
+      } catch {
         failCount++;
       } finally {
         setProcessingOrders(prev => {
@@ -460,7 +515,10 @@ const Table = () => {
       }
     }
 
-    alert(`✅ Batch download complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);
+    setTableMessage({
+      type: successCount > 0 ? 'success' : 'error',
+      text: `Batch download complete: ${successCount} succeeded, ${failCount} failed.`
+    });
     await fetchData();
 
     // Clear selection
@@ -471,10 +529,13 @@ const Table = () => {
 
   const frameworkComponents = {
     orderStatusRenderer: OrderStatusRenderer,
-    courtOrderRenderer: CourtOrderRenderer
+    courtOrderRenderer: CourtOrderRenderer,
+    viewCaseRenderer: ViewCaseRenderer,
+    lifecycleStatusRenderer: LifecycleStatusRenderer
   };
 
   return (
+    <>
     <div className="dashboard-container">
       <div className="dashboard-header">
         <h1 className="dashboard-title">🔍 Search & Order Management</h1>
@@ -631,24 +692,30 @@ const Table = () => {
                     className="btn-professional btn-secondary"
                     disabled={isSearching}
                     onClick={() => {
-                      setSearchCriteria({
-                        startDate: '',
-                        endDate: '',
+                      const today = new Date();
+                      const threeMonthsAgo = new Date();
+                      threeMonthsAgo.setMonth(today.getMonth() - 3);
+                      const defaults = {
+                        startDate: threeMonthsAgo.toISOString().split('T')[0],
+                        endDate: today.toISOString().split('T')[0],
                         advocateName: '',
                         caseNumber: '',
                         caseType: '',
                         caseYear: '',
                         caseStage: '',
-                        orderStatus: ''
-                      });
+                        orderStatus: '',
+                        orderCategory: ''
+                      };
+                      setSearchCriteria(defaults);
                       setSearchError('');
+                      fetchData(defaults);
                     }}
                     style={{
                       opacity: isSearching ? 0.7 : 1,
                       cursor: isSearching ? 'not-allowed' : 'pointer'
                     }}
                   >
-                    Clear
+                    Clear Filters
                   </button>
                 </div>
 
@@ -698,65 +765,97 @@ const Table = () => {
           )}
         </div>
 
-        {/* Applied Search Criteria Display */}
-        {(appliedCriteria.startDate || appliedCriteria.endDate || appliedCriteria.advocateName || appliedCriteria.caseNumber || appliedCriteria.caseType || appliedCriteria.caseYear || appliedCriteria.caseStage || appliedCriteria.orderStatus) && (
-          <div className="card-professional" style={{ marginBottom: 'var(--spacing-lg)', backgroundColor: 'var(--success-bg)' }}>
-            <div className="card-header">
-              <h3 className="section-title" style={{ color: 'var(--success-color)', fontSize: '1rem' }}>
-                🎯 Applied Search Filters
-              </h3>
-            </div>
-            <div className="card-body" style={{ padding: 'var(--spacing-md)' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--spacing-sm)' }}>
-                {appliedCriteria.startDate && (
-                  <span className="badge bg-primary">
-                    Start Date: {appliedCriteria.startDate}
-                  </span>
-                )}
-                {appliedCriteria.endDate && (
-                  <span className="badge bg-primary">
-                    End Date: {appliedCriteria.endDate}
-                  </span>
-                )}
-                {appliedCriteria.advocateName && (
-                  <span className="badge bg-primary">
-                    Advocate: {appliedCriteria.advocateName}
-                  </span>
-                )}
-                {appliedCriteria.caseNumber && (
-                  <span className="badge bg-primary">
-                    Case Number: {appliedCriteria.caseNumber}
-                  </span>
-                )}
-                {appliedCriteria.caseType && (
-                  <span className="badge bg-primary">
-                    Case Type: {appliedCriteria.caseType}
-                  </span>
-                )}
-                {appliedCriteria.caseYear && (
-                  <span className="badge bg-primary">
-                    Case Year: {appliedCriteria.caseYear}
-                  </span>
-                )}
-                {appliedCriteria.caseStage && (
-                  <span className="badge bg-primary">
-                    Case Stage: {appliedCriteria.caseStage}
-                  </span>
-                )}
-                {appliedCriteria.orderStatus && (
-                  <span className="badge bg-primary">
-                    Order Status: {
-                      appliedCriteria.orderStatus === 'not_linked' ? 'Not Linked' :
-                      appliedCriteria.orderStatus === 'linked' ? 'Order Linked (Not Analysed)' :
-                      appliedCriteria.orderStatus === 'analysed' ? 'Linked & Analysed' :
-                      appliedCriteria.orderStatus === 'order_failed' ? 'Order Failed' :
-                      appliedCriteria.orderStatus === 'order_analysis_failed' ? 'Analysis Failed' :
-                      appliedCriteria.orderStatus
-                    }
-                  </span>
-                )}
-              </div>
-            </div>
+        {/* Future-date board banner */}
+        {appliedCriteria.startDate && appliedCriteria.startDate > new Date().toISOString().split('T')[0] && (
+          <div
+            style={{
+              marginBottom: 'var(--spacing-md)',
+              padding: '0.6rem 1rem',
+              backgroundColor: '#fff3cd',
+              border: '1px solid #ffc107',
+              borderRadius: 'var(--radius-md)',
+              color: '#856404',
+              fontSize: '0.875rem'
+            }}
+          >
+            📅 The selected date range is in the future. Orders will be fetched automatically after each board date passes.
+          </div>
+        )}
+
+        {/* Dismissible applied filter chips */}
+        {Object.values(appliedCriteria).some(Boolean) && (
+          <div style={{
+            marginBottom: 'var(--spacing-lg)',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '0.4rem'
+          }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--gray-600)', marginRight: '0.25rem' }}>
+              Filters:
+            </span>
+            {[
+              { key: 'startDate',    label: 'From',          value: appliedCriteria.startDate },
+              { key: 'endDate',      label: 'To',            value: appliedCriteria.endDate },
+              { key: 'advocateName', label: 'Advocate',      value: appliedCriteria.advocateName },
+              { key: 'caseNumber',   label: 'Case No',       value: appliedCriteria.caseNumber },
+              { key: 'caseType',     label: 'Type',          value: appliedCriteria.caseType },
+              { key: 'caseYear',     label: 'Year',          value: appliedCriteria.caseYear },
+              { key: 'caseStage',    label: 'Stage',         value: appliedCriteria.caseStage },
+              { key: 'orderStatus',  label: 'Order Status',  value: appliedCriteria.orderStatus },
+              { key: 'orderCategory',label: 'Category',      value: appliedCriteria.orderCategory },
+            ].filter(f => f.value).map(f => (
+              <span
+                key={f.key}
+                className="badge bg-primary d-inline-flex align-items-center gap-1"
+                style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem' }}
+              >
+                {f.label}: {f.value}
+                <button
+                  type="button"
+                  aria-label={`Remove ${f.label} filter`}
+                  onClick={() => {
+                    const updated = { ...appliedCriteria, [f.key]: '' };
+                    setAppliedCriteria(updated);
+                    setSearchCriteria(updated);
+                    fetchData(updated);
+                  }}
+                  style={{
+                    background: 'none', border: 'none', color: 'white',
+                    cursor: 'pointer', padding: '0 0 0 2px', lineHeight: 1, fontSize: '0.85rem'
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Inline feedback message */}
+        {tableMessage && (
+          <div
+            className={tableMessage.type === 'success' ? 'alert-success' : tableMessage.type === 'info' ? 'alert' : 'alert-error'}
+            style={{
+              marginBottom: 'var(--spacing-md)',
+              padding: 'var(--spacing-sm) var(--spacing-md)',
+              borderRadius: 'var(--radius-md)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: tableMessage.type === 'info' ? '#e0f0ff' : undefined,
+              border: tableMessage.type === 'info' ? '1px solid #90caf9' : undefined,
+              color: tableMessage.type === 'info' ? '#1565c0' : undefined,
+            }}
+          >
+            <span>{tableMessage.text}</span>
+            <button
+              onClick={() => setTableMessage(null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', marginLeft: '1rem' }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
           </div>
         )}
 
@@ -876,6 +975,15 @@ const Table = () => {
                 rowHeight={50}
                 headerHeight={45}
                 rowSelection="multiple"
+                noRowsOverlayComponent={() => (
+                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--gray-600)' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📭</div>
+                    <strong>No cases found for the selected filters.</strong>
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem' }}>
+                      Try widening the date range, removing a filter, or uploading today&apos;s board PDF.
+                    </p>
+                  </div>
+                )}
                 defaultColDef={{
                   flex: 1,
                   minWidth: 100,
@@ -911,6 +1019,13 @@ const Table = () => {
         </div>
       </div>
     </div>
+
+    <CaseDetailModal
+      caseRef={selectedCaseRef}
+      show={showCaseModal}
+      onHide={() => setShowCaseModal(false)}
+    />
+    </>
   );
 };
 

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:unit": "vitest run",
-    "test:unit:fast": "vitest run --reporter=basic --no-coverage",
+    "test:unit:fast": "vitest run --reporter=default --no-coverage",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:fast": "playwright test --project=chromium --workers=2",

@@ -1,85 +1,52 @@
 import { auth } from './firebase.js';
 
-// Use environment variable for API URL, fallback to /api for development proxy
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
-// Helper to build API URLs
 export const getApiUrl = (path) => {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  if (API_BASE_URL.startsWith('http')) {
-    return `${API_BASE_URL}${cleanPath}`;
-  }
   return `${API_BASE_URL}${cleanPath}`;
 };
 
-// Helper function to make authenticated API calls
 export const authenticatedFetch = async (url, options = {}) => {
-  try {
-    const user = auth.currentUser;
-    console.log('🔐 authenticatedFetch: Current user:', user ? user.email : 'NOT LOGGED IN');
+  const user = auth.currentUser;
+  if (!user) throw new Error('User not authenticated');
 
-    if (!user) {
-      console.error('❌ authenticatedFetch: No authenticated user found');
-      throw new Error('User not authenticated');
-    }
+  const idToken = await user.getIdToken();
 
-    // Get the Firebase ID token
-    console.log('🎫 authenticatedFetch: Getting Firebase ID token...');
-    const idToken = await user.getIdToken();
-    console.log('✅ authenticatedFetch: Token obtained (length:', idToken?.length, ')');
+  const headers = {
+    'Authorization': `Bearer ${idToken}`,
+    ...options.headers,
+  };
 
-    // Set up headers with authentication
-    const headers = {
-      'Authorization': `Bearer ${idToken}`,
-      ...options.headers
-    };
-
-    // Only set Content-Type for non-FormData requests
-    if (!(options.body instanceof FormData)) {
-      headers['Content-Type'] = 'application/json';
-    }
-
-    // Make the API call - use API_BASE_URL prefix with Vite proxy
-    const fullUrl = `${API_BASE_URL}${url}`;
-    console.log('📡 authenticatedFetch: Making request to:', fullUrl);
-    console.log('📡 authenticatedFetch: Method:', options.method || 'GET');
-
-    const timeoutMs = Number(options.timeoutMs ?? 45000);
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-    const { timeoutMs: _ignoredTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
-
-    let response;
-    try {
-      response = await fetch(fullUrl, {
-        ...fetchOptions,
-        headers,
-        signal: callerSignal || controller.signal,
-      });
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-
-    console.log('📥 authenticatedFetch: Response status:', response.status, response.statusText);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ authenticatedFetch: API error response:', errorText);
-      throw new Error(`API call failed: ${response.status} ${response.statusText}`);
-    }
-
-    console.log('✅ authenticatedFetch: Request successful');
-    return response;
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw new Error('Request timed out. Please retry.');
-    }
-    console.error('❌ authenticatedFetch: Exception caught:', error);
-    throw error;
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
   }
+
+  const fullUrl = `${API_BASE_URL}${url}`;
+  const timeoutMs = Number(options.timeoutMs ?? 45000);
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const { timeoutMs: _t, signal: callerSignal, ...fetchOptions } = options;
+
+  let response;
+  try {
+    response = await fetch(fullUrl, {
+      ...fetchOptions,
+      headers,
+      signal: callerSignal || controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API call failed: ${response.status} ${response.statusText}${errorText ? ` — ${errorText}` : ''}`);
+  }
+
+  return response;
 };
 
-// Helper function to make authenticated API calls and return JSON
 export const authenticatedFetchJSON = async (url, options = {}) => {
   const response = await authenticatedFetch(url, options);
   return response.json();

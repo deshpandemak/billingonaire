@@ -94,7 +94,7 @@ const Upload = () => {
             ...prev,
             [file.name]: {
               ...fileResult,
-              success: true
+              success: fileResult.error == null
             }
           }));
 
@@ -217,10 +217,11 @@ const Upload = () => {
                         statusText = `Error: ${result.error}`;
                         statusColor = '#dc2626';
                       } else if (result.success && typeof result.records_processed === 'number') {
-                        statusText = `✅ ${result.records_processed} record${result.records_processed !== 1 ? 's' : ''} processed`;
+                        const boardDateStr = result.board_date ? ` · Board date: ${result.board_date}` : '';
+                        statusText = `${result.records_processed} case${result.records_processed !== 1 ? 's' : ''} imported${boardDateStr}`;
                         statusColor = 'var(--secondary-color)';
                       } else if (percent === 100) {
-                        statusText = '✅ Upload complete';
+                        statusText = 'Upload complete';
                         statusColor = 'var(--secondary-color)';
                       } else if (percent > 0) {
                         statusText = `${percent}% uploaded`;
@@ -266,9 +267,25 @@ const Upload = () => {
                   </div>
                 )}
 
-                {successMessage && (
+                {successMessage && Object.keys(fileResults).length > 0 && (
                   <div className="alert-success">
-                    <strong>Success:</strong> {successMessage}
+                    <strong>Upload complete.</strong>
+                    {Object.entries(fileResults).map(([name, result]) =>
+                      result.success && typeof result.records_processed === 'number' ? (
+                        <div key={name} style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+                          <strong>{name}</strong>
+                          {result.board_date && (
+                            <span style={{ marginLeft: '0.5rem', color: 'var(--gray-700)' }}>
+                              Board date: <strong>{result.board_date}</strong>
+                            </span>
+                          )}
+                          <span style={{ marginLeft: '0.5rem' }}>
+                            {result.records_processed} case{result.records_processed !== 1 ? 's' : ''} imported.
+                            Order processing started in background.
+                          </span>
+                        </div>
+                      ) : null
+                    )}
                   </div>
                 )}
               </>

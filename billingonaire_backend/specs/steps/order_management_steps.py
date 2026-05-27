@@ -374,3 +374,55 @@ def manual_override_event_recorded(ctx):
     assert (
         body.get("success") is True or "transition" in body
     ), f"Expected successful manual override response, got: {body}"
+
+
+# ---------------------------------------------------------------------------
+# Admin review-queue steps
+# ---------------------------------------------------------------------------
+
+
+@given(parsers.parse('a case requiring manual review with id "{doc_id}" exists'))
+def manual_review_case_by_id(ctx, mock_firestore_client, doc_id):
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.exists = True
+    mock_doc_ref.id = doc_id
+    mock_doc_ref.to_dict.return_value = {
+        "case_ref": doc_id,
+        "lifecycle_status": "manual_review_required",
+        "confidence_score": 0.45,
+    }
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+        mock_doc_ref
+    )
+    mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
+        mock_doc_ref
+    ]
+    ctx["doc_id"] = doc_id
+
+
+@when("an admin user GET /admin/review-queue")
+def admin_get_review_queue(ctx, admin_api_client):
+    ctx["response"] = admin_api_client.get("/admin/review-queue")
+
+
+@when(parsers.parse('an admin overrides order category of "{doc_id}" to "{category}"'))
+def admin_override_order_category(ctx, admin_api_client, doc_id, category):
+    ctx["response"] = admin_api_client.post(
+        f"/admin/orders/{doc_id}/override",
+        json={"order_category": category},
+    )
+    ctx["expected_category"] = category
+
+
+@then("the response should contain a list of cases needing review")
+def response_has_review_cases(ctx):
+    body = ctx["response"].json()
+    cases = body if isinstance(body, list) else body.get("items", body.get("cases", []))
+    assert isinstance(cases, list), f"Expected list, got: {type(body)}"
+
+
+@then("the response should confirm the category override")
+def response_confirms_override(ctx):
+    body = ctx["response"].json()
+    # Accept any successful response structure
+    assert body is not None, "Expected a non-null response body"

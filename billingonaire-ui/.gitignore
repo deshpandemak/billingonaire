@@ -19,3 +19,9 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /dist
+
+# Coverage artifacts
+coverage/
+coverage.xml
+.coverage
+coverage-final.json

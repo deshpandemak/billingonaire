@@ -10,31 +10,27 @@ export default defineConfig({
     setupFiles: './src/setupTests.js',
     include: ['src/__tests__/**/*.{js,jsx,ts,tsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**', '**/*.spec.js'],
-    // CI optimizations
-    pool: process.env.CI ? 'threads' : 'forks',
+    clearMocks: true,
+    css: false,
+    pool: 'forks',
     poolOptions: {
-      threads: {
-        minThreads: 1,
-        maxThreads: process.env.CI ? 2 : undefined,
+      forks: {
+        minForks: 1,
+        maxForks: process.env.CI ? 2 : undefined,
       }
-    },
-    // Reduce startup time in CI
-    deps: {
-      optimizer: {
-        web: {
-          include: ['vitest > @vitest/utils > pretty-format'],
-        },
-      },
     },
     coverage: {
       provider: 'v8',
-      reporter: process.env.CI ? ['text', 'json'] : ['text', 'json', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      reporter: process.env.CI ? ['text', 'json'] : ['text', 'json', 'html'],
       exclude: [
         'node_modules/',
         'src/setupTests.js',
         'dist/',
         '.eslintrc.cjs',
-        'vite.config.js'
+        'vite.config.js',
+        'playwright.config.js',
+        'eslint.config.js',
       ],
       threshold: {
         lines: 80,

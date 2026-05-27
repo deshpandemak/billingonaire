@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
+import { useToast } from './components/ToastProvider';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -40,10 +41,12 @@ ChartJS.register(
 );
 
 const Dashboard = () => {
+  const { addToast } = useToast();
   const currentDate = new Date();
   const currentYear = currentDate.getFullYear();
   const currentQuarter = Math.floor(currentDate.getMonth() / 3) + 1;
 
+  const [orderStats, setOrderStats] = useState(null);
   const [agpStats, setAgpStats] = useState([]);
   const [monthlyAvg, setMonthlyAvg] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear().toString());
@@ -117,7 +120,7 @@ const Dashboard = () => {
       const data = await authenticatedFetchJSON(url);
       setAgpStats(data);
     } catch (e) {
-      console.error('Failed to fetch AGP stats:', e);
+
       setAgpError('Failed to load AGP statistics');
       setAgpStats([]);
     } finally {
@@ -136,7 +139,7 @@ const Dashboard = () => {
       const data = await authenticatedFetchJSON(url);
       setMonthlyAvg(data);
     } catch (e) {
-      console.error('Failed to fetch monthly avg:', e);
+
       setMonthlyError('Failed to load monthly averages');
       setMonthlyAvg([]);
     } finally {
@@ -156,7 +159,7 @@ const Dashboard = () => {
       const data = await authenticatedFetchJSON(url);
       setMattersByDateRange(data);
     } catch (e) {
-      console.error('Failed to fetch matters by date range:', e);
+
       setAnalyticsError(prev => ({ ...prev, matters: 'Failed to load matters data' }));
       setMattersByDateRange({ data: [], summary: {} });
     } finally {
@@ -201,7 +204,7 @@ const Dashboard = () => {
       const dateSet = new Set((data.rows || []).map(row => row.board_date));
       setSelectedBoardDates(prev => prev.filter(date => dateSet.has(date)));
     } catch (e) {
-      console.error('Failed to fetch board date summary:', e);
+
       setBoardSummaryError('Failed to load board date summary');
       setBoardSummary({ rows: [], summary: {}, filters: {} });
       setSelectedBoardDates([]);
@@ -226,7 +229,7 @@ const Dashboard = () => {
       const data = await authenticatedFetchJSON(`/dashboard/board-date-agp-distribution?${params.toString()}`);
       setSelectedDistribution(data);
     } catch (e) {
-      console.error('Failed to fetch selected board distribution:', e);
+
       setSelectedDistributionError('Failed to load AGP distribution for selected board dates');
       setSelectedDistribution({ distribution: [], total_cases: 0, selected_dates: [], board_breakdown: [] });
     } finally {
@@ -256,7 +259,7 @@ const Dashboard = () => {
       const caseRefSet = new Set(cases.map(item => item.case_ref));
       setSelectedCaseRefs(prev => prev.filter(ref => caseRefSet.has(ref)));
     } catch (e) {
-      console.error('Failed to fetch selected date cases:', e);
+
       setSelectedDateCasesError('Failed to load case list for selected dates');
       setSelectedDateCases([]);
       setSelectedCaseRefs([]);
@@ -272,7 +275,7 @@ const Dashboard = () => {
       const data = await authenticatedFetchJSON('/queue/status');
       setQueueStatus(data || {});
     } catch (e) {
-      console.error('Failed to fetch queue status:', e);
+
       setQueueStatusError('Unable to fetch queue status right now');
     } finally {
       setQueueStatusLoading(false);
@@ -318,7 +321,7 @@ const Dashboard = () => {
       );
       await fetchQueueStatus();
     } catch (e) {
-      console.error('Failed to queue fetch jobs:', e);
+
       setJobActionError('Failed to queue fetch jobs. Admin access may be required.');
     } finally {
       setJobActionLoading('');
@@ -345,7 +348,7 @@ const Dashboard = () => {
       );
       await fetchQueueStatus();
     } catch (e) {
-      console.error('Failed to queue analysis jobs:', e);
+
       setJobActionError('Failed to queue analysis jobs. Admin access may be required.');
     } finally {
       setJobActionLoading('');
@@ -365,7 +368,7 @@ const Dashboard = () => {
       setJobActionMessage(result.message || 'Background workers restarted');
       await fetchQueueStatus();
     } catch (e) {
-      console.error('Failed to restart workers:', e);
+
       setJobActionError('Failed to restart workers. Admin access may be required.');
     } finally {
       setJobActionLoading('');
@@ -400,6 +403,13 @@ const Dashboard = () => {
     }, 15000);
     return () => window.clearInterval(interval);
   }, [fetchQueueStatus]);
+
+  // Fetch order stats for the stuck-orders alert card
+  useEffect(() => {
+    authenticatedFetchJSON('/orders/overview-stats')
+      .then(data => setOrderStats(data))
+      .catch(() => { /* non-critical */ });
+  }, []);
 
   // Helper function for pagination
   const getPaginatedData = (data, currentPage) => {
@@ -556,6 +566,92 @@ const Dashboard = () => {
           Monitor your court matters, AGP statistics, and practice performance
         </p>
       </div>
+
+      {/* Stuck Orders Alert */}
+      {orderStats && (() => {
+        const lc = orderStats.lifecycle_counts || orderStats.status_counts || {};
+        const fetchPending = (lc.fetch_queued || 0) + (lc.fetch_in_progress || 0);
+        const analysisPending = (lc.analysis_queued || 0) + (lc.analysis_in_progress || 0);
+        const fetchFailed = lc.fetch_failed || 0;
+        const analysisFailed = lc.order_analysis_failed || 0;
+        const needsReview = lc.manual_review_required || 0;
+        const workersStalled = !queueStatusLoading
+          && queueStatus.fetch_queue_size > 0
+          && !queueStatus.fetch_processing_active;
+
+        const hasAlert = workersStalled || fetchFailed > 0 || analysisFailed > 0 || needsReview > 0;
+        if (!hasAlert && fetchPending === 0 && analysisPending === 0) return null;
+
+        return (
+          <div className="dashboard-section">
+            <div
+              style={{
+                border: `1px solid ${workersStalled || fetchFailed > 0 ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)'}`,
+                borderRadius: 'var(--radius-md)',
+                padding: '1rem 1.25rem',
+                backgroundColor: workersStalled || fetchFailed > 0 ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.07)',
+              }}
+            >
+              <div className="d-flex flex-wrap gap-4 align-items-center justify-content-between">
+                <div>
+                  <strong style={{ fontSize: '0.95rem' }}>
+                    {workersStalled ? 'Workers are off — orders stuck in queue' : 'Pipeline Status'}
+                  </strong>
+                  {workersStalled && (
+                    <span
+                      style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: 'var(--error-color)' }}
+                    >
+                      {queueStatus.fetch_queue_size} item{queueStatus.fetch_queue_size !== 1 ? 's' : ''} waiting, fetch workers inactive
+                    </span>
+                  )}
+                </div>
+                <div className="d-flex flex-wrap gap-3" style={{ fontSize: '0.85rem' }}>
+                  {fetchPending > 0 && (
+                    <span>
+                      <span className="badge bg-primary me-1">{fetchPending}</span>
+                      Fetch pending
+                    </span>
+                  )}
+                  {analysisPending > 0 && (
+                    <span>
+                      <span className="badge bg-info me-1">{analysisPending}</span>
+                      Analysis pending
+                    </span>
+                  )}
+                  {fetchFailed > 0 && (
+                    <span>
+                      <span className="badge bg-danger me-1">{fetchFailed}</span>
+                      Download failed
+                    </span>
+                  )}
+                  {analysisFailed > 0 && (
+                    <span>
+                      <span className="badge bg-warning text-dark me-1">{analysisFailed}</span>
+                      Analysis failed
+                    </span>
+                  )}
+                  {needsReview > 0 && (
+                    <span>
+                      <span className="badge bg-warning text-dark me-1">{needsReview}</span>
+                      Needs review
+                    </span>
+                  )}
+                </div>
+                {workersStalled && (
+                  <button
+                    className="btn-professional btn-primary"
+                    style={{ fontSize: '0.8rem', padding: '0.3rem 0.75rem' }}
+                    onClick={restartWorkers}
+                    disabled={jobActionLoading === 'restart'}
+                  >
+                    {jobActionLoading === 'restart' ? 'Restarting…' : 'Restart Workers'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="dashboard-section">
         <div className="card-professional">
@@ -870,7 +966,7 @@ const Dashboard = () => {
                         onClick={() => setBoardCurrentPage(Math.max(0, boardCurrentPage - 1))}
                         disabled={boardCurrentPage === 0}
                       >
-                        ← Previous
+                        â† Previous
                       </button>
                       <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
                         Page {boardCurrentPage + 1} of {getTotalPages((boardSummary.rows || []).length)}
@@ -881,7 +977,7 @@ const Dashboard = () => {
                         onClick={() => setBoardCurrentPage(Math.min(getTotalPages((boardSummary.rows || []).length) - 1, boardCurrentPage + 1))}
                         disabled={boardCurrentPage >= getTotalPages((boardSummary.rows || []).length) - 1}
                       >
-                        Next →
+                        Next â†’
                       </button>
                     </div>
                   </div>
@@ -1045,7 +1141,7 @@ const Dashboard = () => {
       <div className="dashboard-section">
         <div className="card-professional">
           <div className="card-header">
-            <h2 className="section-title">📊 Total Matters by Date Range (Last 5 Days Default)</h2>
+            <h2 className="section-title">ðŸ“Š Total Matters by Date Range (Last 5 Days Default)</h2>
           </div>
           <div className="card-body">
             <div className="d-flex flex-wrap gap-3 mb-4">
@@ -1170,7 +1266,7 @@ const Dashboard = () => {
               {/* AGP Data Table */}
               <div className="card-professional">
                 <div className="card-header">
-                  <h2 className="section-title">👤 AGP Statistics ({agpStats.length} records)</h2>
+                  <h2 className="section-title">ðŸ‘¤ AGP Statistics ({agpStats.length} records)</h2>
                 </div>
                 <div className="card-body">
                   <div className="d-flex flex-wrap gap-3 mb-4">
@@ -1265,7 +1361,7 @@ const Dashboard = () => {
                             onClick={() => setAgpCurrentPage(Math.max(0, agpCurrentPage - 1))}
                             disabled={agpCurrentPage === 0}
                           >
-                            ← Previous
+                            â† Previous
                           </button>
                           <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
                             Page {agpCurrentPage + 1} of {getTotalPages(agpStats.length)}
@@ -1276,7 +1372,7 @@ const Dashboard = () => {
                             onClick={() => setAgpCurrentPage(Math.min(getTotalPages(agpStats.length) - 1, agpCurrentPage + 1))}
                             disabled={agpCurrentPage >= getTotalPages(agpStats.length) - 1}
                           >
-                            Next →
+                            Next â†’
                           </button>
                         </div>
                       </div>
@@ -1288,7 +1384,7 @@ const Dashboard = () => {
               {/* AGP Distribution Chart */}
               <div className="card-professional">
                 <div className="card-header">
-                  <h2 className="section-title">📊 AGP Distribution</h2>
+                  <h2 className="section-title">ðŸ“Š AGP Distribution</h2>
                 </div>
                 <div className="card-body">
                   {agpLoading ? (
@@ -1342,7 +1438,7 @@ const Dashboard = () => {
             {!agpLoading && agpStats.length > 0 && (
               <div className="card-professional">
                 <div className="card-header">
-                  <h2 className="section-title">📈 Top 10 AGPs by Case Load</h2>
+                  <h2 className="section-title">ðŸ“ˆ Top 10 AGPs by Case Load</h2>
                 </div>
                 <div className="card-body">
                   <div style={{ height: '300px', position: 'relative' }}>
@@ -1359,7 +1455,7 @@ const Dashboard = () => {
               {/* Monthly Average Data Table */}
               <div className="card-professional">
                 <div className="card-header">
-                  <h2 className="section-title">📈 Monthly Average Matters per AGP ({monthlyAvg.length} records)</h2>
+                  <h2 className="section-title">ðŸ“ˆ Monthly Average Matters per AGP ({monthlyAvg.length} records)</h2>
                 </div>
                 <div className="card-body">
                   <div className="d-flex flex-wrap gap-3 mb-4">
@@ -1455,7 +1551,7 @@ const Dashboard = () => {
                             onClick={() => setMonthlyCurrentPage(Math.max(0, monthlyCurrentPage - 1))}
                             disabled={monthlyCurrentPage === 0}
                           >
-                            ← Previous
+                            â† Previous
                           </button>
                           <span style={{ fontSize: '0.875rem', color: 'var(--gray-600)', alignSelf: 'center' }}>
                             Page {monthlyCurrentPage + 1} of {getTotalPages(monthlyAvg.length)}
@@ -1466,7 +1562,7 @@ const Dashboard = () => {
                             onClick={() => setMonthlyCurrentPage(Math.min(getTotalPages(monthlyAvg.length) - 1, monthlyCurrentPage + 1))}
                             disabled={monthlyCurrentPage >= getTotalPages(monthlyAvg.length) - 1}
                           >
-                            Next →
+                            Next â†’
                           </button>
                         </div>
                       </div>
@@ -1478,7 +1574,7 @@ const Dashboard = () => {
               {/* Monthly Average Chart */}
               <div className="card-professional">
                 <div className="card-header">
-                  <h2 className="section-title">📊 Top 10 Monthly Averages</h2>
+                  <h2 className="section-title">ðŸ“Š Top 10 Monthly Averages</h2>
                 </div>
                 <div className="card-body">
                   {monthlyLoading ? (

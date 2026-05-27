@@ -25,6 +25,8 @@ const BillGeneration = () => {
     const [userList, setUserList] = useState([]);
     const [selectedUser, setSelectedUser] = useState('');
     const [authReady, setAuthReady] = useState(false);
+    const [exportMessage, setExportMessage] = useState(null);
+    const [saveMessage, setSaveMessage] = useState(null);
 
     // Set default date range to current month
     useEffect(() => {
@@ -42,10 +44,8 @@ const BillGeneration = () => {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
-                console.log('🔐 User authenticated, checking admin status...');
                 await checkAdminAndFetchUsers();
             } else {
-                console.log('❌ No user authenticated');
                 setIsAdmin(false);
                 setUserList([]);
             }
@@ -57,36 +57,16 @@ const BillGeneration = () => {
 
     const checkAdminAndFetchUsers = async () => {
         try {
-            console.log('🔍 Attempting to fetch active users from /admin/active-users...');
-
-            // Ensure Firebase auth token is ready
             const currentUser = auth.currentUser;
             if (!currentUser) {
-                console.warn('⚠️ No current user in Firebase auth');
                 setIsAdmin(false);
                 setUserList([]);
                 return;
             }
-
-            // Verify we can get an ID token
-            const token = await currentUser.getIdToken();
-            console.log('✅ Firebase ID token obtained, length:', token?.length || 0);
-
-            // Fetch active user names list (will work only if user is admin)
             const response = await authenticatedFetchJSON('/admin/active-users');
-            console.log('✅ Admin active users response:', response);
-            console.log('📝 User names array:', response.user_names);
-            console.log('📊 Total users:', response.user_names?.length || 0);
             setIsAdmin(true);
             setUserList(response.user_names || []);
-        } catch (err) {
-            console.error('❌ Failed to fetch active users:', err);
-            console.error('❌ Error details:', {
-                message: err.message,
-                stack: err.stack,
-                type: err.constructor.name
-            });
-            // User is not admin, that's fine
+        } catch {
             setIsAdmin(false);
             setUserList([]);
         }
@@ -199,7 +179,6 @@ const BillGeneration = () => {
         } catch (err) {
             // Gracefully handle "No matching AGP" errors by showing empty bill
             if (err.message && err.message.includes('400')) {
-                console.log('⚠️ No matching cases found - showing empty bill');
                 setBillData({
                     bill_entries: [],
                     total_fees: 0,
@@ -366,11 +345,9 @@ const BillGeneration = () => {
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
-            console.log('✅ Excel bill exported successfully in AGP format');
-            alert('✅ Bill exported successfully as Excel file!');
+            setExportMessage({ type: 'success', text: 'Bill exported successfully as Excel file.' });
         } catch (err) {
-            console.error('Excel export error:', err);
-            alert(`Error exporting Excel: ${err.message}`);
+            setExportMessage({ type: 'error', text: `Export failed: ${err.message}` });
         }
     };
 
@@ -392,19 +369,13 @@ const BillGeneration = () => {
                 body: JSON.stringify(payload)
             });
 
-            const successMessage = `
-✅ Bill saved successfully!
-
-📋 Bill Number: ${response.bill_number}
-📅 Period: ${response.month_description}
-💰 Total Fees: ₹${response.total_fees.toLocaleString()}
-📊 Total Entries: ${response.total_entries}
-            `.trim();
-
-            alert(successMessage);
+            setSaveMessage({
+                type: 'success',
+                text: `Bill saved — #${response.bill_number} · ${response.month_description} · ₹${response.total_fees?.toLocaleString()} · ${response.total_entries} entries`
+            });
             setShowSaveModal(false);
         } catch (err) {
-            alert('Failed to save bill: ' + err.message);
+            setSaveMessage({ type: 'error', text: `Failed to save bill: ${err.message}` });
         } finally {
             setSaveBillLoading(false);
         }
@@ -591,6 +562,16 @@ const BillGeneration = () => {
                                 </Alert>
                             )}
 
+                            {saveMessage && (
+                                <Alert
+                                    variant={saveMessage.type === 'success' ? 'success' : 'danger'}
+                                    dismissible
+                                    onClose={() => setSaveMessage(null)}
+                                >
+                                    {saveMessage.text}
+                                </Alert>
+                            )}
+
                             {/* Progress Indicator */}
                             {loading && processingProgress > 0 && (
                                 <Card className="mb-4">
@@ -627,6 +608,15 @@ const BillGeneration = () => {
                                                 Total Fees: ₹{billData.total_fees?.toLocaleString() || 0}
                                             </p>
                                         </div>
+                                        {(() => {
+                                            const lowConf = (billData.bill_entries || []).filter(e => e.confidence_score != null && e.confidence_score < 0.7);
+                                            if (!lowConf.length) return null;
+                                            return (
+                                                <Alert variant="warning" className="mb-0 py-2" style={{ fontSize: '0.85rem' }}>
+                                                    <strong>{lowConf.length} {lowConf.length === 1 ? 'entry has' : 'entries have'} a low confidence score</strong> — highlighted below. Review before saving.
+                                                </Alert>
+                                            );
+                                        })()}
                                         <div>
                                             <Button variant="outline-success" size="sm" onClick={addNewRow} className="me-2">
                                                 + Add Row
@@ -634,8 +624,19 @@ const BillGeneration = () => {
                                             <Button variant="outline-warning" size="sm" onClick={() => setBulkEditMode(!bulkEditMode)} className="me-2">
                                                 {bulkEditMode ? 'Cancel Bulk Edit' : '✏️ Bulk Edit'}
                                             </Button>
-                                            <Button variant="success" size="sm" onClick={exportMultipleFormats} className="me-2">
-                                                📄 Export Excel (XLSX)
+                                            {exportMessage && (
+                                                <Alert
+                                                    variant={exportMessage.type === 'success' ? 'success' : 'danger'}
+                                                    dismissible
+                                                    className="mb-0 py-1 px-2 me-2"
+                                                    style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center' }}
+                                                    onClose={() => setExportMessage(null)}
+                                                >
+                                                    {exportMessage.text}
+                                                </Alert>
+                                            )}
+                                        <Button variant="success" size="sm" onClick={exportMultipleFormats} className="me-2">
+                                                Export Excel (XLSX)
                                             </Button>
                                             <Button variant="primary" size="sm" onClick={() => setShowSaveModal(true)}>
                                                 💾 Save Bill
@@ -727,8 +728,16 @@ const BillGeneration = () => {
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ) : billData.bill_entries.map((entry, index) => (
-                                                    <tr key={index} className={selectedRows.has(index) ? 'table-warning' : ''}>
+                                                ) : billData.bill_entries.map((entry, index) => {
+                                                    const isLowConf = !selectedRows.has(index)
+                                                        && entry.confidence_score != null
+                                                        && entry.confidence_score < 0.7;
+                                                    return (
+                                                    <tr
+                                                        key={index}
+                                                        className={selectedRows.has(index) ? 'table-warning' : ''}
+                                                        style={isLowConf ? { borderLeft: '3px solid #ffc107' } : undefined}
+                                                    >
                                                         {bulkEditMode && (
                                                             <td>
                                                                 <Form.Check
@@ -852,7 +861,8 @@ const BillGeneration = () => {
                                                             )}
                                                         </td>
                                                     </tr>
-                                                ))}
+                                                    );
+                                                })}
                                             </tbody>
                                         </Table>
                                     </div>

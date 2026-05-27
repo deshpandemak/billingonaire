@@ -2,9 +2,6 @@ node_modules
 billingonairevenv
 google-cloud-sdk-460.0.0-linux-x86_64.tar.gz
 google-cloud-sdk
-billingonaire-ui/src-react/package-lock.json
-billingonaire-ui/src-react/node_modules
-billingonaire-ui/src-react/.env
 venv
 .venv
 
@@ -14,7 +11,18 @@ billingonaire_backend/firebase/credentials.json
 firebase/credentials.json
 firebase/firebasetoken
 *.json
+
+# Python coverage artifacts
+.coverage
 billingonaire_backend/.coverage
+coverage.xml
+htmlcov/
+
+# Frontend coverage artifacts
+billingonaire-ui/.coverage
+billingonaire-ui/coverage.xml
+billingonaire-ui/coverage/
+
 .venv-1
 billingonaire-ui/.svelte-kit
 billingonaire-ui/dist
