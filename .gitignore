@@ -11,6 +11,8 @@ billingonaire_backend/firebase/credentials.json
 firebase/credentials.json
 firebase/firebasetoken
 *.json
+# Allow Claude Code project settings (not credentials)
+!.claude/settings.json
 
 # Python coverage artifacts
 .coverage

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "result=$(cd billingonaire_backend && flake8 . 2>&1 | head -40); echo '{}' | jq --arg r \"$result\" 'if ($r | length) > 0 then {systemMessage: (\"⚠️  Flake8 linting issues found — fix before pushing:\\n\" + $r)} else {systemMessage: \"✅  Flake8 passed — code is clean\"} end'",
+            "timeout": 30,
+            "statusMessage": "Running flake8 linting check..."
+          }
+        ]
+      }
+    ]
+  }
+}
