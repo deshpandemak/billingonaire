@@ -150,7 +150,7 @@ jobs:
       - name: Install dependencies (dev only for linting)
         run: |
           cd billingonaire-ui
-          npm ci --prefer-offline --only=dev
+          npm ci --prefer-offline --omit=prod
 
       - name: Run ESLint (only src/)
         run: |
