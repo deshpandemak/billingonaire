@@ -4121,9 +4121,7 @@ async def get_order_pdf(doc_id: str):
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'
-            },
+            headers={"Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'},
         )
 
     except HTTPException:
@@ -4160,7 +4158,10 @@ async def migrate_orders_to_gcs(
 
     # Firestore has no "not starts-with" filter; over-fetch and filter in Python
     docs = list(
-        db.collection("daily-boards").where("order_link", "!=", "").limit(limit * 5).stream()
+        db.collection("daily-boards")
+        .where("order_link", "!=", "")
+        .limit(limit * 5)
+        .stream()
     )
 
     for doc in docs:
@@ -4178,11 +4179,7 @@ async def migrate_orders_to_gcs(
         case_no = str(data.get("case_no") or "")
         case_year = str(data.get("case_year") or "")
         case_ref = f"{case_type}/{case_no}/{case_year}"
-        order_date = str(
-            data.get("latest_order_date")
-            or data.get("board_date")
-            or ""
-        )
+        order_date = str(data.get("latest_order_date") or data.get("board_date") or "")
 
         try:
             resp = requests.get(order_link, timeout=15)
