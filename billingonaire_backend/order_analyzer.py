@@ -86,7 +86,10 @@ class OrderDocumentAnalyzer:
         self.order_patterns = self._create_order_patterns()
         self.entity_patterns = self._create_entity_patterns()
         self.date_patterns = self._create_date_patterns()
-        # Pre-compile strong disposal patterns once to avoid per-call overhead.
+        # Pre-compile pattern lists once to avoid per-call overhead.
+        self._compiled_no_time = [
+            re.compile(p, re.IGNORECASE) for p in self.NO_TIME_PATTERNS
+        ]
         self._compiled_strong_disposal = [
             re.compile(p, re.IGNORECASE) for p in self.STRONG_DISPOSAL_PATTERNS
         ]
@@ -407,6 +410,14 @@ class OrderDocumentAnalyzer:
         return {}
 
     # High-confidence disposal patterns that unambiguously signal a final order.
+    # Phrases that unambiguously mean no hearing took place.  Any match short-
+    # circuits the ML scorer and returns ADJOURNED with high confidence.
+    NO_TIME_PATTERNS: List[str] = [
+        r"\bstand\s+over\b",
+        r"\bpaucity\s+of\s+time\b",
+        r"\bwant\s+of\s+time\b",
+    ]
+
     # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker
     # patterns (e.g. standalone "dismissed") participate in score comparison only.
     # Defined as a class constant and pre-compiled in __init__ for performance.
@@ -1307,6 +1318,12 @@ class OrderDocumentAnalyzer:
         self, text: str, document_structure: Dict[str, Any]
     ) -> Tuple[str, float]:
         """Enhanced classification using document structure information"""
+
+        # Gate: no-time phrases mean the matter was never heard → always ADJOURNED.
+        # Checked before the ML scorer so scoring noise cannot override this.
+        if any(p.search(text) for p in self._compiled_no_time):
+            logging.info("⏱️ NO_TIME gate triggered — classifying as ADJOURNED")
+            return "ADJOURNED", 0.95
 
         # For all document types, use the improved classification logic
         category, confidence = self._classify_order(text)
