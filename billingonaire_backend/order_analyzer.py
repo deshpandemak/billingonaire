@@ -878,7 +878,8 @@ class OrderDocumentAnalyzer:
                 if pattern_idx == 0:
                     # Pattern 1: Full AGP format with case reference
                     advocate1, role1, advocate2, role2, case_num = match
-                    case_num = case_num.replace("WP/", "").replace("/", "/")
+                    # Keep the full "WP/NNNN/YYYY" format so the key matches
+                    # the case_key used in _extract_multi_case_details.
 
                     if case_num not in case_agp_mapping:
                         case_agp_mapping[case_num] = []
@@ -1502,7 +1503,7 @@ class OrderDocumentAnalyzer:
             # Example: "Hemlata Kirtikumar Kakade Alias Hemlata …Petitioner Jagannath Veer"
             # This means the full name is "Hemlata Kirtikumar Kakade Alias Hemlata Jagannath Veer"
             # Also supports: "Bhimrao s/o Gangaramji …Petitioner"
-            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*(?:…|\.{2,})\s*Petitioners?\.?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|V/s\.?|vs\.?)"
+            petitioner_pattern1 = r"([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s/]+?)?)(?:\s*(?:…\.{0,2}|\.{2,})\s*Petitioners?\.?\s+)([A-Z][a-zA-Z\s\.\-/]+?)\s*(?:Versus|V/s\.?|vs\.?)"
             pet_match1 = re.search(petitioner_pattern1, block_text, re.IGNORECASE)
             if pet_match1:
                 # Combine parts before and after "…Petitioner" or "...Petitioner"
@@ -1517,7 +1518,7 @@ class OrderDocumentAnalyzer:
             # Example: "IN THE MATTER BETWEEN Kanhaiyalal Madhavji Thakkar …Petitioner"
             # Also supports: "Bhimrao s/o Gangaramji Chourpagar …Petitioner"
             if not petitioner:
-                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?\.?"
+                petitioner_pattern2 = r"IN\s+THE\s+MATTER\s+BETWEEN\s+([A-Z][a-zA-Z\s\.\-/]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…\.{0,2}|\.{2,})\s*Petitioners?\.?"
                 pet_match2 = re.search(petitioner_pattern2, block_text, re.IGNORECASE)
                 if pet_match2:
                     petitioner = pet_match2.group(1).strip()
@@ -1529,7 +1530,7 @@ class OrderDocumentAnalyzer:
             # Example: "Sunil Shivaji Wagh …Petitioner Versus" or "Alvito Carvalho …Petitioner/Applicant Versus"
             # Also handles "...Petitioners" (three dots) variant and "V/s" (slash variant)
             if not petitioner:
-                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…|\.{2,})\s*Petitioners?\.?(?:/Applicant|/Appellant)?\s+(?:Versus|V/s\.?|vs\.?)"
+                petitioner_pattern3 = r"([A-Z][a-zA-Z\s\.\-/&]+?(?:\s+[Aa]lias\s+[A-Z][a-zA-Z\s\.\-/]+?)?)\s*(?:…\.{0,2}|\.{2,})\s*Petitioners?\.?(?:/Applicant|/Appellant)?\s+(?:Versus|V/s\.?|vs\.?)"
                 pet_match3 = re.search(petitioner_pattern3, block_text, re.IGNORECASE)
                 if pet_match3:
                     petitioner = pet_match3.group(1).strip()
@@ -1577,7 +1578,7 @@ class OrderDocumentAnalyzer:
 
             # Pattern 1: versus/v/s ... …Respondents or ...Respondents (with ellipsis or dots separator)
             # Example: "Versus Mr. Harun Attar & Anr. …Respondents" or "V/s. State of Maharashtra ...Respondents"
-            respondent_pattern1 = r"(?:versus|V/s\.?)\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The|State\s+of)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*(?:…|\.{2,})\s*Respondents?\.?"
+            respondent_pattern1 = r"(?:versus|V/s\.?)\s+((?:(?:Mr\.?|Ms\.?|Dr\.?|Shri?\.?|Smt\.?|The|State\s+of)\s+)?[A-Za-z\s\.\-&,]+?(?:\s+(?:And|&)\s+(?:Ors?\.?|Anr\.?))*?)\s*(?:…\.{0,2}|\.{2,})\s*Respondents?\.?"
             resp_match1 = re.search(
                 respondent_pattern1, block_text, re.DOTALL | re.IGNORECASE
             )
@@ -1681,14 +1682,65 @@ class OrderDocumentAnalyzer:
 
         logging.info(f"      📊 Total AGP/GP found from Pattern 1: {len(pleaders)}")
 
-        # Pattern 2: Case-specific but different format
-        # "Ms. Pooja Joshi Deshpande for Respondent Nos.3 to 5-State in WP/11347/2024"
+        # Pattern 2a: "Adv/Ms/Mr Name, Role a/w Name, Role for the Respondent State in CASE_KEY"
+        # Handles WP-11347 format where each case has named AGPs at the end of an order block.
         if not pleaders:
-            pattern2 = rf"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+|Shri\.?\s+|Smt\.?\s+)([A-Za-z\s\.]+?)\s+(?:for\s+)?Respondent\s+Nos?\.([0-9\s,to\-]+)State\s+in\s+{re.escape(case_key)}"
-            match2 = re.search(pattern2, text, re.IGNORECASE)
-            if match2:
-                name = match2.group(1).strip()
-                pleaders.append(f"Adv. {name}, GP")
+            pattern2a = (
+                rf"(?:Adv\.\s+|Ms\.\s+|Mr\.\s+)([^,]+),\s*((?:Addl\.\s+)?(?:AGP|GP))"
+                rf"(?:\s+a/w\s+([^,]+),\s*((?:AGP|GP)))?"
+                rf"\s+for\s+the\s+Respondent\s+State\s+in\s+{re.escape(case_key)}"
+            )
+            match2a = re.search(pattern2a, text, re.IGNORECASE)
+            if match2a:
+                name1 = match2a.group(1).strip()
+                role1 = self._normalize_agp_role(match2a.group(2).strip())
+                formatted1 = f"Adv. {name1}, {role1}"
+                if formatted1 not in pleaders:
+                    pleaders.append(formatted1)
+                    logging.info(f"      ✅ AGP Pattern 2a matched: '{formatted1}'")
+                if match2a.group(3) and match2a.group(3).strip():
+                    name2 = match2a.group(3).strip()
+                    role2 = self._normalize_agp_role(
+                        (match2a.group(4) or "AGP").strip()
+                    )
+                    formatted2 = f"Adv. {name2}, {role2}"
+                    if formatted2 not in pleaders:
+                        pleaders.append(formatted2)
+                        logging.info(
+                            f"      ✅ AGP Pattern 2a (a/w) matched: '{formatted2}'"
+                        )
+
+        # Pattern 2b: "Ms./Mr./Adv. Name for Respondent Nos.3 to 5-State in CASE_KEY"
+        # Handles case-specific variant where role keyword is absent (WP-11347/WP-10601).
+        if not pleaders:
+            pattern2b = (
+                rf"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+|Shri\.?\s+|Smt\.?\s+)"
+                rf"([A-Za-z\s\.]+?)\s+(?:for\s+)?Respondent\s+Nos?\.([0-9\s,to\-]+)"
+                rf"State\s+in\s+{re.escape(case_key)}"
+            )
+            match2b = re.search(pattern2b, text, re.IGNORECASE)
+            if match2b:
+                name = match2b.group(1).strip()
+                formatted = f"Adv. {name}, GP"
+                if formatted not in pleaders:
+                    pleaders.append(formatted)
+                    logging.info(f"      ✅ AGP Pattern 2b matched: '{formatted}'")
+
+        # Pattern 2c: "Ms./Mr./Adv. Name for Respondent Nos.X to Y-State" (no case ref at end)
+        # Handles WP-10601 where the state-advocate line has no trailing case number.
+        if not pleaders:
+            for match2c in re.finditer(
+                r"(?:Ms\.\s+|Mr\.\s+|Adv\.\s+|Shri\.?\s+|Smt\.?\s+)"
+                r"([A-Za-z][A-Za-z\s\.]+?)\s+for\s+Respondent\s+Nos?\.[^\.]+?[-–]?State",
+                text,
+                re.IGNORECASE,
+            ):
+                name = match2c.group(1).strip()
+                if len(name) > 3:
+                    formatted = f"Adv. {name}, AGP"
+                    if formatted not in pleaders:
+                        pleaders.append(formatted)
+                        logging.info(f"      ✅ AGP Pattern 2c matched: '{formatted}'")
 
         # Pattern 3: General State advocates (if no specific case match found)
         if not pleaders:

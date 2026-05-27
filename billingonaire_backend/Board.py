@@ -121,6 +121,8 @@ class Board:
         board_date = ""
         for x in date_common:
             board_date = datetime.strptime(x[0], "%d/%m/%Y").strftime("%Y-%m-%d")
+        if not board_date:
+            raise ValueError(f"No board date (dd/mm/yyyy) found in PDF: {filename}")
 
         # Process cases with enhanced text
         result = re.split(case_pattern, text)
@@ -320,19 +322,28 @@ class Board:
         if lawyers:
             petitioner_lawyer = lawyers.group(1) if lawyers.group(1) else ""
             respondent_lawyer = lawyers.group(2) if lawyers.group(2) else ""
+            # When court_data starts with a title (SHRI/SMT/MS), group 1 is empty
+            # and group 2 holds the whole string.  Split group 2 at the second
+            # title occurrence to recover the petitioner's name.
+            if not petitioner_lawyer and respondent_lawyer:
+                second_title = re.search(
+                    r"(?<=\w)\s+((?:SHRI|SMT|MS)(?:\b|\.|,))",
+                    respondent_lawyer,
+                    re.IGNORECASE,
+                )
+                if second_title:
+                    petitioner_lawyer = respondent_lawyer[
+                        : second_title.start()
+                    ].strip()
+                    respondent_lawyer = respondent_lawyer[
+                        second_title.start() :
+                    ].strip()
+                else:
+                    petitioner_lawyer = respondent_lawyer
+                    respondent_lawyer = ""
         else:
             petitioner_lawyer = court_data
             respondent_lawyer = ""
-        # if court_data.startswith("SMT") or court_data.startswith("SHRI") or court_data.startswith("MS"):
-        #     petitioner_lawyer = ""
-        #     respondent_lawyer = lawyers[0]
-        # else:
-        #     if len(lawyers) < 2:
-        #         petitioner_lawyer = lawyers[0]
-        #         respondent_lawyer = ""
-        #     else:
-        #         petitioner_lawyer = lawyers[0]
-        #         respondent_lawyer = lawyers[1]
         # Clean up respondent lawyer (remove case references and IN keyword)
         respondent_lawyer_raw = respondent_lawyer
         respondent_lawyer = respondent_lawyer.replace("IN", "")
@@ -480,6 +491,10 @@ class Board:
                     board_date = datetime.strptime(x[0], "%d/%m/%Y").strftime(
                         "%Y-%m-%d"
                     )
+                if not board_date:
+                    raise ValueError(
+                        f"No board date (dd/mm/yyyy) found in PDF: {filename}"
+                    )
 
                 result = re.split(case_pattern, text)
                 count = 0
@@ -575,6 +590,12 @@ class Board:
                             i += 1
 
             matter_df = pd.DataFrame(matter_list)
+            # Normalise serial_number: replace empty strings with None so the
+            # dedup check below treats missing and empty values consistently.
+            if "serial_number" in matter_df.columns:
+                matter_df["serial_number"] = matter_df["serial_number"].replace(
+                    "", None
+                )
             # Drop duplicates based on case identifiers only (not array columns)
             # Arrays (additional_cases, additional_respondent_lawyers) can't be hashed
             # NOTE: Some boards may not have serial numbers for every entry. If
@@ -607,12 +628,6 @@ class Board:
             if not records:
                 raise HTTPException(status_code=400, detail="No data to save")
 
-            # Convert date strings to datetime objects
-            for record in records:
-                if "board_date" in record and isinstance(record["board_date"], str):
-                    record["board_date"] = datetime.strptime(
-                        record["board_date"], "%Y-%m-%d"
-                    ).strftime("%Y-%m-%d")
             for row in records:
                 formatted_date = row["board_date"]
                 row["board_date"] = datetime.strptime(row["board_date"], "%Y-%m-%d")

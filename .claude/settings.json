@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/lint.sh",
+            "timeout": 60,
+            "statusMessage": "Running black, isort, flake8..."
+          }
+        ]
+      }
+    ]
+  }
+}
