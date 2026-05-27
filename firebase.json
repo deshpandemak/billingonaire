@@ -16,23 +16,5 @@
         "destination": "/index.html"
       }
     ]
-  },
-  "functions": [
-    {
-      "source": "billingonaire-backend",
-      "runtime": "python310",
-      "codebase": "default"
-    },
-    {
-      "source": "billingonaire",
-      "codebase": "backend",
-      "ignore": [
-        "venv",
-        ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
-        "*.local"
-      ]
-    }
-  ]
+  }
 }
