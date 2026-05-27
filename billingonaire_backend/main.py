@@ -3393,7 +3393,8 @@ async def get_admin_review_queue(current_user=Depends(require_admin)):
     except Exception as e:
         logger.error(f"Error fetching review queue: {e}")
         return JSONResponse(
-            status_code=500, content={"error": f"Failed to fetch review queue: {str(e)}"}
+            status_code=500,
+            content={"error": f"Failed to fetch review queue: {str(e)}"},
         )
 
 
@@ -3406,7 +3407,9 @@ async def admin_override_order_category(
         body = await request.json()
         order_category = body.get("order_category")
         if not order_category:
-            return JSONResponse(status_code=400, content={"error": "order_category is required"})
+            return JSONResponse(
+                status_code=400, content={"error": "order_category is required"}
+            )
 
         db = firestore.client()
         doc_ref = db.collection("case-details").document(doc_id)
