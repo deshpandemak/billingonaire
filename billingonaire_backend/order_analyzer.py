@@ -124,16 +124,17 @@ class OrderDocumentAnalyzer:
                 # Standalone \bdismissed?\b removed — it fires on "application for time
                 # dismissed" inside an otherwise ADJOURNED order.
                 # Keep petition/writ/suit dismissed patterns above.
-                r"\bpetition\s+(?:is\s+)?granted\b",
-                # \brelief\s+(?:is\s+)?granted\b removed — "interim relief is granted"
-                # legitimately appears in ADJOURNED orders.
+                # "petition is granted" removed — too broad; fires on "interim relief
+                # in the petition is granted" which is HEARD_AND_ADJOURNED, not disposal.
                 r"\bwrit\s+(?:is\s+)?allowed\b",
                 r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
+                r"\brule\s+(?:is\s+)?made\s+absolute\b",
                 r"\bconclusion\b.*?\bdisposed\b",
                 r"\bpassed?\s+(?:the\s+)?(?:following\s+)?order\b.*?\bdisposed\b",
                 r"\baccordingly\b.*?\bdisposed\b",
                 r"\bhence\b.*?\bdisposed\b",
-                r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
+                # "stands closed" variant covers "contempt stands closed"
+                r"\bcontempt\s+(?:case\s+|petition\s+)?(?:(?:is|stands?)\s+)?closed\b",
                 r"\bmatter\s+(?:is\s+)?finally\s+closed\b",
                 # Broad "case/matter closed" patterns removed — "case is closed for
                 # arguments" is not a disposal.
@@ -198,6 +199,13 @@ class OrderDocumentAnalyzer:
                 r"\bcorrective\s+instructions?\b",
                 r"\bpursuant\s+to\s+(?:the\s+)?(?:compliance|aforesaid|above|order)\b",
                 r"\bconduct\s+of\s+(?:the\s+)?(?:officials?|committee|department)\b",
+                # "heard, stand over to [date]" — matter was heard then adjourned
+                r"\bheard\s*[,.]?\s*(?:and\s+)?stands?\s+over\b",
+                # Notice-issuance phrases — court heard petitioner and issued notice
+                r"\bissue\s+notice\b",
+                r"\bnotice\s+(?:be\s+)?(?:issued|returnable)\b",
+                # Interim relief / stay granted — matter was heard, interim order passed
+                r"\binterim\s+(?:relief|stay|injunction)\s+(?:as\s+prayed\s+)?(?:is\s+)?granted\b",
             ],
         }
 
@@ -234,10 +242,11 @@ class OrderDocumentAnalyzer:
             r"\bsuit\s+(?:is\s+)?dismissed?\b",
             r"\bpetition\s+(?:is\s+)?dismissed?\b",
             r"\bwrit\s+(?:is\s+)?dismissed?\b",
-            r"\bpetition\s+(?:is\s+)?granted\b",
             r"\bwrit\s+(?:is\s+)?allowed\b",
             r"\bwrit\s+petition\s+(?:is\s+)?allowed\b",
-            r"\bcontempt\s+(?:case\s+|petition\s+)?(?:is\s+)?closed\b",
+            r"\brule\s+(?:is\s+)?made\s+absolute\b",
+            # updated pattern key (now includes "stands?" variant)
+            r"\bcontempt\s+(?:case\s+|petition\s+)?(?:(?:is|stands?)\s+)?closed\b",
             r"\bmatter\s+(?:is\s+)?finally\s+closed\b",
         ]:
             weights[p] = 2.0
@@ -307,6 +316,15 @@ class OrderDocumentAnalyzer:
             r"\badmission\s+stage.*?after.*?board\b",
         ]:
             weights[p] = 1.5
+
+        # New strong HEARD_AND_ADJOURNED indicators
+        for p in [
+            r"\bheard\s*[,.]?\s*(?:and\s+)?stands?\s+over\b",
+            r"\bissue\s+notice\b",
+            r"\bnotice\s+(?:be\s+)?(?:issued|returnable)\b",
+            r"\binterim\s+(?:relief|stay|injunction)\s+(?:as\s+prayed\s+)?(?:is\s+)?granted\b",
+        ]:
+            weights[p] = 2.5
 
         return weights
 
@@ -412,8 +430,9 @@ class OrderDocumentAnalyzer:
     # High-confidence disposal patterns that unambiguously signal a final order.
     # Phrases that unambiguously mean no hearing took place.  Any match short-
     # circuits the ML scorer and returns ADJOURNED with high confidence.
+    # "stand over" is NOT here — it also appears in "heard, stand over to [date]"
+    # (HEARD_AND_ADJOURNED) so it cannot be a hard gate.
     NO_TIME_PATTERNS: List[str] = [
-        r"\bstand\s+over\b",
         r"\bpaucity\s+of\s+time\b",
         r"\bwant\s+of\s+time\b",
     ]
@@ -439,6 +458,7 @@ class OrderDocumentAnalyzer:
         r"\bwrit\s+(?:is\s+)?allowed\b",
         r"\bfinal\s+disposal\b",
         r"\bfinal\s+judgment\b",
+        r"\brule\s+(?:is\s+)?made\s+absolute\b",
     ]
 
     def _classify_order(self, text: str) -> Tuple[str, float]:

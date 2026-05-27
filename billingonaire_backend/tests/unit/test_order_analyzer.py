@@ -159,16 +159,14 @@ class TestCategoryClassification:
         category, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
-    def test_adjourned_not_classified_as_disposed_when_interim_relief_granted(
-        self, analyzer
-    ):
-        """Granting interim relief does NOT make an adjournment order a disposal."""
+    def test_heard_and_adjourned_when_interim_relief_granted(self, analyzer):
+        """Granting interim relief means the court heard the matter → HEARD_AND_ADJOURNED."""
         text = (
             "Interim relief is granted. Stand over to 15/10/2024. "
             "Interim order to continue."
         )
         category, _ = analyzer._classify_order(text)
-        assert category == "ADJOURNED"
+        assert category == "HEARD_AND_ADJOURNED"
 
     def test_disposed_off_correctly_classified(self, analyzer):
         """Disposal via 'disposed off as infructuous' must still be DISPOSED_OFF."""
