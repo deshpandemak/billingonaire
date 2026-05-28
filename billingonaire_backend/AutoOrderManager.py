@@ -478,6 +478,33 @@ class AutoOrderManager:
                 return True
         return False
 
+    def _board_entry_exists_for_date(self, case_ref: str, date_str: str) -> bool:
+        """Return True when daily-boards contains an entry for *case_ref* on *date_str*.
+
+        Used to decide whether an order returned by the court API should be
+        processed: if no board entry exists for this case on this date we have
+        no hearing record to attach the order to, so we skip it.
+        """
+        if not case_ref or not date_str:
+            return False
+        try:
+            docs = (
+                self.db.collection(self.boards_collection)
+                .where("case_ref", "==", case_ref)
+                .where("board_date", "==", date_str)
+                .limit(1)
+                .stream()
+            )
+            return any(True for _ in docs)
+        except Exception as exc:
+            logger.warning(
+                "_board_entry_exists_for_date: query failed for case_ref=%s date=%s: %s",
+                case_ref,
+                date_str,
+                exc,
+            )
+            return False
+
     def _analyze_order_with_api_metadata(
         self,
         case_id: str,
@@ -663,6 +690,25 @@ class AutoOrderManager:
                 download_link: str = str(order_entry.get("download_link") or "").strip()
 
                 if not download_link:
+                    continue
+
+                # Skip orders for which no board hearing record exists.
+                # The court API returns all historical orders for a case; without
+                # this guard an old order (e.g. July 2025) can be re-processed for
+                # a May 2026 board trigger and overwrite the correct analysed state.
+                # Each order is only processed when there is a daily-boards entry for
+                # this case on that date — i.e. the case actually appeared on the
+                # board on that day.  If multiple board entries exist for different
+                # dates, each one gets processed and linked independently.
+                if order_date_str and not self._board_entry_exists_for_date(
+                    case_ref, order_date_str
+                ):
+                    logger.info(
+                        "_process_all_orders_from_api: skipping order for "
+                        "case_ref=%s order_date=%s — no board entry found for this date",
+                        case_ref,
+                        order_date_str,
+                    )
                     continue
 
                 # Skip orders already fully analysed for this date
