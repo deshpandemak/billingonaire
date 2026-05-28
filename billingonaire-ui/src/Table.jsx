@@ -3,7 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
-import { authenticatedFetchJSON } from './lib/api';
+import { authenticatedFetchJSON, getApiUrl } from './lib/api';
 import './styles/professional.css';
 import CaseDetailModal from './components/CaseDetailModal';
 import { getLifecycleConfig, getOrderStatusConfig } from './lib/lifecycleUtils';
@@ -368,10 +368,17 @@ const Table = () => {
     const orderLink = data?.order_link;
 
     if (orderLink) {
+      // GCS URLs are permanent — open directly.
+      // Legacy expiring court URLs are routed through the backend proxy which
+      // auto-upgrades them to GCS on first access.
+      const href = orderLink.startsWith('https://storage.googleapis.com')
+        ? orderLink
+        : getApiUrl(`/orders/pdf/${data?.id}`);
+
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <a
-            href={orderLink}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             style={{

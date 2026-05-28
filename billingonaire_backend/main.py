@@ -4016,6 +4016,226 @@ async def get_recent_activity(
         )
 
 
+@app.get("/orders/pdf/{doc_id}", tags=["Order Management"])
+async def get_order_pdf(doc_id: str):
+    """Serve a court order PDF with automatic GCS upgrade.
+
+    - GCS URLs: fetched via service-account credentials and streamed back
+      (no public bucket access required; Cloud Run ADC authenticates).
+    - Live court URLs: stream PDF to client and upgrade the stored link to GCS
+      in the background so the next access is served from GCS.
+    - Expired court URLs: queue re-fetch via AutoOrderManager, return 503.
+
+    No authentication required — court PDFs are public documents, consistent
+    with the current behaviour where court URLs are opened directly.
+    """
+    try:
+        ensure_firebase()
+        db = firestore.client()
+        doc = db.collection("daily-boards").document(doc_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        case_data = doc.to_dict() or {}
+        order_link = (case_data.get("order_link") or "").strip()
+
+        if not order_link:
+            raise HTTPException(
+                status_code=404, detail="No order link stored for this case"
+            )
+
+        # GCS URL: download via service-account credentials and stream back.
+        # Public bucket access is not required — Cloud Run ADC authenticates
+        # transparently, so the bucket can stay private.
+        if order_link.startswith("https://storage.googleapis.com"):
+            try:
+                from google.cloud import storage as gcs_storage
+
+                # Parse  https://storage.googleapis.com/{bucket}/{blob_path}
+                without_prefix = order_link[len("https://storage.googleapis.com/") :]
+                bucket_name, _, blob_name = without_prefix.partition("/")
+                client = gcs_storage.Client()
+                pdf_bytes = (
+                    client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+                )
+                return Response(
+                    content=pdf_bytes,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'
+                    },
+                )
+            except Exception as gcs_err:
+                logger.warning(
+                    "get_order_pdf: GCS download failed for doc_id=%s: %s",
+                    doc_id,
+                    gcs_err,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not retrieve order PDF from storage. Please try again.",
+                )
+
+        # Court URL: attempt download
+        try:
+            resp = requests.get(order_link, timeout=15)
+            resp.raise_for_status()
+            pdf_bytes = resp.content
+            if not pdf_bytes or b"%PDF" not in pdf_bytes[:10]:
+                raise ValueError("Response is not a valid PDF")
+        except Exception:
+            # Expired or unreachable — queue re-fetch and tell the client to retry
+            case_type = case_data.get("case_type", "")
+            case_no = str(case_data.get("case_no") or "")
+            case_year = str(case_data.get("case_year") or "")
+            if case_type and case_no:
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(
+                    executor,
+                    get_auto_order_manager()._process_single_case,
+                    {**case_data, "id": doc_id},
+                    None,
+                )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "order_link_expired",
+                    "message": (
+                        "Order link has expired. The system is re-fetching it — "
+                        "please try again in a few minutes."
+                    ),
+                    "doc_id": doc_id,
+                },
+            )
+
+        # Court URL still live: serve the PDF and upgrade to GCS in the background
+        case_type = case_data.get("case_type", "")
+        case_no = str(case_data.get("case_no") or "")
+        case_year = str(case_data.get("case_year") or "")
+        case_ref = f"{case_type}/{case_no}/{case_year}"
+        order_date = str(
+            case_data.get("latest_order_date")
+            or case_data.get("board_date")
+            or datetime.now().strftime("%Y-%m-%d")
+        )
+
+        def _upgrade_to_gcs(
+            _pdf: bytes, _case_ref: str, _order_date: str, _doc_id: str
+        ) -> None:
+            mgr = get_auto_order_manager()
+            gcs_url = mgr._upload_order_to_gcs(_pdf, _case_ref, _order_date)
+            if not gcs_url:
+                return
+            try:
+                firestore.client().collection("daily-boards").document(_doc_id).update(
+                    {"order_link": gcs_url}
+                )
+                mgr.case_store.append_case_order(
+                    _case_ref, {"order_link": gcs_url, "order_date": _order_date}
+                )
+                logger.info(
+                    "get_order_pdf: upgraded order_link to GCS for doc_id=%s", _doc_id
+                )
+            except Exception as _e:
+                logger.warning(
+                    "get_order_pdf: Firestore update after GCS upload failed: %s", _e
+                )
+
+        asyncio.get_event_loop().run_in_executor(
+            executor, _upgrade_to_gcs, pdf_bytes, case_ref, order_date, doc_id
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_order_pdf failed for doc_id=%s: %s", doc_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/orders/migrate-to-gcs", tags=["Order Management"])
+async def migrate_orders_to_gcs(
+    limit: int = Query(100, description="Max docs to process per call (max 500)"),
+    current_user=Depends(require_admin),
+):
+    """Admin: backfill existing court order URLs to permanent GCS URLs.
+
+    Scans ``daily-boards`` documents that hold expiring court URLs, downloads
+    each PDF, uploads it to the configured GCS bucket, and updates Firestore.
+    Run repeatedly with the default ``limit`` until ``skipped`` == ``total_scanned``.
+    """
+    mgr = get_auto_order_manager()
+    if not mgr._gcs_bucket_name:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ORDER_PDF_BUCKET is not configured. "
+                "Set the environment variable and redeploy before running the backfill."
+            ),
+        )
+
+    limit = min(limit, 500)
+    db = firestore.client()
+    migrated = skipped = failed = 0
+
+    # Firestore has no "not starts-with" filter; over-fetch and filter in Python
+    docs = list(
+        db.collection("daily-boards")
+        .where("order_link", "!=", "")
+        .limit(limit * 5)
+        .stream()
+    )
+
+    for doc in docs:
+        if migrated + failed >= limit:
+            break
+
+        data = doc.to_dict() or {}
+        order_link = (data.get("order_link") or "").strip()
+
+        if not order_link or order_link.startswith("https://storage.googleapis.com"):
+            skipped += 1
+            continue
+
+        case_type = data.get("case_type", "")
+        case_no = str(data.get("case_no") or "")
+        case_year = str(data.get("case_year") or "")
+        case_ref = f"{case_type}/{case_no}/{case_year}"
+        order_date = str(data.get("latest_order_date") or data.get("board_date") or "")
+
+        try:
+            resp = requests.get(order_link, timeout=15)
+            resp.raise_for_status()
+            pdf_bytes = resp.content
+            if not pdf_bytes or b"%PDF" not in pdf_bytes[:10]:
+                raise ValueError("Not a valid PDF")
+
+            gcs_url = mgr._upload_order_to_gcs(pdf_bytes, case_ref, order_date)
+            if not gcs_url:
+                raise ValueError("GCS upload returned None")
+
+            doc.reference.update({"order_link": gcs_url})
+            mgr.case_store.append_case_order(
+                case_ref, {"order_link": gcs_url, "order_date": order_date}
+            )
+            migrated += 1
+        except Exception as exc:
+            logger.warning("migrate-to-gcs failed for %s: %s", doc.id, exc)
+            failed += 1
+
+    return {
+        "migrated": migrated,
+        "skipped": skipped,
+        "failed": failed,
+        "total_scanned": len(docs),
+    }
+
+
 # Bill Generation Endpoints
 @app.get("/bills/generate", tags=["Bill Generation"])
 async def generate_bill_data(
