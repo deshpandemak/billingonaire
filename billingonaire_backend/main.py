@@ -4020,9 +4020,10 @@ async def get_recent_activity(
 async def get_order_pdf(doc_id: str):
     """Serve a court order PDF with automatic GCS upgrade.
 
-    - GCS URLs: 302 redirect (permanent, no backend cost).
+    - GCS URLs: fetched via service-account credentials and streamed back
+      (no public bucket access required; Cloud Run ADC authenticates).
     - Live court URLs: stream PDF to client and upgrade the stored link to GCS
-      in the background so the next access uses the permanent URL.
+      in the background so the next access is served from GCS.
     - Expired court URLs: queue re-fetch via AutoOrderManager, return 503.
 
     No authentication required — court PDFs are public documents, consistent
@@ -4043,11 +4044,31 @@ async def get_order_pdf(doc_id: str):
                 status_code=404, detail="No order link stored for this case"
             )
 
-        # GCS URL is permanent — redirect directly, no backend work needed
+        # GCS URL: download via service-account credentials and stream back.
+        # Public bucket access is not required — Cloud Run ADC authenticates
+        # transparently, so the bucket can stay private.
         if order_link.startswith("https://storage.googleapis.com"):
-            from fastapi.responses import RedirectResponse
+            try:
+                from google.cloud import storage as gcs_storage
 
-            return RedirectResponse(url=order_link, status_code=302)
+                # Parse  https://storage.googleapis.com/{bucket}/{blob_path}
+                without_prefix = order_link[len("https://storage.googleapis.com/"):]
+                bucket_name, _, blob_name = without_prefix.partition("/")
+                client = gcs_storage.Client()
+                pdf_bytes = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+                return Response(
+                    content=pdf_bytes,
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'},
+                )
+            except Exception as gcs_err:
+                logger.warning(
+                    "get_order_pdf: GCS download failed for doc_id=%s: %s", doc_id, gcs_err
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not retrieve order PDF from storage. Please try again.",
+                )
 
         # Court URL: attempt download
         try:
