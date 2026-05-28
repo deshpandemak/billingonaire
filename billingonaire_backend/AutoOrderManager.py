@@ -1256,7 +1256,9 @@ class AutoOrderManager:
                 "https://storage.googleapis.com"
             ):
                 board_date_str = str(case_data.get("board_date") or "")
-                gcs_url = self._upload_order_to_gcs(pdf_content, case_ref, board_date_str)
+                gcs_url = self._upload_order_to_gcs(
+                    pdf_content, case_ref, board_date_str
+                )
                 if gcs_url:
                     logger.info(
                         "_analyze_existing_order: upgraded BHC link to GCS for case_ref=%s",
