@@ -1190,7 +1190,9 @@ def test_board_entry_exists_for_date_queries_with_datetime_not_string(
     mock_query.stream.return_value = iter([Mock()])
     auto_order_manager.db.collection = Mock(return_value=mock_query)
 
-    result = auto_order_manager._board_entry_exists_for_date("WP/9146/2025", "2026-05-15")
+    result = auto_order_manager._board_entry_exists_for_date(
+        "WP/9146/2025", "2026-05-15"
+    )
 
     assert result is True
     # The WHERE clause on board_date must use a datetime object, not the raw string
@@ -1213,7 +1215,9 @@ def test_board_entry_exists_for_date_returns_false_when_no_match(auto_order_mana
     mock_query.stream.return_value = iter([])  # empty result
     auto_order_manager.db.collection = Mock(return_value=mock_query)
 
-    result = auto_order_manager._board_entry_exists_for_date("WP/999/2025", "2025-07-10")
+    result = auto_order_manager._board_entry_exists_for_date(
+        "WP/999/2025", "2025-07-10"
+    )
 
     assert result is False
 
