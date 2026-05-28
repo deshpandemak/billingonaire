@@ -4052,18 +4052,24 @@ async def get_order_pdf(doc_id: str):
                 from google.cloud import storage as gcs_storage
 
                 # Parse  https://storage.googleapis.com/{bucket}/{blob_path}
-                without_prefix = order_link[len("https://storage.googleapis.com/"):]
+                without_prefix = order_link[len("https://storage.googleapis.com/") :]
                 bucket_name, _, blob_name = without_prefix.partition("/")
                 client = gcs_storage.Client()
-                pdf_bytes = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+                pdf_bytes = (
+                    client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+                )
                 return Response(
                     content=pdf_bytes,
                     media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'},
+                    headers={
+                        "Content-Disposition": f'inline; filename="order-{doc_id}.pdf"'
+                    },
                 )
             except Exception as gcs_err:
                 logger.warning(
-                    "get_order_pdf: GCS download failed for doc_id=%s: %s", doc_id, gcs_err
+                    "get_order_pdf: GCS download failed for doc_id=%s: %s",
+                    doc_id,
+                    gcs_err,
                 )
                 raise HTTPException(
                     status_code=502,
