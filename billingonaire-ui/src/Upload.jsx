@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import './styles/professional.css';
 
 const Upload = () => {
+  const navigate = useNavigate();
   const fileInput = useRef();
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -286,6 +288,14 @@ const Upload = () => {
                         </div>
                       ) : null
                     )}
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => navigate('/dashboard')}
+                      >
+                        View on Dashboard →
+                      </button>
+                    </div>
                   </div>
                 )}
               </>

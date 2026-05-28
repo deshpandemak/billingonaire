@@ -28,6 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _overview_stats_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+_queue_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 
 # Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
 if os.getenv("K_SERVICE"):
@@ -2958,27 +2959,76 @@ async def process_single_case(request: Request, current_user=Depends(get_current
                     content={"error": "max_sequences must be a valid integer"},
                 )
 
-        # Fetch existing case data from database to check order status
+        # Fetch existing case data from database
         case_doc = db.collection("daily-boards").document(case_id).get()
 
         if not case_doc.exists:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
 
-        # Get full case data including order status
         case_data = case_doc.to_dict()
-        case_data["id"] = case_id
-        case_data["case_ref"] = case_ref
-        case_data["board_date"] = board_date
 
-        # Process the single case with optional max_sequences
-        result = get_auto_order_manager()._process_single_case(case_data, max_sequences)
+        # Enqueue asynchronously — do not block the request for up to 5 minutes.
+        # The caller can poll GET /auto-orders/job-status/{case_id} for progress.
+        auto_mgr = get_auto_order_manager()
+        auto_mgr.case_store.transition_lifecycle(
+            case_ref,
+            "fetch_queued",
+            metadata={"source": "process_case_endpoint", "case_id": case_id},
+            event_type="fetch_job_queued",
+        )
+        await order_processing_queue.put(
+            {
+                "id": case_id,
+                "case_ref": case_ref,
+                "board_date": board_date or case_data.get("board_date"),
+                "max_sequences": max_sequences,
+            }
+        )
+        await ensure_background_processing_active()
 
-        return JSONResponse(content=result)
+        return JSONResponse(
+            content={
+                "success": True,
+                "job_id": case_id,
+                "status": "queued",
+                "case_ref": case_ref,
+                "message": "Case queued for processing. Poll /auto-orders/job-status/{case_id} for progress.",
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error processing single case: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to process case: {str(e)}"}
+        )
+
+
+@app.get("/auto-orders/job-status/{doc_id}", tags=["Auto Order Management"])
+async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
+    """Poll the processing status of a single case queued via /auto-orders/process-case."""
+    try:
+        db = firestore.client()
+        case_doc = db.collection("daily-boards").document(doc_id).get()
+        if not case_doc.exists:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+        data = case_doc.to_dict() or {}
+        lifecycle_status = data.get("lifecycle_status") or "unknown"
+        updated_at = data.get("updated_at")
+        return JSONResponse(
+            content={
+                "doc_id": doc_id,
+                "status": lifecycle_status,
+                "order_category": data.get("order_category"),
+                "order_link": data.get("order_link"),
+                "updated_at": updated_at.isoformat()
+                if hasattr(updated_at, "isoformat")
+                else None,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting job status for {doc_id}: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to get job status: {str(e)}"}
         )
 
 
@@ -3720,40 +3770,62 @@ def _get_distributed_queue_metrics(scan_limit: int = 10000) -> Dict:
 async def get_queue_status(current_user=Depends(get_current_user)):
     """Get status of async fetch and analysis processing queues."""
     try:
+        import time as _time
+
+        if (
+            _time.time() - _queue_status_cache["ts"] < 30
+            and _queue_status_cache["data"]
+        ):
+            return JSONResponse(content=_queue_status_cache["data"])
+
         queue_size = order_processing_queue.qsize()
         analysis_queue_size = analysis_processing_queue.qsize()
         distributed_metrics = _get_distributed_queue_metrics()
 
-        return JSONResponse(
-            content={
-                "fetch_queue_size": queue_size,
-                "analysis_queue_size": analysis_queue_size,
-                "fetch_pending_cases": distributed_metrics.get(
-                    "fetch_pending_cases", 0
-                ),
-                "analysis_pending_cases": distributed_metrics.get(
-                    "analysis_pending_cases", 0
-                ),
-                "distributed_metrics": distributed_metrics,
-                "fetch_processing_active": processing_active,
-                "analysis_processing_active": analysis_processing_active,
-                "status": (
-                    "active"
-                    if processing_active or analysis_processing_active
-                    else "inactive"
-                ),
-                "message": (
-                    f"Fetch queue: {queue_size}, Analysis queue: {analysis_queue_size}"
-                    if queue_size > 0 or analysis_queue_size > 0
-                    else (
-                        "Local queues are empty; check distributed pending counts for multi-instance deployments"
-                        if distributed_metrics.get("fetch_pending_cases", 0) > 0
-                        or distributed_metrics.get("analysis_pending_cases", 0) > 0
-                        else "Both queues are empty"
-                    )
-                ),
-            }
-        )
+        # Count manual review cases inline so the frontend can derive the
+        # badge count from this single endpoint instead of polling /admin/review-queue.
+        try:
+            db = firestore.client()
+            review_count = (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", "manual_review_required")
+                .count()
+                .get()[0][0]
+                .value
+            )
+        except Exception:
+            review_count = 0
+
+        result = {
+            "fetch_queue_size": queue_size,
+            "analysis_queue_size": analysis_queue_size,
+            "fetch_pending_cases": distributed_metrics.get("fetch_pending_cases", 0),
+            "analysis_pending_cases": distributed_metrics.get(
+                "analysis_pending_cases", 0
+            ),
+            "review_queue_count": review_count,
+            "distributed_metrics": distributed_metrics,
+            "fetch_processing_active": processing_active,
+            "analysis_processing_active": analysis_processing_active,
+            "status": (
+                "active"
+                if processing_active or analysis_processing_active
+                else "inactive"
+            ),
+            "message": (
+                f"Fetch queue: {queue_size}, Analysis queue: {analysis_queue_size}"
+                if queue_size > 0 or analysis_queue_size > 0
+                else (
+                    "Local queues are empty; check distributed pending counts for multi-instance deployments"
+                    if distributed_metrics.get("fetch_pending_cases", 0) > 0
+                    or distributed_metrics.get("analysis_pending_cases", 0) > 0
+                    else "Both queues are empty"
+                )
+            ),
+        }
+        _queue_status_cache["ts"] = _time.time()
+        _queue_status_cache["data"] = result
+        return JSONResponse(content=result)
 
     except Exception as e:
         logger.error(f"Error getting queue status: {e}")
@@ -4084,38 +4156,65 @@ async def get_orders_queue_status(current_user=Depends(get_current_user)):
         return JSONResponse(content={"active": False, "pending": 0, "error": str(e)})
 
 
+_LIFECYCLE_ACTION_LABELS = {
+    "analysed": ("Analysis Complete", "success"),
+    "fetch_succeeded": ("Order Downloaded", "success"),
+    "fetch_failed_terminal": ("Download Failed", "error"),
+    "fetch_failed_retryable": ("Download Failed (Retrying)", "warning"),
+    "analysis_failed_terminal": ("Analysis Failed", "error"),
+    "analysis_failed_retryable": ("Analysis Failed (Retrying)", "warning"),
+    "manual_review_required": ("Manual Review Required", "warning"),
+    "fetch_in_progress": ("Fetching Order", "info"),
+    "analysis_in_progress": ("Analysing Order", "info"),
+    "fetch_queued": ("Queued for Download", "info"),
+    "analysis_queued": ("Queued for Analysis", "info"),
+}
+
+
 @app.get("/orders/recent-activity", tags=["Order Management"])
 async def get_recent_activity(
-    limit: int = Query(10, description="Number of recent activities to return"),
+    limit: int = Query(20, description="Number of recent activities to return"),
     current_user=Depends(get_current_user),
 ):
-    """Get recent order processing activity"""
+    """Get recent order processing activity from case-details lifecycle events."""
     try:
-        # This would typically come from a dedicated activity log collection
-        # For now, we'll return a mock structure that can be implemented later
-        recent_activity = [
-            {
-                "timestamp": datetime.now().isoformat(),
-                "action": "Auto Download",
-                "case_ref": "WP/123/2025",
-                "status": "success",
-            },
-            {
-                "timestamp": (datetime.now() - timedelta(minutes=5)).isoformat(),
-                "action": "Analysis Complete",
-                "case_ref": "WP/124/2025",
-                "status": "success",
-            },
-            {
-                "timestamp": (datetime.now() - timedelta(minutes=10)).isoformat(),
-                "action": "Manual Link",
-                "case_ref": "CP/125/2024",
-                "status": "success",
-            },
-        ]
-
-        return JSONResponse(content=recent_activity[:limit])
-
+        db = firestore.client()
+        docs = (
+            db.collection("case-details")
+            .order_by("updated_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+            .stream()
+        )
+        recent_activity = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            lifecycle_status = str(data.get("lifecycle_status") or "")
+            action, status = _LIFECYCLE_ACTION_LABELS.get(
+                lifecycle_status, ("Status Update", "info")
+            )
+            case_type = data.get("case_type") or ""
+            case_no = str(data.get("case_no") or "")
+            case_year = str(data.get("case_year") or "")
+            if case_type and case_no and case_year:
+                case_ref = f"{case_type}/{case_no}/{case_year}"
+            else:
+                case_ref = doc.id.replace("-", "/", 2)
+            updated_at = data.get("updated_at")
+            timestamp = (
+                updated_at.isoformat()
+                if hasattr(updated_at, "isoformat")
+                else datetime.now().isoformat()
+            )
+            recent_activity.append(
+                {
+                    "timestamp": timestamp,
+                    "action": action,
+                    "case_ref": case_ref,
+                    "status": status,
+                    "lifecycle_status": lifecycle_status,
+                }
+            )
+        return JSONResponse(content=recent_activity)
     except Exception as e:
         logger.error(f"Error getting recent activity: {e}")
         return JSONResponse(

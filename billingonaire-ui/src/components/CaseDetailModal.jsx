@@ -106,7 +106,17 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
           </div>
         )}
 
-        {error && <Alert variant="danger">{error}</Alert>}
+        {error && (
+          <Alert variant="danger" className="d-flex justify-content-between align-items-center">
+            <span>{error}</span>
+            <button
+              className="btn btn-sm btn-outline-danger ms-3"
+              onClick={fetchTimeline}
+            >
+              Retry
+            </button>
+          </Alert>
+        )}
 
         {timeline && !loading && (
           <>

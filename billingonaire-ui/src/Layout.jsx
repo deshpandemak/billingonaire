@@ -54,10 +54,13 @@ const Layout = ({ children }) => {
 
     const fetchReviewCount = async () => {
       try {
-        const data = await authenticatedFetchJSON('/orders/overview-stats');
-        const count = data?.status_counts?.manual_review_required
-          || data?.lifecycle_counts?.manual_review_required
-          || 0;
+        // /queue/status is polled every 15s and includes review_queue_count,
+        // so we reuse it here instead of a separate 60s /overview-stats call.
+        const data = await authenticatedFetchJSON('/queue/status');
+        const count = data?.review_queue_count
+          ?? data?.status_counts?.manual_review_required
+          ?? data?.lifecycle_counts?.manual_review_required
+          ?? 0;
         setReviewCount(Number(count));
       } catch {
         // non-critical; silently ignore
@@ -65,7 +68,7 @@ const Layout = ({ children }) => {
     };
 
     fetchReviewCount();
-    const interval = setInterval(fetchReviewCount, 60_000);
+    const interval = setInterval(fetchReviewCount, 15_000);
     return () => clearInterval(interval);
   }, [userProfile]);
 

@@ -909,14 +909,18 @@ class OrderDocumentAnalyzer:
                 if pattern_idx == 0:
                     # Pattern 1: Full AGP format with case reference
                     advocate1, role1, advocate2, role2, case_num = match
-                    # Keep the full "WP/NNNN/YYYY" format so the key matches
-                    # the case_key used in _extract_multi_case_details.
+                    # Normalize to "NNNN/YYYY" (same format as canonical_id in
+                    # _parse_canonical_case_info) so the lookup at line 828 succeeds.
+                    canonical_key = (
+                        self._parse_canonical_case_info(case_num).get("canonical_id")
+                        or case_num
+                    )
 
-                    if case_num not in case_agp_mapping:
-                        case_agp_mapping[case_num] = []
+                    if canonical_key not in case_agp_mapping:
+                        case_agp_mapping[canonical_key] = []
 
                     # Add first advocate (State representative)
-                    case_agp_mapping[case_num].append(
+                    case_agp_mapping[canonical_key].append(
                         {
                             "name": advocate1.strip(),
                             "role": role1.strip(),
@@ -926,7 +930,7 @@ class OrderDocumentAnalyzer:
 
                     # Add second advocate if present (State representative)
                     if advocate2 and advocate2.strip():
-                        case_agp_mapping[case_num].append(
+                        case_agp_mapping[canonical_key].append(
                             {
                                 "name": advocate2.strip(),
                                 "role": role2.strip() if role2 else "AGP",

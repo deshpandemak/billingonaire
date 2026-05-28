@@ -402,7 +402,26 @@ class UserMatterMatcher:
 
             for segment in text_segments:
                 base_score = self.fuzzy_match_score(name_var, segment.strip())
-                if base_score >= user_role.confidence_threshold:
+                # Last-name-only matches are ambiguous when multiple users share a
+                # surname (e.g. "Deshpande" → both "Pooja Deshpande" and "Priya
+                # Deshpande").  Require a higher threshold unless initials also match.
+                effective_threshold = user_role.confidence_threshold
+                if base_score >= effective_threshold:
+                    import re as _re
+
+                    norm_var = self.normalize_name(name_var)
+                    norm_seg = self.normalize_name(segment.strip())
+                    words_var = _re.findall(r"\b\w+\b", norm_var)
+                    words_seg = _re.findall(r"\b\w+\b", norm_seg)
+                    if (
+                        words_var
+                        and words_seg
+                        and words_var[-1] == words_seg[-1]
+                        and len(words_seg) == 1
+                    ):
+                        # Segment is only the last name — require 0.80 to accept.
+                        effective_threshold = max(effective_threshold, 0.80)
+                if base_score >= effective_threshold:
                     final_score = min(
                         1.0, base_score + role_context_bonus + field_bonus
                     )

@@ -1,7 +1,9 @@
 import base64
 import logging
 import os
+import random
 import re
+import time
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -672,10 +674,25 @@ class AutoOrderManager:
                             content_type,
                         )
                         continue
-                except Exception as dl_err:
+                except requests.exceptions.Timeout as dl_err:
                     logger.warning(
-                        "_process_all_orders_from_api: download failed for "
-                        "case_ref=%s date=%s: %s",
+                        "_process_all_orders_from_api: timeout for case_ref=%s date=%s: %s",
+                        case_ref,
+                        order_date_str,
+                        dl_err,
+                    )
+                    continue
+                except requests.exceptions.ConnectionError as dl_err:
+                    logger.warning(
+                        "_process_all_orders_from_api: connection error for case_ref=%s date=%s: %s",
+                        case_ref,
+                        order_date_str,
+                        dl_err,
+                    )
+                    continue
+                except (ValueError, KeyError, TypeError) as dl_err:
+                    logger.error(
+                        "_process_all_orders_from_api: permanent download error for case_ref=%s date=%s: %s",
                         case_ref,
                         order_date_str,
                         dl_err,
@@ -913,6 +930,14 @@ class AutoOrderManager:
                             "error", "Unknown error"
                         )
                         result["retry_attempts"].append(attempt_log)
+                        # Exponential backoff between sequence retries to avoid
+                        # rate-limiting from the court API (cap at 30s + jitter).
+                        # Skip in test environments to keep test suites fast.
+                        if sequence_num < MAX_RETRIES and not os.getenv("TESTING"):
+                            backoff = min(2 ** (sequence_num - 1), 30) + random.uniform(
+                                0, 1
+                            )
+                            time.sleep(backoff)
                         continue
 
                     # Step 2: Analyze order to extract date
