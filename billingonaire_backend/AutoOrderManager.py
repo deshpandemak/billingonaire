@@ -5,7 +5,7 @@ import random
 import re
 import time
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -486,14 +486,14 @@ class AutoOrderManager:
         Timestamp — NOT a string.  A string-equality WHERE clause never matches.
         We must compare with a ``datetime`` object.
 
-        A ±1-day window (board_date in [order_date-1, order_date+1]) handles orders
-        that are published the day after the hearing.
+        Order date and board date (hearing date) are always the same day, so we
+        use an exact equality match — no date window tolerance.
         """
         if not case_ref or not date_str:
             return False
         try:
             try:
-                order_date_dt = datetime.strptime(date_str, "%Y-%m-%d")
+                board_date_dt = datetime.strptime(date_str, "%Y-%m-%d")
             except ValueError:
                 logger.warning(
                     "_board_entry_exists_for_date: unparseable date %r for case_ref=%s",
@@ -501,13 +501,10 @@ class AutoOrderManager:
                     case_ref,
                 )
                 return False
-            start_dt = order_date_dt - timedelta(days=1)
-            end_dt = order_date_dt + timedelta(days=2)  # exclusive upper bound
             docs = (
                 self.db.collection(self.boards_collection)
                 .where("case_ref", "==", case_ref)
-                .where("board_date", ">=", start_dt)
-                .where("board_date", "<", end_dt)
+                .where("board_date", "==", board_date_dt)
                 .limit(1)
                 .stream()
             )
