@@ -743,14 +743,15 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
 
 
 def test_process_all_orders_from_api_success(auto_order_manager):
-    """Download and analyse all orders returned by the direct API."""
+    """Download and analyse all orders returned by the direct API within the 7-day window."""
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
             "status": "found",
             "petitioner": "ABC Corp",
             "respondent": "Govt of MH",
             "case_orders": [
-                {"date": "2025-02-01", "download_link": "https://court.example/o1.pdf"},
+                # Both orders are within 7 days of board_date 2025-03-01
+                {"date": "2025-02-28", "download_link": "https://court.example/o1.pdf"},
                 {"date": "2025-03-01", "download_link": "https://court.example/o2.pdf"},
             ],
         }
@@ -1006,6 +1007,141 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
     auto_order_manager._is_order_already_analysed.assert_called_with(
         "WP/123/2025", "2025-04-09"
     )
+
+
+def test_process_all_orders_from_api_skips_orders_outside_board_date_window(
+    auto_order_manager,
+):
+    """Orders more than 7 days from the board date are silently skipped.
+
+    This guards against the court API returning all historical orders and the
+    wrong one (e.g. July 2025 for a May 2026 board) being linked.
+    """
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                # Old order — 10 months before board date, must be filtered out
+                {"date": "2025-07-10", "download_link": "https://court.example/old.pdf"},
+                # Correct order — same as board date
+                {"date": "2026-05-15", "download_link": "https://court.example/new.pdf"},
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+    captured_dates: list = []
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        side_effect=lambda **kw: captured_dates.append(kw.get("api_order_date"))
+        or {"success": True, "data": {}}
+    )
+    auto_order_manager.case_store.update_case_party_names = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/9146/2025",
+            case_id="board-xyz",
+            board_date="2026-05-15",
+        )
+
+    assert result["success"] is True
+    assert result["orders_processed"] == 1
+    # Only the May 2026 order should have been analysed
+    assert captured_dates == ["2026-05-15"]
+    # The old July 2025 order must not have been passed to the analyser
+    assert "2025-07-10" not in captured_dates
+
+
+def test_process_all_orders_from_api_keeps_orders_within_7_day_window(
+    auto_order_manager,
+):
+    """Orders within 7 days of the board date (e.g. signed a few days after hearing) are kept."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                # Signed 5 days after the board date — still within window
+                {"date": "2026-05-20", "download_link": "https://court.example/o1.pdf"},
+                # Old order — 6 months before, must be filtered
+                {"date": "2025-11-15", "download_link": "https://court.example/old.pdf"},
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+    captured_dates: list = []
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        side_effect=lambda **kw: captured_dates.append(kw.get("api_order_date"))
+        or {"success": True, "data": {}}
+    )
+    auto_order_manager.case_store.update_case_party_names = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/100/2025",
+            case_id="board-abc",
+            board_date="2026-05-15",
+        )
+
+    assert result["success"] is True
+    assert result["orders_processed"] == 1
+    assert captured_dates == ["2026-05-20"]
+    assert "2025-11-15" not in captured_dates
+
+
+def test_process_all_orders_from_api_no_board_date_processes_all_orders(
+    auto_order_manager,
+):
+    """When no board_date is supplied, the date filter is inactive and all orders are processed."""
+    auto_order_manager.court_scraper.get_case_orders = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                {"date": "2024-01-01", "download_link": "https://court.example/o1.pdf"},
+                {"date": "2025-07-10", "download_link": "https://court.example/o2.pdf"},
+            ],
+        }
+    )
+    auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        return_value={"success": True, "data": {}}
+    )
+    auto_order_manager.case_store.update_case_party_names = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4"
+        mock_get.return_value = mock_resp
+
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/200/2025",
+            case_id="board-no-date",
+            board_date=None,
+        )
+
+    assert result["success"] is True
+    assert result["orders_processed"] == 2
 
 
 def test_process_single_case_analysis_success_when_all_orders_skipped(

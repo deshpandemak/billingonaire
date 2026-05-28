@@ -665,6 +665,27 @@ class AutoOrderManager:
                 if not download_link:
                     continue
 
+                # Skip orders that fall outside a ±7-day window around the board date.
+                # The court API returns all historical orders for a case; without this
+                # guard an old order (e.g. July 2025) can be re-processed for a May 2026
+                # hearing and overwrite the correct analysed state.
+                if board_date and order_date_str:
+                    order_date_parsed = self._parse_board_date(order_date_str)
+                    board_date_parsed = self._parse_board_date(board_date)
+                    if order_date_parsed and board_date_parsed:
+                        delta_days = abs((order_date_parsed - board_date_parsed).days)
+                        if delta_days > 7:
+                            logger.info(
+                                "_process_all_orders_from_api: skipping order for "
+                                "case_ref=%s order_date=%s board_date=%s "
+                                "(delta=%d days exceeds 7-day window)",
+                                case_ref,
+                                order_date_str,
+                                board_date,
+                                delta_days,
+                            )
+                            continue
+
                 # Skip orders already fully analysed for this date
                 if order_date_str and self._is_order_already_analysed(
                     case_ref, order_date_str
