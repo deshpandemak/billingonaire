@@ -1004,6 +1004,7 @@ async def get_case_timeline(
                         board_dates.append(
                             {
                                 "board_date": bd,
+                                "board_doc_id": snap.id,
                                 "respondent_lawyer": d.get("respondent_lawyer") or "",
                                 "additional_respondent_lawyers": d.get(
                                     "additional_respondent_lawyers"
