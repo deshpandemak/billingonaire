@@ -878,7 +878,9 @@ def test_process_single_case_uses_direct_api_first(auto_order_manager):
     auto_order_manager._download_order_for_case.assert_not_called()
 
 
-def test_process_single_case_normalises_firestore_datetime_board_date(auto_order_manager):
+def test_process_single_case_normalises_firestore_datetime_board_date(
+    auto_order_manager,
+):
     """When board_date is a Firestore Timestamp (datetime object), _process_single_case
     must pass a clean 'YYYY-MM-DD' string to _process_all_orders_from_api — NOT
     the str() representation '2026-05-15 00:00:00' which would break date comparison."""
@@ -985,12 +987,16 @@ def test_normalise_order_date_unparseable(auto_order_manager):
 
 def test_normalise_order_date_space_separated_datetime(auto_order_manager):
     """str(datetime_object) produces '2026-05-15 00:00:00' — must strip time part."""
-    assert auto_order_manager._normalise_order_date("2026-05-15 00:00:00") == "2026-05-15"
+    assert (
+        auto_order_manager._normalise_order_date("2026-05-15 00:00:00") == "2026-05-15"
+    )
 
 
 def test_normalise_order_date_t_separated_datetime(auto_order_manager):
     """ISO datetime with T separator is stripped to date."""
-    assert auto_order_manager._normalise_order_date("2026-05-15T14:30:00") == "2026-05-15"
+    assert (
+        auto_order_manager._normalise_order_date("2026-05-15T14:30:00") == "2026-05-15"
+    )
 
 
 def test_parse_board_date_handles_datetime_object():
