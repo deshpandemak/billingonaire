@@ -92,7 +92,7 @@ class CaseDataStore:
         },
         "analysed": {
             "analysed",
-            "fetch_queued",       # allow re-download (e.g. to upgrade BHC link → GCS)
+            "fetch_queued",  # allow re-download (e.g. to upgrade BHC link → GCS)
             "fetch_in_progress",
             "analysis_queued",
             "analysis_in_progress",
