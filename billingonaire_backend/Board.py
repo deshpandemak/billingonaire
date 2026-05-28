@@ -784,18 +784,13 @@ class Board:
 
         return False
 
+    # Maximum rows returned from a single search — prevents unbounded full-scans.
+    _SEARCH_RESULT_LIMIT = 500
+
     def getData(self, search_criteria, agp_filter=None, agp_name_variations=None):
-        # SECURITY: Removed debug logging to prevent data leakage
         logging.info("Processing search request")
 
         try:
-            # First, check total documents in collection
-            all_docs = list(self.db.collection("daily-boards").limit(5).stream())
-            logging.info(f"Database query returned {len(all_docs)} documents")
-
-            if not all_docs:
-                logging.warning("No documents found in database")
-
             if not any(search_criteria.values()) and not agp_filter:
                 # No criteria at all and no access restriction: return first 10 records
                 logging.info("No search criteria provided, returning first 10 records")
@@ -864,13 +859,14 @@ class Board:
                 )
                 query = query.where("board_date", "<=", end_date)
 
+            has_date_filter = bool(start_date or end_date)
+
             advocate_name = search_criteria.get("advocateName") or search_criteria.get(
                 "advocate_name"
             )
             if advocate_name:
                 # Note: Using range query for advocate name conflicts with date range in Firestore
                 # If date filters are present, we skip the advocate filter and apply it client-side
-                has_date_filter = start_date or end_date
                 if not has_date_filter:
                     # Safe to use range query when no date filter
                     query = query.where("respondent_lawyer", ">=", advocate_name)
@@ -916,53 +912,34 @@ class Board:
                 "orderCategory"
             ) or search_criteria.get("order_category")
 
-            docs = query.stream()
-            data = []
-            sample_dates = []
+            # Sort most-recent first and cap at the result limit.  ORDER BY on
+            # board_date is required by Firestore when a range filter on that
+            # field is in use, and it gives the user the most relevant rows first.
+            if has_date_filter:
+                query = query.order_by("board_date", direction="DESCENDING")
+            query = query.limit(self._SEARCH_RESULT_LIMIT)
 
             # Check which filters need to be applied client-side (when date filters present)
             apply_advocate_filter_client_side = advocate_name and has_date_filter
 
-            for doc in docs:
+            data = []
+            for doc in query.stream():
                 doc_data = doc.to_dict()
 
                 # Apply client-side advocate name filter if needed
                 if apply_advocate_filter_client_side:
                     respondent_lawyer = doc_data.get("respondent_lawyer", "").lower()
                     if advocate_name.lower() not in respondent_lawyer:
-                        continue  # Skip this document
+                        continue
 
-                # Add document ID for reference
                 doc_data["id"] = doc.id
 
-                # Log sample board_date values for debugging
-                if "board_date" in doc_data and len(sample_dates) < 3:
-                    sample_dates.append(
-                        f"{doc_data['board_date']} (type: {type(doc_data['board_date'])})"
-                    )
-                # Convert datetime objects to strings for JSON serialization
                 if "board_date" in doc_data and hasattr(
                     doc_data["board_date"], "strftime"
                 ):
                     doc_data["board_date"] = doc_data["board_date"].strftime("%Y-%m-%d")
 
                 data.append(doc_data)
-
-            # Log sample dates for debugging
-            if sample_dates:
-                logging.info(f"SAMPLE BOARD_DATE VALUES: {sample_dates}")
-            else:
-                # Get a few sample documents to see what dates look like
-                sample_query = self.db.collection("daily-boards").limit(3)
-                sample_docs = sample_query.stream()
-                sample_dates = []
-                for doc in sample_docs:
-                    doc_data = doc.to_dict()
-                    if "board_date" in doc_data:
-                        sample_dates.append(
-                            f"{doc_data['board_date']} (type: {type(doc_data['board_date'])})"
-                        )
-                logging.info(f"SAMPLE BOARD_DATE VALUES FROM DB: {sample_dates}")
 
             logging.info(f"Search query returned {len(data)} records")
 

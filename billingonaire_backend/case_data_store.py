@@ -513,21 +513,14 @@ class CaseDataStore:
         if not refs:
             return {}
 
-        logger.info(
-            "get_case_details_map fetching %d case refs in %d chunk(s)",
-            len(refs),
-            (len(refs) + 9) // 10,
-        )
+        # Use get_all() with explicit document references — one BatchGetDocuments
+        # RPC regardless of how many refs are requested (vs N/10 IN-query round trips).
+        collection = self.db.collection(self.case_collection)
+        doc_refs = [collection.document(self._case_doc_id(ref)) for ref in refs]
         result: Dict[str, Dict] = {}
-        for i in range(0, len(refs), 10):
-            chunk = refs[i : i + 10]
-            docs = (
-                self.db.collection(self.case_collection)
-                .where("case_ref", "in", chunk)
-                .stream()
-            )
-            for doc in docs:
-                data = doc.to_dict() or {}
+        for snap in self.db.get_all(doc_refs):
+            if snap.exists:
+                data = snap.to_dict() or {}
                 case_ref = data.get("case_ref")
                 if case_ref:
                     result[case_ref] = data

@@ -55,13 +55,13 @@ const Table = () => {
   }, []);
 
   useEffect(() => {
-    // By default, show last 3 months data
+    // By default, show last 30 days — narrow enough for fast initial load
     const today = new Date();
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(today.getMonth() - 3);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(today.getDate() - 30);
 
     const endDate = today.toISOString().split('T')[0];
-    const startDate = threeMonthsAgo.toISOString().split('T')[0];
+    const startDate = thirtyDaysAgo.toISOString().split('T')[0];
 
     const initialCriteria = {
       startDate,
@@ -784,10 +784,10 @@ const Table = () => {
                     disabled={isSearching}
                     onClick={() => {
                       const today = new Date();
-                      const threeMonthsAgo = new Date();
-                      threeMonthsAgo.setMonth(today.getMonth() - 3);
+                      const thirtyDaysAgo = new Date();
+                      thirtyDaysAgo.setDate(today.getDate() - 30);
                       const defaults = {
-                        startDate: threeMonthsAgo.toISOString().split('T')[0],
+                        startDate: thirtyDaysAgo.toISOString().split('T')[0],
                         endDate: today.toISOString().split('T')[0],
                         advocateName: '',
                         caseNumber: '',
