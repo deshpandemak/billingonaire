@@ -5,7 +5,7 @@ import random
 import re
 import time
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -481,17 +481,33 @@ class AutoOrderManager:
     def _board_entry_exists_for_date(self, case_ref: str, date_str: str) -> bool:
         """Return True when daily-boards contains an entry for *case_ref* on *date_str*.
 
-        Used to decide whether an order returned by the court API should be
-        processed: if no board entry exists for this case on this date we have
-        no hearing record to attach the order to, so we skip it.
+        IMPORTANT: Board.py saves board_date as a Python ``datetime`` object
+        (``datetime.strptime(..., "%Y-%m-%d")``), so Firestore stores it as a
+        Timestamp — NOT a string.  A string-equality WHERE clause never matches.
+        We must compare with a ``datetime`` object.
+
+        A ±1-day window (board_date in [order_date-1, order_date+1]) handles orders
+        that are published the day after the hearing.
         """
         if not case_ref or not date_str:
             return False
         try:
+            try:
+                order_date_dt = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                logger.warning(
+                    "_board_entry_exists_for_date: unparseable date %r for case_ref=%s",
+                    date_str,
+                    case_ref,
+                )
+                return False
+            start_dt = order_date_dt - timedelta(days=1)
+            end_dt = order_date_dt + timedelta(days=2)  # exclusive upper bound
             docs = (
                 self.db.collection(self.boards_collection)
                 .where("case_ref", "==", case_ref)
-                .where("board_date", "==", date_str)
+                .where("board_date", ">=", start_dt)
+                .where("board_date", "<", end_dt)
                 .limit(1)
                 .stream()
             )

@@ -1173,6 +1173,51 @@ def test_process_all_orders_from_api_no_board_date_uses_board_entry_check(
     assert result["orders_processed"] == 2
 
 
+def test_board_entry_exists_for_date_queries_with_datetime_not_string(
+    auto_order_manager,
+):
+    """board_date in daily-boards is a Firestore Timestamp (Python datetime), not a string.
+
+    Board.py saves: row["board_date"] = datetime.strptime(row["board_date"], "%Y-%m-%d")
+    before calling doc_ref.set(row), so the field is a datetime in Firestore.
+    The WHERE clause must use a datetime object — a string comparison always returns
+    zero results, causing every order to be silently skipped.
+    """
+    mock_query = Mock()
+    mock_query.where.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    # Simulate one matching document
+    mock_query.stream.return_value = iter([Mock()])
+    auto_order_manager.db.collection = Mock(return_value=mock_query)
+
+    result = auto_order_manager._board_entry_exists_for_date("WP/9146/2025", "2026-05-15")
+
+    assert result is True
+    # The WHERE clause on board_date must use a datetime object, not the raw string
+    where_calls = mock_query.where.call_args_list
+    board_date_calls = [c for c in where_calls if c[0][0] == "board_date"]
+    assert board_date_calls, "No WHERE clause on board_date found"
+    for call in board_date_calls:
+        _, value = call[0][1], call[0][2]
+        assert isinstance(value, datetime), (
+            f"board_date WHERE value must be datetime, got {type(value).__name__!r}. "
+            "String comparison against a Firestore Timestamp always returns 0 results."
+        )
+
+
+def test_board_entry_exists_for_date_returns_false_when_no_match(auto_order_manager):
+    """Returns False when no daily-boards record exists for the given case and date."""
+    mock_query = Mock()
+    mock_query.where.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = iter([])  # empty result
+    auto_order_manager.db.collection = Mock(return_value=mock_query)
+
+    result = auto_order_manager._board_entry_exists_for_date("WP/999/2025", "2025-07-10")
+
+    assert result is False
+
+
 def test_process_single_case_analysis_success_when_all_orders_skipped(
     auto_order_manager,
 ):
