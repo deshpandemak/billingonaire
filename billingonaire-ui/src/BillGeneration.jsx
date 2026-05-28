@@ -21,6 +21,7 @@ const BillGeneration = () => {
     const [bulkFeeValue, setBulkFeeValue] = useState('');
     const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStatus, setProcessingStatus] = useState('');
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [isAdmin, setIsAdmin] = useState(false);
     const [userList, setUserList] = useState([]);
     const [selectedUser, setSelectedUser] = useState('');
@@ -150,32 +151,23 @@ const BillGeneration = () => {
 
         setLoading(true);
         setError('');
-        setProcessingProgress(0);
-        setProcessingStatus('Initializing bill generation...');
+        setElapsedSeconds(0);
+        setProcessingStatus('Generating bill data…');
+
+        const startTs = Date.now();
+        const timerRef = setInterval(() => {
+            setElapsedSeconds(Math.floor((Date.now() - startTs) / 1000));
+        }, 1000);
 
         try {
-            // Status updates for user feedback
-            setProcessingProgress(20);
-            setProcessingStatus('Fetching case data...');
-
-            // Build query with optional user_name parameter for admin
             let queryUrl = `/bills/generate?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
             if (isAdmin && selectedUser) {
                 queryUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
 
             const response = await authenticatedFetchJSON(queryUrl);
-
-            setProcessingProgress(60);
-            setProcessingStatus('Processing entries...');
-
-            // Brief delay to show status transition
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            setProcessingProgress(100);
-            setProcessingStatus('Bill generation complete!');
-
             setBillData(response);
+            setProcessingStatus('');
         } catch (err) {
             // Gracefully handle "No matching AGP" errors by showing empty bill
             if (err.message && err.message.includes('400')) {
@@ -187,15 +179,14 @@ const BillGeneration = () => {
                     end_date: dateRange.endDate,
                     generated_at: new Date().toISOString()
                 });
-                setProcessingStatus('No matching cases found');
+                setProcessingStatus('');
             } else {
                 setError(err.message || 'Failed to generate bill data');
-                setProcessingStatus('Generation failed');
+                setProcessingStatus('');
             }
         } finally {
+            clearInterval(timerRef);
             setLoading(false);
-            setProcessingProgress(0);
-            setProcessingStatus('');
         }
     };
 
@@ -573,26 +564,16 @@ const BillGeneration = () => {
                             )}
 
                             {/* Progress Indicator */}
-                            {loading && processingProgress > 0 && (
+                            {loading && (
                                 <Card className="mb-4">
-                                    <Card.Body>
-                                        <div className="d-flex justify-content-between align-items-center mb-2">
-                                            <span>Status</span>
-                                            <span className="badge bg-primary">{processingProgress}%</span>
-                                        </div>
-                                        <div className="progress">
-                                            <div
-                                                className="progress-bar"
-                                                role="progressbar"
-                                                style={{width: `${processingProgress}%`}}
-                                                aria-valuenow={processingProgress}
-                                                aria-valuemin="0"
-                                                aria-valuemax="100"
-                                            ></div>
-                                        </div>
-                                        {processingStatus && (
-                                            <small className="text-muted mt-1 d-block">{processingStatus}</small>
-                                        )}
+                                    <Card.Body className="d-flex align-items-center gap-3 py-3">
+                                        <Spinner animation="border" variant="primary" size="sm" />
+                                        <span className="text-muted" style={{ fontSize: '0.9rem' }}>
+                                            {processingStatus || 'Generating bill data…'}
+                                            {elapsedSeconds > 0 && (
+                                                <span className="ms-2 text-secondary">({elapsedSeconds}s)</span>
+                                            )}
+                                        </span>
                                     </Card.Body>
                                 </Card>
                             )}

@@ -138,6 +138,9 @@ const Table = () => {
         : [];
       setData(normalizedResult);
       setEditedData(JSON.parse(JSON.stringify(normalizedResult)));
+      if (gridApi) {
+        gridApi.deselectAll();
+      }
     } catch (e) {
       setSearchError('Search failed. Please check your criteria and try again.');
     } finally {
