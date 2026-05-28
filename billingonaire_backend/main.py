@@ -3315,6 +3315,39 @@ async def scheduled_retry_orders(
         )
 
 
+@app.get("/admin/test-gcs", tags=["Admin Order Management"])
+async def test_gcs_access(current_user=Depends(require_admin)):
+    """Smoke-test GCS bucket read and write access from Cloud Run.
+
+    Writes a tiny sentinel object, reads it back, then deletes it.
+    Returns ``status: ok`` when the service account can reach the bucket,
+    or ``status: error`` with the exception detail when it cannot.
+    """
+    mgr = get_auto_order_manager()
+    if not mgr._gcs_bucket_name:
+        return {"status": "skipped", "reason": "ORDER_PDF_BUCKET env var is not set"}
+    try:
+        from google.cloud import storage as gcs_storage
+
+        client = gcs_storage.Client()
+        bucket = client.bucket(mgr._gcs_bucket_name)
+        blob = bucket.blob("__health-check__.txt")
+        blob.upload_from_string(b"ok", content_type="text/plain")
+        data = blob.download_as_bytes()
+        blob.delete()
+        return {
+            "status": "ok",
+            "bucket": mgr._gcs_bucket_name,
+            "read_write": data == b"ok",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "bucket": mgr._gcs_bucket_name,
+            "detail": str(exc),
+        }
+
+
 @app.get("/admin/order-status-overview", tags=["Admin Order Management"])
 async def get_order_status_overview(current_user=Depends(require_admin)):
     """
