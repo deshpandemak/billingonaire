@@ -487,6 +487,7 @@ class AutoOrderManager:
         api_petitioner: str,
         api_respondent: str,
         order_link: Optional[str] = None,
+        board_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Analyse a PDF using the court API-provided date and party names.
 
@@ -547,6 +548,7 @@ class AutoOrderManager:
                     "order_status": order_analysis["order_status"],
                     "order_category": order_analysis["order_category"],
                     "order_date": order_analysis["order_date"],
+                    "board_date": board_date,
                     "order_category_confidence": order_analysis[
                         "order_category_confidence"
                     ],
@@ -745,6 +747,7 @@ class AutoOrderManager:
                         api_petitioner=api_petitioner,
                         api_respondent=api_respondent,
                         order_link=final_order_link,
+                        board_date=board_date,
                     )
                     if anal.get("success"):
                         result["orders_processed"] += 1

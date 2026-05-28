@@ -45,22 +45,54 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
     const orders = Array.isArray(timeline.orders) ? timeline.orders : [];
     const boardDates = Array.isArray(timeline.board_dates) ? timeline.board_dates : [];
 
+    // Index board records by date for O(1) lookup
     const boardByDate = {};
     boardDates.forEach(bd => {
       if (bd.board_date) boardByDate[bd.board_date] = bd;
     });
 
+    // Find the closest board record to a given date string (YYYY-MM-DD).
+    // Tries exact match first; then picks the nearest date within 14 days.
+    const findBoardRecord = (dateStr) => {
+      if (!dateStr) return boardDates[0] || {};
+      if (boardByDate[dateStr]) return boardByDate[dateStr];
+      // Closest-date fallback
+      const ts = new Date(dateStr).getTime();
+      if (isNaN(ts)) return boardDates[0] || {};
+      let best = null, bestDiff = Infinity;
+      boardDates.forEach(bd => {
+        const t = new Date(bd.board_date).getTime();
+        if (!isNaN(t)) {
+          const diff = Math.abs(t - ts);
+          if (diff < bestDiff) { bestDiff = diff; best = bd; }
+        }
+      });
+      // Accept if within 14 days; otherwise fall back to first board record
+      return (best && bestDiff <= 14 * 86400000) ? best : (boardDates[0] || {});
+    };
+
+    // Top-level GP from case-details — used as fallback when per-order GP is absent
+    const topLevelGP = Array.isArray(timeline.government_pleader)
+      ? timeline.government_pleader
+      : [];
+
     return orders.map(order => {
-      const boardRecord = boardByDate[order.order_date] || {};
+      // Prefer board_date stored on the order (set by backend since fix),
+      // fall back to order_date for matching against board records.
+      const matchDate = order.board_date || order.order_date || null;
+      const boardRecord = findBoardRecord(matchDate);
+
       const gpInBoard = [
         boardRecord.respondent_lawyer,
         ...(Array.isArray(boardRecord.additional_respondent_lawyers)
           ? boardRecord.additional_respondent_lawyers : [])
       ].filter(Boolean);
 
-      const gpInOrder = Array.isArray(order.government_pleader)
+      const orderGP = Array.isArray(order.government_pleader)
         ? order.government_pleader
         : (order.government_pleader ? [order.government_pleader] : []);
+      // Fall back to top-level GP when per-order GP not yet populated (old data)
+      const gpInOrder = orderGP.length ? orderGP : topLevelGP;
 
       const rawLink = order.order_link || null;
       const boardDocId = boardRecord.board_doc_id || null;
@@ -71,7 +103,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
         : null;
 
       return {
-        date: order.order_date || '-',
+        date: order.board_date || order.order_date || '-',
+        orderDate: order.order_date || '-',
         orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
         gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(', ') : '-',
@@ -191,7 +224,14 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
                       const catCfg = ORDER_CATEGORY_CONFIG[app.orderAnalysis];
                       return (
                         <tr key={i}>
-                          <td style={{ whiteSpace: 'nowrap' }}>{app.date}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {app.date}
+                            {app.orderDate && app.orderDate !== app.date && (
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #6c757d)' }}>
+                                Order: {app.orderDate}
+                              </div>
+                            )}
+                          </td>
                           <td>{app.gpInBoard}</td>
                           <td>
                             {app.orderPdf ? (

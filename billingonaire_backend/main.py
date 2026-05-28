@@ -1036,12 +1036,33 @@ async def get_case_timeline(
             or "board_ingested"
         )
 
+        # Normalise each order's board_date field (may be a Timestamp from old data)
+        raw_orders = case_details.get("orders") or []
+        orders_out = []
+        for o in raw_orders:
+            if not isinstance(o, dict):
+                continue
+            o = dict(o)
+            raw_bd = o.get("board_date")
+            if raw_bd is not None:
+                if hasattr(raw_bd, "strftime"):
+                    o["board_date"] = raw_bd.strftime("%Y-%m-%d")
+                else:
+                    bd_str = str(raw_bd)
+                    if "T" in bd_str:
+                        bd_str = bd_str.split("T", 1)[0]
+                    elif " " in bd_str:
+                        bd_str = bd_str.split(" ", 1)[0]
+                    o["board_date"] = bd_str
+            orders_out.append(o)
+
         return {
             "case_ref": normalized_case_ref,
             "lifecycle_status": lifecycle_status,
             "petitioner": case_details.get("petitioner") or "",
             "respondent": case_details.get("respondent") or "",
-            "orders": case_details.get("orders") or [],
+            "government_pleader": case_details.get("government_pleader") or [],
+            "orders": orders_out,
             "board_dates": board_dates,
             "lifecycle_events": lifecycle_events,
             # backward-compat aliases kept for any callers expecting the old shape
