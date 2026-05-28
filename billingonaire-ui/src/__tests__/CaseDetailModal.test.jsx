@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../lib/api', () => ({
   authenticatedFetchJSON: vi.fn(),
+  getApiUrl: (path) => `http://localhost:8000${path}`,
 }));
 
 import * as api from '../lib/api';
@@ -84,7 +85,9 @@ describe('CaseDetailModal', () => {
     await waitFor(() => {
       const link = screen.getByText('View Order');
       expect(link).toBeTruthy();
-      expect(link.getAttribute('href')).toBe('https://example.com/order1.pdf');
+      // Non-GCS links are proxied through /orders/pdf/{boardDocId}
+      const href = link.getAttribute('href');
+      expect(href).toContain('/orders/pdf/');
     });
   });
 

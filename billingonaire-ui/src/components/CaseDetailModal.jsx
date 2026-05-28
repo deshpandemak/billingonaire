@@ -99,21 +99,40 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       const gpInOrder = orderGP.length ? orderGP : topLevelGP;
 
       const rawLink = order.order_link || null;
-      const boardDocId = boardRecord.board_doc_id || null;
+      // Construct boardDocId deterministically if not stored on board record.
+      // Board.py uses format: {YYYY-MM-DD}-{type}-{no}-{year} e.g. "2026-05-15-WP-9146-2025"
+      const boardDocId = boardRecord.board_doc_id
+        || (matchDate ? `${matchDate}-${caseRef.replace(/\//g, '-')}` : null);
       const orderPdfHref = rawLink
         ? (rawLink.startsWith('https://storage.googleapis.com')
             ? rawLink
             : boardDocId ? getApiUrl(`/orders/pdf/${boardDocId}`) : rawLink)
         : null;
 
+      // Use board record date as the display date only when the board record is
+      // a close match (within 14 days). The default-fallback board record may be
+      // far away and its date would be wrong.
+      const boardRecordDate = (() => {
+        if (!boardRecord.board_date || !matchDate) return null;
+        const diff = Math.abs(new Date(boardRecord.board_date).getTime() - new Date(matchDate).getTime());
+        return diff <= 14 * 86400000 ? boardRecord.board_date : null;
+      })();
+
       return {
-        date: order.board_date || order.order_date || '-',
+        date: order.board_date || boardRecordDate || order.order_date || '-',
         orderDate: order.order_date || '-',
         orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
         gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(', ') : '-',
         gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(', ') : '-',
       };
+    }).sort((a, b) => {
+      const da = new Date(a.date).getTime();
+      const db = new Date(b.date).getTime();
+      if (isNaN(da) && isNaN(db)) return 0;
+      if (isNaN(da)) return 1;
+      if (isNaN(db)) return -1;
+      return db - da;
     });
   };
 

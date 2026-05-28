@@ -309,8 +309,10 @@ class AutoOrderManager:
         orders_with_link = [
             o for o in orders if isinstance(o, dict) and o.get("order_link")
         ]
-        latest_order = orders_with_link[-1] if orders_with_link else (
-            orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        latest_order = (
+            orders_with_link[-1]
+            if orders_with_link
+            else (orders[-1] if orders and isinstance(orders[-1], dict) else {})
         )
         return {
             "case_detail": case_detail,
