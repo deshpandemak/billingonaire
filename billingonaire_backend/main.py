@@ -3315,6 +3315,39 @@ async def scheduled_retry_orders(
         )
 
 
+@app.get("/admin/test-gcs", tags=["Admin Order Management"])
+async def test_gcs_access(current_user=Depends(require_admin)):
+    """Smoke-test GCS bucket read and write access from Cloud Run.
+
+    Writes a tiny sentinel object, reads it back, then deletes it.
+    Returns ``status: ok`` when the service account can reach the bucket,
+    or ``status: error`` with the exception detail when it cannot.
+    """
+    mgr = get_auto_order_manager()
+    if not mgr._gcs_bucket_name:
+        return {"status": "skipped", "reason": "ORDER_PDF_BUCKET env var is not set"}
+    try:
+        from google.cloud import storage as gcs_storage
+
+        client = gcs_storage.Client()
+        bucket = client.bucket(mgr._gcs_bucket_name)
+        blob = bucket.blob("__health-check__.txt")
+        blob.upload_from_string(b"ok", content_type="text/plain")
+        data = blob.download_as_bytes()
+        blob.delete()
+        return {
+            "status": "ok",
+            "bucket": mgr._gcs_bucket_name,
+            "read_write": data == b"ok",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "bucket": mgr._gcs_bucket_name,
+            "detail": str(exc),
+        }
+
+
 @app.get("/admin/order-status-overview", tags=["Admin Order Management"])
 async def get_order_status_overview(current_user=Depends(require_admin)):
     """
@@ -4038,6 +4071,22 @@ async def get_order_pdf(doc_id: str):
 
         case_data = doc.to_dict() or {}
         order_link = (case_data.get("order_link") or "").strip()
+
+        # Fall back to case-details.latest_order_link — that's the authoritative
+        # location written by case_data_store.append_case_order().
+        if not order_link:
+            _ct = case_data.get("case_type", "")
+            _cn = str(case_data.get("case_no") or "")
+            _cy = str(case_data.get("case_year") or "")
+            if _ct and _cn and _cy:
+                _details_id = f"{_ct}-{_cn}-{_cy}"
+                _details_snap = (
+                    db.collection("case-details").document(_details_id).get()
+                )
+                if _details_snap.exists:
+                    order_link = (
+                        (_details_snap.to_dict() or {}).get("latest_order_link") or ""
+                    ).strip()
 
         if not order_link:
             raise HTTPException(
