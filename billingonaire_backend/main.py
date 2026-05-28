@@ -27,6 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_overview_stats_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+
 # Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
 if os.getenv("K_SERVICE"):
     try:
@@ -961,32 +963,85 @@ async def get_case_timeline(
     limit: int = Query(50, ge=1, le=500),
     current_user=Depends(get_current_user),
 ):
-    """Return full lifecycle timeline for a case reference."""
+    """Return full case details + lifecycle timeline for the case detail modal.
+
+    Returns petitioner, respondent, orders, board_dates, and lifecycle_events
+    so the frontend CaseDetailModal can display all sections without additional
+    API calls.
+    """
     try:
         normalized_case_ref = str(case_ref or "").strip().upper()
         if not normalized_case_ref:
             raise HTTPException(status_code=400, detail="case_ref is required")
 
+        ensure_firebase()
+        db = firestore.client()
         case_store = get_auto_order_manager().case_store
         case_details = case_store.get_case_details(normalized_case_ref)
         if not case_details:
             raise HTTPException(status_code=404, detail="Case not found")
 
-        timeline = case_store.get_case_timeline(normalized_case_ref, limit)
-        return {
-            "case_ref": normalized_case_ref,
-            "lifecycle_status": case_details.get("lifecycle_status")
+        # Lifecycle events (paginated)
+        all_events = list(case_details.get("lifecycle_events") or [])
+        lifecycle_events = all_events[-limit:] if limit and limit > 0 else all_events
+
+        # Board date records — batch-fetch from daily-boards using stored assignment IDs
+        board_dates: list = []
+        board_ids = case_details.get("board_assignment_ids") or []
+        if board_ids:
+            try:
+                doc_refs = [
+                    db.collection("daily-boards").document(bid)
+                    for bid in board_ids[:50]
+                ]
+                for snap in db.get_all(doc_refs):
+                    if snap.exists:
+                        d = snap.to_dict() or {}
+                        bd = str(d.get("board_date") or "")
+                        if "T" in bd:
+                            bd = bd.split("T", 1)[0]
+                        board_dates.append(
+                            {
+                                "board_date": bd,
+                                "respondent_lawyer": d.get("respondent_lawyer") or "",
+                                "additional_respondent_lawyers": d.get(
+                                    "additional_respondent_lawyers"
+                                )
+                                or [],
+                                "petitioner_lawyer": d.get("petitioner_lawyer") or "",
+                            }
+                        )
+            except Exception as _bd_err:
+                logger.warning(
+                    "get_case_timeline: board_dates fetch failed for %s: %s",
+                    normalized_case_ref,
+                    _bd_err,
+                )
+
+        lifecycle_status = (
+            case_details.get("lifecycle_status")
             or case_store.map_legacy_order_status(
                 case_details.get("latest_order_status")
             )
-            or "board_ingested",
-            "timeline": timeline,
-            "count": len(timeline),
+            or "board_ingested"
+        )
+
+        return {
+            "case_ref": normalized_case_ref,
+            "lifecycle_status": lifecycle_status,
+            "petitioner": case_details.get("petitioner") or "",
+            "respondent": case_details.get("respondent") or "",
+            "orders": case_details.get("orders") or [],
+            "board_dates": board_dates,
+            "lifecycle_events": lifecycle_events,
+            # backward-compat aliases kept for any callers expecting the old shape
+            "timeline": lifecycle_events,
+            "count": len(lifecycle_events),
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching case timeline for {case_ref}: {e}")
+        logger.error("Error fetching case timeline for %s: %s", case_ref, e)
         raise HTTPException(status_code=500, detail="Error retrieving case timeline")
 
 
@@ -1258,6 +1313,7 @@ async def dashboard_weekly_status(
     start_date: str = Query(None),
     end_date: str = Query(None),
     current_user_with_profile=Depends(get_user_with_profile),
+    response: Response = None,
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get("uid")
@@ -1268,6 +1324,8 @@ async def dashboard_weekly_status(
     data = await get_dashboard_data().get_weekly_status(
         start_date, end_date, agp_filter
     )
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=120"
     return JSONResponse(content=data)
 
 
@@ -1275,6 +1333,7 @@ async def dashboard_weekly_status(
 async def dashboard_agp_stats(
     agp_name: str = Query(None),
     current_user_with_profile=Depends(get_user_with_profile),
+    response: Response = None,
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get("uid")
@@ -1286,12 +1345,16 @@ async def dashboard_agp_stats(
     target_agp = agp_filter or agp_name
 
     data = await get_dashboard_data().get_agp_stats(target_agp, agp_filter)
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=120"
     return JSONResponse(content=data)
 
 
 @app.get("/dashboard/monthly-avg")
 async def dashboard_monthly_avg(
-    year: str = Query(None), current_user_with_profile=Depends(get_user_with_profile)
+    year: str = Query(None),
+    current_user_with_profile=Depends(get_user_with_profile),
+    response: Response = None,
 ):
     # SECURITY: Get AGP filter for the user - strict enforcement
     uid = current_user_with_profile.get("uid")
@@ -1300,6 +1363,8 @@ async def dashboard_monthly_avg(
     )  # This will raise 403 if invalid
 
     data = await get_dashboard_data().get_monthly_avg(year, agp_filter)
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=120"
     return JSONResponse(content=data)
 
 
@@ -1312,6 +1377,7 @@ async def dashboard_matters_by_date_range(
         None, description="End date (YYYY-MM-DD) - defaults to today"
     ),
     current_user_with_profile=Depends(get_user_with_profile),
+    response: Response = None,
 ):
     """Get total matters by date range with average for bar chart + line visualization"""
     # SECURITY: Get AGP filter for the user - strict enforcement
@@ -1323,6 +1389,8 @@ async def dashboard_matters_by_date_range(
     data = await get_dashboard_data().get_matters_by_date_range(
         start_date, end_date, agp_filter
     )
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=120"
     return JSONResponse(content=data)
 
 
@@ -1379,6 +1447,7 @@ async def dashboard_board_date_summary(
     quarter: Optional[int] = Query(None, description="Quarter filter (1-4)"),
     limit: int = Query(180, ge=1, le=1000),
     current_user_with_profile=Depends(get_user_with_profile),
+    response: Response = None,
 ):
     """Get board-date summary with case counts and distinct pleader counts."""
     uid = current_user_with_profile.get("uid")
@@ -1392,6 +1461,8 @@ async def dashboard_board_date_summary(
         limit=limit,
         agp_filter=agp_filter,
     )
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=120"
     return JSONResponse(content=data)
 
 
@@ -3925,11 +3996,17 @@ async def generate_name_variations(
 async def get_order_overview_stats(current_user=Depends(get_current_user)):
     """Get comprehensive overview statistics for Order Management Center"""
     try:
+        import time as _time
+
+        if (
+            _time.time() - _overview_stats_cache["ts"] < 120
+            and _overview_stats_cache["data"]
+        ):
+            return JSONResponse(content=_overview_stats_cache["data"])
+
+        ensure_firebase()
         db = firestore.client()
-        # Get total cases count
-        boards_ref = db.collection("daily-boards")
-        total_cases_query = boards_ref.limit(10000)  # Reasonable limit for counting
-        total_cases_docs = list(total_cases_query.stream())
+        total_cases_docs = list(db.collection("daily-boards").limit(10000).stream())
         total_cases = len(total_cases_docs)
 
         case_docs = list(db.collection("case-details").limit(10000).stream())
@@ -3947,25 +4024,23 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
             if status in {"order_failed", "order_analysis_failed"}:
                 recent_failed += 1
 
-        # Calculate cases without orders
         cases_without_orders = total_cases - cases_with_orders
-
-        # Calculate analysis completion rate
         analysis_completion_rate = round(
             (cases_with_orders / total_cases * 100) if total_cases > 0 else 0, 1
         )
 
-        return JSONResponse(
-            content={
-                "total_cases": total_cases,
-                "cases_with_orders": cases_with_orders,
-                "cases_without_orders": cases_without_orders,
-                "analysis_completion_rate": analysis_completion_rate,
-                "recent_successful_analyses": recent_successful,
-                "recent_failed_analyses": recent_failed,
-                "last_updated": datetime.now().isoformat(),
-            }
-        )
+        result = {
+            "total_cases": total_cases,
+            "cases_with_orders": cases_with_orders,
+            "cases_without_orders": cases_without_orders,
+            "analysis_completion_rate": analysis_completion_rate,
+            "recent_successful_analyses": recent_successful,
+            "recent_failed_analyses": recent_failed,
+            "last_updated": datetime.now().isoformat(),
+        }
+        _overview_stats_cache["ts"] = _time.time()
+        _overview_stats_cache["data"] = result
+        return JSONResponse(content=result)
 
     except Exception as e:
         logger.error(f"Error getting order overview stats: {e}")

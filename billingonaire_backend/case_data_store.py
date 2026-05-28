@@ -52,6 +52,7 @@ class CaseDataStore:
             "fetch_succeeded",
             "fetch_failed_retryable",
             "fetch_failed_terminal",
+            "analysed",
         },
         "fetch_succeeded": {
             "fetch_succeeded",

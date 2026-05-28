@@ -497,29 +497,35 @@ class UserMatterMatcher:
             return []
 
         matches = []
-
         try:
-            # Query daily-boards collection
-            boards_ref = self.db.collection("daily-boards").limit(limit)
-            docs = boards_ref.stream()
+            # Load all board docs first (single stream call)
+            all_docs = list(self.db.collection("daily-boards").limit(limit).stream())
 
-            for doc in docs:
+            # Batch-fetch case details to avoid N+1 (one read per case → 10 per chunk)
+            case_refs_for_batch = []
+            doc_case_refs = []
+            for doc in all_docs:
+                d = doc.to_dict()
+                cr = f"{d.get('case_type', '')}/{d.get('case_no', '')}/{d.get('case_year', '')}"
+                doc_case_refs.append(cr)
+                case_refs_for_batch.append(cr)
+
+            details_map = self.case_store.get_case_details_map(case_refs_for_batch)
+
+            for doc, case_ref in zip(all_docs, doc_case_refs):
                 doc_data = doc.to_dict()
                 case_id = doc.id
-                case_ref = f"{doc_data.get('case_type', '')}/{doc_data.get('case_no', '')}/{doc_data.get('case_year', '')}"
 
                 # Check board data fields
                 board_fields = {
                     "petitioner_lawyer": doc_data.get("petitioner_lawyer", ""),
                     "respondent_lawyer": doc_data.get("respondent_lawyer", ""),
                 }
-
                 for field_name, field_value in board_fields.items():
                     if field_value:
-                        text_matches = self.find_user_matches_in_text(
+                        for matched_text, confidence in self.find_user_matches_in_text(
                             field_value, user_role, field_name
-                        )
-                        for matched_text, confidence in text_matches:
+                        ):
                             matches.append(
                                 MatterMatch(
                                     case_id=case_id,
@@ -533,17 +539,12 @@ class UserMatterMatcher:
                                 )
                             )
 
-                # Check additional_respondent_lawyers (array field)
                 additional_lawyers = doc_data.get("additional_respondent_lawyers", [])
                 if additional_lawyers and isinstance(additional_lawyers, list):
-                    # Join array into searchable text
-                    text_to_search = " ".join(
-                        str(lawyer) for lawyer in additional_lawyers
-                    )
-                    text_matches = self.find_user_matches_in_text(
+                    text_to_search = " ".join(str(lw) for lw in additional_lawyers)
+                    for matched_text, confidence in self.find_user_matches_in_text(
                         text_to_search, user_role, "additional_respondent_lawyers"
-                    )
-                    for matched_text, confidence in text_matches:
+                    ):
                         matches.append(
                             MatterMatch(
                                 case_id=case_id,
@@ -557,26 +558,22 @@ class UserMatterMatcher:
                             )
                         )
 
-                # Check normalized case-details fields when available.
-                case_details = self.case_store.get_case_details(case_ref) or {}
+                # Use pre-fetched case details map (no per-doc Firestore call)
+                case_details = details_map.get(case_ref) or {}
                 case_fields = {
                     "government_pleader": case_details.get("government_pleader", []),
                     "petitioner": case_details.get("petitioner", ""),
                     "respondent": case_details.get("respondent", ""),
                 }
-
                 for field_name, field_value in case_fields.items():
                     if isinstance(field_value, list):
                         text_to_search = " ".join(str(item) for item in field_value)
                     else:
-                        text_to_search = str(field_value)
-
+                        text_to_search = str(field_value) if field_value else ""
                     if text_to_search:
-                        text_matches = self.find_user_matches_in_text(
+                        for matched_text, confidence in self.find_user_matches_in_text(
                             text_to_search, user_role, field_name
-                        )
-                        for matched_text, confidence in text_matches:
-                            boosted_confidence = min(1.0, confidence + 0.05)
+                        ):
                             matches.append(
                                 MatterMatch(
                                     case_id=case_id,
@@ -584,27 +581,16 @@ class UserMatterMatcher:
                                     match_source="case_details",
                                     match_field=field_name,
                                     matched_text=matched_text,
-                                    confidence_score=boosted_confidence,
+                                    confidence_score=confidence,
                                     role_type=user_role.role_type,
                                     board_date=str(doc_data.get("board_date", "")),
                                 )
                             )
 
         except Exception as e:
-            logging.error(f"Error finding user matters for {user_id}: {e}")
+            logging.error(f"Error finding user matters: {e}")
 
-        # Sort by confidence score and remove duplicates
-        matches.sort(key=lambda x: x.confidence_score, reverse=True)
-
-        # Remove duplicate case_ids, keeping highest confidence match
-        seen_cases = set()
-        unique_matches = []
-        for match in matches:
-            if match.case_id not in seen_cases:
-                seen_cases.add(match.case_id)
-                unique_matches.append(match)
-
-        return unique_matches
+        return sorted(matches, key=lambda m: m.board_date or "", reverse=True)
 
     def get_matters_summary(self, user_id: str) -> Dict[str, Any]:
         """Get summary of matters for a user"""
