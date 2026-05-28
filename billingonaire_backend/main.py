@@ -451,7 +451,9 @@ async def process_order_queue_worker(worker_id: int):
                         event_type="fetch_timeout",
                     )
                 except Exception as lc_err:
-                    logger.error(f"Failed to mark lifecycle failed after timeout: {lc_err}")
+                    logger.error(
+                        f"Failed to mark lifecycle failed after timeout: {lc_err}"
+                    )
             except Exception as e:
                 logger.error(
                     f"❌ Error processing order for {case_info['case_ref']}: {e}"
@@ -469,7 +471,9 @@ async def process_order_queue_worker(worker_id: int):
                         event_type="fetch_error",
                     )
                 except Exception as lc_err:
-                    logger.error(f"Failed to mark lifecycle failed after exception: {lc_err}")
+                    logger.error(
+                        f"Failed to mark lifecycle failed after exception: {lc_err}"
+                    )
 
             # Mark task as done
             order_processing_queue.task_done()
@@ -1065,6 +1069,12 @@ async def get_case_timeline(
             if not isinstance(o, dict):
                 continue
             o = dict(o)
+            # Skip status-only entries that have neither an order_date nor an
+            # order_link — these are internal tracking markers (e.g. order_failed
+            # after exhausting sequence retries) that should not appear as rows
+            # in the modal's appearances table.
+            if not o.get("order_date") and not o.get("order_link"):
+                continue
             raw_bd = o.get("board_date")
             if raw_bd is not None:
                 if hasattr(raw_bd, "strftime"):

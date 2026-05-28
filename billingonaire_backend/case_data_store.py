@@ -470,7 +470,14 @@ class CaseDataStore:
         if len(orders) > 100:
             orders = orders[-100:]
 
+        # latest: last entry — used for status tracking
         latest = orders[-1] if orders else {}
+        # latest_with_link: last entry that has an actual order_link.
+        # Status-only entries (order_failed markers, etc.) have no order_link and
+        # must NOT clobber a previously stored GCS URL in latest_order_link.
+        orders_with_link = [o for o in orders if o.get("order_link")]
+        latest_with_link = orders_with_link[-1] if orders_with_link else {}
+
         petitioner_value = (
             order_payload.get("order_petitioner")
             or order_payload.get("petitioner")
@@ -486,10 +493,10 @@ class CaseDataStore:
         update_data = {
             "case_ref": case_ref,
             "orders": orders,
-            "latest_order_link": latest.get("order_link"),
-            "latest_order_date": latest.get("order_date"),
+            "latest_order_link": latest_with_link.get("order_link"),
+            "latest_order_date": latest_with_link.get("order_date"),
             "latest_order_status": latest.get("order_status"),
-            "latest_order_category": latest.get("order_category"),
+            "latest_order_category": latest_with_link.get("order_category"),
             "petitioner": petitioner_value,
             "respondent": respondent_value,
             "government_pleader": order_payload.get("government_pleader")

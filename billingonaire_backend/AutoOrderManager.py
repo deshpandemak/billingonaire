@@ -463,11 +463,17 @@ class AutoOrderManager:
                 )
             if normalised_target is not None and normalised_stored is not None:
                 if normalised_stored == normalised_target:
-                    # Order is analysed but if the link is still a live court URL
-                    # (not GCS), returning False forces a re-fetch that will upload
-                    # the PDF to GCS and update the stored link.
+                    # When GCS is configured, force a re-fetch for orders that
+                    # still have an expiring BHC URL so the PDF is uploaded to
+                    # GCS for permanent storage.  When GCS is NOT configured
+                    # (bucket name empty or library unavailable), accept the BHC
+                    # URL as-is — otherwise every retry would loop indefinitely
+                    # without ever upgrading the link.
                     order_link = order.get("order_link") or ""
-                    if order_link and not order_link.startswith(
+                    gcs_configured = bool(
+                        self._gcs_bucket_name and gcs_storage is not None
+                    )
+                    if gcs_configured and order_link and not order_link.startswith(
                         "https://storage.googleapis.com"
                     ):
                         return False
@@ -475,7 +481,10 @@ class AutoOrderManager:
             elif stored_date == order_date:
                 # Fallback: raw string comparison when neither side could be parsed
                 order_link = order.get("order_link") or ""
-                if order_link and not order_link.startswith(
+                gcs_configured = bool(
+                    self._gcs_bucket_name and gcs_storage is not None
+                )
+                if gcs_configured and order_link and not order_link.startswith(
                     "https://storage.googleapis.com"
                 ):
                     return False
