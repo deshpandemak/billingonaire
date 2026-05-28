@@ -2959,27 +2959,76 @@ async def process_single_case(request: Request, current_user=Depends(get_current
                     content={"error": "max_sequences must be a valid integer"},
                 )
 
-        # Fetch existing case data from database to check order status
+        # Fetch existing case data from database
         case_doc = db.collection("daily-boards").document(case_id).get()
 
         if not case_doc.exists:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
 
-        # Get full case data including order status
         case_data = case_doc.to_dict()
-        case_data["id"] = case_id
-        case_data["case_ref"] = case_ref
-        case_data["board_date"] = board_date
 
-        # Process the single case with optional max_sequences
-        result = get_auto_order_manager()._process_single_case(case_data, max_sequences)
+        # Enqueue asynchronously — do not block the request for up to 5 minutes.
+        # The caller can poll GET /auto-orders/job-status/{case_id} for progress.
+        auto_mgr = get_auto_order_manager()
+        auto_mgr.case_store.transition_lifecycle(
+            case_ref,
+            "fetch_queued",
+            metadata={"source": "process_case_endpoint", "case_id": case_id},
+            event_type="fetch_job_queued",
+        )
+        await order_processing_queue.put(
+            {
+                "id": case_id,
+                "case_ref": case_ref,
+                "board_date": board_date or case_data.get("board_date"),
+                "max_sequences": max_sequences,
+            }
+        )
+        await ensure_background_processing_active()
 
-        return JSONResponse(content=result)
+        return JSONResponse(
+            content={
+                "success": True,
+                "job_id": case_id,
+                "status": "queued",
+                "case_ref": case_ref,
+                "message": "Case queued for processing. Poll /auto-orders/job-status/{case_id} for progress.",
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error processing single case: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to process case: {str(e)}"}
+        )
+
+
+@app.get("/auto-orders/job-status/{doc_id}", tags=["Auto Order Management"])
+async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
+    """Poll the processing status of a single case queued via /auto-orders/process-case."""
+    try:
+        db = firestore.client()
+        case_doc = db.collection("daily-boards").document(doc_id).get()
+        if not case_doc.exists:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+        data = case_doc.to_dict() or {}
+        lifecycle_status = data.get("lifecycle_status") or "unknown"
+        updated_at = data.get("updated_at")
+        return JSONResponse(
+            content={
+                "doc_id": doc_id,
+                "status": lifecycle_status,
+                "order_category": data.get("order_category"),
+                "order_link": data.get("order_link"),
+                "updated_at": updated_at.isoformat()
+                if hasattr(updated_at, "isoformat")
+                else None,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting job status for {doc_id}: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to get job status: {str(e)}"}
         )
 
 
@@ -3733,6 +3782,20 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         analysis_queue_size = analysis_processing_queue.qsize()
         distributed_metrics = _get_distributed_queue_metrics()
 
+        # Count manual review cases inline so the frontend can derive the
+        # badge count from this single endpoint instead of polling /admin/review-queue.
+        try:
+            db = firestore.client()
+            review_count = (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", "manual_review_required")
+                .count()
+                .get()[0][0]
+                .value
+            )
+        except Exception:
+            review_count = 0
+
         result = {
             "fetch_queue_size": queue_size,
             "analysis_queue_size": analysis_queue_size,
@@ -3740,6 +3803,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
             "analysis_pending_cases": distributed_metrics.get(
                 "analysis_pending_cases", 0
             ),
+            "review_queue_count": review_count,
             "distributed_metrics": distributed_metrics,
             "fetch_processing_active": processing_active,
             "analysis_processing_active": analysis_processing_active,

@@ -860,10 +860,32 @@ const BillGeneration = () => {
                     <Modal.Title>Save Bill</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
-                    <p>Are you sure you want to save this bill with {billData?.total_entries} entries totaling ₹{billData?.total_fees?.toLocaleString()}?</p>
-                    <p className="text-muted">
-                        Date Range: {dateRange.startDate} to {dateRange.endDate}
-                    </p>
+                    <table className="table table-sm table-borderless mb-0" style={{ fontSize: '0.9rem' }}>
+                        <tbody>
+                            <tr>
+                                <td className="text-muted fw-semibold" style={{ width: '40%' }}>Entries</td>
+                                <td>{billData?.total_entries ?? (billData?.bill_entries?.length ?? 0)}</td>
+                            </tr>
+                            <tr>
+                                <td className="text-muted fw-semibold">Total Fees</td>
+                                <td>₹{(billData?.total_fees ?? 0).toLocaleString('en-IN')}</td>
+                            </tr>
+                            <tr>
+                                <td className="text-muted fw-semibold">Date Range</td>
+                                <td>{dateRange.startDate} → {dateRange.endDate}</td>
+                            </tr>
+                            {isAdmin && selectedUser && (
+                                <tr>
+                                    <td className="text-muted fw-semibold">Advocate</td>
+                                    <td>{selectedUser}</td>
+                                </tr>
+                            )}
+                            <tr>
+                                <td className="text-muted fw-semibold">Bill Number</td>
+                                <td className="text-muted">Assigned on save</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </Modal.Body>
                 <Modal.Footer>
                     <Button variant="secondary" onClick={() => setShowSaveModal(false)}>
