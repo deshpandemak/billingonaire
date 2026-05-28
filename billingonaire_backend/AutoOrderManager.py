@@ -459,9 +459,22 @@ class AutoOrderManager:
                 )
             if normalised_target is not None and normalised_stored is not None:
                 if normalised_stored == normalised_target:
+                    # Order is analysed but if the link is still a live court URL
+                    # (not GCS), returning False forces a re-fetch that will upload
+                    # the PDF to GCS and update the stored link.
+                    order_link = order.get("order_link") or ""
+                    if order_link and not order_link.startswith(
+                        "https://storage.googleapis.com"
+                    ):
+                        return False
                     return True
             elif stored_date == order_date:
                 # Fallback: raw string comparison when neither side could be parsed
+                order_link = order.get("order_link") or ""
+                if order_link and not order_link.startswith(
+                    "https://storage.googleapis.com"
+                ):
+                    return False
                 return True
         return False
 

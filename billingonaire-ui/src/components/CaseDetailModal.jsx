@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Table, Badge, Spinner, Alert } from 'react-bootstrap';
-import { authenticatedFetchJSON } from '../lib/api';
+import { authenticatedFetchJSON, getApiUrl } from '../lib/api';
 import { getLifecycleConfig } from '../lib/lifecycleUtils';
 
 const ORDER_CATEGORY_CONFIG = {
@@ -62,9 +62,17 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
         ? order.government_pleader
         : (order.government_pleader ? [order.government_pleader] : []);
 
+      const rawLink = order.order_link || null;
+      const boardDocId = boardRecord.board_doc_id || null;
+      const orderPdfHref = rawLink
+        ? (rawLink.startsWith('https://storage.googleapis.com')
+            ? rawLink
+            : boardDocId ? getApiUrl(`/orders/pdf/${boardDocId}`) : rawLink)
+        : null;
+
       return {
         date: order.order_date || '-',
-        orderPdf: order.order_link || null,
+        orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
         gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(', ') : '-',
         gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(', ') : '-',
