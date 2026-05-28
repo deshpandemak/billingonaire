@@ -878,6 +878,45 @@ def test_process_single_case_uses_direct_api_first(auto_order_manager):
     auto_order_manager._download_order_for_case.assert_not_called()
 
 
+def test_process_single_case_normalises_firestore_datetime_board_date(
+    auto_order_manager,
+):
+    """When board_date is a Firestore Timestamp (datetime object), _process_single_case
+    must pass a clean 'YYYY-MM-DD' string to _process_all_orders_from_api — NOT
+    the str() representation '2026-05-15 00:00:00' which would break date comparison."""
+    dt_board_date = datetime(2026, 5, 15, 0, 0, 0)
+    case_data = {
+        "id": "board-dt",
+        "case_ref": "WP/9146/2025",
+        "case_type": "WP",
+        "case_no": 9146,
+        "case_year": 2025,
+        "board_date": dt_board_date,  # datetime object as returned by Firestore
+    }
+
+    captured_args = {}
+    auto_order_manager._process_all_orders_from_api = Mock(
+        side_effect=lambda **kw: captured_args.update(kw)
+        or {
+            "success": True,
+            "orders_processed": 1,
+            "orders_skipped": 0,
+            "order_link": "https://storage.googleapis.com/b/court-orders/WP-9146-2025/2026-05-15.pdf",
+        }
+    )
+    auto_order_manager._download_order_for_case = Mock(
+        return_value={"success": False, "error": "should not be called"}
+    )
+
+    auto_order_manager._process_single_case(case_data)
+
+    # board_date must be the clean ISO string "2026-05-15", NOT "2026-05-15 00:00:00"
+    assert captured_args.get("board_date") == "2026-05-15", (
+        f"Expected board_date='2026-05-15' but got {captured_args.get('board_date')!r} — "
+        "str(datetime) produces a space-separated string that breaks date comparison"
+    )
+
+
 def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_manager):
     """When GCS upload succeeds, the HTTPS GCS URL is persisted instead of the expiring API link."""
     auto_order_manager.court_scraper.get_case_orders = Mock(
@@ -944,6 +983,37 @@ def test_normalise_order_date_none(auto_order_manager):
 def test_normalise_order_date_unparseable(auto_order_manager):
     """Unparseable value returns None."""
     assert auto_order_manager._normalise_order_date("not-a-date") is None
+
+
+def test_normalise_order_date_space_separated_datetime(auto_order_manager):
+    """str(datetime_object) produces '2026-05-15 00:00:00' — must strip time part."""
+    assert (
+        auto_order_manager._normalise_order_date("2026-05-15 00:00:00") == "2026-05-15"
+    )
+
+
+def test_normalise_order_date_t_separated_datetime(auto_order_manager):
+    """ISO datetime with T separator is stripped to date."""
+    assert (
+        auto_order_manager._normalise_order_date("2026-05-15T14:30:00") == "2026-05-15"
+    )
+
+
+def test_parse_board_date_handles_datetime_object():
+    """_parse_board_date extracts .date() from a Python datetime object (Firestore Timestamp)."""
+    from datetime import date
+
+    dt = datetime(2026, 5, 15, 0, 0, 0)
+    result = AutoOrderManager._parse_board_date(dt)
+    assert result == date(2026, 5, 15)
+
+
+def test_parse_board_date_handles_space_separated_string():
+    """_parse_board_date handles str(datetime) output '2026-05-15 00:00:00'."""
+    from datetime import date
+
+    result = AutoOrderManager._parse_board_date("2026-05-15 00:00:00")
+    assert result == date(2026, 5, 15)
 
 
 def test_is_order_already_analysed_normalises_date_formats(auto_order_manager):

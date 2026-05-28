@@ -354,6 +354,8 @@ class AutoOrderManager:
             return None
         if "T" in raw:
             raw = raw.split("T", 1)[0]
+        elif " " in raw:
+            raw = raw.split(" ", 1)[0]
         try:
             return datetime.strptime(raw, "%Y-%m-%d").date()
         except ValueError:
@@ -416,9 +418,11 @@ class AutoOrderManager:
         raw = str(value).strip()
         if not raw:
             return None
-        # Strip time component if present (e.g. 2025-04-09T12:34:56)
+        # Strip time component if present (e.g. "2025-04-09T12:34:56" or "2025-04-09 12:34:56")
         if "T" in raw:
             raw = raw.split("T", 1)[0]
+        elif " " in raw:
+            raw = raw.split(" ", 1)[0]
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
             try:
                 return datetime.strptime(raw, fmt).date().isoformat()
@@ -923,7 +927,10 @@ class AutoOrderManager:
         #  (a) new orders may have been published since the last run, and
         #  (b) previously stored download URLs may have expired.
         # ---------------------------------------------------------------
-        board_date_str = str(case_data.get("board_date") or "")
+        # board_date_value was already parsed above via _parse_board_date which
+        # handles Firestore Timestamp objects correctly (str() would produce
+        # "2026-05-15 00:00:00" which breaks the date comparison downstream).
+        board_date_str = board_date_value.isoformat() if board_date_value else ""
         api_result = self._process_all_orders_from_api(
             case_ref=case_ref,
             case_id=case_id,
