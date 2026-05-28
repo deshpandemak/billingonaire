@@ -72,6 +72,9 @@ class FakeFirestore:
     def get_collection(self, name):
         return self._collections.get(name, {})
 
+    def get_all(self, doc_refs):
+        return [ref.get() for ref in doc_refs]
+
 
 def test_upsert_from_board_entry_merges_pleaders_and_board_ids():
     db = FakeFirestore()
