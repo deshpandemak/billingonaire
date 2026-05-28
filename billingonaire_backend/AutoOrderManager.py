@@ -303,7 +303,17 @@ class AutoOrderManager:
     def _get_case_order_context(self, case_ref: str) -> Dict[str, Any]:
         case_detail = self.case_store.get_case_details(case_ref) or {}
         orders = case_detail.get("orders") or []
-        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
+        # Use the last entry that actually has an order_link — blank status-only
+        # entries (order_failed, not_linked markers) have no order_link and must
+        # not shadow a previously stored valid link.
+        orders_with_link = [
+            o for o in orders if isinstance(o, dict) and o.get("order_link")
+        ]
+        latest_order = (
+            orders_with_link[-1]
+            if orders_with_link
+            else (orders[-1] if orders and isinstance(orders[-1], dict) else {})
+        )
         return {
             "case_detail": case_detail,
             "latest_order": latest_order,
@@ -323,13 +333,10 @@ class AutoOrderManager:
             status,
             reason,
         )
-        payload = {
-            "order_status": status,
-            "order_status_updated_at": datetime.now().isoformat(),
-        }
-        if reason:
-            payload["order_failure_reason"] = reason
-        self.case_store.append_case_order(case_ref, payload)
+        # Only update the lifecycle — do NOT call append_case_order with a
+        # status-only payload. Status entries have no order_date or order_link
+        # and would be appended as blank rows in the orders array, clobbering
+        # latest_order_link and showing empty rows in the modal.
         mapped_lifecycle = self.case_store.map_legacy_order_status(status)
         if mapped_lifecycle:
             self.case_store.transition_lifecycle(
