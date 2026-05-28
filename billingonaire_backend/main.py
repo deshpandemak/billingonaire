@@ -4328,6 +4328,8 @@ async def get_order_pdf(doc_id: str):
 
         # Fall back to case-details.latest_order_link — that's the authoritative
         # location written by case_data_store.append_case_order().
+        # Also scan the orders array directly so that cases whose latest_order_link
+        # was clobbered to None by a previous blank status entry still resolve.
         if not order_link:
             _ct = case_data.get("case_type", "")
             _cn = str(case_data.get("case_no") or "")
@@ -4338,9 +4340,14 @@ async def get_order_pdf(doc_id: str):
                     db.collection("case-details").document(_details_id).get()
                 )
                 if _details_snap.exists:
-                    order_link = (
-                        (_details_snap.to_dict() or {}).get("latest_order_link") or ""
-                    ).strip()
+                    _details = _details_snap.to_dict() or {}
+                    order_link = (_details.get("latest_order_link") or "").strip()
+                    if not order_link:
+                        # Scan orders array for the most-recent entry with a link
+                        for _o in reversed(_details.get("orders") or []):
+                            if isinstance(_o, dict) and _o.get("order_link"):
+                                order_link = _o["order_link"].strip()
+                                break
 
         if not order_link:
             raise HTTPException(
