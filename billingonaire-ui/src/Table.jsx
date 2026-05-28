@@ -509,7 +509,9 @@ const Table = () => {
           })
         });
 
-        if (response.download_success) {
+        // Async endpoint: returns {success, status:'queued'} immediately.
+        // Legacy sync endpoint returned {download_success: true}.
+        if (response.download_success || (response.success && response.status === 'queued')) {
           successCount++;
         } else {
           failCount++;
@@ -527,7 +529,9 @@ const Table = () => {
 
     setTableMessage({
       type: successCount > 0 ? 'success' : 'error',
-      text: `Batch download complete: ${successCount} succeeded, ${failCount} failed.`
+      text: failCount === 0
+        ? `${successCount} case(s) queued for download. Refresh in a moment to see results.`
+        : `${successCount} queued, ${failCount} failed to queue.`
     });
     await fetchData();
 
