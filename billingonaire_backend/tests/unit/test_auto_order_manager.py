@@ -653,6 +653,7 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
             order_category="interim",
             category_confidence=0.9,
             analysis_metadata={},
+            cases=[],
         )
     )
 
