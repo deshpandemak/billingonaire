@@ -478,6 +478,33 @@ class AutoOrderManager:
                 return True
         return False
 
+    def _board_entry_exists_for_date(self, case_ref: str, date_str: str) -> bool:
+        """Return True when daily-boards contains an entry for *case_ref* on *date_str*.
+
+        Used to decide whether an order returned by the court API should be
+        processed: if no board entry exists for this case on this date we have
+        no hearing record to attach the order to, so we skip it.
+        """
+        if not case_ref or not date_str:
+            return False
+        try:
+            docs = (
+                self.db.collection(self.boards_collection)
+                .where("case_ref", "==", case_ref)
+                .where("board_date", "==", date_str)
+                .limit(1)
+                .stream()
+            )
+            return any(True for _ in docs)
+        except Exception as exc:
+            logger.warning(
+                "_board_entry_exists_for_date: query failed for case_ref=%s date=%s: %s",
+                case_ref,
+                date_str,
+                exc,
+            )
+            return False
+
     def _analyze_order_with_api_metadata(
         self,
         case_id: str,
@@ -665,26 +692,24 @@ class AutoOrderManager:
                 if not download_link:
                     continue
 
-                # Skip orders that fall outside a ±7-day window around the board date.
-                # The court API returns all historical orders for a case; without this
-                # guard an old order (e.g. July 2025) can be re-processed for a May 2026
-                # hearing and overwrite the correct analysed state.
-                if board_date and order_date_str:
-                    order_date_parsed = self._parse_board_date(order_date_str)
-                    board_date_parsed = self._parse_board_date(board_date)
-                    if order_date_parsed and board_date_parsed:
-                        delta_days = abs((order_date_parsed - board_date_parsed).days)
-                        if delta_days > 7:
-                            logger.info(
-                                "_process_all_orders_from_api: skipping order for "
-                                "case_ref=%s order_date=%s board_date=%s "
-                                "(delta=%d days exceeds 7-day window)",
-                                case_ref,
-                                order_date_str,
-                                board_date,
-                                delta_days,
-                            )
-                            continue
+                # Skip orders for which no board hearing record exists.
+                # The court API returns all historical orders for a case; without
+                # this guard an old order (e.g. July 2025) can be re-processed for
+                # a May 2026 board trigger and overwrite the correct analysed state.
+                # Each order is only processed when there is a daily-boards entry for
+                # this case on that date — i.e. the case actually appeared on the
+                # board on that day.  If multiple board entries exist for different
+                # dates, each one gets processed and linked independently.
+                if order_date_str and not self._board_entry_exists_for_date(
+                    case_ref, order_date_str
+                ):
+                    logger.info(
+                        "_process_all_orders_from_api: skipping order for "
+                        "case_ref=%s order_date=%s — no board entry found for this date",
+                        case_ref,
+                        order_date_str,
+                    )
+                    continue
 
                 # Skip orders already fully analysed for this date
                 if order_date_str and self._is_order_already_analysed(

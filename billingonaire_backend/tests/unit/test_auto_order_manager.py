@@ -743,21 +743,21 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
 
 
 def test_process_all_orders_from_api_success(auto_order_manager):
-    """Download and analyse all orders returned by the direct API within the 7-day window."""
+    """Download and analyse all orders returned by the direct API that have board entries."""
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
             "status": "found",
             "petitioner": "ABC Corp",
             "respondent": "Govt of MH",
             "case_orders": [
-                # Both orders are within 7 days of board_date 2025-03-01
-                {"date": "2025-02-28", "download_link": "https://court.example/o1.pdf"},
+                {"date": "2025-02-01", "download_link": "https://court.example/o1.pdf"},
                 {"date": "2025-03-01", "download_link": "https://court.example/o2.pdf"},
             ],
         }
     )
-    # No orders already analysed
+    # No orders already analysed; board entries exist for both dates
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._board_entry_exists_for_date = Mock(return_value=True)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         return_value={"success": True, "data": {"order_category": "interim"}}
@@ -801,6 +801,7 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=True)
+    auto_order_manager._board_entry_exists_for_date = Mock(return_value=True)
     auto_order_manager._analyze_order_with_api_metadata = Mock()
     # Mock the public update_case_party_names method
     auto_order_manager.case_store.update_case_party_names = Mock()
@@ -895,6 +896,7 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._board_entry_exists_for_date = Mock(return_value=True)
     https_url = (
         "https://storage.googleapis.com/test-bucket"
         "/court-orders/WP-123-2025/2025-03-01.pdf"
@@ -980,6 +982,7 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._board_entry_exists_for_date = Mock(return_value=True)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     captured_args: dict = {}
     auto_order_manager._analyze_order_with_api_metadata = Mock(
@@ -1009,13 +1012,14 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
     )
 
 
-def test_process_all_orders_from_api_skips_orders_outside_board_date_window(
+def test_process_all_orders_from_api_skips_orders_without_board_entry(
     auto_order_manager,
 ):
-    """Orders more than 7 days from the board date are silently skipped.
+    """Orders for which no daily-boards entry exists are silently skipped.
 
-    This guards against the court API returning all historical orders and the
-    wrong one (e.g. July 2025 for a May 2026 board) being linked.
+    Guards against the court API returning all historical orders and the wrong
+    one (e.g. July 2025 when the board date is May 2026) being linked because
+    no board entry exists for that old date.
     """
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
@@ -1023,14 +1027,24 @@ def test_process_all_orders_from_api_skips_orders_outside_board_date_window(
             "petitioner": "P",
             "respondent": "R",
             "case_orders": [
-                # Old order — 10 months before board date, must be filtered out
-                {"date": "2025-07-10", "download_link": "https://court.example/old.pdf"},
-                # Correct order — same as board date
-                {"date": "2026-05-15", "download_link": "https://court.example/new.pdf"},
+                # Old order — no board entry for July 2025
+                {
+                    "date": "2025-07-10",
+                    "download_link": "https://court.example/old.pdf",
+                },
+                # Current order — board entry exists for May 2026
+                {
+                    "date": "2026-05-15",
+                    "download_link": "https://court.example/new.pdf",
+                },
             ],
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    # Only the May 2026 date has a board entry
+    auto_order_manager._board_entry_exists_for_date = Mock(
+        side_effect=lambda cr, d: d == "2026-05-15"
+    )
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     captured_dates: list = []
     auto_order_manager._analyze_order_with_api_metadata = Mock(
@@ -1054,30 +1068,42 @@ def test_process_all_orders_from_api_skips_orders_outside_board_date_window(
 
     assert result["success"] is True
     assert result["orders_processed"] == 1
-    # Only the May 2026 order should have been analysed
+    # Only the May 2026 order (which has a board entry) must be analysed
     assert captured_dates == ["2026-05-15"]
-    # The old July 2025 order must not have been passed to the analyser
     assert "2025-07-10" not in captured_dates
 
 
-def test_process_all_orders_from_api_keeps_orders_within_7_day_window(
+def test_process_all_orders_from_api_processes_multiple_dates_with_board_entries(
     auto_order_manager,
 ):
-    """Orders within 7 days of the board date (e.g. signed a few days after hearing) are kept."""
+    """Orders for multiple distinct hearing dates are all processed when board entries exist.
+
+    A case may appear on the board more than once (different hearings). All
+    such appearances should be downloaded and linked independently.
+    """
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
             "respondent": "R",
             "case_orders": [
-                # Signed 5 days after the board date — still within window
-                {"date": "2026-05-20", "download_link": "https://court.example/o1.pdf"},
-                # Old order — 6 months before, must be filtered
-                {"date": "2025-11-15", "download_link": "https://court.example/old.pdf"},
+                # First hearing — board entry exists
+                {"date": "2026-03-10", "download_link": "https://court.example/o1.pdf"},
+                # Second hearing — board entry exists
+                {"date": "2026-05-15", "download_link": "https://court.example/o2.pdf"},
+                # Old order with no board entry — must be skipped
+                {
+                    "date": "2025-01-20",
+                    "download_link": "https://court.example/old.pdf",
+                },
             ],
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    # Board entries exist for March and May 2026 but not January 2025
+    auto_order_manager._board_entry_exists_for_date = Mock(
+        side_effect=lambda cr, d: d in ("2026-03-10", "2026-05-15")
+    )
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     captured_dates: list = []
     auto_order_manager._analyze_order_with_api_metadata = Mock(
@@ -1100,15 +1126,16 @@ def test_process_all_orders_from_api_keeps_orders_within_7_day_window(
         )
 
     assert result["success"] is True
-    assert result["orders_processed"] == 1
-    assert captured_dates == ["2026-05-20"]
-    assert "2025-11-15" not in captured_dates
+    assert result["orders_processed"] == 2
+    assert "2026-03-10" in captured_dates
+    assert "2026-05-15" in captured_dates
+    assert "2025-01-20" not in captured_dates
 
 
-def test_process_all_orders_from_api_no_board_date_processes_all_orders(
+def test_process_all_orders_from_api_no_board_date_uses_board_entry_check(
     auto_order_manager,
 ):
-    """When no board_date is supplied, the date filter is inactive and all orders are processed."""
+    """When no board_date is supplied the board-entry check still governs which orders are processed."""
     auto_order_manager.court_scraper.get_case_orders = Mock(
         return_value={
             "status": "found",
@@ -1121,6 +1148,8 @@ def test_process_all_orders_from_api_no_board_date_processes_all_orders(
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    # Both dates have board entries
+    auto_order_manager._board_entry_exists_for_date = Mock(return_value=True)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         return_value={"success": True, "data": {}}
