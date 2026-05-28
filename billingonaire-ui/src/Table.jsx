@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
@@ -46,6 +46,13 @@ const Table = () => {
   const [tableMessage, setTableMessage] = useState(null);
   const [showCaseModal, setShowCaseModal] = useState(false);
   const [selectedCaseRef, setSelectedCaseRef] = useState('');
+  const [jobStatuses, setJobStatuses] = useState(new Map()); // caseId → {caseRef, status, label, variant}
+  const pollTimers = useRef({});
+
+  // Clean up all poll timers on unmount
+  useEffect(() => {
+    return () => Object.values(pollTimers.current).forEach(clearTimeout);
+  }, []);
 
   useEffect(() => {
     // By default, show last 3 months data
@@ -479,6 +486,69 @@ const Table = () => {
     }
   };
 
+  const JOB_TERMINAL = new Set(['analysed', 'fetch_failed', 'fetch_failed_terminal', 'analysis_failed', 'manual_review_required']);
+  const JOB_SUCCESS  = new Set(['analysed']);
+
+  const jobLabel = (status) => {
+    const labels = {
+      fetch_queued: 'Queued',
+      fetch_in_progress: 'Downloading…',
+      fetch_succeeded: 'Analysing…',
+      analysis_queued: 'Analysing…',
+      analysis_in_progress: 'Analysing…',
+      analysed: 'Done ✓',
+      fetch_failed: 'Download failed',
+      fetch_failed_retryable: 'Retrying…',
+      fetch_failed_terminal: 'Download failed',
+      analysis_failed: 'Analysis failed',
+      manual_review_required: 'Needs review',
+    };
+    return labels[status] || status;
+  };
+
+  const jobVariant = (status) => {
+    if (JOB_SUCCESS.has(status)) return 'success';
+    if (['fetch_failed', 'fetch_failed_terminal', 'analysis_failed'].includes(status)) return 'error';
+    if (status === 'manual_review_required') return 'warning';
+    return 'info';
+  };
+
+  const startPollingJob = (caseId, caseRef) => {
+    // Stop any existing timer for this case
+    if (pollTimers.current[caseId]) clearTimeout(pollTimers.current[caseId]);
+
+    const poll = async () => {
+      try {
+        const res = await authenticatedFetchJSON(`/auto-orders/job-status/${caseId}`);
+        const status = res.status || 'unknown';
+        setJobStatuses(prev => new Map(prev).set(caseId, {
+          caseRef,
+          status,
+          label: jobLabel(status),
+          variant: jobVariant(status),
+        }));
+
+        if (!JOB_TERMINAL.has(status)) {
+          pollTimers.current[caseId] = setTimeout(poll, 3000);
+        } else {
+          delete pollTimers.current[caseId];
+          setProcessingOrders(prev => { const s = new Set(prev); s.delete(caseId); return s; });
+          // Refresh row data once the last job finishes
+          setJobStatuses(prev => {
+            const allDone = [...prev.values()].every(j => JOB_TERMINAL.has(j.status));
+            if (allDone) fetchData();
+            return prev;
+          });
+        }
+      } catch {
+        // transient error — retry after a longer wait
+        pollTimers.current[caseId] = setTimeout(poll, 6000);
+      }
+    };
+
+    poll();
+  };
+
   // Batch operations for selected rows
   const handleBatchDownload = async () => {
     if (selectedRows.length === 0) {
@@ -486,18 +556,27 @@ const Table = () => {
       return;
     }
 
-    setTableMessage({ type: 'info', text: `Downloading orders for ${selectedRows.length} case(s)... This may take a moment.` });
+    // Clear previous job statuses
+    setJobStatuses(new Map());
+    setTableMessage(null);
 
-    let successCount = 0;
+    let queuedCount = 0;
     let failCount = 0;
 
     for (const row of selectedRows) {
       const caseId = row.id;
       const caseRef = `${row.case_type}/${row.case_no}/${row.case_year}`;
 
-      try {
-        setProcessingOrders(prev => new Set(prev).add(caseId));
+      // Show as queued immediately in the status panel
+      setJobStatuses(prev => new Map(prev).set(caseId, {
+        caseRef,
+        status: 'submitting',
+        label: 'Submitting…',
+        variant: 'info',
+      }));
+      setProcessingOrders(prev => new Set(prev).add(caseId));
 
+      try {
         const response = await authenticatedFetchJSON(`/auto-orders/process-case`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -509,32 +588,34 @@ const Table = () => {
           })
         });
 
-        if (response.download_success) {
-          successCount++;
+        if (response.download_success || (response.success && response.status === 'queued')) {
+          queuedCount++;
+          setJobStatuses(prev => new Map(prev).set(caseId, {
+            caseRef, status: 'fetch_queued', label: jobLabel('fetch_queued'), variant: 'info',
+          }));
+          startPollingJob(caseId, caseRef);
         } else {
           failCount++;
+          setJobStatuses(prev => new Map(prev).set(caseId, {
+            caseRef, status: 'fetch_failed', label: 'Queue failed', variant: 'error',
+          }));
+          setProcessingOrders(prev => { const s = new Set(prev); s.delete(caseId); return s; });
         }
       } catch {
         failCount++;
-      } finally {
-        setProcessingOrders(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(caseId);
-          return newSet;
-        });
+        setJobStatuses(prev => new Map(prev).set(caseId, {
+          caseRef, status: 'fetch_failed', label: 'Queue failed', variant: 'error',
+        }));
+        setProcessingOrders(prev => { const s = new Set(prev); s.delete(caseId); return s; });
       }
     }
 
-    setTableMessage({
-      type: successCount > 0 ? 'success' : 'error',
-      text: `Batch download complete: ${successCount} succeeded, ${failCount} failed.`
-    });
-    await fetchData();
-
-    // Clear selection
-    if (gridApi) {
-      gridApi.deselectAll();
+    if (failCount > 0 && queuedCount === 0) {
+      setTableMessage({ type: 'error', text: `Failed to queue ${failCount} case(s).` });
     }
+
+    // Clear grid selection
+    if (gridApi) gridApi.deselectAll();
   };
 
   const frameworkComponents = {
@@ -866,6 +947,51 @@ const Table = () => {
             >
               ×
             </button>
+          </div>
+        )}
+
+        {/* Download job status panel */}
+        {jobStatuses.size > 0 && (
+          <div style={{
+            marginBottom: 'var(--spacing-md)',
+            border: '1px solid var(--gray-200)',
+            borderRadius: 'var(--radius-md)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: 'var(--spacing-sm) var(--spacing-md)',
+              backgroundColor: 'var(--gray-50)',
+              borderBottom: '1px solid var(--gray-200)',
+            }}>
+              <strong style={{ fontSize: '0.875rem' }}>Download Status</strong>
+              {[...jobStatuses.values()].every(j => JOB_TERMINAL.has(j.status)) && (
+                <button
+                  onClick={() => setJobStatuses(new Map())}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: 'var(--gray-500)' }}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {[...jobStatuses.entries()].map(([caseId, job]) => {
+                const bg = job.variant === 'success' ? '#f0fdf4' : job.variant === 'error' ? '#fef2f2' : job.variant === 'warning' ? '#fffbeb' : '#f0f9ff';
+                const color = job.variant === 'success' ? '#166534' : job.variant === 'error' ? '#991b1b' : job.variant === 'warning' ? '#92400e' : '#1e40af';
+                return (
+                  <div key={caseId} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '6px var(--spacing-md)',
+                    borderBottom: '1px solid var(--gray-100)',
+                    backgroundColor: bg,
+                    fontSize: '0.82rem',
+                  }}>
+                    <span style={{ fontFamily: 'monospace', color: 'var(--gray-700)' }}>{job.caseRef}</span>
+                    <span style={{ fontWeight: 600, color }}>{job.label}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

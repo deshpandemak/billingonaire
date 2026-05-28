@@ -503,13 +503,29 @@ class AutoOrderManager:
             )
             analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
 
+            # Extract government pleaders from the analysis result.
+            # Try to find the CaseInfo that matches case_ref; fall back to
+            # the first case (or combine all when there is only one case).
+            gp_list: List[str] = []
+            if analysis_result.cases:
+                target_case = None
+                for c in analysis_result.cases:
+                    if c.case_type and c.case_number and c.case_year:
+                        candidate = f"{c.case_type}/{c.case_number}/{c.case_year}"
+                        if candidate == case_ref:
+                            target_case = c
+                            break
+                if target_case is None:
+                    target_case = analysis_result.cases[0]
+                gp_list = list(target_case.government_pleader or [])
+
             order_analysis: Dict[str, Any] = {
                 "order_category": analysis_result.order_category,
                 "order_category_confidence": analysis_result.category_confidence,
                 "order_date": api_order_date,
                 "order_petitioner": api_petitioner,
                 "order_respondent": api_respondent,
-                "government_pleader": [],
+                "government_pleader": gp_list,
                 "order_link": order_link,
                 "order_status": "analysed",
                 "order_analysis_timestamp": datetime.now().isoformat(),
