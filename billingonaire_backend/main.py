@@ -3024,7 +3024,9 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
         board_data = board_doc.to_dict() or {}
 
         # Lifecycle status lives in case-details (keyed by case_ref with / → -)
-        case_ref = board_data.get("case_ref") or get_auto_order_manager().case_store.build_case_ref(
+        case_ref = board_data.get(
+            "case_ref"
+        ) or get_auto_order_manager().case_store.build_case_ref(
             board_data.get("case_type"),
             board_data.get("case_no"),
             board_data.get("case_year"),
