@@ -486,7 +486,17 @@ const Table = () => {
     }
   };
 
-  const JOB_TERMINAL = new Set(['analysed', 'fetch_failed', 'fetch_failed_terminal', 'analysis_failed', 'manual_review_required']);
+  const JOB_TERMINAL = new Set([
+    'analysed',
+    'fetch_not_due',
+    'fetch_failed',
+    'fetch_failed_retryable',
+    'fetch_failed_terminal',
+    'analysis_failed',
+    'analysis_failed_retryable',
+    'analysis_failed_terminal',
+    'manual_review_required',
+  ]);
   const JOB_SUCCESS  = new Set(['analysed']);
 
   const jobLabel = (status) => {
@@ -494,13 +504,16 @@ const Table = () => {
       fetch_queued: 'Queued',
       fetch_in_progress: 'Downloading…',
       fetch_succeeded: 'Analysing…',
+      fetch_not_due: 'Not due yet',
       analysis_queued: 'Analysing…',
       analysis_in_progress: 'Analysing…',
       analysed: 'Done ✓',
       fetch_failed: 'Download failed',
-      fetch_failed_retryable: 'Retrying…',
+      fetch_failed_retryable: 'Download failed',
       fetch_failed_terminal: 'Download failed',
       analysis_failed: 'Analysis failed',
+      analysis_failed_retryable: 'Analysis failed',
+      analysis_failed_terminal: 'Analysis failed',
       manual_review_required: 'Needs review',
     };
     return labels[status] || status;
@@ -508,7 +521,9 @@ const Table = () => {
 
   const jobVariant = (status) => {
     if (JOB_SUCCESS.has(status)) return 'success';
-    if (['fetch_failed', 'fetch_failed_terminal', 'analysis_failed'].includes(status)) return 'error';
+    if (status === 'fetch_not_due') return 'warning';
+    if (['fetch_failed', 'fetch_failed_retryable', 'fetch_failed_terminal',
+         'analysis_failed', 'analysis_failed_retryable', 'analysis_failed_terminal'].includes(status)) return 'error';
     if (status === 'manual_review_required') return 'warning';
     return 'info';
   };
