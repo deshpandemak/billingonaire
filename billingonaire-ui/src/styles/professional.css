@@ -370,7 +370,7 @@ h6 { font-size: 1rem; }
 /* Dashboard Styles */
 .dashboard-container {
   padding: var(--spacing-xl);
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
