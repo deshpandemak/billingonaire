@@ -16,6 +16,22 @@ echo "$GCLOUD_SERVICE_ACCOUNT_KEY" > /tmp/gcloud-key.json
 gcloud auth activate-service-account --key-file=/tmp/gcloud-key.json
 gcloud config set project billingonaire
 
+# Ensure the GCS bucket for court order PDFs exists and the Cloud Run service
+# account has write permission to it.
+GCS_BUCKET="billingonaire-court-orders"
+SA_EMAIL="firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com"
+echo "📦 Ensuring GCS bucket ${GCS_BUCKET} exists..."
+if ! gsutil ls -b "gs://${GCS_BUCKET}" >/dev/null 2>&1; then
+  gsutil mb -p billingonaire -l asia-south1 "gs://${GCS_BUCKET}"
+  echo "✅ Created GCS bucket: gs://${GCS_BUCKET}"
+else
+  echo "✅ GCS bucket already exists: gs://${GCS_BUCKET}"
+fi
+
+echo "🔑 Granting objectAdmin on ${GCS_BUCKET} to ${SA_EMAIL}..."
+gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${GCS_BUCKET}"
+echo "✅ IAM binding applied."
+
 # Navigate to the backend directory (script is run from firebase dir)
 cd ../billingonaire_backend
 

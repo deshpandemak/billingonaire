@@ -76,7 +76,11 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       ? timeline.government_pleader
       : [];
 
-    return orders.map(order => {
+    // Filter out status-only entries (no order_date, no order_link) — these
+    // are internal processing markers that should not appear as table rows.
+    const meaningfulOrders = orders.filter(o => o.order_date || o.order_link);
+
+    return meaningfulOrders.map(order => {
       // Prefer board_date stored on the order (set by backend since fix),
       // fall back to order_date for matching against board records.
       const matchDate = order.board_date || order.order_date || null;
