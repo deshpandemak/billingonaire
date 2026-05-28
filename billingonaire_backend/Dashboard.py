@@ -9,6 +9,8 @@ from fastapi import HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+_agp_name_mapping_cache: dict = {"key": None, "mapping": {}}
+
 
 class DashboardData:
     def __init__(self, db=None):
@@ -39,29 +41,43 @@ class DashboardData:
     def group_similar_agp_names(
         self, agp_counts: dict, threshold: float = 0.85
     ) -> dict:
-        """Group similar AGP names together using fuzzy matching"""
-        grouped = {}
-        processed = set()
+        """Group similar AGP names using fuzzy matching. Result is cached."""
+        if not agp_counts:
+            return agp_counts
 
-        for agp_name in sorted(agp_counts.keys()):
-            if agp_name in processed:
-                continue
+        cache_key = (frozenset(agp_counts.keys()), threshold)
+        if _agp_name_mapping_cache["key"] == cache_key:
+            name_mapping = _agp_name_mapping_cache["mapping"]
+        else:
+            all_agp_names = list(agp_counts.keys())
+            name_mapping: dict = {}
+            processed: set = set()
 
-            # Find all similar names
-            similar_group = [agp_name]
-            for other_name in agp_counts.keys():
-                if other_name != agp_name and other_name not in processed:
-                    similarity = self.fuzzy_match_agp_names(agp_name, other_name)
-                    if similarity >= threshold:
-                        similar_group.append(other_name)
-                        processed.add(other_name)
+            for agp_name in sorted(all_agp_names):
+                if agp_name in processed:
+                    continue
+                similar_group = [agp_name]
+                for other_name in all_agp_names:
+                    if other_name != agp_name and other_name not in processed:
+                        if (
+                            self.fuzzy_match_agp_names(agp_name, other_name)
+                            >= threshold
+                        ):
+                            similar_group.append(other_name)
+                            processed.add(other_name)
+                canonical_name = max(similar_group, key=lambda n: agp_counts.get(n, 0))
+                for name in similar_group:
+                    name_mapping[name] = canonical_name
+                processed.add(agp_name)
 
-            # Use the most common variant as the canonical name
-            canonical_name = max(similar_group, key=lambda n: agp_counts[n])
-            grouped[canonical_name] = sum(agp_counts[name] for name in similar_group)
-            processed.add(agp_name)
+            _agp_name_mapping_cache["key"] = cache_key
+            _agp_name_mapping_cache["mapping"] = name_mapping
 
-        return grouped
+        merged: dict = {}
+        for agp, count in agp_counts.items():
+            canonical = name_mapping.get(agp, agp)
+            merged[canonical] = merged.get(canonical, 0) + count
+        return merged
 
     async def get_weekly_status(self, start_date=None, end_date=None, agp_filter=None):
         # Use provided dates or default to last 7 days
@@ -163,44 +179,25 @@ class DashboardData:
                 agp_month_counts.setdefault(agp, {}).setdefault(month, 0)
                 agp_month_counts[agp][month] += 1
 
-        # Apply fuzzy matching to group similar AGP names
+        # Apply fuzzy matching to group similar AGP names (cached O(N²) logic)
         if use_fuzzy_matching and len(agp_month_counts) > 0:
-            # First, create a mapping of canonical names
-            all_agp_names = list(agp_month_counts.keys())
-            name_mapping = {}
-            processed = set()
+            totals = {
+                agp: sum(months.values()) for agp, months in agp_month_counts.items()
+            }
+            # This call is O(N²) but now cached via _agp_name_mapping_cache
+            self.group_similar_agp_names(totals, threshold=0.85)
+            # Use the populated cache mapping to merge monthly data
+            mapping = _agp_name_mapping_cache.get("mapping", {})
 
-            for agp_name in sorted(all_agp_names):
-                if agp_name in processed:
-                    continue
-
-                similar_group = [agp_name]
-                for other_name in all_agp_names:
-                    if other_name != agp_name and other_name not in processed:
-                        similarity = self.fuzzy_match_agp_names(agp_name, other_name)
-                        if similarity >= 0.85:
-                            similar_group.append(other_name)
-                            processed.add(other_name)
-
-                # Use the most common variant as canonical
-                canonical_name = max(
-                    similar_group, key=lambda n: sum(agp_month_counts[n].values())
-                )
-                for name in similar_group:
-                    name_mapping[name] = canonical_name
-                processed.add(agp_name)
-
-            # Merge data using canonical names
-            merged_counts = {}
+            merged_counts: dict = {}
             for agp, months in agp_month_counts.items():
-                canonical = name_mapping.get(agp, agp)
+                canonical = mapping.get(agp, agp)
                 if canonical not in merged_counts:
                     merged_counts[canonical] = {}
                 for month, count in months.items():
                     merged_counts[canonical][month] = (
                         merged_counts[canonical].get(month, 0) + count
                     )
-
             agp_month_counts = merged_counts
 
         result = []
