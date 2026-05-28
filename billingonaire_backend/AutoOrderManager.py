@@ -902,10 +902,18 @@ class AutoOrderManager:
         )
 
         # ---------------------------------------------------------------
-        # Path 2: Re-analyse a previously stored (linked) order link.
+        # Path 2: Re-analyse a previously stored order link.
+        # Applies whenever the case already has a stored order link and the
+        # direct API yielded nothing — covers both legacy "linked" status and
+        # already-"analysed" cases being retried (e.g. to upgrade a BHC URL
+        # to a GCS-hosted copy).
         # ---------------------------------------------------------------
-        if order_status == "linked" and has_existing_order_link:
-            logger.info(f"📋 {case_ref} - Status is 'linked', analyzing existing order")
+        if has_existing_order_link:
+            logger.info(
+                "📋 %s - has existing order link (status=%s), re-analysing stored order",
+                case_ref,
+                order_status,
+            )
             try:
                 return self._analyze_existing_order(case_data, result, max_sequences)
             except Exception as e:
@@ -1241,6 +1249,22 @@ class AutoOrderManager:
             logger.info(
                 f"Successfully re-downloaded order for {case_ref}, size: {len(pdf_content)} bytes"
             )
+
+            # If the existing link is not already a GCS URL, try to upload to GCS
+            # so future access uses a permanent, non-expiring link.
+            if order_link and not order_link.startswith(
+                "https://storage.googleapis.com"
+            ):
+                board_date_str = str(case_data.get("board_date") or "")
+                gcs_url = self._upload_order_to_gcs(
+                    pdf_content, case_ref, board_date_str
+                )
+                if gcs_url:
+                    logger.info(
+                        "_analyze_existing_order: upgraded BHC link to GCS for case_ref=%s",
+                        case_ref,
+                    )
+                    order_link = gcs_url
 
             # Mark download as successful
             result["download_success"] = True

@@ -3017,20 +3017,38 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
     """Poll the processing status of a single case queued via /auto-orders/process-case."""
     try:
         db = firestore.client()
-        case_doc = db.collection("daily-boards").document(doc_id).get()
-        if not case_doc.exists:
+        # doc_id is the daily-boards document ID; read it to get case_ref
+        board_doc = db.collection("daily-boards").document(doc_id).get()
+        if not board_doc.exists:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
-        data = case_doc.to_dict() or {}
-        lifecycle_status = data.get("lifecycle_status") or "unknown"
-        updated_at = data.get("updated_at")
+        board_data = board_doc.to_dict() or {}
+
+        # Lifecycle status lives in case-details (keyed by case_ref with / → -)
+        case_ref = board_data.get(
+            "case_ref"
+        ) or get_auto_order_manager().case_store.build_case_ref(
+            board_data.get("case_type"),
+            board_data.get("case_no"),
+            board_data.get("case_year"),
+        )
+        case_details_id = case_ref.replace("/", "-")
+        case_doc = db.collection("case-details").document(case_details_id).get()
+        case_data = case_doc.to_dict() if case_doc.exists else {}
+
+        lifecycle_status = case_data.get("lifecycle_status") or "board_ingested"
+        updated_at = case_data.get("updated_at")
         return JSONResponse(
             content={
                 "doc_id": doc_id,
                 "status": lifecycle_status,
-                "order_category": data.get("order_category"),
-                "order_link": data.get("order_link"),
+                "order_category": case_data.get("latest_order_category")
+                or board_data.get("order_category"),
+                "order_link": case_data.get("latest_order_link")
+                or board_data.get("order_link"),
                 "updated_at": updated_at.isoformat()
                 if hasattr(updated_at, "isoformat")
+                else str(updated_at)
+                if updated_at
                 else None,
             }
         )

@@ -115,6 +115,18 @@ def test_process_single_case_download_success_analysis_success(auto_order_manage
         return_value=Mock(order_date="2024-01-15")
     )
 
+    # No existing order link — force Path 3 (brute-force sequences)
+    auto_order_manager._get_case_order_context = Mock(
+        return_value={
+            "order_status": "not_linked",
+            "order_link": None,
+            "latest_order": {},
+            "case_detail": {},
+        }
+    )
+    # Direct API returns nothing so Path 1 fails and test falls through to Path 3
+    auto_order_manager.court_scraper.get_case_orders = Mock(return_value={})
+
     # Execute
     result = auto_order_manager._process_single_case(case_data)
 
@@ -179,6 +191,17 @@ def test_process_single_case_download_success_analysis_failure(auto_order_manage
     auto_order_manager._create_order_link = Mock()
     auto_order_manager._record_case_order_status = Mock()
 
+    # No existing order link — force Path 3 (brute-force sequences)
+    auto_order_manager._get_case_order_context = Mock(
+        return_value={
+            "order_status": "not_linked",
+            "order_link": None,
+            "latest_order": {},
+            "case_detail": {},
+        }
+    )
+    auto_order_manager.court_scraper.get_case_orders = Mock(return_value={})
+
     # Execute
     result = auto_order_manager._process_single_case(case_data)
 
@@ -224,6 +247,17 @@ def test_process_single_case_download_failure(auto_order_manager):
 
     # Mock normalized status persistence
     auto_order_manager._record_case_order_status = Mock()
+
+    # No existing order link — force Path 3 (brute-force sequences)
+    auto_order_manager._get_case_order_context = Mock(
+        return_value={
+            "order_status": "not_linked",
+            "order_link": None,
+            "latest_order": {},
+            "case_detail": {},
+        }
+    )
+    auto_order_manager.court_scraper.get_case_orders = Mock(return_value={})
 
     # Execute with limited retries for faster test
     with patch.dict("os.environ", {"ORDER_MAX_SEQUENCE_RETRIES": "3"}):
@@ -287,6 +321,17 @@ def test_process_single_case_date_mismatch_retries(auto_order_manager):
     auto_order_manager.db = Mock()
     auto_order_manager.db.collection().document().update = Mock()
 
+    # No existing order link — force Path 3 (brute-force sequences)
+    auto_order_manager._get_case_order_context = Mock(
+        return_value={
+            "order_status": "not_linked",
+            "order_link": None,
+            "latest_order": {},
+            "case_detail": {},
+        }
+    )
+    auto_order_manager.court_scraper.get_case_orders = Mock(return_value={})
+
     # Execute with limited retries
     with patch.dict("os.environ", {"ORDER_MAX_SEQUENCE_RETRIES": "3"}):
         result = auto_order_manager._process_single_case(case_data)
@@ -345,6 +390,17 @@ def test_process_single_case_analysis_exception_keeps_order(auto_order_manager):
     # Mock _create_order_link
     auto_order_manager._create_order_link = Mock()
     auto_order_manager._record_case_order_status = Mock()
+
+    # No existing order link — force Path 3 (brute-force sequences)
+    auto_order_manager._get_case_order_context = Mock(
+        return_value={
+            "order_status": "not_linked",
+            "order_link": None,
+            "latest_order": {},
+            "case_detail": {},
+        }
+    )
+    auto_order_manager.court_scraper.get_case_orders = Mock(return_value={})
 
     # Execute
     result = auto_order_manager._process_single_case(case_data)
