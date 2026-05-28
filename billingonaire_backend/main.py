@@ -998,9 +998,17 @@ async def get_case_timeline(
                 for snap in db.get_all(doc_refs):
                     if snap.exists:
                         d = snap.to_dict() or {}
-                        bd = str(d.get("board_date") or "")
-                        if "T" in bd:
-                            bd = bd.split("T", 1)[0]
+                        raw_bd = d.get("board_date")
+                        if hasattr(raw_bd, "strftime"):
+                            # Firestore Timestamp / DatetimeWithNanoseconds
+                            bd = raw_bd.strftime("%Y-%m-%d")
+                        else:
+                            bd = str(raw_bd or "")
+                            # Handle both ISO ("T") and space-separated formats
+                            if "T" in bd:
+                                bd = bd.split("T", 1)[0]
+                            elif " " in bd:
+                                bd = bd.split(" ", 1)[0]
                         board_dates.append(
                             {
                                 "board_date": bd,
