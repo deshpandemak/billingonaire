@@ -4072,6 +4072,22 @@ async def get_order_pdf(doc_id: str):
         case_data = doc.to_dict() or {}
         order_link = (case_data.get("order_link") or "").strip()
 
+        # Fall back to case-details.latest_order_link — that's the authoritative
+        # location written by case_data_store.append_case_order().
+        if not order_link:
+            _ct = case_data.get("case_type", "")
+            _cn = str(case_data.get("case_no") or "")
+            _cy = str(case_data.get("case_year") or "")
+            if _ct and _cn and _cy:
+                _details_id = f"{_ct}-{_cn}-{_cy}"
+                _details_snap = (
+                    db.collection("case-details").document(_details_id).get()
+                )
+                if _details_snap.exists:
+                    order_link = (
+                        (_details_snap.to_dict() or {}).get("latest_order_link") or ""
+                    ).strip()
+
         if not order_link:
             raise HTTPException(
                 status_code=404, detail="No order link stored for this case"
