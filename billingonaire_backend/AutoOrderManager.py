@@ -348,6 +348,14 @@ class AutoOrderManager:
             )
 
     @staticmethod
+    def build_case_ref_from_data(case_data: Dict[str, Any]) -> str:
+        """Reconstruct a case_ref string from case_type/case_no/case_year fields."""
+        ct = str(case_data.get("case_type") or "").strip().upper()
+        cn = str(case_data.get("case_no") or "").strip()
+        cy = str(case_data.get("case_year") or "").strip()
+        return f"{ct}/{cn}/{cy}" if ct and cn and cy else ""
+
+    @staticmethod
     def _parse_board_date(value: Optional[str]) -> Optional[date]:
         if value is None:
             return None
@@ -912,7 +920,12 @@ class AutoOrderManager:
                 fallback path (default: from env or 10)
         """
         case_id = case_data["id"]
-        case_ref = case_data["case_ref"]
+        case_ref = case_data.get("case_ref") or self.build_case_ref_from_data(case_data)
+        if not case_ref:
+            raise ValueError(
+                f"_process_single_case: case_ref missing and cannot be reconstructed "
+                f"for case_id={case_id}"
+            )
         order_context = self._get_case_order_context(case_ref)
         order_status = order_context["order_status"]
         case_data["order_status"] = order_status

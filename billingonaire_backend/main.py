@@ -4481,12 +4481,18 @@ async def get_order_pdf(doc_id: str):
                 # we do for expired court URLs.
                 _case_type = case_data.get("case_type", "")
                 _case_no = str(case_data.get("case_no") or "")
+                _case_year = str(case_data.get("case_year") or "")
                 if _case_type and _case_no:
+                    _refetch_data = {**case_data, "id": doc_id}
+                    if not _refetch_data.get("case_ref") and _case_type and _case_year:
+                        _refetch_data[
+                            "case_ref"
+                        ] = f"{_case_type}/{_case_no}/{_case_year}"
                     loop = asyncio.get_event_loop()
                     loop.run_in_executor(
                         executor,
                         get_auto_order_manager()._process_single_case,
-                        {**case_data, "id": doc_id},
+                        _refetch_data,
                         None,
                     )
                 return JSONResponse(
@@ -4514,11 +4520,14 @@ async def get_order_pdf(doc_id: str):
             case_no = str(case_data.get("case_no") or "")
             case_year = str(case_data.get("case_year") or "")
             if case_type and case_no:
+                _refetch_data = {**case_data, "id": doc_id}
+                if not _refetch_data.get("case_ref") and case_type and case_year:
+                    _refetch_data["case_ref"] = f"{case_type}/{case_no}/{case_year}"
                 loop = asyncio.get_event_loop()
                 loop.run_in_executor(
                     executor,
                     get_auto_order_manager()._process_single_case,
-                    {**case_data, "id": doc_id},
+                    _refetch_data,
                     None,
                 )
             return JSONResponse(
