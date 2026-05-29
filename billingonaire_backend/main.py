@@ -4381,9 +4381,29 @@ async def get_order_pdf(doc_id: str):
                     doc_id,
                     gcs_err,
                 )
-                raise HTTPException(
-                    status_code=502,
-                    detail="Could not retrieve order PDF from storage. Please try again.",
+                # Blob missing or inaccessible — queue a re-fetch so the PDF is
+                # retrieved from the court API and re-uploaded to GCS, exactly as
+                # we do for expired court URLs.
+                _case_type = case_data.get("case_type", "")
+                _case_no = str(case_data.get("case_no") or "")
+                if _case_type and _case_no:
+                    loop = asyncio.get_event_loop()
+                    loop.run_in_executor(
+                        executor,
+                        get_auto_order_manager()._process_single_case,
+                        {**case_data, "id": doc_id},
+                        None,
+                    )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "order_link_expired",
+                        "message": (
+                            "Order PDF is unavailable. The system is re-fetching it — "
+                            "please try again in a few minutes."
+                        ),
+                        "doc_id": doc_id,
+                    },
                 )
 
         # Court URL: attempt download

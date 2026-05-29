@@ -103,10 +103,12 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       // Board.py uses format: {YYYY-MM-DD}-{type}-{no}-{year} e.g. "2026-05-15-WP-9146-2025"
       const boardDocId = boardRecord.board_doc_id
         || (matchDate ? `${matchDate}-${caseRef.replace(/\//g, '-')}` : null);
+      // Always route through the backend proxy — the GCS bucket is private so
+      // direct browser access to storage.googleapis.com returns 403. The proxy
+      // uses Cloud Run ADC to fetch the blob and triggers an automatic re-fetch
+      // when any link (GCS or court URL) is unavailable.
       const orderPdfHref = rawLink
-        ? (rawLink.startsWith('https://storage.googleapis.com')
-            ? rawLink
-            : boardDocId ? getApiUrl(`/orders/pdf/${boardDocId}`) : rawLink)
+        ? (boardDocId ? getApiUrl(`/orders/pdf/${boardDocId}`) : rawLink)
         : null;
 
       // Use board record date as the display date only when the board record is
@@ -123,8 +125,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
         orderDate: order.order_date || '-',
         orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
-        gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(', ') : '-',
-        gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(', ') : '-',
+        gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(' · ') : '-',
+        gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(' · ') : '-',
       };
     }).sort((a, b) => {
       const da = new Date(a.date).getTime();

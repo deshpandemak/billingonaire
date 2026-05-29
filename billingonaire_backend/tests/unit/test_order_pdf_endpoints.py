@@ -254,9 +254,17 @@ def test_get_order_pdf_gcs_url_parses_bucket_and_blob(client, monkeypatch):
     assert captured["blob"] == "court-orders/WP-1-2025/order.pdf"
 
 
-def test_get_order_pdf_gcs_download_failure_returns_502(client, monkeypatch):
-    """When GCS download fails, returns 502."""
-    board_snap = _make_snap(True, {"order_link": FAKE_GCS_URL})
+def test_get_order_pdf_gcs_download_failure_triggers_refetch(client, monkeypatch):
+    """When GCS download fails, re-fetch is queued and 503 with order_link_expired is returned."""
+    board_snap = _make_snap(
+        True,
+        {
+            "order_link": FAKE_GCS_URL,
+            "case_type": "WP",
+            "case_no": "123",
+            "case_year": "2024",
+        },
+    )
     db = _make_db(daily_boards_snap=board_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
@@ -268,7 +276,8 @@ def test_get_order_pdf_gcs_download_failure_returns_502(client, monkeypatch):
     with patch("google.cloud.storage.Client", return_value=mock_gcs_client):
         resp = client.get(f"/orders/pdf/{FAKE_DOC_ID}")
 
-    assert resp.status_code == 502
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "order_link_expired"
 
 
 # ---------------------------------------------------------------------------
