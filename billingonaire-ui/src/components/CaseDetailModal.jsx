@@ -14,6 +14,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
   const [error, setError] = useState('');
   const [timeline, setTimeline] = useState(null);
   const [showEvents, setShowEvents] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
 
   useEffect(() => {
     if (show && caseRef) {
@@ -22,6 +24,7 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       setTimeline(null);
       setError('');
       setShowEvents(false);
+      setResetMessage('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show, caseRef]);
@@ -36,6 +39,29 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       setError(`Could not load case timeline: ${e.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForceReset = async () => {
+    if (!window.confirm(
+      `Force re-fetch for ${caseRef}?\n\nThis clears all stored order links and re-downloads every order PDF from the court. Previous links will be lost.`
+    )) return;
+    setResetting(true);
+    setResetMessage('');
+    try {
+      const resp = await authenticatedFetchJSON(`/cases/${encodeURIComponent(caseRef)}/reset`, {
+        method: 'POST',
+      });
+      if (resp.success) {
+        setResetMessage(`Reset complete — ${resp.board_entries_reset} board entries requeued. Re-fetching timeline…`);
+        await fetchTimeline();
+      } else {
+        setResetMessage(`Reset failed: ${resp.error || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setResetMessage(`Reset failed: ${e.message}`);
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -218,12 +244,34 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
               </div>
             </div>
 
+            {/* Reset message */}
+            {resetMessage && (
+              <Alert
+                variant={resetMessage.startsWith('Reset failed') ? 'danger' : 'info'}
+                className="py-2 mb-3"
+                style={{ fontSize: '0.85rem' }}
+                dismissible
+                onClose={() => setResetMessage('')}
+              >
+                {resetMessage}
+              </Alert>
+            )}
+
             {/* Appearances table */}
             <div className="d-flex justify-content-between align-items-center mb-2">
               <h6 className="mb-0">
                 Appearances
                 <Badge bg="secondary" className="ms-2">{appearances.length}</Badge>
               </h6>
+              <button
+                className="btn btn-sm btn-outline-danger"
+                style={{ fontSize: '0.75rem' }}
+                onClick={handleForceReset}
+                disabled={resetting}
+                title="Clear all order links and re-download every PDF from the court (admin only)"
+              >
+                {resetting ? '…' : '↻ Force Re-fetch All Orders'}
+              </button>
             </div>
 
             <div className="table-responsive mb-4">

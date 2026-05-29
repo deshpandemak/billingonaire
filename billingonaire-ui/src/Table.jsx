@@ -376,12 +376,14 @@ const Table = () => {
   const CourtOrderRenderer = (props) => {
     const { data, value } = props;
     const orderLink = data?.order_link;
+    const caseId = data?.id;
+    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
 
     if (orderLink) {
       // Always proxy through the backend — the GCS bucket is private so direct
       // browser access to storage.googleapis.com returns 403. The proxy uses
       // Cloud Run ADC and triggers an automatic re-fetch when the link is stale.
-      const href = getApiUrl(`/orders/pdf/${data?.id}`);
+      const href = getApiUrl(`/orders/pdf/${caseId}`);
 
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -389,15 +391,21 @@ const Table = () => {
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            style={{
-              color: 'var(--primary-color)',
-              textDecoration: 'none',
-              fontWeight: 500
-            }}
+            style={{ color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 500 }}
             onClick={(e) => e.stopPropagation()}
           >
             📄 View Order
           </a>
+          <button
+            title="Force re-fetch: clear order history and re-download from court (admin only)"
+            onClick={(e) => { e.stopPropagation(); handleForceReset(caseId, caseRef); }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--gray-500)', fontSize: '0.8rem', padding: '0 2px',
+            }}
+          >
+            ↻
+          </button>
           {value && <span style={{ fontSize: '0.75rem', color: 'var(--gray-600)' }}>({value})</span>}
         </div>
       );
@@ -457,6 +465,46 @@ const Table = () => {
   };
 
   // Order management functions
+  const handleForceReset = async (caseId, caseRef) => {
+    if (!window.confirm(
+      `Force re-fetch for ${caseRef}?\n\nThis will clear all stored order links and re-download every order PDF from the court, uploading them to permanent storage. Previous links will be lost.`
+    )) return;
+
+    setProcessingOrders(prev => new Set(prev).add(caseId));
+    setTableMessage(null);
+
+    try {
+      // 1. Reset all history for the case
+      const resetResp = await authenticatedFetchJSON(`/cases/${encodeURIComponent(caseRef)}/reset`, {
+        method: 'POST',
+      });
+      if (!resetResp.success) {
+        throw new Error(resetResp.error || 'Reset failed');
+      }
+
+      // 2. Queue a fresh download for this board entry
+      const procResp = await authenticatedFetchJSON(`/auto-orders/process-case`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_id: caseId, case_ref: caseRef }),
+      });
+
+      if (procResp.download_success || (procResp.success && procResp.status === 'queued')) {
+        setTableMessage({ type: 'success', text: `Re-fetch queued for ${caseRef} (${resetResp.board_entries_reset} entries reset).` });
+        setJobStatuses(prev => new Map(prev).set(caseId, {
+          caseRef, status: 'fetch_queued', label: jobLabel('fetch_queued'), variant: 'info',
+        }));
+        startPollingJob(caseId, caseRef);
+      } else {
+        setTableMessage({ type: 'success', text: `${caseRef} reset (${resetResp.board_entries_reset} entries). Download will run in background.` });
+        await fetchData();
+      }
+    } catch (err) {
+      setTableMessage({ type: 'error', text: `Force re-fetch failed for ${caseRef}: ${err.message}` });
+      setProcessingOrders(prev => { const s = new Set(prev); s.delete(caseId); return s; });
+    }
+  };
+
   const handleAnalyzeOrder = async (caseId, caseRef) => {
     setProcessingOrders(prev => new Set(prev).add(caseId));
     try {
