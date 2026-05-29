@@ -2989,6 +2989,50 @@ async def manual_override_case_outcome(
         )
 
 
+@app.post("/cases/{case_ref:path}/reset", tags=["Auto Order Management"])
+async def reset_case_orders(
+    case_ref: str,
+    current_user=Depends(require_admin),
+):
+    """Hard-reset a case: clear all order history and requeue every board entry.
+
+    Wipes the orders array and latest_order_* fields from case-details, then
+    resets every daily-boards entry for this case to fetch_queued so the
+    background pipeline re-fetches every order PDF and uploads them to GCS.
+
+    Use this when a case has stale BHC links that retries have not replaced,
+    or whenever a clean slate is needed.
+    """
+    try:
+        ensure_firebase()
+        normalized = str(case_ref or "").strip().upper()
+        if not normalized:
+            return JSONResponse(
+                status_code=400, content={"error": "case_ref is required"}
+            )
+
+        case_store = get_auto_order_manager().case_store
+        result = case_store.reset_case_for_reprocessing(normalized)
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "case_ref": normalized,
+                "board_entries_reset": result["board_entries_reset"],
+                "message": (
+                    f"Case {normalized} reset. "
+                    f"{result['board_entries_reset']} board entries requeued for download."
+                ),
+            }
+        )
+    except Exception as exc:
+        logger.error("reset_case_orders failed for %s: %s", case_ref, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Reset failed: {str(exc)}"},
+        )
+
+
 @app.post("/auto-orders/process-case", tags=["Auto Order Management"])
 async def process_single_case(request: Request, current_user=Depends(get_current_user)):
     """Process a single case for order download and analysis"""

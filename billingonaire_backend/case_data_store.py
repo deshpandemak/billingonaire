@@ -570,3 +570,65 @@ class CaseDataStore:
             "latest_board_date": details.get("latest_board_date"),
             "event_count": len(details.get("lifecycle_events") or []),
         }
+
+    def reset_case_for_reprocessing(self, case_ref: str) -> Dict:
+        """Clear all order history for a case and requeue every board entry.
+
+        Wipes the orders array and latest_order_* fields from case-details so
+        the pipeline treats the case as fresh.  Every daily-boards entry whose
+        case_ref matches is reset to fetch_queued so the background worker
+        re-fetches and re-uploads every order PDF.
+
+        Returns a summary: {"board_entries_reset": N, "case_ref": case_ref}
+        """
+        if not case_ref:
+            return {"board_entries_reset": 0, "case_ref": case_ref}
+
+        # 1. Wipe order history from case-details
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        snap = case_doc_ref.get()
+        if snap.exists:
+            existing = snap.to_dict() or {}
+            case_doc_ref.update(
+                {
+                    "orders": [],
+                    "latest_order_link": None,
+                    "latest_order_date": None,
+                    "latest_order_status": None,
+                    "latest_order_category": None,
+                    "reset_at": datetime.now().isoformat(),
+                }
+            )
+            logger.info(
+                "reset_case_for_reprocessing: cleared orders for case_ref=%s "
+                "(had %d orders)",
+                case_ref,
+                len(existing.get("orders") or []),
+            )
+
+        # 2. Reset every daily-boards entry for this case to fetch_queued
+        board_docs = (
+            self.db.collection("daily-boards")
+            .where("case_ref", "==", case_ref)
+            .stream()
+        )
+        reset_count = 0
+        for doc in board_docs:
+            doc.reference.update(
+                {
+                    "lifecycle_status": "fetch_queued",
+                    "lifecycle_status_updated_at": datetime.now().isoformat(),
+                    "order_link": None,
+                    "order_category": None,
+                }
+            )
+            reset_count += 1
+
+        logger.info(
+            "reset_case_for_reprocessing: reset %d board entries for case_ref=%s",
+            reset_count,
+            case_ref,
+        )
+        return {"board_entries_reset": reset_count, "case_ref": case_ref}
