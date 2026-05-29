@@ -1690,9 +1690,20 @@ class OrderDocumentAnalyzer:
         logging.info("      🔍 Testing Pattern 1 for AGP/GP extraction...")
         logging.info(f"      📄 Text snippet being searched (100 chars): '{text[:100]}'")
 
-        # Ultra-simplified pattern - titles may or may not have periods, names can have spaces and periods
-        # Example: "Mr. N. C. Walimbe, Addl.G.P. with Ms N. M. Mehra, AGP, for Respondent"
-        simple_pattern = r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)\s+(?:a/w|with)\s+((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s+[A-Z][A-Za-z\s\.]+?),\s*([A-Za-z\.\s]+?)(?:,\s*)?for\s+(?:the\s+)?Respondent"
+        # Handles "Mr. Name, Role a/w[.] Mr[.]Name, Role for Respondent" and
+        # the Lok Adalat variant "Mr. Name, Role a/w. Mr.Name, Role present."
+        # Key differences handled vs older patterns:
+        #   • a/w.  — trailing period after 'w' (a/w\.?)
+        #   • Mr.Name — no space between title and name (\s*)
+        #   • 'B' Panel Council — non-standard GP role keyword
+        #   • ends with "present" instead of "for Respondent"
+        simple_pattern = (
+            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z][A-Za-z\s\.]+?),"
+            r"\s*([A-Za-z\.\s]+?)\s+(?:a/w\.?|with)\s*"
+            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z][A-Za-z\s\.]+?),"
+            r"\s*([^\n]+?)"
+            r"(?=\s*(?:for\s+(?:the\s+)?Respondent|(?:is\s+)?present[,\.]?))"
+        )
 
         for match in re.finditer(simple_pattern, text, re.IGNORECASE):
             title1_name1 = match.group(1).strip()
@@ -1704,19 +1715,18 @@ class OrderDocumentAnalyzer:
                 f"      🎯 Simple pattern matched: '{title1_name1}' role='{role1}', '{title2_name2}' role='{role2}'"
             )
 
-            # Only process if roles contain AGP/GP/G.P.
-            if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role1, re.IGNORECASE):
+            # Accept GP/AGP/G.P./Addl. roles and 'B'/'A' Panel Counsel roles
+            _gp_role_re = r"(?:AGP|GP|G\.?\s*P\.?|Addl|Panel\s+Coun)"
+            if re.search(_gp_role_re, role1, re.IGNORECASE):
                 role1_normalized = self._normalize_agp_role(role1)
-                clean_name1 = self._normalize_person_name(title1_name1)
-                formatted1 = f"Adv. {clean_name1}, {role1_normalized}"
+                formatted1 = f"{title1_name1.strip()}, {role1_normalized}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
 
-            if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role2, re.IGNORECASE):
+            if re.search(_gp_role_re, role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
-                clean_name2 = self._normalize_person_name(title2_name2)
-                formatted2 = f"Adv. {clean_name2}, {role2_normalized}"
+                formatted2 = f"{title2_name2.strip()}, {role2_normalized}"
                 if formatted2 not in pleaders:
                     pleaders.append(formatted2)
                     logging.info(
@@ -1737,7 +1747,7 @@ class OrderDocumentAnalyzer:
             if match2a:
                 name1 = match2a.group(1).strip()
                 role1 = self._normalize_agp_role(match2a.group(2).strip())
-                formatted1 = f"Adv. {name1}, {role1}"
+                formatted1 = f"{name1}, {role1}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 2a matched: '{formatted1}'")
@@ -1746,7 +1756,7 @@ class OrderDocumentAnalyzer:
                     role2 = self._normalize_agp_role(
                         (match2a.group(4) or "AGP").strip()
                     )
-                    formatted2 = f"Adv. {name2}, {role2}"
+                    formatted2 = f"{name2}, {role2}"
                     if formatted2 not in pleaders:
                         pleaders.append(formatted2)
                         logging.info(
@@ -1764,7 +1774,7 @@ class OrderDocumentAnalyzer:
             match2b = re.search(pattern2b, text, re.IGNORECASE)
             if match2b:
                 name = match2b.group(1).strip()
-                formatted = f"Adv. {name}, GP"
+                formatted = f"{name}, GP"
                 if formatted not in pleaders:
                     pleaders.append(formatted)
                     logging.info(f"      ✅ AGP Pattern 2b matched: '{formatted}'")
@@ -1780,7 +1790,7 @@ class OrderDocumentAnalyzer:
             ):
                 name = match2c.group(1).strip()
                 if len(name) > 3:
-                    formatted = f"Adv. {name}, AGP"
+                    formatted = f"{name}, AGP"
                     if formatted not in pleaders:
                         pleaders.append(formatted)
                         logging.info(f"      ✅ AGP Pattern 2c matched: '{formatted}'")
@@ -1790,9 +1800,9 @@ class OrderDocumentAnalyzer:
             # More precise patterns for AGP/GP mentions
             agp_patterns = [
                 # Pattern 1: "Adv. Full Name, Role" - PRIORITY: capture everything after Adv. until comma
-                r"Adv\.\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b",
+                r"Adv\.\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|G\.?\s*P\.?|A\.?\s*G\.?\s*P\.?))\b",
                 # Pattern 2: "Full Name, Role" - fallback for cases without Adv. prefix (must start with capital letter, not 'a' or 'w')
-                r"\b(?!a/|w\s)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b",
+                r"\b(?!a/|w\s)([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*),\s*((?:Addl\.?\s*)?(?:AGP|GP|G\.?\s*P\.?|A\.?\s*G\.?\s*P\.?))\b",
                 # Pattern 3: "AGP Shri/Mr. Name" - role followed by title and name (improved)
                 r"(?:AGP|GP|Addl\.?\s*GP)\s+(?:Shri\.?|Smt\.?|Mr\.?|Ms\.?)\s+([A-Z][A-Za-z]*(?:\s+[A-Z]\.?\s*)*[A-Za-z]+(?:\s+[A-Z][A-Za-z]*)*)\b",
                 # Pattern 4: "Government Pleader: Name" (improved)
@@ -1833,34 +1843,29 @@ class OrderDocumentAnalyzer:
 
                         normalized_role = self._normalize_agp_role(role)
 
-                        # Clean name - remove any remaining titles
-                        name = self._normalize_person_name(name)
-
                         if name and len(name) > 1:
                             if i == 0:  # Pattern 1 (Adv. prefix) gets priority
-                                adv_matches.append(f"Adv. {name}, {normalized_role}")
+                                adv_matches.append(f"{name}, {normalized_role}")
                             else:
-                                # For general patterns, check if this name is already covered by Adv. patterns
-                                # Avoid duplicates by checking if this name is a substring of any Adv. match
+                                # Avoid duplicates: skip if this name is already in an Adv. match
                                 is_duplicate = False
                                 for adv_match in adv_matches:
-                                    adv_name = adv_match.replace("Adv. ", "").split(
-                                        ", "
-                                    )[0]
+                                    adv_name = adv_match.split(", ")[0]
                                     if name in adv_name or adv_name in name:
                                         is_duplicate = True
                                         break
                                 if not is_duplicate:
-                                    general_matches.append(
-                                        f"Adv. {name}, {normalized_role}"
-                                    )
+                                    general_matches.append(f"{name}, {normalized_role}")
 
             # Combine results: Adv. patterns first, then general patterns
             all_matches = adv_matches + general_matches
 
-            # Handle "a/w" (along with) pattern for second advocates
+            # Handle "a/w" / "a/w." (along with) pattern for second advocates.
+            # \s* instead of \s+ allows "Mr.Name" (no space after title prefix).
+            # G\.?\s*P\.? handles "G.P" / "G.P." without A-prefix.
             aw_pattern = (
-                r"a/w\s+([^,]+),\s*((?:Addl\.?\s*)?(?:AGP|GP|A\.?\s*G\.?\s*P\.?))\b"
+                r"a/w\.?\s*(?:(?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*)?"
+                r"([A-Z][^,\n]+?),\s*((?:Addl\.?\s*)?(?:AGP|GP|G\.?\s*P\.?|A\.?\s*G\.?\s*P\.?))\b"
             )
             aw_matches: List[Tuple[str, str]] = re.findall(
                 aw_pattern, text, re.IGNORECASE
@@ -1886,10 +1891,9 @@ class OrderDocumentAnalyzer:
                     continue
 
                 normalized_role = self._normalize_agp_role(role)
-                name = self._normalize_person_name(name)
 
                 if name and len(name) > 1:
-                    all_matches.append(f"Adv. {name}, {normalized_role}")
+                    all_matches.append(f"{name}, {normalized_role}")
 
             # Add all matches to pleaders list
             pleaders.extend(all_matches)
@@ -1906,11 +1910,15 @@ class OrderDocumentAnalyzer:
 
     def _normalize_agp_role(self, role: str) -> str:
         """Normalize AGP/GP role names to standard format"""
-        role_upper = role.upper().replace(".", "").replace(" ", "")
+        role_upper = role.upper().replace(".", "").replace(" ", "").replace("'", "")
         if "AGP" in role_upper or "APP" in role_upper:
             return "AGP"
         elif "ADDLGP" in role_upper or "ADDL" in role_upper:
             return "Addl. G.P."
+        elif "PANEL" in role_upper:
+            # Preserve the Panel designation as-is — 'B' Panel Council is a
+            # distinct role and must not be collapsed to GP.
+            return role.strip()
         else:
             return "GP"
 
@@ -1922,7 +1930,7 @@ class OrderDocumentAnalyzer:
         'Adv.' lets deduplication work across extraction patterns.
         """
         return re.sub(
-            r"^(?:Adv\.?\s+|Ms\.?\s+|Mr\.?\s+|Shri\.?\s+|Smt\.?\s+|Dr\.?\s+)",
+            r"^(?:Adv\.?\s*|Ms\.?\s*|Mr\.?\s*|Shri\.?\s*|Smt\.?\s*|Dr\.?\s*)",
             "",
             name.strip(),
             flags=re.IGNORECASE,
