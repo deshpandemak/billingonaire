@@ -1707,14 +1707,16 @@ class OrderDocumentAnalyzer:
             # Only process if roles contain AGP/GP/G.P.
             if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role1, re.IGNORECASE):
                 role1_normalized = self._normalize_agp_role(role1)
-                formatted1 = f"{title1_name1}, {role1_normalized}"
+                clean_name1 = self._normalize_person_name(title1_name1)
+                formatted1 = f"Adv. {clean_name1}, {role1_normalized}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
 
             if re.search(r"(?:AGP|GP|G\.?\s*P\.?)", role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
-                formatted2 = f"{title2_name2}, {role2_normalized}"
+                clean_name2 = self._normalize_person_name(title2_name2)
+                formatted2 = f"Adv. {clean_name2}, {role2_normalized}"
                 if formatted2 not in pleaders:
                     pleaders.append(formatted2)
                     logging.info(
@@ -1829,22 +1831,10 @@ class OrderDocumentAnalyzer:
                         ):
                             continue
 
-                        # Normalize role
-                        role_upper = role.upper().replace(".", "").replace(" ", "")
-                        if "AGP" in role_upper or "APP" in role_upper:
-                            normalized_role = "AGP"
-                        elif "ADDLGP" in role_upper or "ADDL" in role_upper:
-                            normalized_role = "Addl. GP"
-                        else:
-                            normalized_role = "GP"
+                        normalized_role = self._normalize_agp_role(role)
 
                         # Clean name - remove any remaining titles
-                        name = re.sub(
-                            r"^(Ms\.|Mr\.|Adv\.|Shri\.?|Smt\.?)\s+",
-                            "",
-                            name,
-                            flags=re.IGNORECASE,
-                        ).strip()
+                        name = self._normalize_person_name(name)
 
                         if name and len(name) > 1:
                             if i == 0:  # Pattern 1 (Adv. prefix) gets priority
@@ -1895,14 +1885,8 @@ class OrderDocumentAnalyzer:
                 ):
                     continue
 
-                # Normalize role
-                role_upper = role.upper().replace(".", "").replace(" ", "")
-                if "AGP" in role_upper or "APP" in role_upper:
-                    normalized_role = "AGP"
-                elif "ADDLGP" in role_upper or "ADDL" in role_upper:
-                    normalized_role = "Addl. GP"
-                else:
-                    normalized_role = "GP"
+                normalized_role = self._normalize_agp_role(role)
+                name = self._normalize_person_name(name)
 
                 if name and len(name) > 1:
                     all_matches.append(f"Adv. {name}, {normalized_role}")
@@ -1929,6 +1913,20 @@ class OrderDocumentAnalyzer:
             return "Addl. G.P."
         else:
             return "GP"
+
+    def _normalize_person_name(self, name: str) -> str:
+        """Strip common title prefixes so all names are stored in a consistent format.
+
+        Patterns like 'Ms. N. M. Mehra' and 'Adv. N. M. Mehra' refer to the same
+        person but compare as unequal. Stripping the prefix and re-prefixing with
+        'Adv.' lets deduplication work across extraction patterns.
+        """
+        return re.sub(
+            r"^(?:Adv\.?\s+|Ms\.?\s+|Mr\.?\s+|Shri\.?\s+|Smt\.?\s+|Dr\.?\s+)",
+            "",
+            name.strip(),
+            flags=re.IGNORECASE,
+        ).strip()
 
     def _extract_parties_for_case(
         self, text: str, case_canonical: str

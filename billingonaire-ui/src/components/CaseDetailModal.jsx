@@ -123,8 +123,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
         orderDate: order.order_date || '-',
         orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
-        gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(', ') : '-',
-        gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(', ') : '-',
+        gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(' · ') : '-',
+        gpInOrder: gpInOrder.length ? [...new Set(gpInOrder)].join(' · ') : '-',
       };
     }).sort((a, b) => {
       const da = new Date(a.date).getTime();
