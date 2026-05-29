@@ -104,7 +104,17 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
 
     // Filter out status-only entries (no order_date, no order_link) — these
     // are internal processing markers that should not appear as table rows.
-    const meaningfulOrders = orders.filter(o => o.order_date || o.order_link);
+    // Also deduplicate by order_link — dirty Firestore data (written before the
+    // date-mismatch guard was added) can have two entries for the same PDF.
+    const seenLinks = new Set();
+    const meaningfulOrders = orders.filter(o => {
+      if (!o.order_date && !o.order_link) return false;
+      if (o.order_link) {
+        if (seenLinks.has(o.order_link)) return false;
+        seenLinks.add(o.order_link);
+      }
+      return true;
+    });
 
     return meaningfulOrders.map(order => {
       // Prefer board_date stored on the order (set by backend since fix),
