@@ -1719,16 +1719,14 @@ class OrderDocumentAnalyzer:
             _gp_role_re = r"(?:AGP|GP|G\.?\s*P\.?|Addl|Panel\s+Coun)"
             if re.search(_gp_role_re, role1, re.IGNORECASE):
                 role1_normalized = self._normalize_agp_role(role1)
-                clean_name1 = self._normalize_person_name(title1_name1)
-                formatted1 = f"Adv. {clean_name1}, {role1_normalized}"
+                formatted1 = f"{title1_name1.strip()}, {role1_normalized}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
 
             if re.search(_gp_role_re, role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
-                clean_name2 = self._normalize_person_name(title2_name2)
-                formatted2 = f"Adv. {clean_name2}, {role2_normalized}"
+                formatted2 = f"{title2_name2.strip()}, {role2_normalized}"
                 if formatted2 not in pleaders:
                     pleaders.append(formatted2)
                     logging.info(
@@ -1749,7 +1747,7 @@ class OrderDocumentAnalyzer:
             if match2a:
                 name1 = match2a.group(1).strip()
                 role1 = self._normalize_agp_role(match2a.group(2).strip())
-                formatted1 = f"Adv. {name1}, {role1}"
+                formatted1 = f"{name1}, {role1}"
                 if formatted1 not in pleaders:
                     pleaders.append(formatted1)
                     logging.info(f"      ✅ AGP Pattern 2a matched: '{formatted1}'")
@@ -1758,7 +1756,7 @@ class OrderDocumentAnalyzer:
                     role2 = self._normalize_agp_role(
                         (match2a.group(4) or "AGP").strip()
                     )
-                    formatted2 = f"Adv. {name2}, {role2}"
+                    formatted2 = f"{name2}, {role2}"
                     if formatted2 not in pleaders:
                         pleaders.append(formatted2)
                         logging.info(
@@ -1776,7 +1774,7 @@ class OrderDocumentAnalyzer:
             match2b = re.search(pattern2b, text, re.IGNORECASE)
             if match2b:
                 name = match2b.group(1).strip()
-                formatted = f"Adv. {name}, GP"
+                formatted = f"{name}, GP"
                 if formatted not in pleaders:
                     pleaders.append(formatted)
                     logging.info(f"      ✅ AGP Pattern 2b matched: '{formatted}'")
@@ -1792,7 +1790,7 @@ class OrderDocumentAnalyzer:
             ):
                 name = match2c.group(1).strip()
                 if len(name) > 3:
-                    formatted = f"Adv. {name}, AGP"
+                    formatted = f"{name}, AGP"
                     if formatted not in pleaders:
                         pleaders.append(formatted)
                         logging.info(f"      ✅ AGP Pattern 2c matched: '{formatted}'")
@@ -1845,27 +1843,19 @@ class OrderDocumentAnalyzer:
 
                         normalized_role = self._normalize_agp_role(role)
 
-                        # Clean name - remove any remaining titles
-                        name = self._normalize_person_name(name)
-
                         if name and len(name) > 1:
                             if i == 0:  # Pattern 1 (Adv. prefix) gets priority
-                                adv_matches.append(f"Adv. {name}, {normalized_role}")
+                                adv_matches.append(f"{name}, {normalized_role}")
                             else:
-                                # For general patterns, check if this name is already covered by Adv. patterns
-                                # Avoid duplicates by checking if this name is a substring of any Adv. match
+                                # Avoid duplicates: skip if this name is already in an Adv. match
                                 is_duplicate = False
                                 for adv_match in adv_matches:
-                                    adv_name = adv_match.replace("Adv. ", "").split(
-                                        ", "
-                                    )[0]
+                                    adv_name = adv_match.split(", ")[0]
                                     if name in adv_name or adv_name in name:
                                         is_duplicate = True
                                         break
                                 if not is_duplicate:
-                                    general_matches.append(
-                                        f"Adv. {name}, {normalized_role}"
-                                    )
+                                    general_matches.append(f"{name}, {normalized_role}")
 
             # Combine results: Adv. patterns first, then general patterns
             all_matches = adv_matches + general_matches
@@ -1901,10 +1891,9 @@ class OrderDocumentAnalyzer:
                     continue
 
                 normalized_role = self._normalize_agp_role(role)
-                name = self._normalize_person_name(name)
 
                 if name and len(name) > 1:
-                    all_matches.append(f"Adv. {name}, {normalized_role}")
+                    all_matches.append(f"{name}, {normalized_role}")
 
             # Add all matches to pleaders list
             pleaders.extend(all_matches)
