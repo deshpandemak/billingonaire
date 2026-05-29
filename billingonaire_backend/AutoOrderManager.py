@@ -1364,6 +1364,22 @@ class AutoOrderManager:
                 order_link,
             )
 
+            # If the stored order's date doesn't match this board entry's date,
+            # the existing link is wrong (e.g. linked via old tolerance window).
+            # Fall back to a fresh download so the correct order can be found.
+            if analysis_result.get("error") == "date_mismatch":
+                logger.warning(
+                    "_analyze_existing_order: existing order date mismatch for "
+                    "case_ref=%s — falling back to fresh download",
+                    case_ref,
+                )
+                return self._fallback_to_fresh_download(
+                    case_data,
+                    result,
+                    "Existing order date does not match board date",
+                    max_sequences,
+                )
+
             if analysis_result.get("success"):
                 result["analysis_success"] = True
                 result["analysis_data"] = analysis_result.get("data")
@@ -2162,6 +2178,28 @@ class AutoOrderManager:
                 "order_status": "analysed",
                 "order_status_updated_at": datetime.now().isoformat(),
             }
+
+            # Do not persist an order whose date clearly does not match the board
+            # date — storing it would create a duplicate entry (wrong order_date
+            # format from PDF vs ISO from API) or silently link the wrong order to
+            # the wrong hearing.  When the date is unknown (order_date=None) we
+            # accept the entry because the PDF may lack a date field entirely.
+            if not date_validation.get("valid") and order_analysis.get("order_date"):
+                logger.warning(
+                    "_analyze_order_with_date_validation: date mismatch for "
+                    "case_ref=%s (extracted=%s expected=%s) — skipping persist",
+                    case_ref,
+                    order_analysis.get("order_date"),
+                    expected_board_date,
+                )
+                return {
+                    "success": False,
+                    "error": "date_mismatch",
+                    "data": {
+                        "order_date": order_analysis.get("order_date"),
+                        "expected_board_date": expected_board_date,
+                    },
+                }
 
             try:
                 self.case_store.transition_lifecycle(

@@ -143,6 +143,16 @@ class CaseDataStore:
             return None
         if "T" in raw:
             return raw.split("T")[0]
+        if " " in raw:
+            # "2026-05-15 00:00:00" from Firestore Timestamp str()
+            return raw.split(" ", 1)[0]
+        # Convert DD/MM/YYYY → YYYY-MM-DD so duplicate detection works across
+        # extraction paths (PDF text gives DD/MM/YYYY; API gives YYYY-MM-DD).
+        import re as _re
+
+        if _re.match(r"^\d{2}/\d{2}/\d{4}$", raw):
+            dd, mm, yyyy = raw.split("/")
+            return f"{yyyy}-{mm}-{dd}"
         return raw
 
     @staticmethod
