@@ -258,7 +258,12 @@ def test_get_order_pdf_gcs_download_failure_triggers_refetch(client, monkeypatch
     """When GCS download fails, re-fetch is queued and 503 with order_link_expired is returned."""
     board_snap = _make_snap(
         True,
-        {"order_link": FAKE_GCS_URL, "case_type": "WP", "case_no": "123", "case_year": "2024"},
+        {
+            "order_link": FAKE_GCS_URL,
+            "case_type": "WP",
+            "case_no": "123",
+            "case_year": "2024",
+        },
     )
     db = _make_db(daily_boards_snap=board_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
