@@ -1927,8 +1927,9 @@ class OrderDocumentAnalyzer:
         elif "ADDLGP" in role_upper or "ADDL" in role_upper:
             return "Addl. G.P."
         elif "PANEL" in role_upper:
-            # 'B' Panel Counsel / 'A' Panel Council appearing for the state
-            return "GP"
+            # Preserve the Panel designation as-is — 'B' Panel Council is a
+            # distinct role and must not be collapsed to GP.
+            return role.strip()
         else:
             return "GP"
 
