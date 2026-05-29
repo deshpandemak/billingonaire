@@ -378,12 +378,10 @@ const Table = () => {
     const orderLink = data?.order_link;
 
     if (orderLink) {
-      // GCS URLs are permanent — open directly.
-      // Legacy expiring court URLs are routed through the backend proxy which
-      // auto-upgrades them to GCS on first access.
-      const href = orderLink.startsWith('https://storage.googleapis.com')
-        ? orderLink
-        : getApiUrl(`/orders/pdf/${data?.id}`);
+      // Always proxy through the backend — the GCS bucket is private so direct
+      // browser access to storage.googleapis.com returns 403. The proxy uses
+      // Cloud Run ADC and triggers an automatic re-fetch when the link is stale.
+      const href = getApiUrl(`/orders/pdf/${data?.id}`);
 
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
