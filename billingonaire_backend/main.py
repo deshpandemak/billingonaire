@@ -4481,12 +4481,18 @@ async def get_order_pdf(doc_id: str):
                 # we do for expired court URLs.
                 _case_type = case_data.get("case_type", "")
                 _case_no = str(case_data.get("case_no") or "")
+                _case_year = str(case_data.get("case_year") or "")
                 if _case_type and _case_no:
+                    _refetch_data = {**case_data, "id": doc_id}
+                    if not _refetch_data.get("case_ref") and _case_type and _case_year:
+                        _refetch_data[
+                            "case_ref"
+                        ] = f"{_case_type}/{_case_no}/{_case_year}"
                     loop = asyncio.get_event_loop()
                     loop.run_in_executor(
                         executor,
                         get_auto_order_manager()._process_single_case,
-                        {**case_data, "id": doc_id},
+                        _refetch_data,
                         None,
                     )
                 return JSONResponse(
@@ -4514,11 +4520,14 @@ async def get_order_pdf(doc_id: str):
             case_no = str(case_data.get("case_no") or "")
             case_year = str(case_data.get("case_year") or "")
             if case_type and case_no:
+                _refetch_data = {**case_data, "id": doc_id}
+                if not _refetch_data.get("case_ref") and case_type and case_year:
+                    _refetch_data["case_ref"] = f"{case_type}/{case_no}/{case_year}"
                 loop = asyncio.get_event_loop()
                 loop.run_in_executor(
                     executor,
                     get_auto_order_manager()._process_single_case,
-                    {**case_data, "id": doc_id},
+                    _refetch_data,
                     None,
                 )
             return JSONResponse(
@@ -4538,11 +4547,14 @@ async def get_order_pdf(doc_id: str):
         case_no = str(case_data.get("case_no") or "")
         case_year = str(case_data.get("case_year") or "")
         case_ref = f"{case_type}/{case_no}/{case_year}"
-        order_date = str(
+        _raw_order_date = (
             case_data.get("latest_order_date")
             or case_data.get("board_date")
             or datetime.now().strftime("%Y-%m-%d")
         )
+        # Firestore Timestamps stringify as "YYYY-MM-DD HH:MM:SS"; strip the time
+        # component so GCS blob names don't contain spaces.
+        order_date = str(_raw_order_date).split(" ")[0].split("T")[0]
 
         def _upgrade_to_gcs(
             _pdf: bytes, _case_ref: str, _order_date: str, _doc_id: str
