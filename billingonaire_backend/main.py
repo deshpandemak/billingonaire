@@ -4398,6 +4398,57 @@ async def get_order_pdf(doc_id: str):
                 status_code=404, detail="No order link stored for this case"
             )
 
+        # If the stored link is a court URL (not GCS), check whether a previous
+        # background re-fetch already upgraded the link to GCS in case-details
+        # but hadn't yet written back to daily-boards.  If so, use the GCS URL
+        # directly and patch daily-boards so the next request is instant.
+        if order_link and not order_link.startswith("https://storage.googleapis.com"):
+            _ct = case_data.get("case_type", "")
+            _cn = str(case_data.get("case_no") or "")
+            _cy = str(case_data.get("case_year") or "")
+            if _ct and _cn and _cy:
+                _details_id_upgrade = f"{_ct}-{_cn}-{_cy}"
+                try:
+                    _details_snap_upgrade = (
+                        db.collection("case-details")
+                        .document(_details_id_upgrade)
+                        .get()
+                    )
+                    if _details_snap_upgrade.exists:
+                        _det = _details_snap_upgrade.to_dict() or {}
+                        _gcs_candidate = None
+                        # Prefer an orders[] entry whose order_link is a GCS URL
+                        for _o in reversed(_det.get("orders") or []):
+                            if isinstance(_o, dict) and (
+                                _o.get("order_link") or ""
+                            ).startswith("https://storage.googleapis.com"):
+                                _gcs_candidate = _o["order_link"].strip()
+                                break
+                        if not _gcs_candidate and (
+                            _det.get("latest_order_link") or ""
+                        ).startswith("https://storage.googleapis.com"):
+                            _gcs_candidate = _det["latest_order_link"].strip()
+                        if _gcs_candidate:
+                            # Patch daily-boards so future hits skip this lookup
+                            try:
+                                db.collection("daily-boards").document(doc_id).update(
+                                    {"order_link": _gcs_candidate}
+                                )
+                            except Exception:
+                                pass
+                            order_link = _gcs_candidate
+                            logger.info(
+                                "get_order_pdf: upgraded court URL to GCS from "
+                                "case-details for doc_id=%s",
+                                doc_id,
+                            )
+                except Exception as _upg_err:
+                    logger.debug(
+                        "get_order_pdf: GCS upgrade lookup failed for doc_id=%s: %s",
+                        doc_id,
+                        _upg_err,
+                    )
+
         # GCS URL: download via service-account credentials and stream back.
         # Public bucket access is not required — Cloud Run ADC authenticates
         # transparently, so the bucket can stay private.
