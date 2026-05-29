@@ -4547,11 +4547,14 @@ async def get_order_pdf(doc_id: str):
         case_no = str(case_data.get("case_no") or "")
         case_year = str(case_data.get("case_year") or "")
         case_ref = f"{case_type}/{case_no}/{case_year}"
-        order_date = str(
+        _raw_order_date = (
             case_data.get("latest_order_date")
             or case_data.get("board_date")
             or datetime.now().strftime("%Y-%m-%d")
         )
+        # Firestore Timestamps stringify as "YYYY-MM-DD HH:MM:SS"; strip the time
+        # component so GCS blob names don't contain spaces.
+        order_date = str(_raw_order_date).split(" ")[0].split("T")[0]
 
         def _upgrade_to_gcs(
             _pdf: bytes, _case_ref: str, _order_date: str, _doc_id: str
