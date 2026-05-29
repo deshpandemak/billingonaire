@@ -636,6 +636,25 @@ class AutoOrderManager:
                 },
                 event_type="analysis_succeeded",
             )
+            # Propagate the GCS URL back to daily-boards so the PDF proxy reads
+            # the permanent link directly without falling back to case-details.
+            # Without this, the proxy keeps reading the expired court URL from
+            # daily-boards and re-queueing re-fetches indefinitely.
+            if order_link and order_link.startswith("https://storage.googleapis.com"):
+                try:
+                    self.db.collection("daily-boards").document(case_id).update(
+                        {
+                            "order_link": order_link,
+                            "order_category": order_analysis["order_category"],
+                        }
+                    )
+                except Exception as _db_err:
+                    logger.warning(
+                        "_analyze_order_with_api_metadata: daily-boards update "
+                        "failed for case_id=%s: %s",
+                        case_id,
+                        _db_err,
+                    )
             logger.info(
                 "_analyze_order_with_api_metadata: analysed case_ref=%s date=%s category=%s",
                 case_ref,
@@ -1340,7 +1359,13 @@ class AutoOrderManager:
             if order_link and not order_link.startswith(
                 "https://storage.googleapis.com"
             ):
-                board_date_str = str(case_data.get("board_date") or "")
+                # _normalise_order_date strips the time component from Firestore
+                # Timestamps serialised as "YYYY-MM-DD HH:MM:SS", which would
+                # otherwise produce invalid GCS blob names with spaces.
+                board_date_str = (
+                    self._normalise_order_date(str(case_data.get("board_date") or ""))
+                    or ""
+                )
                 gcs_url = self._upload_order_to_gcs(
                     pdf_content, case_ref, board_date_str
                 )
@@ -1524,12 +1549,22 @@ class AutoOrderManager:
                         result["download_success"] = True
                         result["order_link"] = order_link
 
+                        # Normalise board_date — Firestore Timestamps serialise as
+                        # "YYYY-MM-DD HH:MM:SS" which breaks GCS blob naming and
+                        # date validation inside _analyze_order_with_date_validation.
+                        _bd_normalised = (
+                            self._normalise_order_date(
+                                str(case_data.get("board_date") or "")
+                            )
+                            or ""
+                        )
+
                         # Analyze the downloaded order
                         analysis_result = self._analyze_order_with_date_validation(
                             case_id,
                             case_ref,
                             pdf_content,
-                            str(case_data.get("board_date") or ""),
+                            _bd_normalised,
                             order_link,
                         )
 
@@ -1558,7 +1593,7 @@ class AutoOrderManager:
                                     case_ref,
                                     link_analysis_data,
                                     download_result,
-                                    str(case_data.get("board_date") or ""),
+                                    _bd_normalised,
                                 )
                                 if linked_cases:
                                     result["additional_cases_linked"] = linked_cases
@@ -2244,6 +2279,25 @@ class AutoOrderManager:
                     },
                     event_type="analysis_succeeded",
                 )
+                # Propagate GCS URL back to daily-boards so the PDF proxy reads
+                # the permanent link directly and stops re-queueing re-fetches.
+                if order_link and order_link.startswith(
+                    "https://storage.googleapis.com"
+                ):
+                    try:
+                        self.db.collection("daily-boards").document(case_id).update(
+                            {
+                                "order_link": order_link,
+                                "order_category": order_analysis.get("order_category"),
+                            }
+                        )
+                    except Exception as _db_err:
+                        logger.warning(
+                            "_analyze_order_with_date_validation: daily-boards "
+                            "update failed for case_id=%s: %s",
+                            case_id,
+                            _db_err,
+                        )
             except Exception as case_sync_error:
                 logger.warning(
                     f"Failed to sync normalized order history for {case_ref}: {case_sync_error}"
