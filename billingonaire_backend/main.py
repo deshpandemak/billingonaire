@@ -4595,6 +4595,53 @@ async def get_order_pdf(doc_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/admin/gcs-bucket-info", tags=["Admin"])
+async def gcs_bucket_info(current_user=Depends(require_admin)):
+    """Return GCS bucket metadata so admins can verify no lifecycle rules are deleting blobs.
+
+    If the bucket has a lifecycle rule that deletes objects after N days, order PDFs
+    would silently disappear, causing the proxy to return 503 even for GCS URLs.
+    """
+    try:
+        from google.cloud import storage as gcs_storage
+
+        mgr = get_auto_order_manager()
+        bucket_name = mgr._gcs_bucket_name
+        if not bucket_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "ORDER_PDF_BUCKET env var not set on this instance"},
+            )
+        client = gcs_storage.Client()
+        bucket = client.get_bucket(bucket_name)
+        rules = []
+        if bucket.lifecycle_rules:
+            for rule in bucket.lifecycle_rules:
+                rules.append(rule)
+        return JSONResponse(
+            content={
+                "bucket": bucket_name,
+                "location": bucket.location,
+                "storage_class": bucket.storage_class,
+                "lifecycle_rules": rules,
+                "lifecycle_rule_count": len(rules),
+                "versioning_enabled": bucket.versioning_enabled,
+                "diagnosis": (
+                    "No lifecycle rules — blobs are retained indefinitely."
+                    if not rules
+                    else f"WARNING: {len(rules)} lifecycle rule(s) found — "
+                    "they may be deleting order PDFs. Check rules above."
+                ),
+            }
+        )
+    except Exception as exc:
+        logger.error("gcs_bucket_info failed: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc)},
+        )
+
+
 @app.post("/orders/migrate-to-gcs", tags=["Order Management"])
 async def migrate_orders_to_gcs(
     limit: int = Query(100, description="Max docs to process per call (max 500)"),

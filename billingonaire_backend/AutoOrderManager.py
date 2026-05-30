@@ -1041,7 +1041,25 @@ class AutoOrderManager:
         # ---------------------------------------------------------------
         # Path 3: Brute-force sequence-number fallback.
         # ---------------------------------------------------------------
-        # Configurable max retries - use parameter, env var, or default to 10
+        return self._try_sequence_download(
+            case_ref, case_id, case_data, result, max_sequences
+        )
+
+    def _try_sequence_download(
+        self,
+        case_ref: str,
+        case_id: str,
+        case_data: Dict[str, Any],
+        result: Dict[str, Any],
+        max_sequences: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Brute-force sequence-number fallback for _process_single_case (Path 3).
+
+        Iterates sequence numbers 1..MAX_RETRIES, downloads each order PDF,
+        validates its date against the board date, and on the first match
+        performs full analysis and persists atomically.  Returns *result* in
+        all outcomes (success, exhausted, or exception).
+        """
         if max_sequences is not None and max_sequences > 0:
             MAX_RETRIES = max_sequences
         else:
@@ -1054,7 +1072,6 @@ class AutoOrderManager:
         date_mismatches = 0
 
         try:
-            # Retry loop: Try sequence numbers 1 through MAX_RETRIES
             for sequence_num in range(1, MAX_RETRIES + 1):
                 # Log progress every 5 sequences or on first/last attempt
                 if (
@@ -1138,27 +1155,26 @@ class AutoOrderManager:
                         f"✅ Case {case_ref} - SUCCESS at sequence {sequence_num}/{MAX_RETRIES}"
                     )
 
-                    # Step 4: Create order link first (since download succeeded)
-                    try:
-                        self._create_order_link(case_id, order_info)
-                    except Exception as link_error:
-                        logger.error(
-                            f"Failed to create order link for {case_ref}: {link_error}"
+                    # Normalise board_date — Firestore Timestamps serialise as
+                    # "YYYY-MM-DD HH:MM:SS"; strip the time component so GCS blob
+                    # names and date comparisons work correctly.
+                    _bd_normalised = (
+                        self._normalise_order_date(
+                            str(case_data.get("board_date") or "")
                         )
-                        result[
-                            "error"
-                        ] = f"Order downloaded but link creation failed: {str(link_error)}"
-                        result["download_success"] = True
-                        result["order_link"] = order_info.get("order_link")
-                        return result
+                        or ""
+                    )
 
-                    # Step 5: Perform analysis (after order link is created)
+                    # Step 4: Analyse the PDF — this call handles both persistence
+                    # (append_case_order) and lifecycle transition atomically.
+                    # Do NOT call _create_order_link before this: if analysis
+                    # detects a date_mismatch, the order must NOT be persisted.
                     try:
                         analysis_result = self._analyze_order_with_date_validation(
                             case_id,
                             case_ref,
                             order_info["pdf_content"],
-                            str(case_data.get("board_date") or ""),
+                            _bd_normalised,
                             order_info.get("order_link"),
                         )
 
@@ -2227,12 +2243,12 @@ class AutoOrderManager:
                 "order_status_updated_at": datetime.now().isoformat(),
             }
 
-            # Do not persist an order whose date clearly does not match the board
-            # date — storing it would create a duplicate entry (wrong order_date
-            # format from PDF vs ISO from API) or silently link the wrong order to
-            # the wrong hearing.  When the date is unknown (order_date=None) we
-            # accept the entry because the PDF may lack a date field entirely.
-            if not date_validation.get("valid") and order_analysis.get("order_date"):
+            # Reject orders whose date does not match the expected board date,
+            # including orders where no date could be extracted from the PDF
+            # (order_date=None).  Allowing unknown-date PDFs to pass through
+            # caused wrong orders (e.g. July 10) to be linked to unrelated board
+            # entries (e.g. May 8) whenever the PDF lacked a date header.
+            if not date_validation.get("valid"):
                 logger.warning(
                     "_analyze_order_with_date_validation: date mismatch for "
                     "case_ref=%s (extracted=%s expected=%s) — skipping persist",

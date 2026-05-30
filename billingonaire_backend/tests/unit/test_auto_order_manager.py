@@ -135,7 +135,9 @@ def test_process_single_case_download_success_analysis_success(auto_order_manage
     assert result["analysis_success"] is True
     assert result["order_link"] == "http://example.com/order.pdf"
     assert result["error"] is None
-    auto_order_manager._create_order_link.assert_called_once()
+    # _create_order_link is intentionally NOT called before analysis — only
+    # _analyze_order_with_date_validation persists (atomically after date validation).
+    auto_order_manager._create_order_link.assert_not_called()
     auto_order_manager._analyze_order_with_date_validation.assert_called_once()
 
 
@@ -211,8 +213,8 @@ def test_process_single_case_download_success_analysis_failure(auto_order_manage
     assert result["order_link"] == "http://example.com/order456.pdf"
     assert "analysis failed" in result["error"].lower()
 
-    # Verify order link was created despite analysis failure
-    auto_order_manager._create_order_link.assert_called_once()
+    # _create_order_link must NOT be called — no Firestore write before analysis succeeds
+    auto_order_manager._create_order_link.assert_not_called()
 
     # Verify status was updated to order_analysis_failed in normalized store
     auto_order_manager._record_case_order_status.assert_called_with(
@@ -410,8 +412,8 @@ def test_process_single_case_analysis_exception_keeps_order(auto_order_manager):
     assert result["analysis_success"] is False, "Analysis should fail"
     assert "exception" in result["error"].lower()
 
-    # Verify order link was created
-    auto_order_manager._create_order_link.assert_called_once()
+    # _create_order_link must NOT be called — no Firestore write before analysis succeeds
+    auto_order_manager._create_order_link.assert_not_called()
 
     # Verify status was updated to order_analysis_failed
     auto_order_manager._record_case_order_status.assert_called_with(
