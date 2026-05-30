@@ -3012,17 +3012,13 @@ async def reset_case_orders(
             )
 
         case_store = get_auto_order_manager().case_store
-        result = case_store.reset_case_for_reprocessing(normalized)
+        case_store.reset_case_for_reprocessing(normalized)
 
         return JSONResponse(
             content={
                 "success": True,
                 "case_ref": normalized,
-                "board_entries_reset": result["board_entries_reset"],
-                "message": (
-                    f"Case {normalized} reset. "
-                    f"{result['board_entries_reset']} board entries requeued for download."
-                ),
+                "message": f"Case {normalized} reset and queued for re-fetch.",
             }
         )
     except Exception as exc:
@@ -4368,86 +4364,28 @@ async def get_order_pdf(doc_id: str):
             raise HTTPException(status_code=404, detail="Case not found")
 
         case_data = doc.to_dict() or {}
-        order_link = (case_data.get("order_link") or "").strip()
 
-        # Fall back to case-details.latest_order_link — that's the authoritative
-        # location written by case_data_store.append_case_order().
-        # Also scan the orders array directly so that cases whose latest_order_link
-        # was clobbered to None by a previous blank status entry still resolve.
-        if not order_link:
-            _ct = case_data.get("case_type", "")
-            _cn = str(case_data.get("case_no") or "")
-            _cy = str(case_data.get("case_year") or "")
-            if _ct and _cn and _cy:
-                _details_id = f"{_ct}-{_cn}-{_cy}"
-                _details_snap = (
-                    db.collection("case-details").document(_details_id).get()
-                )
-                if _details_snap.exists:
-                    _details = _details_snap.to_dict() or {}
-                    order_link = (_details.get("latest_order_link") or "").strip()
-                    if not order_link:
-                        # Scan orders array for the most-recent entry with a link
-                        for _o in reversed(_details.get("orders") or []):
-                            if isinstance(_o, dict) and _o.get("order_link"):
-                                order_link = _o["order_link"].strip()
-                                break
+        # order_link lives in case-details — daily-boards is immutable board data.
+        _ct = case_data.get("case_type", "")
+        _cn = str(case_data.get("case_no") or "")
+        _cy = str(case_data.get("case_year") or "")
+        order_link = ""
+        if _ct and _cn and _cy:
+            _details_id = f"{_ct}-{_cn}-{_cy}"
+            _details_snap = db.collection("case-details").document(_details_id).get()
+            if _details_snap.exists:
+                _details = _details_snap.to_dict() or {}
+                order_link = (_details.get("latest_order_link") or "").strip()
+                if not order_link:
+                    for _o in reversed(_details.get("orders") or []):
+                        if isinstance(_o, dict) and _o.get("order_link"):
+                            order_link = _o["order_link"].strip()
+                            break
 
         if not order_link:
             raise HTTPException(
                 status_code=404, detail="No order link stored for this case"
             )
-
-        # If the stored link is a court URL (not GCS), check whether a previous
-        # background re-fetch already upgraded the link to GCS in case-details
-        # but hadn't yet written back to daily-boards.  If so, use the GCS URL
-        # directly and patch daily-boards so the next request is instant.
-        if order_link and not order_link.startswith("https://storage.googleapis.com"):
-            _ct = case_data.get("case_type", "")
-            _cn = str(case_data.get("case_no") or "")
-            _cy = str(case_data.get("case_year") or "")
-            if _ct and _cn and _cy:
-                _details_id_upgrade = f"{_ct}-{_cn}-{_cy}"
-                try:
-                    _details_snap_upgrade = (
-                        db.collection("case-details")
-                        .document(_details_id_upgrade)
-                        .get()
-                    )
-                    if _details_snap_upgrade.exists:
-                        _det = _details_snap_upgrade.to_dict() or {}
-                        _gcs_candidate = None
-                        # Prefer an orders[] entry whose order_link is a GCS URL
-                        for _o in reversed(_det.get("orders") or []):
-                            if isinstance(_o, dict) and (
-                                _o.get("order_link") or ""
-                            ).startswith("https://storage.googleapis.com"):
-                                _gcs_candidate = _o["order_link"].strip()
-                                break
-                        if not _gcs_candidate and (
-                            _det.get("latest_order_link") or ""
-                        ).startswith("https://storage.googleapis.com"):
-                            _gcs_candidate = _det["latest_order_link"].strip()
-                        if _gcs_candidate:
-                            # Patch daily-boards so future hits skip this lookup
-                            try:
-                                db.collection("daily-boards").document(doc_id).update(
-                                    {"order_link": _gcs_candidate}
-                                )
-                            except Exception:
-                                pass
-                            order_link = _gcs_candidate
-                            logger.info(
-                                "get_order_pdf: upgraded court URL to GCS from "
-                                "case-details for doc_id=%s",
-                                doc_id,
-                            )
-                except Exception as _upg_err:
-                    logger.debug(
-                        "get_order_pdf: GCS upgrade lookup failed for doc_id=%s: %s",
-                        doc_id,
-                        _upg_err,
-                    )
 
         # GCS URL: download via service-account credentials and stream back.
         # Public bucket access is not required — Cloud Run ADC authenticates
@@ -4564,9 +4502,6 @@ async def get_order_pdf(doc_id: str):
             if not gcs_url:
                 return
             try:
-                firestore.client().collection("daily-boards").document(_doc_id).update(
-                    {"order_link": gcs_url}
-                )
                 mgr.case_store.append_case_order(
                     _case_ref, {"order_link": gcs_url, "order_date": _order_date}
                 )

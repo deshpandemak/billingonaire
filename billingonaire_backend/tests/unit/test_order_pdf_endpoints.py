@@ -100,10 +100,9 @@ def test_get_order_pdf_doc_not_found(client, monkeypatch):
 
 
 def test_get_order_pdf_no_order_link_anywhere(client, monkeypatch):
-    """Returns 404 when neither daily-boards nor case-details holds an order_link."""
+    """Returns 404 when case-details holds no order_link."""
     board_snap = _make_snap(
-        True,
-        {"case_type": "WP", "case_no": "123", "case_year": "2025", "order_link": ""},
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
     )
     db = _make_db(
         daily_boards_snap=board_snap,
@@ -122,18 +121,11 @@ def test_get_order_pdf_no_order_link_anywhere(client, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_get_order_pdf_falls_back_to_case_details(client, monkeypatch):
-    """When daily-boards.order_link is empty, falls back to case-details.latest_order_link."""
+def test_get_order_pdf_reads_order_link_from_case_details(client, monkeypatch):
+    """order_link is read from case-details.latest_order_link, not daily-boards."""
     board_snap = _make_snap(
-        True,
-        {
-            "case_type": "WP",
-            "case_no": "123",
-            "case_year": "2025",
-            "order_link": "",  # empty in daily-boards
-        },
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
     )
-    # case-details has the link
     details_snap = _make_snap(True, {"latest_order_link": FAKE_COURT_URL})
     db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
@@ -202,8 +194,11 @@ def test_get_order_pdf_case_details_doc_id_format(client, monkeypatch):
 
 def test_get_order_pdf_gcs_url_streams_via_adc(client, monkeypatch):
     """GCS URLs are fetched via ADC and streamed as application/pdf."""
-    board_snap = _make_snap(True, {"order_link": FAKE_GCS_URL})
-    db = _make_db(daily_boards_snap=board_snap)
+    board_snap = _make_snap(
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
+    )
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_GCS_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     mock_gcs_client = MagicMock()
@@ -224,8 +219,28 @@ def test_get_order_pdf_gcs_url_parses_bucket_and_blob(client, monkeypatch):
     gcs_url = (
         "https://storage.googleapis.com/my-bucket/court-orders/WP-1-2025/order.pdf"
     )
-    board_snap = _make_snap(True, {"order_link": gcs_url})
-    db = _make_db(daily_boards_snap=board_snap)
+    board_snap = _make_snap(
+        True, {"case_type": "WP", "case_no": "1", "case_year": "2025"}
+    )
+    details_snap = _make_snap(True, {"latest_order_link": gcs_url})
+
+    def _collection(name):
+        col = MagicMock()
+        if name == "case-details":
+            captured_inner = {}
+
+            def _document(doc_id):
+                inner = MagicMock()
+                inner.get.return_value = details_snap
+                return inner
+
+            col.document.side_effect = _document
+        else:
+            col.document.return_value.get.return_value = board_snap
+        return col
+
+    db = MagicMock()
+    db.collection.side_effect = _collection
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     captured = {}
@@ -257,15 +272,10 @@ def test_get_order_pdf_gcs_url_parses_bucket_and_blob(client, monkeypatch):
 def test_get_order_pdf_gcs_download_failure_triggers_refetch(client, monkeypatch):
     """When GCS download fails, re-fetch is queued and 503 with order_link_expired is returned."""
     board_snap = _make_snap(
-        True,
-        {
-            "order_link": FAKE_GCS_URL,
-            "case_type": "WP",
-            "case_no": "123",
-            "case_year": "2024",
-        },
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2024"}
     )
-    db = _make_db(daily_boards_snap=board_snap)
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_GCS_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     mock_gcs_client = MagicMock()
@@ -288,15 +298,10 @@ def test_get_order_pdf_gcs_download_failure_triggers_refetch(client, monkeypatch
 def test_get_order_pdf_live_court_url_streams_pdf(client, monkeypatch):
     """Live court URL: PDF is streamed and GCS upgrade is queued."""
     board_snap = _make_snap(
-        True,
-        {
-            "order_link": FAKE_COURT_URL,
-            "case_type": "WP",
-            "case_no": "123",
-            "case_year": "2025",
-        },
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
     )
-    db = _make_db(daily_boards_snap=board_snap)
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_COURT_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     fake_http = MagicMock()
@@ -321,15 +326,10 @@ def test_get_order_pdf_court_url_non_pdf_response_treated_as_expired(
 ):
     """When court URL returns non-PDF bytes, treat as expired and return 503."""
     board_snap = _make_snap(
-        True,
-        {
-            "order_link": FAKE_COURT_URL,
-            "case_type": "WP",
-            "case_no": "123",
-            "case_year": "2025",
-        },
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
     )
-    db = _make_db(daily_boards_snap=board_snap)
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_COURT_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     fake_http = MagicMock()
@@ -356,15 +356,10 @@ def test_get_order_pdf_court_url_non_pdf_response_treated_as_expired(
 def test_get_order_pdf_expired_court_url_returns_503(client, monkeypatch):
     """Expired court URL: returns 503 with error details."""
     board_snap = _make_snap(
-        True,
-        {
-            "order_link": FAKE_COURT_URL,
-            "case_type": "WP",
-            "case_no": "123",
-            "case_year": "2025",
-        },
+        True, {"case_type": "WP", "case_no": "123", "case_year": "2025"}
     )
-    db = _make_db(daily_boards_snap=board_snap)
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_COURT_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     import requests as _requests
@@ -389,15 +384,10 @@ def test_get_order_pdf_expired_court_url_returns_503(client, monkeypatch):
 def test_get_order_pdf_expired_queues_reprocess(client, monkeypatch):
     """Expired court URL: _process_single_case is invoked via executor."""
     board_snap = _make_snap(
-        True,
-        {
-            "order_link": FAKE_COURT_URL,
-            "case_type": "WP",
-            "case_no": "456",
-            "case_year": "2025",
-        },
+        True, {"case_type": "WP", "case_no": "456", "case_year": "2025"}
     )
-    db = _make_db(daily_boards_snap=board_snap)
+    details_snap = _make_snap(True, {"latest_order_link": FAKE_COURT_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
     monkeypatch.setattr(main.firestore, "client", lambda: db)
 
     import requests as _requests
