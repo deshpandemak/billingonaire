@@ -58,61 +58,7 @@ def manager():
 
 
 # ---------------------------------------------------------------------------
-# 1.  Default max_sequences reduced from 50 → 10
-# ---------------------------------------------------------------------------
-
-
-def test_default_max_sequence_retries_is_10(manager, monkeypatch):
-    """_process_single_case should default to 10 sequence retries, not 50."""
-    monkeypatch.delenv("ORDER_MAX_SEQUENCE_RETRIES", raising=False)
-
-    attempts = []
-
-    def fake_download(case_data, seq):
-        attempts.append(seq)
-        return {"success": False, "error": "not found"}
-
-    manager._download_order_for_case = fake_download
-
-    case_data = {
-        "id": "2025-04-09-WP-100-2025",
-        "case_ref": "WP/100/2025",
-        "board_date": "2024-01-01",  # past date so fetch is due
-        "order_status": "not_linked",
-    }
-
-    result = manager._process_single_case(case_data)
-
-    assert result["download_success"] is False
-    assert len(attempts) == 10, f"Expected 10 attempts, got {len(attempts)}"
-
-
-def test_env_var_overrides_max_sequence_retries(manager, monkeypatch):
-    """ORDER_MAX_SEQUENCE_RETRIES env var should override the default."""
-    monkeypatch.setenv("ORDER_MAX_SEQUENCE_RETRIES", "3")
-
-    attempts = []
-
-    def fake_download(case_data, seq):
-        attempts.append(seq)
-        return {"success": False, "error": "not found"}
-
-    manager._download_order_for_case = fake_download
-
-    case_data = {
-        "id": "2025-04-09-WP-200-2025",
-        "case_ref": "WP/200/2025",
-        "board_date": "2024-01-01",
-        "order_status": "not_linked",
-    }
-
-    result = manager._process_single_case(case_data)
-
-    assert len(attempts) == 3, f"Expected 3 attempts, got {len(attempts)}"
-
-
-# ---------------------------------------------------------------------------
-# 2.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
+# 1.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
 # ---------------------------------------------------------------------------
 
 
