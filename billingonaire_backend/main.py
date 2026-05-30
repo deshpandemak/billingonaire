@@ -379,15 +379,11 @@ async def process_order_queue_worker(worker_id: int):
             # Set timeout to 5 minutes (300 seconds) to prevent hanging
             try:
                 loop = asyncio.get_event_loop()
-                max_sequences = case_info.get(
-                    "max_sequences"
-                )  # None when not set → AutoOrderManager uses ORDER_MAX_SEQUENCE_RETRIES env var
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
                         get_auto_order_manager()._process_single_case,
                         case_info,
-                        max_sequences,  # Pass max_sequences parameter
                     ),
                     timeout=300.0,  # 5 minutes timeout per case
                 )
@@ -2450,26 +2446,8 @@ async def auto_process_orders(request: Request, current_user=Depends(get_current
         body = await request.json()
         filters = body.get("filters", {})
         limit = body.get("limit", 50)
-        max_sequences = body.get("max_sequences")  # Optional parameter
 
-        # Validate max_sequences if provided
-        if max_sequences is not None:
-            try:
-                max_sequences = int(max_sequences)
-                if max_sequences < 1 or max_sequences > 100:
-                    return JSONResponse(
-                        status_code=400,
-                        content={"error": "max_sequences must be between 1 and 100"},
-                    )
-            except (ValueError, TypeError):
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be a valid integer"},
-                )
-
-        result = get_auto_order_manager().get_orders_for_cases(
-            filters, limit, max_sequences
-        )
+        result = get_auto_order_manager().get_orders_for_cases(filters, limit)
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -2496,17 +2474,11 @@ async def queue_fetch_orders_jobs(
         board_dates = body.get("board_dates") or []
         case_refs = body.get("case_refs") or []
         limit = int(body.get("limit", 100))
-        max_sequences = int(body.get("max_sequences", 10))
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
                 status_code=400,
                 content={"error": "limit must be between 1 and 1000"},
-            )
-        if max_sequences < 1 or max_sequences > 100:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "max_sequences must be between 1 and 100"},
             )
 
         manager = get_auto_order_manager()
@@ -2578,7 +2550,6 @@ async def queue_fetch_orders_jobs(
                     "id": case_id,
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date"),
-                    "max_sequences": max_sequences,
                 }
             )
             queued += 1
@@ -2742,7 +2713,6 @@ async def retry_failed_cases(
         body = await request.json()
         board_dates = body.get("board_dates") or []
         limit = int(body.get("limit", 200))
-        max_sequences = int(body.get("max_sequences", 10))
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
@@ -2792,7 +2762,6 @@ async def retry_failed_cases(
                         "id": case_id,
                         "case_ref": case_ref,
                         "board_date": case_data.get("board_date"),
-                        "max_sequences": max_sequences,
                     }
                 )
                 fetch_queued += 1
@@ -2817,7 +2786,6 @@ async def retry_failed_cases(
                             "id": case_id,
                             "case_ref": case_ref,
                             "board_date": case_data.get("board_date"),
-                            "max_sequences": max_sequences,
                         }
                     )
                     fetch_queued += 1
@@ -3039,27 +3007,11 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         case_id = body.get("case_id")
         case_ref = body.get("case_ref")
         board_date = body.get("board_date")
-        max_sequences = body.get("max_sequences")  # Optional parameter
 
         if not case_id or not case_ref:
             return JSONResponse(
                 status_code=400, content={"error": "case_id and case_ref are required"}
             )
-
-        # Validate max_sequences if provided
-        if max_sequences is not None:
-            try:
-                max_sequences = int(max_sequences)
-                if max_sequences < 1 or max_sequences > 100:
-                    return JSONResponse(
-                        status_code=400,
-                        content={"error": "max_sequences must be between 1 and 100"},
-                    )
-            except (ValueError, TypeError):
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be a valid integer"},
-                )
 
         # Fetch existing case data from database
         case_doc = db.collection("daily-boards").document(case_id).get()
@@ -3083,7 +3035,6 @@ async def process_single_case(request: Request, current_user=Depends(get_current
                 "id": case_id,
                 "case_ref": case_ref,
                 "board_date": board_date or case_data.get("board_date"),
-                "max_sequences": max_sequences,
             }
         )
         await ensure_background_processing_active()
@@ -3332,31 +3283,13 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
     try:
         body = await request.json()
         case_ids = body.get("case_ids", [])
-        raw_max_sequences = body.get("max_sequences")
-        if raw_max_sequences is not None:
-            try:
-                max_sequences = int(raw_max_sequences)
-            except (TypeError, ValueError):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": "Invalid value for max_sequences; must be a positive integer."
-                    },
-                )
-            if max_sequences <= 0 or max_sequences > 100:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be between 1 and 100"},
-                )
-        else:
-            max_sequences = None  # Let AutoOrderManager use ORDER_MAX_SEQUENCE_RETRIES
 
         if not case_ids:
             return JSONResponse(
                 status_code=400, content={"error": "No case IDs provided"}
             )
 
-        result = get_auto_order_manager().bulk_process_orders(case_ids, max_sequences)
+        result = get_auto_order_manager().bulk_process_orders(case_ids)
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -3720,15 +3653,14 @@ async def admin_bulk_order_processing(
     request: Request, current_user=Depends(require_admin)
 ):
     """
-    Admin endpoint to trigger bulk order processing for cases with specific order status
-    Adds cases to async processing queue and returns immediately
+    Admin endpoint to trigger bulk order processing for cases with specific order status.
+    Adds cases to async processing queue and returns immediately.
 
     Request body:
     {
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
         "limit": 100,  // Maximum cases to process
-        "days_back": 30,  // Only process cases from last N days (optional)
-        "max_sequences": 5  // Maximum sequence numbers to try per case (optional, omit to use server default)
+        "days_back": 30  // Only process cases from last N days (optional)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
@@ -3742,24 +3674,6 @@ async def admin_bulk_order_processing(
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
-        raw_max_sequences = body.get("max_sequences")
-        if raw_max_sequences is not None:
-            try:
-                max_sequences = int(raw_max_sequences)
-            except (TypeError, ValueError):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": "Invalid value for max_sequences; must be a positive integer."
-                    },
-                )
-            if max_sequences <= 0 or max_sequences > 100:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be between 1 and 100"},
-                )
-        else:
-            max_sequences = None  # Let queue worker use ORDER_MAX_SEQUENCE_RETRIES
         query = db.collection("daily-boards")
 
         # Filter by date if specified (board_date is stored as datetime object)
@@ -3794,7 +3708,6 @@ async def admin_bulk_order_processing(
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date"),
                     "current_status": case_status,
-                    "max_sequences": max_sequences,  # Add max_sequences to case info
                 }
                 case_list.append(case_info)
 

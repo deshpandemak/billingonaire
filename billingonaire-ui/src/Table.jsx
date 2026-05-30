@@ -42,7 +42,6 @@ const Table = () => {
   const [processingOrders, setProcessingOrders] = useState(new Set());
   const [selectedRows, setSelectedRows] = useState([]);
   const [gridApi, setGridApi] = useState(null);
-  const [maxSequences, setMaxSequences] = useState(50);
   const [tableMessage, setTableMessage] = useState(null);
   const [showCaseModal, setShowCaseModal] = useState(false);
   const [selectedCaseRef, setSelectedCaseRef] = useState('');
@@ -645,7 +644,6 @@ const Table = () => {
             case_id: caseId,
             case_ref: caseRef,
             board_date: row.board_date,
-            max_sequences: maxSequences
           })
         });
 
@@ -1103,40 +1101,6 @@ const Table = () => {
               {selectedRows.length > 0 ? `${selectedRows.length} row(s) selected` : 'Select rows for batch operations'}
             </span>
             <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginLeft: 'auto', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <label
-                  htmlFor="maxSequencesInput"
-                  style={{
-                    fontSize: '0.875rem',
-                    color: 'var(--gray-700)',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  Max Sequences:
-                </label>
-                <input
-                  id="maxSequencesInput"
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={maxSequences}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value);
-                    if (value >= 1 && value <= 100) {
-                      setMaxSequences(value);
-                    }
-                  }}
-                  style={{
-                    width: '80px',
-                    padding: '0.25rem 0.5rem',
-                    fontSize: '0.875rem',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '4px',
-                    textAlign: 'center'
-                  }}
-                  title="Number of sequence numbers to try when downloading orders (1-100)"
-                />
-              </div>
               <button
                 className="btn-professional btn-primary"
                 onClick={handleBatchDownload}

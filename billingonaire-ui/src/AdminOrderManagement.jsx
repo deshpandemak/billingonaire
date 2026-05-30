@@ -21,7 +21,6 @@ const AdminOrderManagement = () => {
     const [selectedStatuses, setSelectedStatuses] = useState(['not_linked', 'order_failed']);
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
-    const [maxSequences, setMaxSequences] = useState(10);
     const [confirmState, setConfirmState] = useState({ show: false, title: '', body: '', onConfirm: null });
 
     const requireConfirm = (title, body, onConfirm) => {
@@ -156,7 +155,6 @@ const AdminOrderManagement = () => {
                     order_statuses: selectedStatuses,
                     limit: limit,
                     days_back: daysBack,
-                    max_sequences: maxSequences
                 })
             });
 
@@ -211,7 +209,7 @@ const AdminOrderManagement = () => {
                     'Authorization': `Bearer ${idToken}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ limit: 500, max_sequences: maxSequences })
+                body: JSON.stringify({ limit: 500 })
             });
             const data = await response.json();
             if (data.success) {

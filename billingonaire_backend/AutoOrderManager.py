@@ -65,7 +65,6 @@ class AutoOrderManager:
         self,
         case_filters: Optional[Dict[str, Any]] = None,
         limit: int = 50,
-        max_sequences: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Main method to automatically get orders for filtered cases
@@ -73,7 +72,6 @@ class AutoOrderManager:
         Args:
             case_filters: Optional filters for case selection
             limit: Maximum number of cases to process
-            max_sequences: Maximum number of sequence numbers to try per case
 
         Returns:
             Dictionary with processing results
@@ -94,10 +92,9 @@ class AutoOrderManager:
                 }
 
             logger.info(
-                "get_orders_for_cases: processing %d cases (filters=%s max_sequences=%s)",
+                "get_orders_for_cases: processing %d cases (filters=%s)",
                 len(filtered_cases),
                 case_filters,
-                max_sequences,
             )
             results: Dict[str, Any] = {
                 "total_cases": len(filtered_cases),
@@ -111,7 +108,7 @@ class AutoOrderManager:
 
             for case_data in filtered_cases:
                 try:
-                    case_result = self._process_single_case(case_data, max_sequences)
+                    case_result = self._process_single_case(case_data)
                     results["processed_cases"].append(case_result)
 
                     if case_result.get("download_success"):
@@ -145,15 +142,12 @@ class AutoOrderManager:
             logger.error("Error in get_orders_for_cases: %s", e)
             return {"success": False, "error": str(e)}
 
-    def bulk_process_orders(
-        self, case_ids: List[str], max_sequences: int = 50
-    ) -> Dict[str, Any]:
+    def bulk_process_orders(self, case_ids: List[str]) -> Dict[str, Any]:
         """
-        Bulk process specific cases by their IDs with configurable max sequences
+        Bulk process specific cases by their IDs.
 
         Args:
             case_ids: List of case document IDs to process
-            max_sequences: Maximum number of sequence numbers to try per case
 
         Returns:
             Dictionary with processing results
@@ -163,9 +157,8 @@ class AutoOrderManager:
                 return {"success": False, "error": "No case IDs provided"}
 
             logger.info(
-                "bulk_process_orders starting: case_count=%d max_sequences=%d",
+                "bulk_process_orders starting: case_count=%d",
                 len(case_ids),
-                max_sequences,
             )
             results: Dict[str, Any] = {
                 "total_cases": len(case_ids),
@@ -199,7 +192,7 @@ class AutoOrderManager:
                     case_data["case_ref"] = case_ref
 
                     # Process the case
-                    case_result = self._process_single_case(case_data, max_sequences)
+                    case_result = self._process_single_case(case_data)
                     results["processed_cases"].append(case_result)
 
                     if case_result.get("download_success"):
@@ -817,15 +810,13 @@ class AutoOrderManager:
 
         return result
 
-    def _process_single_case(
-        self, case_data: Dict[str, Any], max_sequences: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """Download and analyse all orders for a single case via the court scraper.
+    def _process_single_case(self, case_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Download and analyse all orders for a single case via Playwright.
 
-        Calls ``_process_all_orders_from_api`` which tries the direct API first
-        and falls back to Playwright automatically (configured in CourtScraper).
-        If the scraper finds no orders for the board date the case is transitioned
-        to ``fetch_failed_retryable`` so it can be retried later.
+        Delegates to ``_process_all_orders_from_api`` which drives the
+        CourtScraper Playwright session (retried up to PLAYWRIGHT_RETRY_COUNT
+        times, default 3).  If the scraper finds no orders for the board date
+        the case is transitioned to ``fetch_failed_retryable``.
         """
         case_id = case_data["id"]
         case_ref = case_data.get("case_ref") or self.build_case_ref_from_data(case_data)
