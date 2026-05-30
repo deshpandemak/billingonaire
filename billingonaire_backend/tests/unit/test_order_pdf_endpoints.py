@@ -418,6 +418,13 @@ def test_get_order_pdf_expired_queues_reprocess(client, monkeypatch):
     assert resp.status_code == 503
     # run_in_executor should have been called to queue the re-fetch
     assert fake_loop.run_in_executor.called
+    # Verify _process_single_case is called with exactly (executor, func, case_data)
+    # — no stale extra positional args (e.g. the removed max_sequences parameter).
+    call_args = fake_loop.run_in_executor.call_args
+    assert len(call_args.args) == 3, (
+        f"run_in_executor must pass exactly 3 args (executor, func, case_data), "
+        f"got {len(call_args.args)}: {call_args.args}"
+    )
 
 
 # ---------------------------------------------------------------------------
