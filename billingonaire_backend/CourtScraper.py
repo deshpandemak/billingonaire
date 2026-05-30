@@ -32,7 +32,7 @@ class BombayHighCourtScraper:
             "https://bombayhighcourt.gov.in/bhc/get-case-types-by-side"
         )
         self.scraper_provider = (
-            os.getenv("COURT_SCRAPER_PROVIDER", "direct_api").strip().lower()
+            os.getenv("COURT_SCRAPER_PROVIDER", "playwright").strip().lower()
         )
         self.playwright_headless = (
             os.getenv("COURT_PLAYWRIGHT_HEADLESS", "true").strip().lower() == "true"
@@ -62,7 +62,7 @@ class BombayHighCourtScraper:
         }
 
     def _supported_providers(self) -> List[str]:
-        return ["direct_api", "playwright"]
+        return ["playwright"]
 
     def get_scraper_config(self) -> Dict[str, Any]:
         return {
@@ -122,10 +122,7 @@ class BombayHighCourtScraper:
             return {}
 
     def _provider_attempt_sequence(self, provider: str) -> List[str]:
-        normalized = (provider or "direct_api").lower()
-        if normalized == "playwright":
-            return ["playwright"]
-        return ["direct_api", "playwright"]
+        return ["playwright"]
 
     def _run_provider_attempts(
         self,
@@ -154,14 +151,9 @@ class BombayHighCourtScraper:
                 case_ref,
             )
             try:
-                if attempt_provider == "playwright":
-                    result = self._fetch_with_playwright_new(
-                        case_ref, date=date, bench=bench
-                    )
-                else:
-                    result = self._fetch_with_direct_api(
-                        case_ref, date=date, bench=bench
-                    )
+                result = self._fetch_with_playwright_new(
+                    case_ref, date=date, bench=bench
+                )
 
                 duration_ms = int((time.time() - started) * 1000)
                 if result:

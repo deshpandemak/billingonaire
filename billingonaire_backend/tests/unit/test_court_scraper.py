@@ -5,13 +5,10 @@ import pytest
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
 
-def test_scraper_initialization_defaults_to_direct_api():
+def test_scraper_initialization_defaults_to_playwright():
     scraper = BombayHighCourtScraper()
-    assert scraper.scraper_provider == "direct_api"
-    assert scraper.get_scraper_config()["supported_providers"] == [
-        "direct_api",
-        "playwright",
-    ]
+    assert scraper.scraper_provider == "playwright"
+    assert scraper.get_scraper_config()["supported_providers"] == ["playwright"]
 
 
 @pytest.mark.parametrize(
