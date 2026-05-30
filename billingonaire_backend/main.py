@@ -4344,7 +4344,6 @@ async def get_order_pdf(doc_id: str):
                         executor,
                         get_auto_order_manager()._process_single_case,
                         _refetch_data,
-                        None,
                     )
                 return JSONResponse(
                     status_code=503,
@@ -4379,7 +4378,6 @@ async def get_order_pdf(doc_id: str):
                     executor,
                     get_auto_order_manager()._process_single_case,
                     _refetch_data,
-                    None,
                 )
             return JSONResponse(
                 status_code=503,

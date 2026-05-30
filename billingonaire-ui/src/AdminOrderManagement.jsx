@@ -418,7 +418,7 @@ const AdminOrderManagement = () => {
                                 variant="outline-warning"
                                 onClick={() => requireConfirm(
                                     'Retry All Failed Cases',
-                                    'Re-queue all order_failed and order_analysis_failed cases for retry? This will use the current Max Sequences setting.',
+                                    'Re-queue all order_failed and order_analysis_failed cases for retry?',
                                     retryFailedCases
                                 )}
                                 disabled={processing}
@@ -498,21 +498,6 @@ const AdminOrderManagement = () => {
                                             </Form.Text>
                                         </Form.Group>
                                     </Col>
-                                    <Col md={3}>
-                                        <Form.Group>
-                                            <Form.Label><strong>Max Sequences</strong></Form.Label>
-                                            <Form.Control
-                                                type="number"
-                                                value={maxSequences}
-                                                onChange={(e) => setMaxSequences(parseInt(e.target.value))}
-                                                min="1"
-                                                max="200"
-                                            />
-                                            <Form.Text className="text-muted">
-                                                Sequences to try per case (lower = faster)
-                                            </Form.Text>
-                                        </Form.Group>
-                                    </Col>
                                 </Row>
 
                                 <Row>
@@ -569,10 +554,9 @@ const AdminOrderManagement = () => {
                                             <strong>How it works:</strong> Bulk processing adds cases to an asynchronous background queue.
                                             Cases will be processed automatically in the background with {' '}
                                             <strong>5 parallel workers</strong>. The queue status updates every 5 seconds.
-                                            Use <em>Max Sequences = 10</em> (default) for faster throughput — increase only if orders
-                                            are consistently missed. After a successful fetch, cases are <strong>automatically
+                                            After a successful fetch, cases are <strong>automatically
                                             queued for analysis</strong>; use <em>Queue Linked for Analysis</em> to manually
-                                            unblock any that were stuck before this fix.
+                                            unblock any that were stuck.
                                         </Alert>
                                     </Col>
                                 </Row>
