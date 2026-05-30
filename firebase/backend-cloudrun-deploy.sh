@@ -56,7 +56,7 @@ gcloud run deploy billingonaire-backend \
   --min-instances=1 \
   --cpu-boost \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=billingonaire,COURT_SCRAPER_PROVIDER=direct_api,ORDER_PDF_BUCKET=billingonaire-court-orders"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,GOOGLE_CLOUD_PROJECT=billingonaire,ORDER_PDF_BUCKET=billingonaire-court-orders"
 
 BACKEND_URL=$(gcloud run services describe billingonaire-backend --region=asia-south1 --format='value(status.url)')
 echo "🔎 Backend health check: ${BACKEND_URL}/"
