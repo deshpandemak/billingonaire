@@ -32,7 +32,7 @@ class BombayHighCourtScraper:
             "https://bombayhighcourt.gov.in/bhc/get-case-types-by-side"
         )
         self.scraper_provider = (
-            os.getenv("COURT_SCRAPER_PROVIDER", "direct_api").strip().lower()
+            os.getenv("COURT_SCRAPER_PROVIDER", "playwright").strip().lower()
         )
         self.playwright_headless = (
             os.getenv("COURT_PLAYWRIGHT_HEADLESS", "true").strip().lower() == "true"
@@ -40,6 +40,7 @@ class BombayHighCourtScraper:
         self.playwright_timeout_seconds = int(
             os.getenv("COURT_PLAYWRIGHT_TIMEOUT_SECONDS", "60")
         )
+        self.playwright_retry_count = int(os.getenv("PLAYWRIGHT_RETRY_COUNT", "3"))
         self.request_timeout_seconds = int(
             os.getenv("COURT_REQUEST_TIMEOUT_SECONDS", "60")
         )
@@ -62,7 +63,7 @@ class BombayHighCourtScraper:
         }
 
     def _supported_providers(self) -> List[str]:
-        return ["direct_api", "playwright"]
+        return ["playwright"]
 
     def get_scraper_config(self) -> Dict[str, Any]:
         return {
@@ -121,12 +122,6 @@ class BombayHighCourtScraper:
             logger.error("Error parsing case number %s: %s", case_ref, exc)
             return {}
 
-    def _provider_attempt_sequence(self, provider: str) -> List[str]:
-        normalized = (provider or "direct_api").lower()
-        if normalized == "playwright":
-            return ["playwright"]
-        return ["direct_api", "playwright"]
-
     def _run_provider_attempts(
         self,
         case_ref: str,
@@ -134,51 +129,40 @@ class BombayHighCourtScraper:
         bench: str,
         provider: str,
     ) -> Dict[str, Any]:
-        sequence = self._provider_attempt_sequence(provider)
         attempts: List[Dict[str, Any]] = []
         final_result: Optional[Dict[str, Any]] = None
 
         logger.info(
-            "Provider attempt sequence starting for case_ref=%s provider=%s sequence=%s",
+            "Playwright fetch starting for case_ref=%s retries=%d",
             case_ref,
-            provider,
-            sequence,
+            self.playwright_retry_count,
         )
-        for index, attempt_provider in enumerate(sequence, start=1):
+        for attempt_num in range(1, self.playwright_retry_count + 1):
             started = time.time()
             logger.info(
-                "Trying provider=%s (step %d/%d) for case_ref=%s",
-                attempt_provider,
-                index,
-                len(sequence),
+                "Playwright attempt %d/%d for case_ref=%s",
+                attempt_num,
+                self.playwright_retry_count,
                 case_ref,
             )
             try:
-                if attempt_provider == "playwright":
-                    result = self._fetch_with_playwright_new(
-                        case_ref, date=date, bench=bench
-                    )
-                else:
-                    result = self._fetch_with_direct_api(
-                        case_ref, date=date, bench=bench
-                    )
-
+                result = self._fetch_with_playwright_new(
+                    case_ref, date=date, bench=bench
+                )
                 duration_ms = int((time.time() - started) * 1000)
                 if result:
                     logger.info(
-                        "Provider=%s succeeded for case_ref=%s in %dms orders_found=%d",
-                        attempt_provider,
+                        "Playwright succeeded attempt=%d for case_ref=%s in %dms orders_found=%d",
+                        attempt_num,
                         case_ref,
                         duration_ms,
                         len(result.get("court_orders") or []),
                     )
                     attempts.append(
                         {
-                            "step": index,
-                            "provider": attempt_provider,
+                            "attempt": attempt_num,
                             "status": "success",
                             "source": result.get("source"),
-                            "final_status": result.get("status"),
                             "orders_found": len(result.get("court_orders") or []),
                             "duration_ms": duration_ms,
                         }
@@ -187,15 +171,14 @@ class BombayHighCourtScraper:
                     break
 
                 logger.warning(
-                    "Provider=%s returned no result for case_ref=%s in %dms",
-                    attempt_provider,
+                    "Playwright attempt=%d returned no result for case_ref=%s in %dms",
+                    attempt_num,
                     case_ref,
                     duration_ms,
                 )
                 attempts.append(
                     {
-                        "step": index,
-                        "provider": attempt_provider,
+                        "attempt": attempt_num,
                         "status": "no_result",
                         "duration_ms": duration_ms,
                     }
@@ -203,25 +186,24 @@ class BombayHighCourtScraper:
             except Exception as exc:
                 duration_ms = int((time.time() - started) * 1000)
                 logger.error(
-                    "Provider=%s raised exception for case_ref=%s in %dms: %s",
-                    attempt_provider,
+                    "Playwright attempt=%d raised exception for case_ref=%s in %dms: %s",
+                    attempt_num,
                     case_ref,
                     duration_ms,
                     exc,
                 )
                 attempts.append(
                     {
-                        "step": index,
-                        "provider": attempt_provider,
+                        "attempt": attempt_num,
                         "status": "error",
                         "error": str(exc),
-                        "duration_ms": int((time.time() - started) * 1000),
+                        "duration_ms": duration_ms,
                     }
                 )
 
         return {
-            "provider": provider,
-            "provider_sequence": sequence,
+            "provider": "playwright",
+            "provider_sequence": ["playwright"],
             "provider_attempts": attempts,
             "result": final_result,
         }
@@ -265,63 +247,6 @@ class BombayHighCourtScraper:
         if include_diagnostics:
             return diagnostics
         return diagnostics.get("result")
-
-    def _build_form_data(
-        self,
-        case_parts: Dict[str, str],
-        hidden_html: str,
-        case_type_options: List[Dict[str, Any]],
-    ) -> Dict[str, str]:
-        soup = BeautifulSoup(hidden_html, "html.parser")
-        hidden_inputs = soup.find_all("input", {"type": "hidden"})
-        form_data: Dict[str, str] = {}
-        first_form_secret: Optional[str] = None
-
-        for hidden_input in hidden_inputs:
-            name = hidden_input.get("name")
-            value = hidden_input.get("value", "")
-            if name == "form_secret" and first_form_secret is None:
-                first_form_secret = value
-            elif name:
-                form_data[name] = value
-
-        if first_form_secret:
-            form_data["form_secret"] = first_form_secret
-
-        target_label = self._get_base_case_type(case_parts["case_type"])
-        resolved_case_type = target_label
-        for item in case_type_options:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("type_name", "")).upper() == target_label.upper():
-                resolved_case_type = str(item.get("case_type", target_label))
-                if str(item.get("type_flag", "1")) == "1":
-                    break
-
-        if resolved_case_type == target_label and case_type_options:
-            available = [
-                item.get("type_name")
-                for item in case_type_options
-                if isinstance(item, dict)
-            ]
-            logger.warning(
-                "Case type %s not found in API type list; using label as-is. "
-                "Available types: %s",
-                target_label,
-                available,
-            )
-
-        stampreg = self._get_stampreg_value(case_parts["case_type"])
-        form_data.update(
-            {
-                "side": "1",
-                "stampreg": stampreg,
-                "case_type": resolved_case_type,
-                "case_no": case_parts["case_number"],
-                "year": case_parts["year"],
-            }
-        )
-        return form_data
 
     def _extract_case_details_from_html(
         self,
@@ -405,174 +330,6 @@ class BombayHighCourtScraper:
             if match:
                 return match.group(1)
         return None
-
-    def _extract_orders_from_html(
-        self,
-        html_content: str,
-        base_url: str,
-    ) -> List[Dict[str, Optional[str]]]:
-        try:
-            soup = BeautifulSoup(html_content, "html.parser")
-            orders: List[Dict[str, Optional[str]]] = []
-
-            orders_table = soup.select_one("#cn_CaseNoOrders table tbody")
-            if orders_table:
-                for row in orders_table.find_all("tr"):
-                    cells = row.find_all("td")
-                    if len(cells) < 5:
-                        continue
-                    link = cells[4].find("a")
-                    if not link or not link.get("href"):
-                        continue
-                    orders.append(
-                        {
-                            "listing_date": cells[2].get_text(strip=True) or None,
-                            "download_url": requests.compat.urljoin(
-                                base_url, link["href"]
-                            ),
-                        }
-                    )
-
-            if not orders:
-                for link in soup.select(
-                    "a[href*='.pdf'], a[href*='order'], a[href*='judg']"
-                ):
-                    href = link.get("href")
-                    if not href:
-                        continue
-                    orders.append(
-                        {
-                            "listing_date": self._extract_listing_date_from_text(
-                                link.get_text(" ", strip=True)
-                            ),
-                            "download_url": requests.compat.urljoin(base_url, href),
-                        }
-                    )
-
-            unique_orders: List[Dict[str, Optional[str]]] = []
-            seen_urls = set()
-            for order in orders:
-                url = order.get("download_url")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    unique_orders.append(order)
-            return unique_orders
-        except Exception as exc:
-            logger.error("Error extracting orders from HTML: %s", exc)
-            return []
-
-    def _fetch_with_direct_api(
-        self,
-        case_ref: str,
-        date: Optional[str] = None,
-        bench: str = "mumbai",
-    ) -> Optional[Dict[str, Any]]:
-        del date, bench
-        case_parts = self.parse_case_number(case_ref)
-        if not case_parts:
-            return None
-
-        logger.info("Direct API fetch starting for case_ref=%s", case_ref)
-        headers = self._browser_headers()
-        session = requests.Session()
-
-        try:
-            initial_response = session.get(
-                self.case_status_url,
-                headers=headers,
-                timeout=self.request_timeout_seconds,
-            )
-            if initial_response.status_code != 200:
-                logger.warning(
-                    "Direct API initial GET returned HTTP %d for case_ref=%s",
-                    initial_response.status_code,
-                    case_ref,
-                )
-                return None
-
-            ajax_response = session.get(
-                self.case_types_url,
-                params={"side": "1"},
-                headers=headers,
-                timeout=self.request_timeout_seconds,
-            )
-            case_type_options: List[Dict[str, Any]] = []
-            if ajax_response.status_code == 200:
-                payload = ajax_response.json()
-                if isinstance(payload, list):
-                    case_type_options = payload
-
-            form_data = self._build_form_data(
-                case_parts,
-                initial_response.text,
-                case_type_options,
-            )
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-            headers["Referer"] = self.case_status_url
-
-            logger.info(
-                "Direct API POST submitting case search for case_ref=%s case_type=%s",
-                case_ref,
-                form_data.get("case_type"),
-            )
-            response = session.post(
-                self.case_status_url,
-                data=form_data,
-                headers=headers,
-                timeout=self.request_timeout_seconds,
-                allow_redirects=True,
-            )
-            if response.status_code not in {200, 302}:
-                logger.warning(
-                    "Direct API POST returned HTTP %d for case_ref=%s",
-                    response.status_code,
-                    case_ref,
-                )
-                return None
-
-            try:
-                data = response.json()
-            except ValueError:
-                data = {"status": True, "page": response.text}
-
-            if not data.get("status"):
-                logger.warning(
-                    "Direct API response status=False for case_ref=%s", case_ref
-                )
-                return None
-
-            html_content = data.get("page", "")
-            if not html_content:
-                logger.warning(
-                    "Direct API returned empty page content for case_ref=%s", case_ref
-                )
-                return None
-
-            case_details = self._extract_case_details_from_html(html_content, case_ref)
-            if not case_details:
-                logger.warning(
-                    "Could not extract case details from HTML for case_ref=%s", case_ref
-                )
-                return None
-
-            court_orders = self._extract_orders_from_html(html_content, response.url)
-            logger.info(
-                "Direct API fetch succeeded for case_ref=%s orders_found=%d",
-                case_ref,
-                len(court_orders),
-            )
-            return {
-                "status": "found",
-                "source": "direct_api",
-                "case_details": case_details,
-                "court_orders": court_orders,
-            }
-        except requests.exceptions.RequestException as exc:
-            logger.error("HTTP request failed for %s: %s", case_ref, exc)
-            return None
-        except Exception as exc:
-            logger.error("Direct API scraper failed for %s: %s", case_ref, exc)
-            return None
 
     def _extract_case_details_new(
         self, page: Any, case_ref: str

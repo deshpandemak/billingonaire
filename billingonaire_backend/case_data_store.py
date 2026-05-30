@@ -122,7 +122,6 @@ class CaseDataStore:
     def __init__(self, db: firestore.Client):
         self.db = db
         self.case_collection = "case-details"
-        self.assignment_collection = "board-assignments"
 
     @staticmethod
     def build_case_ref(case_type: str, case_no, case_year) -> str:
@@ -310,21 +309,6 @@ class CaseDataStore:
             case_ref,
             board_doc_id,
             board_date,
-        )
-
-        assignment_doc = {
-            "board_doc_id": board_doc_id,
-            "case_ref": case_ref,
-            "board_date": board_date,
-            "file_name": row.get("file_name"),
-            "serial_number": row.get("serial_number"),
-            "assigned_government_pleaders": assigned_pleaders,
-            "petitioner_lawyer": row.get("petitioner_lawyer"),
-            "respondent_lawyer": row.get("respondent_lawyer"),
-            "updated_at": now,
-        }
-        self.db.collection(self.assignment_collection).document(board_doc_id).set(
-            assignment_doc, merge=True
         )
 
         case_doc_ref = self.db.collection(self.case_collection).document(
@@ -582,19 +566,17 @@ class CaseDataStore:
         }
 
     def reset_case_for_reprocessing(self, case_ref: str) -> Dict:
-        """Clear all order history for a case and requeue every board entry.
+        """Clear order history for a case so the pipeline re-fetches it.
 
-        Wipes the orders array and latest_order_* fields from case-details so
-        the pipeline treats the case as fresh.  Every daily-boards entry whose
-        case_ref matches is reset to fetch_queued so the background worker
-        re-fetches and re-uploads every order PDF.
+        Wipes the orders array and latest_order_* fields from case-details, then
+        transitions lifecycle to fetch_queued so background workers pick it up.
+        daily-boards documents are not modified — they are immutable board records.
 
-        Returns a summary: {"board_entries_reset": N, "case_ref": case_ref}
+        Returns {"case_ref": case_ref}.
         """
         if not case_ref:
-            return {"board_entries_reset": 0, "case_ref": case_ref}
+            return {"case_ref": case_ref}
 
-        # 1. Wipe order history from case-details
         case_doc_ref = self.db.collection(self.case_collection).document(
             self._case_doc_id(case_ref)
         )
@@ -618,27 +600,11 @@ class CaseDataStore:
                 len(existing.get("orders") or []),
             )
 
-        # 2. Reset every daily-boards entry for this case to fetch_queued
-        board_docs = (
-            self.db.collection("daily-boards")
-            .where("case_ref", "==", case_ref)
-            .stream()
+        self.transition_lifecycle(
+            case_ref, "fetch_queued", reason="reset_for_reprocessing"
         )
-        reset_count = 0
-        for doc in board_docs:
-            doc.reference.update(
-                {
-                    "lifecycle_status": "fetch_queued",
-                    "lifecycle_status_updated_at": datetime.now().isoformat(),
-                    "order_link": None,
-                    "order_category": None,
-                }
-            )
-            reset_count += 1
-
         logger.info(
-            "reset_case_for_reprocessing: reset %d board entries for case_ref=%s",
-            reset_count,
+            "reset_case_for_reprocessing: case_ref=%s lifecycle set to fetch_queued",
             case_ref,
         )
-        return {"board_entries_reset": reset_count, "case_ref": case_ref}
+        return {"case_ref": case_ref}

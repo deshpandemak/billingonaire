@@ -285,7 +285,7 @@ const Dashboard = () => {
       }
       const r = await authenticatedFetchJSON('/jobs/fetch-orders', {
         method: 'POST',
-        body: JSON.stringify({ filters, board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300), max_sequences: 50 }),
+        body: JSON.stringify({ filters, board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300) }),
       });
       setJobMessage(`Queued ${r.queued || 0} fetch jobs, skipped ${r.skipped_not_due || 0}`);
       await fetchQueueStatus();

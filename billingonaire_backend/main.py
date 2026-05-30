@@ -379,15 +379,11 @@ async def process_order_queue_worker(worker_id: int):
             # Set timeout to 5 minutes (300 seconds) to prevent hanging
             try:
                 loop = asyncio.get_event_loop()
-                max_sequences = case_info.get(
-                    "max_sequences"
-                )  # None when not set → AutoOrderManager uses ORDER_MAX_SEQUENCE_RETRIES env var
                 result = await asyncio.wait_for(
                     loop.run_in_executor(
                         executor,
                         get_auto_order_manager()._process_single_case,
                         case_info,
-                        max_sequences,  # Pass max_sequences parameter
                     ),
                     timeout=300.0,  # 5 minutes timeout per case
                 )
@@ -2450,26 +2446,8 @@ async def auto_process_orders(request: Request, current_user=Depends(get_current
         body = await request.json()
         filters = body.get("filters", {})
         limit = body.get("limit", 50)
-        max_sequences = body.get("max_sequences")  # Optional parameter
 
-        # Validate max_sequences if provided
-        if max_sequences is not None:
-            try:
-                max_sequences = int(max_sequences)
-                if max_sequences < 1 or max_sequences > 100:
-                    return JSONResponse(
-                        status_code=400,
-                        content={"error": "max_sequences must be between 1 and 100"},
-                    )
-            except (ValueError, TypeError):
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be a valid integer"},
-                )
-
-        result = get_auto_order_manager().get_orders_for_cases(
-            filters, limit, max_sequences
-        )
+        result = get_auto_order_manager().get_orders_for_cases(filters, limit)
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -2496,17 +2474,11 @@ async def queue_fetch_orders_jobs(
         board_dates = body.get("board_dates") or []
         case_refs = body.get("case_refs") or []
         limit = int(body.get("limit", 100))
-        max_sequences = int(body.get("max_sequences", 10))
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
                 status_code=400,
                 content={"error": "limit must be between 1 and 1000"},
-            )
-        if max_sequences < 1 or max_sequences > 100:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "max_sequences must be between 1 and 100"},
             )
 
         manager = get_auto_order_manager()
@@ -2578,7 +2550,6 @@ async def queue_fetch_orders_jobs(
                     "id": case_id,
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date"),
-                    "max_sequences": max_sequences,
                 }
             )
             queued += 1
@@ -2742,7 +2713,6 @@ async def retry_failed_cases(
         body = await request.json()
         board_dates = body.get("board_dates") or []
         limit = int(body.get("limit", 200))
-        max_sequences = int(body.get("max_sequences", 10))
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
@@ -2792,7 +2762,6 @@ async def retry_failed_cases(
                         "id": case_id,
                         "case_ref": case_ref,
                         "board_date": case_data.get("board_date"),
-                        "max_sequences": max_sequences,
                     }
                 )
                 fetch_queued += 1
@@ -2817,7 +2786,6 @@ async def retry_failed_cases(
                             "id": case_id,
                             "case_ref": case_ref,
                             "board_date": case_data.get("board_date"),
-                            "max_sequences": max_sequences,
                         }
                     )
                     fetch_queued += 1
@@ -3012,17 +2980,13 @@ async def reset_case_orders(
             )
 
         case_store = get_auto_order_manager().case_store
-        result = case_store.reset_case_for_reprocessing(normalized)
+        case_store.reset_case_for_reprocessing(normalized)
 
         return JSONResponse(
             content={
                 "success": True,
                 "case_ref": normalized,
-                "board_entries_reset": result["board_entries_reset"],
-                "message": (
-                    f"Case {normalized} reset. "
-                    f"{result['board_entries_reset']} board entries requeued for download."
-                ),
+                "message": f"Case {normalized} reset and queued for re-fetch.",
             }
         )
     except Exception as exc:
@@ -3043,27 +3007,11 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         case_id = body.get("case_id")
         case_ref = body.get("case_ref")
         board_date = body.get("board_date")
-        max_sequences = body.get("max_sequences")  # Optional parameter
 
         if not case_id or not case_ref:
             return JSONResponse(
                 status_code=400, content={"error": "case_id and case_ref are required"}
             )
-
-        # Validate max_sequences if provided
-        if max_sequences is not None:
-            try:
-                max_sequences = int(max_sequences)
-                if max_sequences < 1 or max_sequences > 100:
-                    return JSONResponse(
-                        status_code=400,
-                        content={"error": "max_sequences must be between 1 and 100"},
-                    )
-            except (ValueError, TypeError):
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be a valid integer"},
-                )
 
         # Fetch existing case data from database
         case_doc = db.collection("daily-boards").document(case_id).get()
@@ -3087,7 +3035,6 @@ async def process_single_case(request: Request, current_user=Depends(get_current
                 "id": case_id,
                 "case_ref": case_ref,
                 "board_date": board_date or case_data.get("board_date"),
-                "max_sequences": max_sequences,
             }
         )
         await ensure_background_processing_active()
@@ -3336,31 +3283,13 @@ async def bulk_process_orders(request: Request, current_user=Depends(get_current
     try:
         body = await request.json()
         case_ids = body.get("case_ids", [])
-        raw_max_sequences = body.get("max_sequences")
-        if raw_max_sequences is not None:
-            try:
-                max_sequences = int(raw_max_sequences)
-            except (TypeError, ValueError):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": "Invalid value for max_sequences; must be a positive integer."
-                    },
-                )
-            if max_sequences <= 0 or max_sequences > 100:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be between 1 and 100"},
-                )
-        else:
-            max_sequences = None  # Let AutoOrderManager use ORDER_MAX_SEQUENCE_RETRIES
 
         if not case_ids:
             return JSONResponse(
                 status_code=400, content={"error": "No case IDs provided"}
             )
 
-        result = get_auto_order_manager().bulk_process_orders(case_ids, max_sequences)
+        result = get_auto_order_manager().bulk_process_orders(case_ids)
 
         if result.get("success"):
             return JSONResponse(content=result)
@@ -3724,15 +3653,14 @@ async def admin_bulk_order_processing(
     request: Request, current_user=Depends(require_admin)
 ):
     """
-    Admin endpoint to trigger bulk order processing for cases with specific order status
-    Adds cases to async processing queue and returns immediately
+    Admin endpoint to trigger bulk order processing for cases with specific order status.
+    Adds cases to async processing queue and returns immediately.
 
     Request body:
     {
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
         "limit": 100,  // Maximum cases to process
-        "days_back": 30,  // Only process cases from last N days (optional)
-        "max_sequences": 5  // Maximum sequence numbers to try per case (optional, omit to use server default)
+        "days_back": 30  // Only process cases from last N days (optional)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
@@ -3746,24 +3674,6 @@ async def admin_bulk_order_processing(
         )
         limit = body.get("limit", 100)
         days_back = body.get("days_back")
-        raw_max_sequences = body.get("max_sequences")
-        if raw_max_sequences is not None:
-            try:
-                max_sequences = int(raw_max_sequences)
-            except (TypeError, ValueError):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": "Invalid value for max_sequences; must be a positive integer."
-                    },
-                )
-            if max_sequences <= 0 or max_sequences > 100:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "max_sequences must be between 1 and 100"},
-                )
-        else:
-            max_sequences = None  # Let queue worker use ORDER_MAX_SEQUENCE_RETRIES
         query = db.collection("daily-boards")
 
         # Filter by date if specified (board_date is stored as datetime object)
@@ -3798,7 +3708,6 @@ async def admin_bulk_order_processing(
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date"),
                     "current_status": case_status,
-                    "max_sequences": max_sequences,  # Add max_sequences to case info
                 }
                 case_list.append(case_info)
 
@@ -4368,86 +4277,28 @@ async def get_order_pdf(doc_id: str):
             raise HTTPException(status_code=404, detail="Case not found")
 
         case_data = doc.to_dict() or {}
-        order_link = (case_data.get("order_link") or "").strip()
 
-        # Fall back to case-details.latest_order_link — that's the authoritative
-        # location written by case_data_store.append_case_order().
-        # Also scan the orders array directly so that cases whose latest_order_link
-        # was clobbered to None by a previous blank status entry still resolve.
-        if not order_link:
-            _ct = case_data.get("case_type", "")
-            _cn = str(case_data.get("case_no") or "")
-            _cy = str(case_data.get("case_year") or "")
-            if _ct and _cn and _cy:
-                _details_id = f"{_ct}-{_cn}-{_cy}"
-                _details_snap = (
-                    db.collection("case-details").document(_details_id).get()
-                )
-                if _details_snap.exists:
-                    _details = _details_snap.to_dict() or {}
-                    order_link = (_details.get("latest_order_link") or "").strip()
-                    if not order_link:
-                        # Scan orders array for the most-recent entry with a link
-                        for _o in reversed(_details.get("orders") or []):
-                            if isinstance(_o, dict) and _o.get("order_link"):
-                                order_link = _o["order_link"].strip()
-                                break
+        # order_link lives in case-details — daily-boards is immutable board data.
+        _ct = case_data.get("case_type", "")
+        _cn = str(case_data.get("case_no") or "")
+        _cy = str(case_data.get("case_year") or "")
+        order_link = ""
+        if _ct and _cn and _cy:
+            _details_id = f"{_ct}-{_cn}-{_cy}"
+            _details_snap = db.collection("case-details").document(_details_id).get()
+            if _details_snap.exists:
+                _details = _details_snap.to_dict() or {}
+                order_link = (_details.get("latest_order_link") or "").strip()
+                if not order_link:
+                    for _o in reversed(_details.get("orders") or []):
+                        if isinstance(_o, dict) and _o.get("order_link"):
+                            order_link = _o["order_link"].strip()
+                            break
 
         if not order_link:
             raise HTTPException(
                 status_code=404, detail="No order link stored for this case"
             )
-
-        # If the stored link is a court URL (not GCS), check whether a previous
-        # background re-fetch already upgraded the link to GCS in case-details
-        # but hadn't yet written back to daily-boards.  If so, use the GCS URL
-        # directly and patch daily-boards so the next request is instant.
-        if order_link and not order_link.startswith("https://storage.googleapis.com"):
-            _ct = case_data.get("case_type", "")
-            _cn = str(case_data.get("case_no") or "")
-            _cy = str(case_data.get("case_year") or "")
-            if _ct and _cn and _cy:
-                _details_id_upgrade = f"{_ct}-{_cn}-{_cy}"
-                try:
-                    _details_snap_upgrade = (
-                        db.collection("case-details")
-                        .document(_details_id_upgrade)
-                        .get()
-                    )
-                    if _details_snap_upgrade.exists:
-                        _det = _details_snap_upgrade.to_dict() or {}
-                        _gcs_candidate = None
-                        # Prefer an orders[] entry whose order_link is a GCS URL
-                        for _o in reversed(_det.get("orders") or []):
-                            if isinstance(_o, dict) and (
-                                _o.get("order_link") or ""
-                            ).startswith("https://storage.googleapis.com"):
-                                _gcs_candidate = _o["order_link"].strip()
-                                break
-                        if not _gcs_candidate and (
-                            _det.get("latest_order_link") or ""
-                        ).startswith("https://storage.googleapis.com"):
-                            _gcs_candidate = _det["latest_order_link"].strip()
-                        if _gcs_candidate:
-                            # Patch daily-boards so future hits skip this lookup
-                            try:
-                                db.collection("daily-boards").document(doc_id).update(
-                                    {"order_link": _gcs_candidate}
-                                )
-                            except Exception:
-                                pass
-                            order_link = _gcs_candidate
-                            logger.info(
-                                "get_order_pdf: upgraded court URL to GCS from "
-                                "case-details for doc_id=%s",
-                                doc_id,
-                            )
-                except Exception as _upg_err:
-                    logger.debug(
-                        "get_order_pdf: GCS upgrade lookup failed for doc_id=%s: %s",
-                        doc_id,
-                        _upg_err,
-                    )
 
         # GCS URL: download via service-account credentials and stream back.
         # Public bucket access is not required — Cloud Run ADC authenticates
@@ -4564,9 +4415,6 @@ async def get_order_pdf(doc_id: str):
             if not gcs_url:
                 return
             try:
-                firestore.client().collection("daily-boards").document(_doc_id).update(
-                    {"order_link": gcs_url}
-                )
                 mgr.case_store.append_case_order(
                     _case_ref, {"order_link": gcs_url, "order_date": _order_date}
                 )
@@ -4593,6 +4441,53 @@ async def get_order_pdf(doc_id: str):
     except Exception as exc:
         logger.error("get_order_pdf failed for doc_id=%s: %s", doc_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/gcs-bucket-info", tags=["Admin"])
+async def gcs_bucket_info(current_user=Depends(require_admin)):
+    """Return GCS bucket metadata so admins can verify no lifecycle rules are deleting blobs.
+
+    If the bucket has a lifecycle rule that deletes objects after N days, order PDFs
+    would silently disappear, causing the proxy to return 503 even for GCS URLs.
+    """
+    try:
+        from google.cloud import storage as gcs_storage
+
+        mgr = get_auto_order_manager()
+        bucket_name = mgr._gcs_bucket_name
+        if not bucket_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "ORDER_PDF_BUCKET env var not set on this instance"},
+            )
+        client = gcs_storage.Client()
+        bucket = client.get_bucket(bucket_name)
+        rules = []
+        if bucket.lifecycle_rules:
+            for rule in bucket.lifecycle_rules:
+                rules.append(rule)
+        return JSONResponse(
+            content={
+                "bucket": bucket_name,
+                "location": bucket.location,
+                "storage_class": bucket.storage_class,
+                "lifecycle_rules": rules,
+                "lifecycle_rule_count": len(rules),
+                "versioning_enabled": bucket.versioning_enabled,
+                "diagnosis": (
+                    "No lifecycle rules — blobs are retained indefinitely."
+                    if not rules
+                    else f"WARNING: {len(rules)} lifecycle rule(s) found — "
+                    "they may be deleting order PDFs. Check rules above."
+                ),
+            }
+        )
+    except Exception as exc:
+        logger.error("gcs_bucket_info failed: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc)},
+        )
 
 
 @app.post("/orders/migrate-to-gcs", tags=["Order Management"])
