@@ -164,7 +164,9 @@ class BombayHighCourtScraper:
         for opt in case_type_options:
             label = str(opt.get("name") or opt.get("label") or opt.get("text") or "")
             if label.strip().upper() == base_case_type.upper():
-                resolved_case_type = str(opt.get("value") or opt.get("id") or base_case_type)
+                resolved_case_type = str(
+                    opt.get("value") or opt.get("id") or base_case_type
+                )
                 break
         if resolved_case_type == base_case_type and case_type_options:
             logger.warning(
@@ -308,7 +310,9 @@ class BombayHighCourtScraper:
                 )
 
             # Step 3: POST form
-            form_data = self._build_form_data(case_parts, initial_html, case_type_options)
+            form_data = self._build_form_data(
+                case_parts, initial_html, case_type_options
+            )
             post_resp = self.session.post(
                 self.case_status_url,
                 data=form_data,
@@ -333,7 +337,8 @@ class BombayHighCourtScraper:
                 data = post_resp.json()
                 if not data.get("status"):
                     logger.info(
-                        "_fetch_with_http: portal returned status=False for %s", case_ref
+                        "_fetch_with_http: portal returned status=False for %s",
+                        case_ref,
                     )
                     return None
                 html_content = data.get("page", "")
@@ -368,9 +373,7 @@ class BombayHighCourtScraper:
             }
 
         except requests.exceptions.RequestException as exc:
-            logger.warning(
-                "_fetch_with_http: network error for %s: %s", case_ref, exc
-            )
+            logger.warning("_fetch_with_http: network error for %s: %s", case_ref, exc)
             return None
         except Exception as exc:
             logger.warning(
@@ -493,7 +496,9 @@ class BombayHighCourtScraper:
                                     "attempt": attempt_num,
                                     "status": "success",
                                     "source": "playwright",
-                                    "orders_found": len(result.get("court_orders") or []),
+                                    "orders_found": len(
+                                        result.get("court_orders") or []
+                                    ),
                                     "duration_ms": duration_ms,
                                 }
                             )

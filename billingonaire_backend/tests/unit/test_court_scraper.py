@@ -1,7 +1,7 @@
-import requests as _requests
 from unittest.mock import Mock, patch
 
 import pytest
+import requests as _requests
 
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
@@ -219,13 +219,17 @@ def test_extract_orders_from_html_parses_table():
     orders = scraper._extract_orders_from_html(_ORDERS_TABLE_HTML, base)
     assert len(orders) == 2
     assert orders[0]["listing_date"] == "09/04/2025"
-    assert orders[0]["download_url"] == "https://bombayhighcourt.gov.in/orders/order1.pdf"
+    assert (
+        orders[0]["download_url"] == "https://bombayhighcourt.gov.in/orders/order1.pdf"
+    )
     assert orders[1]["listing_date"] == "10/05/2025"
 
 
 def test_extract_orders_from_html_no_table_returns_empty():
     scraper = BombayHighCourtScraper()
-    orders = scraper._extract_orders_from_html("<html><body>no table</body></html>", "https://example.com/")
+    orders = scraper._extract_orders_from_html(
+        "<html><body>no table</body></html>", "https://example.com/"
+    )
     assert orders == []
 
 
@@ -381,18 +385,25 @@ def test_run_provider_attempts_http_succeeds_playwright_not_called(monkeypatch):
         "status": "found",
         "source": "http",
         "case_details": {},
-        "court_orders": [{"listing_date": "09/04/2025", "download_url": "https://x.pdf"}],
+        "court_orders": [
+            {"listing_date": "09/04/2025", "download_url": "https://x.pdf"}
+        ],
     }
     monkeypatch.setattr(scraper, "_fetch_with_http", lambda *a, **kw: http_result)
     monkeypatch.setattr(
         scraper,
         "_fetch_with_playwright_new",
-        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("Playwright must not be called")),
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("Playwright must not be called")
+        ),
     )
 
     run = scraper._run_provider_attempts("WP/1/2025", None, "mumbai", "http")
     assert run["result"]["source"] == "http"
-    assert any(a["step"] == "http" and a["status"] == "success" for a in run["provider_attempts"])
+    assert any(
+        a["step"] == "http" and a["status"] == "success"
+        for a in run["provider_attempts"]
+    )
 
 
 def test_run_provider_attempts_http_fails_uses_playwright(monkeypatch):
@@ -405,7 +416,9 @@ def test_run_provider_attempts_http_fails_uses_playwright(monkeypatch):
         "court_orders": [],
     }
     monkeypatch.setattr(scraper, "_fetch_with_http", lambda *a, **kw: None)
-    monkeypatch.setattr(scraper, "_fetch_with_playwright_new", lambda *a, **kw: pw_result)
+    monkeypatch.setattr(
+        scraper, "_fetch_with_playwright_new", lambda *a, **kw: pw_result
+    )
 
     run = scraper._run_provider_attempts("WP/1/2025", None, "mumbai", "http")
     assert run["result"]["source"] == "playwright"
@@ -427,13 +440,22 @@ def test_run_provider_attempts_both_fail_returns_none(monkeypatch):
 def test_run_provider_attempts_playwright_only_skips_http(monkeypatch):
     """Explicitly requesting playwright skips HTTP entirely."""
     scraper = BombayHighCourtScraper()
-    pw_result = {"status": "found", "source": "playwright", "case_details": {}, "court_orders": []}
+    pw_result = {
+        "status": "found",
+        "source": "playwright",
+        "case_details": {},
+        "court_orders": [],
+    }
     monkeypatch.setattr(
         scraper,
         "_fetch_with_http",
-        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("HTTP must not be called")),
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("HTTP must not be called")
+        ),
     )
-    monkeypatch.setattr(scraper, "_fetch_with_playwright_new", lambda *a, **kw: pw_result)
+    monkeypatch.setattr(
+        scraper, "_fetch_with_playwright_new", lambda *a, **kw: pw_result
+    )
 
     run = scraper._run_provider_attempts("WP/1/2025", None, "mumbai", "playwright")
     assert run["result"]["source"] == "playwright"
