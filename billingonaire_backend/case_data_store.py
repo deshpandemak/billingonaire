@@ -49,6 +49,7 @@ class CaseDataStore:
         },
         "fetch_in_progress": {
             "fetch_in_progress",
+            "fetch_queued",  # allow re-queue when a previous attempt is cancelled/stuck
             "fetch_succeeded",
             "fetch_failed_retryable",
             "fetch_failed_terminal",

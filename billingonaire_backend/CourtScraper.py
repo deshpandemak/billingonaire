@@ -38,11 +38,11 @@ class BombayHighCourtScraper:
             os.getenv("COURT_PLAYWRIGHT_HEADLESS", "true").strip().lower() == "true"
         )
         self.playwright_timeout_seconds = int(
-            os.getenv("COURT_PLAYWRIGHT_TIMEOUT_SECONDS", "60")
+            os.getenv("COURT_PLAYWRIGHT_TIMEOUT_SECONDS", "30")
         )
-        self.playwright_retry_count = int(os.getenv("PLAYWRIGHT_RETRY_COUNT", "3"))
+        self.playwright_retry_count = int(os.getenv("PLAYWRIGHT_RETRY_COUNT", "2"))
         self.request_timeout_seconds = int(
-            os.getenv("COURT_REQUEST_TIMEOUT_SECONDS", "60")
+            os.getenv("COURT_REQUEST_TIMEOUT_SECONDS", "20")
         )
         self.session = requests.Session()
         self.session.headers.update(self._browser_headers())
@@ -413,12 +413,20 @@ class BombayHighCourtScraper:
                 try:
                     result = self._fetch_with_http(case_ref, date=date, bench=bench)
                     duration_ms = int((time.time() - started) * 1000)
-                    if result:
+                    orders_found = (
+                        len(result.get("court_orders") or []) if result else 0
+                    )
+                    # Only treat HTTP as a success when it found at least one order
+                    # link.  Returning a result with 0 orders means the static HTML
+                    # had no downloadable links (orders may be rendered via JS after
+                    # page load), so we fall through to Playwright which executes the
+                    # full page lifecycle.
+                    if result and orders_found > 0:
                         logger.info(
                             "HTTP succeeded for case_ref=%s in %dms orders_found=%d",
                             case_ref,
                             duration_ms,
-                            len(result.get("court_orders") or []),
+                            orders_found,
                         )
                         attempts.append(
                             {
@@ -426,15 +434,20 @@ class BombayHighCourtScraper:
                                 "attempt": 1,
                                 "status": "success",
                                 "source": "http",
-                                "orders_found": len(result.get("court_orders") or []),
+                                "orders_found": orders_found,
                                 "duration_ms": duration_ms,
                             }
                         )
                         final_result = result
                     else:
+                        reason = (
+                            "no_orders_in_html"
+                            if result and orders_found == 0
+                            else "no_result"
+                        )
                         logger.info(
-                            "HTTP returned no result for case_ref=%s in %dms — "
-                            "trying Playwright",
+                            "HTTP %s for case_ref=%s in %dms — trying Playwright",
+                            reason,
                             case_ref,
                             duration_ms,
                         )
@@ -442,7 +455,7 @@ class BombayHighCourtScraper:
                             {
                                 "step": "http",
                                 "attempt": 1,
-                                "status": "no_result",
+                                "status": reason,
                                 "duration_ms": duration_ms,
                             }
                         )
