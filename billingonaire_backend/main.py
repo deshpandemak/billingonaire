@@ -3084,10 +3084,23 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
 
         lifecycle_status = case_data.get("lifecycle_status") or "board_ingested"
         updated_at = case_data.get("updated_at")
+
+        # Surface the last lifecycle event so the UI can show the actual error
+        events = case_data.get("lifecycle_events") or []
+        last_event = events[-1] if events else {}
+
         return JSONResponse(
             content={
                 "doc_id": doc_id,
                 "status": lifecycle_status,
+                "error_reason": case_data.get("lifecycle_status_reason"),
+                "last_event": {
+                    "event_type": last_event.get("event_type"),
+                    "reason": last_event.get("reason"),
+                    "timestamp": last_event.get("timestamp"),
+                }
+                if last_event
+                else None,
                 "order_category": case_data.get("latest_order_category")
                 or board_data.get("order_category"),
                 "order_link": case_data.get("latest_order_link")

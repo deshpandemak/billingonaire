@@ -581,10 +581,21 @@ const Table = () => {
       try {
         const res = await authenticatedFetchJSON(`/auto-orders/job-status/${caseId}`);
         const status = res.status || 'unknown';
+
+        // Always log the full response so failures are visible in DevTools console
+        console.log(`[job-status] ${caseRef} (${caseId}):`, res);
+
+        const errorReason = res.error_reason || res.last_event?.reason || null;
+        const baseLabel = jobLabel(status);
+        const displayLabel = errorReason && JOB_TERMINAL.has(status) && status !== 'analysed'
+          ? `${baseLabel}: ${errorReason}`
+          : baseLabel;
+
         setJobStatuses(prev => new Map(prev).set(caseId, {
           caseRef,
           status,
-          label: jobLabel(status),
+          label: displayLabel,
+          errorReason,
           variant: jobVariant(status),
         }));
 
@@ -600,7 +611,8 @@ const Table = () => {
             return prev;
           });
         }
-      } catch {
+      } catch (err) {
+        console.warn(`[job-status] poll error for ${caseRef}:`, err);
         // transient error — retry after a longer wait
         pollTimers.current[caseId] = setTimeout(poll, 6000);
       }
@@ -1039,14 +1051,18 @@ const Table = () => {
                 const color = job.variant === 'success' ? '#166534' : job.variant === 'error' ? '#991b1b' : job.variant === 'warning' ? '#92400e' : '#1e40af';
                 return (
                   <div key={caseId} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
                     padding: '6px var(--spacing-md)',
                     borderBottom: '1px solid var(--gray-100)',
                     backgroundColor: bg,
                     fontSize: '0.82rem',
+                    gap: '8px',
                   }}>
-                    <span style={{ fontFamily: 'monospace', color: 'var(--gray-700)' }}>{job.caseRef}</span>
-                    <span style={{ fontWeight: 600, color }}>{job.label}</span>
+                    <span style={{ fontFamily: 'monospace', color: 'var(--gray-700)', flexShrink: 0 }}>{job.caseRef}</span>
+                    <span style={{ fontWeight: 600, color, textAlign: 'right' }}
+                          title={job.errorReason || undefined}>
+                      {job.label}
+                    </span>
                   </div>
                 );
               })}

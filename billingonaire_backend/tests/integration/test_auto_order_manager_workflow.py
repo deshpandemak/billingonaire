@@ -85,7 +85,12 @@ def test_process_single_case_playwright_success(manager_with_mocks):
         "order_status": "not_linked",
     }
 
-    manager.court_scraper.get_case_orders.return_value = {
+    manager.court_scraper._fetch_with_provider.return_value = {
+        "result": {"_dummy": True},
+        "provider_sequence": ["http"],
+        "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+    }
+    manager.court_scraper._enrich_case_orders_result.return_value = {
         "status": "found",
         "source": "playwright",
         "petitioner": "MOTILAL OSWAL HOME FINANCE LTD",
@@ -115,8 +120,8 @@ def test_process_single_case_playwright_success(manager_with_mocks):
         result = manager._process_single_case(case_data)
 
     assert result["download_success"] is True
-    manager.court_scraper.get_case_orders.assert_called_once_with(
-        case_ref="WP/3373/2025", date="2025-04-09", bench="mumbai"
+    manager.court_scraper._fetch_with_provider.assert_called_once_with(
+        case_ref="WP/3373/2025", date="2025-04-09", bench="mumbai", include_diagnostics=True
     )
 
 
@@ -133,16 +138,18 @@ def test_process_single_case_playwright_no_orders(manager_with_mocks):
         "order_status": "not_linked",
     }
 
-    manager.court_scraper.get_case_orders.return_value = {
-        "status": "not_found",
-        "source": "playwright",
-        "court_orders": [],
-        "message": "No orders found",
+    manager.court_scraper._fetch_with_provider.return_value = {
+        "result": None,
+        "provider_sequence": ["http", "playwright"],
+        "provider_attempts": [
+            {"step": "http", "status": "no_result", "duration_ms": 200},
+            {"step": "playwright", "status": "no_result", "duration_ms": 5000},
+        ],
     }
 
     result = manager._process_single_case(case_data)
 
     assert result["download_success"] is False
-    manager.court_scraper.get_case_orders.assert_called_once_with(
-        case_ref="WP/3374/2025", date="2025-04-09", bench="mumbai"
+    manager.court_scraper._fetch_with_provider.assert_called_once_with(
+        case_ref="WP/3374/2025", date="2025-04-09", bench="mumbai", include_diagnostics=True
     )
