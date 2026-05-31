@@ -186,6 +186,7 @@ def test_configure_scraper_rejects_invalid_provider():
         ("IA/500/2024", _CASE_TYPES_JSON, "R", "8"),
         ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1"),
         ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5"),
+        ("IA(ST)/123/2025", _CASE_TYPES_JSON, "S", "8"),
         # Unknown case type falls back to the label string
         ("OA/10/2025", _CASE_TYPES_JSON, "R", "OA"),
     ],
@@ -210,6 +211,7 @@ def test_build_form_data_case_type_and_stampreg(
         ("PIL/294/2025", "6"),
         ("IA/500/2024", "69"),
         ("WP(ST)/100/2025", "1"),
+        ("IA(ST)/123/2025", "69"),
     ],
 )
 def test_build_form_data_portal_format_type_name_case_type(
@@ -674,3 +676,220 @@ def test_enrich_case_orders_result_builds_title_when_missing():
     assert enriched["case_orders"] == [
         {"date": "01/01/2025", "download_link": "http://example.com/order.pdf"}
     ]
+
+
+# ---------------------------------------------------------------------------
+# Stamp (ST) cases — stampreg forwarded to AJAX + form POST
+# ---------------------------------------------------------------------------
+
+_CASE_TYPES_WITH_IA = [
+    {"case_type": 1, "type_name": "WP", "full_form": "Writ Petition"},
+    {"case_type": 69, "type_name": "IA", "full_form": "INTERIM APPLICATION"},
+]
+
+_SUCCESS_IA_JSON = {
+    "status": True,
+    "page": (
+        '<div id="cn_CaseNoUpdates"><div class="card-header">'
+        "IA(ST)/123/2025 filed on 01/01/2025 by Petitioner X against Respondent Y"
+        "</div></div>"
+        '<div id="cn_CaseNoOrders"><table><tbody>'
+        "<tr><td>1</td><td>IA</td><td>10/04/2025</td><td>Order</td>"
+        '<td><a href="https://bombayhighcourt.gov.in/bhc/file/download/abc">Download</a></td>'
+        "</tr></tbody></table></div>"
+    ),
+}
+
+
+def test_fetch_with_http_sends_stampreg_to_ajax_for_stamp_case():
+    """The case-types AJAX call must include stampreg=S for IA(ST) cases so the
+    portal returns the Stamp-specific case type list.
+
+    Regression: the AJAX call previously only sent side=1, meaning Stamp cases
+    received the Registered case type list where IA may have a different numeric
+    ID or be absent.
+    """
+    scraper = BombayHighCourtScraper()
+    ajax_params_seen = []
+
+    def fake_get(url, params=None, **kwargs):
+        if "get-case-types" in url:
+            ajax_params_seen.append(dict(params or {}))
+            r = Mock()
+            r.status_code = 200
+            r.json = Mock(return_value=_CASE_TYPES_WITH_IA)
+            return r
+        r = Mock()
+        r.status_code = 200
+        r.text = _MINIMAL_GET_HTML
+        return r
+
+    def fake_post(url, data=None, headers=None, **kwargs):
+        r = Mock()
+        r.status_code = 200
+        r.url = url
+        r.json = Mock(return_value=_SUCCESS_IA_JSON)
+        r.text = ""
+        return r
+
+    scraper.session = Mock()
+    scraper.session.get = Mock(side_effect=fake_get)
+    scraper.session.post = Mock(side_effect=fake_post)
+
+    result = scraper._fetch_with_http("IA(ST)/123/2025")
+
+    assert result is not None, "Expected a result for IA(ST) case"
+    assert ajax_params_seen, "case-types AJAX was never called"
+    assert (
+        ajax_params_seen[0].get("stampreg") == "S"
+    ), f"AJAX call did not include stampreg=S for Stamp case; params={ajax_params_seen[0]}"
+
+
+def test_fetch_with_http_sends_stampreg_r_to_ajax_for_registered_case():
+    """Registered (non-ST) cases must send stampreg=R to the AJAX endpoint."""
+    scraper = BombayHighCourtScraper()
+    ajax_params_seen = []
+
+    def fake_get(url, params=None, **kwargs):
+        if "get-case-types" in url:
+            ajax_params_seen.append(dict(params or {}))
+            r = Mock()
+            r.status_code = 200
+            r.json = Mock(return_value=_CASE_TYPES_WITH_IA)
+            return r
+        r = Mock()
+        r.status_code = 200
+        r.text = _MINIMAL_GET_HTML
+        return r
+
+    def fake_post(url, data=None, headers=None, **kwargs):
+        r = Mock()
+        r.status_code = 200
+        r.url = url
+        r.json = Mock(return_value=_SUCCESS_JSON)
+        r.text = ""
+        return r
+
+    scraper.session = Mock()
+    scraper.session.get = Mock(side_effect=fake_get)
+    scraper.session.post = Mock(side_effect=fake_post)
+
+    scraper._fetch_with_http("WP/3373/2025")
+
+    assert (
+        ajax_params_seen[0].get("stampreg") == "R"
+    ), f"AJAX call should include stampreg=R for Registered case; params={ajax_params_seen[0]}"
+
+
+# ---------------------------------------------------------------------------
+# HTTP 419 retry
+# ---------------------------------------------------------------------------
+
+_MINIMAL_GET_HTML = (
+    '<html><head><meta name="csrf-token" content="TOKEN-A"/></head>'
+    "<body><form></form></body></html>"
+)
+_FRESH_GET_HTML = (
+    '<html><head><meta name="csrf-token" content="TOKEN-B"/></head>'
+    "<body><form></form></body></html>"
+)
+
+_SUCCESS_JSON = {
+    "status": True,
+    "page": _CASE_DETAILS_HTML + _ORDERS_TABLE_HTML,
+}
+
+_CASE_TYPES_WP = [{"case_type": 1, "type_name": "WP", "full_form": "Writ Petition"}]
+
+
+def test_fetch_with_http_retries_on_419():
+    """When the POST returns 419, the scraper must refresh the CSRF token and
+    retry the POST exactly once.  The retry should succeed if the second POST
+    returns 200.
+
+    Regression test for WP/8552/2018 and WP/7810/2013 which consistently hit
+    HTTP 419 (CSRF token expiry between the initial GET and the POST).
+    """
+    scraper = BombayHighCourtScraper()
+
+    get_call_count = 0
+
+    def fake_get(url, **kwargs):
+        nonlocal get_call_count
+        get_call_count += 1
+        if "get-case-types" in url:
+            r = Mock()
+            r.status_code = 200
+            r.json = Mock(return_value=_CASE_TYPES_WP)
+            return r
+        # First GET → initial page; second GET → refreshed page with new CSRF
+        html = _MINIMAL_GET_HTML if get_call_count == 1 else _FRESH_GET_HTML
+        r = Mock()
+        r.status_code = 200
+        r.text = html
+        return r
+
+    post_call_count = 0
+    captured_csrf = []
+
+    def fake_post(url, data=None, headers=None, **kwargs):
+        nonlocal post_call_count
+        post_call_count += 1
+        captured_csrf.append((headers or {}).get("X-CSRF-TOKEN", ""))
+        r = Mock()
+        if post_call_count == 1:
+            # First POST → 419 (expired CSRF)
+            r.status_code = 419
+            r.url = url
+        else:
+            # Second POST → success
+            r.status_code = 200
+            r.url = url
+            r.json = Mock(return_value=_SUCCESS_JSON)
+            r.text = ""
+        return r
+
+    scraper.session = Mock()
+    scraper.session.get = Mock(side_effect=fake_get)
+    scraper.session.post = Mock(side_effect=fake_post)
+
+    result = scraper._fetch_with_http("WP/3373/2025")
+
+    assert result is not None, "Expected a result after the 419 retry"
+    assert post_call_count == 2, f"Expected exactly 2 POST calls, got {post_call_count}"
+    # CSRF token must be refreshed between the two POSTs
+    assert captured_csrf[0] == "TOKEN-A", "First POST must use original CSRF token"
+    assert captured_csrf[1] == "TOKEN-B", "Retry POST must use refreshed CSRF token"
+
+
+def test_fetch_with_http_raises_after_second_419():
+    """If the retry POST also returns 419, the scraper must raise HTTPError so
+    the caller falls back to Playwright.
+    """
+    scraper = BombayHighCourtScraper()
+
+    def fake_get(url, **kwargs):
+        if "get-case-types" in url:
+            r = Mock()
+            r.status_code = 200
+            r.json = Mock(return_value=_CASE_TYPES_WP)
+            return r
+        r = Mock()
+        r.status_code = 200
+        r.text = _MINIMAL_GET_HTML
+        return r
+
+    def fake_post(url, data=None, headers=None, **kwargs):
+        r = Mock()
+        r.status_code = 419
+        r.url = url
+        return r
+
+    scraper.session = Mock()
+    scraper.session.get = Mock(side_effect=fake_get)
+    scraper.session.post = Mock(side_effect=fake_post)
+
+    import requests
+
+    with pytest.raises(requests.exceptions.HTTPError, match="419"):
+        scraper._fetch_with_http("WP/8552/2018")

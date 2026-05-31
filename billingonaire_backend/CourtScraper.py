@@ -310,12 +310,18 @@ class BombayHighCourtScraper:
                 )
             initial_html = get_resp.text
 
-            # Step 2: GET case-type options via AJAX endpoint
+            # Step 2: GET case-type options via AJAX endpoint.
+            # Mirror what the portal JS does: include stampreg so the server
+            # returns the correct type list for Stamp (S) vs Registered (R) cases.
+            # For IA(ST) the browser sends stampreg=S; without it the server may
+            # return only Registered types where IA has a different numeric ID or
+            # is absent entirely.
+            stampreg_value = self._get_stampreg_value(case_parts["case_type"])
             case_type_options: List[Dict[str, Any]] = []
             try:
                 types_resp = self.session.get(
                     self.case_types_url,
-                    params={"side": "1"},
+                    params={"side": "1", "stampreg": stampreg_value},
                     timeout=self.request_timeout_seconds,
                 )
                 if types_resp.status_code == 200:
@@ -355,6 +361,34 @@ class BombayHighCourtScraper:
                 headers=post_headers,
                 allow_redirects=True,
             )
+
+            # 419 = CSRF token expired — refresh the session and retry once.
+            # This happens when the AJAX case-types GET takes long enough that
+            # the server rotates the CSRF token before our POST arrives.
+            if post_resp.status_code == 419:
+                logger.info(
+                    "_fetch_with_http: 419 CSRF expiry for %s — refreshing token and retrying",
+                    case_ref,
+                )
+                get_resp2 = self.session.get(
+                    self.case_status_url, timeout=self.request_timeout_seconds
+                )
+                soup_get2 = BeautifulSoup(get_resp2.text, "html.parser")
+                csrf_meta2 = soup_get2.find("meta", attrs={"name": "csrf-token"})
+                if csrf_meta2:
+                    post_headers["X-CSRF-TOKEN"] = csrf_meta2.get("content", "")
+                # Also rebuild hidden-field form data from the fresh page
+                form_data2 = self._build_form_data(
+                    case_parts, get_resp2.text, case_type_options
+                )
+                post_resp = self.session.post(
+                    self.case_status_url,
+                    data=form_data2,
+                    timeout=self.request_timeout_seconds,
+                    headers=post_headers,
+                    allow_redirects=True,
+                )
+
             if post_resp.status_code not in (200, 302):
                 raise requests.exceptions.HTTPError(
                     f"HTTP {post_resp.status_code} on POST for {case_ref}",
@@ -791,25 +825,61 @@ class BombayHighCourtScraper:
                     timeout=timeout_ms,
                 )
 
-                page.select_option("select[name='side']", value="1")
-                page.select_option(
-                    "select[name='stampreg']",
-                    value=self._get_stampreg_value(case_parts["case_type"]),
-                )
-                page.wait_for_timeout(2000)
-
+                stampreg_value = self._get_stampreg_value(case_parts["case_type"])
                 base_case_type = self._get_base_case_type(case_parts["case_type"])
-                options = page.query_selector_all("select[name='case_type'] option")
-                resolved_case_type = None
-                for option in options:
-                    text = option.inner_text().strip().upper()
-                    if text == base_case_type.upper():
-                        resolved_case_type = option.get_attribute("value")
-                        break
-                if not resolved_case_type:
-                    resolved_case_type = base_case_type
 
-                page.select_option("select[name='case_type']", value=resolved_case_type)
+                page.select_option("select[name='side']", value="1")
+
+                # Wait for the stampreg dropdown to be populated by its AJAX handler
+                # before we select from it — selecting too early can leave the wrong
+                # value or fail silently.
+                try:
+                    page.wait_for_selector(
+                        "select[name='stampreg'] option:not([value=''])",
+                        timeout=5000,
+                    )
+                except Exception:
+                    page.wait_for_timeout(1000)
+
+                page.select_option("select[name='stampreg']", value=stampreg_value)
+
+                # Wait for the case_type dropdown to reload after the stampreg
+                # selection.  The portal JS fires a second AJAX call when stampreg
+                # changes, so case_type options may differ between Stamp (S) and
+                # Registered (R).  Waiting here ensures we read the correct type list
+                # for the case — e.g. IA(ST) must select from the Stamp type list.
+                try:
+                    page.wait_for_selector(
+                        "select[name='case_type'] option:not([value=''])",
+                        timeout=8000,
+                    )
+                except Exception:
+                    # Fallback: give it a fixed wait if the selector never fires
+                    page.wait_for_timeout(3000)
+
+                # Prefer selecting by label (visible text) — avoids the label/numeric-ID
+                # mismatch where option values are "1"/"6"/… but we only know "WP"/"PIL".
+                try:
+                    page.select_option("select[name='case_type']", label=base_case_type)
+                except Exception:
+                    # Label match failed — read the numeric value from the DOM directly
+                    options = page.query_selector_all("select[name='case_type'] option")
+                    resolved_case_type = None
+                    for option in options:
+                        if (
+                            option.inner_text().strip().upper()
+                            == base_case_type.upper()
+                        ):
+                            resolved_case_type = option.get_attribute("value")
+                            break
+                    if not resolved_case_type:
+                        raise Exception(
+                            f"Case type {base_case_type!r} not found in dropdown — "
+                            f"options: {[o.inner_text().strip() for o in options[:10]]}"
+                        )
+                    page.select_option(
+                        "select[name='case_type']", value=resolved_case_type
+                    )
                 page.fill("input[name='case_no']", case_parts["case_number"])
                 page.fill("input[name='year']", case_parts["year"])
                 page.click(
@@ -844,6 +914,16 @@ class BombayHighCourtScraper:
                 "Playwright timed out for %s (timeout=%ds): %s",
                 case_ref,
                 self.playwright_timeout_seconds,
+                exc,
+            )
+            raise
+        except AttributeError as exc:
+            # sync_playwright().__enter__() failed to set _playwright — this is a
+            # flaky init failure that occurs when called from a thread pool while an
+            # asyncio event loop is running.  Re-raise so the retry loop retries.
+            logger.warning(
+                "Playwright context init failed for %s (will retry): %s",
+                case_ref,
                 exc,
             )
             raise

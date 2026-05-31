@@ -1706,9 +1706,9 @@ class OrderDocumentAnalyzer:
         )
 
         for match in re.finditer(simple_pattern, text, re.IGNORECASE):
-            title1_name1 = match.group(1).strip()
+            title1_name1 = self._normalise_title_name(match.group(1))
             role1 = match.group(2).strip()
-            title2_name2 = match.group(3).strip()
+            title2_name2 = self._normalise_title_name(match.group(3))
             role2 = match.group(4).strip()
 
             logging.info(
@@ -1898,15 +1898,32 @@ class OrderDocumentAnalyzer:
             # Add all matches to pleaders list
             pleaders.extend(all_matches)
 
-        # Remove duplicates while preserving order
-        seen = set()
+        # Remove duplicates while preserving order.
+        # Use a normalised key so "Mr. Asif Patel" and "Mr.Asif Patel" collapse
+        # to the same entry regardless of which code path produced each string.
+        seen: set = set()
         unique_pleaders = []
         for pleader in pleaders:
-            if pleader not in seen:
-                seen.add(pleader)
-                unique_pleaders.append(pleader)
+            key = self._normalise_title_name(pleader).lower()
+            if key not in seen:
+                seen.add(key)
+                unique_pleaders.append(self._normalise_title_name(pleader))
 
         return unique_pleaders
+
+    @staticmethod
+    def _normalise_title_name(s: str) -> str:
+        """Ensure a space after title prefixes so 'Mr.Name' and 'Mr. Name' normalise
+        to the same string — prevents spurious duplicates when the same advocate
+        appears in both the header and the body of an order with inconsistent spacing.
+        """
+        s = re.sub(
+            r"\b(Mr|Ms|Mrs|Smt|Adv|Dr)\.([A-Za-z])",
+            r"\1. \2",
+            s,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", s).strip()
 
     def _normalize_agp_role(self, role: str) -> str:
         """Normalize AGP/GP role names to standard format"""
