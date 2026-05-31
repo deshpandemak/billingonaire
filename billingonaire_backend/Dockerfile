@@ -16,11 +16,36 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy language model - using direct URL for reliability
 RUN pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
-# Install Playwright browser binary + all OS-level dependencies it needs.
-# This step runs AFTER pip install so Playwright is already on PATH.
-# --with-deps installs the required apt packages (libnss3, libgbm1, etc.)
-# in a single RUN layer so the browser works in the container.
-RUN playwright install --with-deps chromium
+# Install OS-level dependencies required by Playwright's Chromium browser.
+# We install them manually instead of using --with-deps because that flag
+# uses Ubuntu package names (ttf-unifont, ttf-ubuntu-font-family) that do
+# not exist in Debian Bookworm slim, causing the build to fail with exit 100.
+# Fonts are omitted — headless Chromium doesn't need them for court scraping.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxext6 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Playwright Chromium browser binary (system deps already installed above).
+RUN playwright install chromium
 
 # Copy application code
 COPY . .
