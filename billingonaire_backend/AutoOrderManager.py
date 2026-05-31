@@ -795,9 +795,7 @@ class AutoOrderManager:
                     pdf_bytes, case_ref, order_date_str
                 )
                 final_order_link: str = stored_url or download_link
-                gcs_upload_failed = stored_url is None and bool(
-                    self._gcs_bucket_name
-                )
+                gcs_upload_failed = stored_url is None and bool(self._gcs_bucket_name)
                 if gcs_upload_failed:
                     logger.error(
                         "_process_all_orders_from_api: GCS upload failed for "

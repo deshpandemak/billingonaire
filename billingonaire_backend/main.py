@@ -3092,7 +3092,9 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
         # Check if the most recent order was stored with an expiring court URL
         # because the GCS upload failed (persisted in order payload).
         orders = case_data.get("orders") or []
-        orders_with_link = [o for o in orders if isinstance(o, dict) and o.get("order_link")]
+        orders_with_link = [
+            o for o in orders if isinstance(o, dict) and o.get("order_link")
+        ]
         latest_order = orders_with_link[-1] if orders_with_link else {}
         gcs_upload_failed = bool(latest_order.get("gcs_upload_failed"))
 
