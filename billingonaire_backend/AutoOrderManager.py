@@ -811,12 +811,13 @@ class AutoOrderManager:
         return result
 
     def _process_single_case(self, case_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Download and analyse all orders for a single case via Playwright.
+        """Download and analyse all orders for a single case.
 
         Delegates to ``_process_all_orders_from_api`` which drives the
-        CourtScraper Playwright session (retried up to PLAYWRIGHT_RETRY_COUNT
-        times, default 3).  If the scraper finds no orders for the board date
-        the case is transitioned to ``fetch_failed_retryable``.
+        CourtScraper HTTP-first pipeline (direct POST to court portal, then
+        Playwright fallback retried up to PLAYWRIGHT_RETRY_COUNT times, default 3).
+        If the scraper finds no orders for the board date the case is transitioned
+        to ``fetch_failed_retryable``.
         """
         case_id = case_data["id"]
         case_ref = case_data.get("case_ref") or self.build_case_ref_from_data(case_data)

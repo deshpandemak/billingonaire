@@ -3,7 +3,7 @@
 Usage example:
   /workspaces/billingonaire/.venv/bin/python benchmark_court_scraper.py \
     --input-file case_refs.txt \
-        --provider direct_api \
+        --provider http \
     --limit 50 \
     --board-date 2026-03-20
 """
@@ -109,8 +109,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        default="direct_api",
-        choices=["direct_api", "playwright"],
+        default="http",
+        choices=["http", "playwright"],
         help="Scraper provider strategy",
     )
     parser.add_argument(
