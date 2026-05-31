@@ -4,13 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### Local dev (both servers)
+
+```bash
+# Linux / macOS / WSL — starts backend (:8000) and UI (:5000) together
+chmod +x start_local.sh billingonaire_backend/start_local.sh
+./start_local.sh          # Ctrl-C stops both
+
+# Windows
+start_local.bat           # opens two console windows, one per server
+```
+
 ### Backend (`billingonaire_backend/`)
 
 ```bash
 # Install
 pip install -r requirements.txt -r requirements-test.txt
 
-# Dev server
+# Dev server — preferred (handles spaCy/pydantic stub automatically)
+./start_local.sh          # Linux/macOS/WSL
+start_local.bat           # Windows
+
+# Dev server — manual (requires TESTING=true; spaCy crash workaround: use dev_server.py)
+TESTING=true python dev_server.py
+# Direct uvicorn (only if spaCy is not installed or compatible)
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Tests

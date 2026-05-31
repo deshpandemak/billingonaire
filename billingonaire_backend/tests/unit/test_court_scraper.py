@@ -42,6 +42,13 @@ _CASE_TYPES_JSON = [
     {"name": "IA", "value": "8"},
 ]
 
+# Real BHC portal AJAX format — keys are type_name / case_type (numeric ID)
+_CASE_TYPES_JSON_PORTAL = [
+    {"case_type": 1, "type_name": "WP", "full_form": "Writ Petition"},
+    {"case_type": 6, "type_name": "PIL", "full_form": "Public Interest Litigation"},
+    {"case_type": 69, "type_name": "IA", "full_form": "INTERIM APPLICATION"},
+]
+
 
 def _make_mock_session(
     get_html: str = "<html></html>",
@@ -196,6 +203,30 @@ def test_build_form_data_case_type_and_stampreg(
     assert form["year"] == case_parts["year"]
 
 
+@pytest.mark.parametrize(
+    "case_ref, expected_case_type",
+    [
+        ("WP/3373/2025", "1"),
+        ("PIL/294/2025", "6"),
+        ("IA/500/2024", "69"),
+        ("WP(ST)/100/2025", "1"),
+    ],
+)
+def test_build_form_data_portal_format_type_name_case_type(
+    case_ref, expected_case_type
+):
+    """Real portal AJAX uses type_name/case_type keys — must be resolved correctly."""
+    scraper = BombayHighCourtScraper()
+    case_parts = scraper.parse_case_number(case_ref)
+    form = scraper._build_form_data(
+        case_parts, "<html></html>", _CASE_TYPES_JSON_PORTAL
+    )
+    assert form["case_type"] == expected_case_type, (
+        f"Expected numeric ID {expected_case_type!r} for {case_ref}, got {form['case_type']!r}. "
+        "Portal AJAX uses type_name/case_type keys, not name/value."
+    )
+
+
 def test_build_form_data_extracts_hidden_fields():
     scraper = BombayHighCourtScraper()
     html = (
@@ -261,6 +292,72 @@ def test_extract_orders_from_html_deduplicates_urls():
     orders = scraper._extract_orders_from_html(html, base)
     urls = [o["download_url"] for o in orders]
     assert len(urls) == len(set(urls)), "Duplicate URLs should be deduplicated"
+
+
+_BASE = "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+_NIC_AUTH_URL = "https://www.bombayhighcourt.nic.in/generatenewauth.php?bhcpar=AAABBB"
+_NIC_AUTH_URL2 = "https://www.bombayhighcourt.nic.in/generatenewauth.php?bhcpar=CCCDDD"
+
+
+def test_extract_orders_from_html_preserves_absolute_nic_auth_url():
+    """Absolute generatenewauth.php links from the NIC server are preserved as-is."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoOrders"><table><tbody>'
+        "<tr><td>1</td><td>WP</td><td>09/04/2025</td><td>Order/Judg-1</td>"
+        f'<td><a href="{_NIC_AUTH_URL}">Download</a></td></tr>'
+        "</tbody></table></div>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert len(orders) == 1
+    assert orders[0]["download_url"] == _NIC_AUTH_URL
+    assert orders[0]["listing_date"] == "09/04/2025"
+
+
+def test_extract_orders_from_html_six_column_table_uses_last_cell():
+    """Tables with a 6th status column still resolve the download link from cells[-1]."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoOrders"><table><tbody>'
+        "<tr><td>1</td><td>WP</td><td>09/04/2025</td><td>Order/Judg-1</td>"
+        f'<td>HEARD</td><td><a href="{_NIC_AUTH_URL}">Download</a></td></tr>'
+        "</tbody></table></div>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert len(orders) == 1, "6-column table row must not be silently skipped"
+    assert orders[0]["download_url"] == _NIC_AUTH_URL
+
+
+def test_extract_orders_from_html_fallback_matches_generatenewauth_links():
+    """When #cn_CaseNoOrders table is absent, generatenewauth.php hrefs are found via fallback."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        "<html><body>"
+        f'<a href="{_NIC_AUTH_URL}">Order 09/04/2025</a>'
+        f'<a href="{_NIC_AUTH_URL2}">Order 08/04/2025</a>'
+        "</body></html>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert len(orders) == 2, (
+        "Fallback must match generatenewauth.php links — they are the BHC file-server "
+        "auth endpoint for all order PDFs"
+    )
+    urls = {o["download_url"] for o in orders}
+    assert _NIC_AUTH_URL in urls
+    assert _NIC_AUTH_URL2 in urls
+
+
+def test_extract_orders_from_html_three_column_table_uses_last_cell():
+    """Rows with only 3 cells (minimum) still resolve the last cell's link."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoOrders"><table><tbody>'
+        f'<tr><td>1</td><td>09/04/2025</td><td><a href="{_NIC_AUTH_URL}">Download</a></td></tr>'
+        "</tbody></table></div>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert len(orders) == 1, "3-column table rows must not be skipped"
+    assert orders[0]["download_url"] == _NIC_AUTH_URL
 
 
 # ---------------------------------------------------------------------------

@@ -158,21 +158,36 @@ class BombayHighCourtScraper:
             if name:
                 form_data[name] = value
 
-        # Resolve the numeric case_type option value from the AJAX options list
+        # Resolve the numeric case_type option value from the AJAX options list.
+        # The portal AJAX endpoint returns {"type_name": "WP", "case_type": 1, ...}
+        # (new format).  Older test fixtures use {"name": "WP", "value": "1"}.
+        # Both formats are handled so unit tests and the live portal work identically.
         base_case_type = self._get_base_case_type(case_parts["case_type"])
         resolved_case_type = base_case_type  # fallback: use label string
         for opt in case_type_options:
-            label = str(opt.get("name") or opt.get("label") or opt.get("text") or "")
+            label = str(
+                opt.get("type_name")  # new portal API key
+                or opt.get("name")
+                or opt.get("label")
+                or opt.get("text")
+                or ""
+            )
             if label.strip().upper() == base_case_type.upper():
                 resolved_case_type = str(
-                    opt.get("value") or opt.get("id") or base_case_type
+                    opt.get("case_type")  # new portal API key (numeric ID)
+                    or opt.get("value")
+                    or opt.get("id")
+                    or base_case_type
                 )
                 break
         if resolved_case_type == base_case_type and case_type_options:
             logger.warning(
                 "_build_form_data: case_type %r not found in options %s; using label fallback",
                 base_case_type,
-                [o.get("name") or o.get("label") for o in case_type_options[:5]],
+                [
+                    o.get("type_name") or o.get("name") or o.get("label")
+                    for o in case_type_options[:5]
+                ],
             )
 
         form_data.update(
@@ -209,9 +224,13 @@ class BombayHighCourtScraper:
             if table:
                 for row in table.find_all("tr"):
                     cells = row.find_all("td")
-                    if len(cells) < 5:
+                    # Require at least 3 cells (date col + description + download link).
+                    # The portal table can have 5 or 6 columns depending on court bench;
+                    # always check the LAST cell for the download link so extra status
+                    # columns don't cause the link to be silently skipped.
+                    if len(cells) < 3:
                         continue
-                    link = cells[4].find("a")
+                    link = cells[-1].find("a")
                     href = link.get("href") if link else None
                     if not href:
                         continue
@@ -226,11 +245,16 @@ class BombayHighCourtScraper:
                         }
                     )
 
-            # Fallback: any PDF/order links when the table is absent or empty
+            # Fallback: any PDF/order/auth links when the table is absent or empty.
+            # generatenewauth.php is the Bombay HC file-server auth endpoint used for
+            # all order PDF downloads — it must be matched even when its href does not
+            # contain "order" or ".pdf".
             if not orders:
                 for link in soup.find_all(
                     "a",
-                    href=re.compile(r"\.(pdf)$|order|judg", re.IGNORECASE),
+                    href=re.compile(
+                        r"\.(pdf)$|order|judg|generatenewauth", re.IGNORECASE
+                    ),
                 ):
                     href = link.get("href")
                     if not href:
@@ -713,9 +737,11 @@ class BombayHighCourtScraper:
         rows = page.query_selector_all("#cn_CaseNoOrders table tbody tr")
         for row in rows:
             cells = row.query_selector_all("td")
-            if len(cells) < 5:
+            # Require at least 3 cells; always check the LAST cell for the download
+            # link so that 6-column variants (extra status column) still resolve.
+            if len(cells) < 3:
                 continue
-            link = cells[4].query_selector("a")
+            link = cells[-1].query_selector("a")
             href = link.get_attribute("href") if link else None
             if not href:
                 continue
