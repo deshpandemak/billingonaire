@@ -88,7 +88,9 @@ def test_process_single_case_playwright_success(manager_with_mocks):
     manager.court_scraper._fetch_with_provider.return_value = {
         "result": {"_dummy": True},
         "provider_sequence": ["http"],
-        "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+        "provider_attempts": [
+            {"step": "http", "status": "success", "duration_ms": 100}
+        ],
     }
     manager.court_scraper._enrich_case_orders_result.return_value = {
         "status": "found",
@@ -121,7 +123,10 @@ def test_process_single_case_playwright_success(manager_with_mocks):
 
     assert result["download_success"] is True
     manager.court_scraper._fetch_with_provider.assert_called_once_with(
-        case_ref="WP/3373/2025", date="2025-04-09", bench="mumbai", include_diagnostics=True
+        case_ref="WP/3373/2025",
+        date="2025-04-09",
+        bench="mumbai",
+        include_diagnostics=True,
     )
 
 
@@ -151,5 +156,8 @@ def test_process_single_case_playwright_no_orders(manager_with_mocks):
 
     assert result["download_success"] is False
     manager.court_scraper._fetch_with_provider.assert_called_once_with(
-        case_ref="WP/3374/2025", date="2025-04-09", bench="mumbai", include_diagnostics=True
+        case_ref="WP/3374/2025",
+        date="2025-04-09",
+        bench="mumbai",
+        include_diagnostics=True,
     )

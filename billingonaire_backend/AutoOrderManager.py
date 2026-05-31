@@ -648,18 +648,20 @@ class AutoOrderManager:
                     for a in attempts
                 ],
             )
-            api_response = self.court_scraper._enrich_case_orders_result(
-                diagnostics["result"]
-            ) if diagnostics.get("result") else {
-                "status": "not_found",
-                "message": "All scraper providers returned no result. "
-                + "; ".join(
-                    f"{a.get('step')} {a.get('status')}"
-                    + (f": {a.get('error')}" if a.get("error") else "")
-                    for a in attempts
-                ),
-                "case_orders": [],
-            }
+            api_response = (
+                self.court_scraper._enrich_case_orders_result(diagnostics["result"])
+                if diagnostics.get("result")
+                else {
+                    "status": "not_found",
+                    "message": "All scraper providers returned no result. "
+                    + "; ".join(
+                        f"{a.get('step')} {a.get('status')}"
+                        + (f": {a.get('error')}" if a.get("error") else "")
+                        for a in attempts
+                    ),
+                    "case_orders": [],
+                }
+            )
 
             if not isinstance(api_response, dict):
                 result["error"] = "Direct API returned non-dict response"

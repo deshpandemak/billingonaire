@@ -202,7 +202,9 @@ def test_process_all_orders_from_api_success(auto_order_manager):
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -254,7 +256,9 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -391,7 +395,9 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -514,7 +520,9 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -573,7 +581,9 @@ def test_process_all_orders_from_api_skips_order_not_matching_board_date(
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -635,7 +645,9 @@ def test_process_all_orders_from_api_different_hearing_date_triggers_own_downloa
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
@@ -693,7 +705,9 @@ def test_process_all_orders_from_api_no_board_date_processes_all_orders(
         return_value={
             "result": {"_dummy": True},
             "provider_sequence": ["http"],
-            "provider_attempts": [{"step": "http", "status": "success", "duration_ms": 100}],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
         }
     )
     auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
