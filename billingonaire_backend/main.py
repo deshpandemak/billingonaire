@@ -4422,15 +4422,22 @@ async def get_order_pdf(doc_id: str):
         case_no = str(case_data.get("case_no") or "")
         case_year = str(case_data.get("case_year") or "")
         case_ref = f"{case_type}/{case_no}/{case_year}"
-        # Use the actual order date from case-details (preferred) to match the
-        # blob name used during the original upload. Board date can differ from
-        # the order date (e.g. a hearing listed on 2025-04-09 whose order was
-        # issued on 2025-04-08).
-        _raw_order_date = (
-            _details.get("latest_order_date")
-            or case_data.get("board_date")
-            or datetime.now().strftime("%Y-%m-%d")
-        )
+        # Use the actual order date from case-details to match the blob name used
+        # during the original upload. Fall back through: latest_order_date →
+        # the matching order entry's date → board_date → today (last resort, avoids
+        # creating an orphan GCS blob with today's date that can't be linked back).
+        _raw_order_date = _details.get("latest_order_date")
+        if not _raw_order_date:
+            # Walk orders to find the entry whose order_link matches the URL we just
+            # served — that gives us the correct date for the GCS blob name.
+            for _o in reversed(_details.get("orders") or []):
+                if isinstance(_o, dict) and _o.get("order_link") == order_link:
+                    _raw_order_date = _o.get("order_date")
+                    break
+        if not _raw_order_date:
+            _raw_order_date = case_data.get("board_date") or datetime.now().strftime(
+                "%Y-%m-%d"
+            )
         # Firestore Timestamps stringify as "YYYY-MM-DD HH:MM:SS"; strip the time
         # component so GCS blob names don't contain spaces.
         order_date = str(_raw_order_date).split(" ")[0].split("T")[0]
@@ -4439,8 +4446,21 @@ async def get_order_pdf(doc_id: str):
             _pdf: bytes, _case_ref: str, _order_date: str, _doc_id: str
         ) -> None:
             mgr = get_auto_order_manager()
+            if not mgr._gcs_bucket_name:
+                logger.debug(
+                    "get_order_pdf: GCS upgrade skipped for doc_id=%s — "
+                    "ORDER_PDF_BUCKET not configured",
+                    _doc_id,
+                )
+                return
             gcs_url = mgr._upload_order_to_gcs(_pdf, _case_ref, _order_date)
             if not gcs_url:
+                logger.warning(
+                    "get_order_pdf: GCS upload failed for doc_id=%s case_ref=%s — "
+                    "order_link remains as court URL. Run GET /admin/test-gcs to diagnose.",
+                    _doc_id,
+                    _case_ref,
+                )
                 return
             try:
                 mgr.case_store.append_case_order(

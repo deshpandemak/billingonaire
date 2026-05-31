@@ -46,6 +46,17 @@ The Stop hook in `.claude/settings.json` runs black (CI-pinned `==23.12.1` from 
 
 flake8 ignores E203/E501/W503 (line length 88, matching black). Test files suppress F401/F841.
 
+### Local GCS setup (PDF storage)
+
+`ORDER_PDF_BUCKET=billingonaire-court-orders` is already in `billingonaire_backend/.env`.
+To actually write to GCS locally, authenticate with ADC once:
+
+```bash
+gcloud auth application-default login
+```
+
+Without ADC the backend still works — PDFs are served from live court URLs, but uploads to GCS are skipped and logged at WARNING level. Use `/admin/test-gcs` (requires admin auth) to verify bucket write access. Use `/admin/gcs-bucket-info` to check for lifecycle rules that might be deleting blobs.
+
 ### Frontend (`billingonaire-ui/`)
 
 ```bash
