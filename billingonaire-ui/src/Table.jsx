@@ -590,12 +590,14 @@ const Table = () => {
         const displayLabel = errorReason && JOB_TERMINAL.has(status) && status !== 'analysed'
           ? `${baseLabel}: ${errorReason}`
           : baseLabel;
+        const gcsUploadFailed = res.gcs_upload_failed === true;
 
         setJobStatuses(prev => new Map(prev).set(caseId, {
           caseRef,
           status,
           label: displayLabel,
           errorReason,
+          gcsUploadFailed,
           variant: jobVariant(status),
         }));
 
@@ -1062,6 +1064,12 @@ const Table = () => {
                     <span style={{ fontWeight: 600, color, textAlign: 'right' }}
                           title={job.errorReason || undefined}>
                       {job.label}
+                      {job.gcsUploadFailed && (
+                        <span style={{ marginLeft: 6, fontWeight: 400, fontSize: '0.75rem', color: '#92400e' }}
+                              title="Order PDF was stored as a temporary court URL — link may expire. Check Cloud Run logs and run /admin/test-gcs to diagnose.">
+                          ⚠ link may expire
+                        </span>
+                      )}
                     </span>
                   </div>
                 );

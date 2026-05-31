@@ -366,11 +366,15 @@ class AutoOrderManager:
             )
             return https_url
         except Exception as exc:
-            logger.warning(
-                "_upload_order_to_gcs failed for case_ref=%s date=%s: %s",
+            logger.error(
+                "_upload_order_to_gcs failed for case_ref=%s date=%s: %s — "
+                "check Cloud Run service account permissions on bucket %s. "
+                "Run GET /admin/test-gcs to diagnose.",
                 case_ref,
                 order_date,
                 exc,
+                self._gcs_bucket_name,
+                exc_info=True,
             )
             return None
 
@@ -471,6 +475,7 @@ class AutoOrderManager:
         api_respondent: str,
         order_link: Optional[str] = None,
         board_date: Optional[str] = None,
+        gcs_upload_failed: bool = False,
     ) -> Dict[str, Any]:
         """Analyse a PDF using the court API-provided date and party names.
 
@@ -516,6 +521,7 @@ class AutoOrderManager:
                 "order_last_updated": datetime.now().isoformat(),
                 "order_analysis_metadata": analysis_metadata,
                 "date_source": "api",
+                "gcs_upload_failed": gcs_upload_failed,
             }
 
             self.case_store.transition_lifecycle(
@@ -545,6 +551,7 @@ class AutoOrderManager:
                         "order_analysis_metadata"
                     ],
                     "date_source": "api",
+                    "gcs_upload_failed": gcs_upload_failed,
                 },
             )
             self.case_store.transition_lifecycle(
@@ -788,6 +795,17 @@ class AutoOrderManager:
                     pdf_bytes, case_ref, order_date_str
                 )
                 final_order_link: str = stored_url or download_link
+                gcs_upload_failed = stored_url is None and bool(
+                    self._gcs_bucket_name
+                )
+                if gcs_upload_failed:
+                    logger.error(
+                        "_process_all_orders_from_api: GCS upload failed for "
+                        "case_ref=%s date=%s — storing expiring court URL instead. "
+                        "Run GET /admin/test-gcs to diagnose the bucket permission.",
+                        case_ref,
+                        order_date_str,
+                    )
 
                 # Analyse and persist
                 try:
@@ -800,6 +818,7 @@ class AutoOrderManager:
                         api_respondent=api_respondent,
                         order_link=final_order_link,
                         board_date=board_date,
+                        gcs_upload_failed=gcs_upload_failed,
                     )
                     if anal.get("success"):
                         result["orders_processed"] += 1
