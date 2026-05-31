@@ -327,24 +327,26 @@ def test_fetch_with_http_no_case_details_returns_none():
     assert result is None
 
 
-def test_fetch_with_http_get_error_returns_none():
+def test_fetch_with_http_get_error_raises():
+    """Non-200 GET response raises HTTPError so _run_provider_attempts captures the status."""
     scraper = BombayHighCourtScraper()
     mock_session = Mock()
     mock_session.get = Mock(return_value=Mock(status_code=503, text=""))
     scraper.session = mock_session
 
-    result = scraper._fetch_with_http("WP/100/2025")
-    assert result is None
+    with pytest.raises(_requests.exceptions.HTTPError):
+        scraper._fetch_with_http("WP/100/2025")
 
 
-def test_fetch_with_http_network_exception_returns_none():
+def test_fetch_with_http_network_exception_propagates():
+    """Network errors propagate so _run_provider_attempts captures the error text."""
     scraper = BombayHighCourtScraper()
     mock_session = Mock()
     mock_session.get = Mock(side_effect=_requests.exceptions.ConnectionError("timeout"))
     scraper.session = mock_session
 
-    result = scraper._fetch_with_http("WP/100/2025")
-    assert result is None
+    with pytest.raises(_requests.exceptions.ConnectionError):
+        scraper._fetch_with_http("WP/100/2025")
 
 
 def test_fetch_with_http_invalid_case_ref_returns_none():

@@ -280,13 +280,10 @@ class BombayHighCourtScraper:
                 self.case_status_url, timeout=self.request_timeout_seconds
             )
             if get_resp.status_code != 200:
-                logger.warning(
-                    "_fetch_with_http: GET %s returned HTTP %d for %s",
-                    self.case_status_url,
-                    get_resp.status_code,
-                    case_ref,
+                raise requests.exceptions.HTTPError(
+                    f"HTTP {get_resp.status_code} on GET {self.case_status_url} for {case_ref}",
+                    response=get_resp,
                 )
-                return None
             initial_html = get_resp.text
 
             # Step 2: GET case-type options via AJAX endpoint
@@ -324,12 +321,10 @@ class BombayHighCourtScraper:
                 allow_redirects=True,
             )
             if post_resp.status_code not in (200, 302):
-                logger.warning(
-                    "_fetch_with_http: POST returned HTTP %d for %s",
-                    post_resp.status_code,
-                    case_ref,
+                raise requests.exceptions.HTTPError(
+                    f"HTTP {post_resp.status_code} on POST for {case_ref}",
+                    response=post_resp,
                 )
-                return None
 
             # Step 4: Parse response (JSON wrapper {"status": true, "page": "<html>"} or raw HTML)
             html_content = ""
@@ -374,12 +369,12 @@ class BombayHighCourtScraper:
 
         except requests.exceptions.RequestException as exc:
             logger.warning("_fetch_with_http: network error for %s: %s", case_ref, exc)
-            return None
+            raise
         except Exception as exc:
             logger.warning(
                 "_fetch_with_http: unexpected error for %s: %s", case_ref, exc
             )
-            return None
+            raise
 
     def _run_provider_attempts(
         self,
