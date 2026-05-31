@@ -5867,5 +5867,75 @@ async def scraper_configure(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/scraper/test-case", tags=["Case Orders"])
+async def scraper_test_case(
+    request: Request,
+    current_user: dict = Depends(require_admin_active),
+):
+    """Run a live scrape for a case reference and return full diagnostics.
+
+    POST body: {"case_ref": "WP/3434/2026", "date": "2026-05-30"}
+    Returns the raw provider result including court_orders, case_details,
+    the provider sequence that ran, and each attempt's duration and status.
+    Useful for diagnosing download failures without triggering a full pipeline run.
+    """
+    _ = current_user
+    import time as _time
+
+    body = await request.json()
+    case_ref = str(body.get("case_ref") or "").strip().upper()
+    date = body.get("date")
+
+    if not case_ref:
+        return JSONResponse(status_code=400, content={"error": "case_ref is required"})
+
+    scraper = get_court_scraper()
+    started = _time.time()
+
+    loop = asyncio.get_event_loop()
+    try:
+        diagnostics = await asyncio.wait_for(
+            loop.run_in_executor(
+                executor,
+                lambda: scraper._fetch_with_provider(
+                    case_ref=case_ref,
+                    date=date,
+                    bench="mumbai",
+                    include_diagnostics=True,
+                ),
+            ),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={"error": "Scraper timed out after 120 seconds", "case_ref": case_ref},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc), "case_ref": case_ref},
+        )
+
+    elapsed_ms = int((_time.time() - started) * 1000)
+    result = diagnostics.get("result") or {}
+    court_orders = result.get("court_orders") or []
+    return JSONResponse(
+        content={
+            "case_ref": case_ref,
+            "date_filter": date,
+            "elapsed_ms": elapsed_ms,
+            "provider": diagnostics.get("provider"),
+            "provider_sequence": diagnostics.get("provider_sequence"),
+            "provider_attempts": diagnostics.get("provider_attempts"),
+            "found": bool(result),
+            "orders_found": len(court_orders),
+            "court_orders": court_orders,
+            "case_details": result.get("case_details"),
+            "source": result.get("source"),
+        }
+    )
+
+
 # Cloud Run entry point - uvicorn will run the app directly
 # For Cloud Functions deployment, use a separate functions_entry.py file
