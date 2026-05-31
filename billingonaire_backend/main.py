@@ -3024,9 +3024,12 @@ async def process_single_case(request: Request, current_user=Depends(get_current
         # Enqueue asynchronously — do not block the request for up to 5 minutes.
         # The caller can poll GET /auto-orders/job-status/{case_id} for progress.
         auto_mgr = get_auto_order_manager()
+        # force=True so retries always reset lifecycle regardless of current state
+        # (e.g. fetch_in_progress from a previous stuck/timed-out attempt).
         auto_mgr.case_store.transition_lifecycle(
             case_ref,
             "fetch_queued",
+            force=True,
             metadata={"source": "process_case_endpoint", "case_id": case_id},
             event_type="fetch_job_queued",
         )
