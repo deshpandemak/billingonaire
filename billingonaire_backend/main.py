@@ -3089,6 +3089,15 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
         events = case_data.get("lifecycle_events") or []
         last_event = events[-1] if events else {}
 
+        # Check if the most recent order was stored with an expiring court URL
+        # because the GCS upload failed (persisted in order payload).
+        orders = case_data.get("orders") or []
+        orders_with_link = [
+            o for o in orders if isinstance(o, dict) and o.get("order_link")
+        ]
+        latest_order = orders_with_link[-1] if orders_with_link else {}
+        gcs_upload_failed = bool(latest_order.get("gcs_upload_failed"))
+
         return JSONResponse(
             content={
                 "doc_id": doc_id,
@@ -3105,6 +3114,7 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
                 or board_data.get("order_category"),
                 "order_link": case_data.get("latest_order_link")
                 or board_data.get("order_link"),
+                "gcs_upload_failed": gcs_upload_failed,
                 "updated_at": updated_at.isoformat()
                 if hasattr(updated_at, "isoformat")
                 else str(updated_at)
@@ -4412,8 +4422,12 @@ async def get_order_pdf(doc_id: str):
         case_no = str(case_data.get("case_no") or "")
         case_year = str(case_data.get("case_year") or "")
         case_ref = f"{case_type}/{case_no}/{case_year}"
+        # Use the actual order date from case-details (preferred) to match the
+        # blob name used during the original upload. Board date can differ from
+        # the order date (e.g. a hearing listed on 2025-04-09 whose order was
+        # issued on 2025-04-08).
         _raw_order_date = (
-            case_data.get("latest_order_date")
+            _details.get("latest_order_date")
             or case_data.get("board_date")
             or datetime.now().strftime("%Y-%m-%d")
         )
