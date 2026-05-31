@@ -32,7 +32,7 @@ class BombayHighCourtScraper:
             "https://bombayhighcourt.gov.in/bhc/get-case-types-by-side"
         )
         self.scraper_provider = (
-            os.getenv("COURT_SCRAPER_PROVIDER", "playwright").strip().lower()
+            os.getenv("COURT_SCRAPER_PROVIDER", "http").strip().lower()
         )
         self.playwright_headless = (
             os.getenv("COURT_PLAYWRIGHT_HEADLESS", "true").strip().lower() == "true"
@@ -63,12 +63,15 @@ class BombayHighCourtScraper:
         }
 
     def _supported_providers(self) -> List[str]:
-        return ["playwright"]
+        return ["http", "playwright"]
 
     def get_scraper_config(self) -> Dict[str, Any]:
         return {
             "provider": self.scraper_provider,
             "supported_providers": self._supported_providers(),
+            "http": {
+                "timeout_seconds": self.request_timeout_seconds,
+            },
             "playwright": {
                 "available": bool(sync_playwright),
                 "headless": self.playwright_headless,
@@ -122,6 +125,262 @@ class BombayHighCourtScraper:
             logger.error("Error parsing case number %s: %s", case_ref, exc)
             return {}
 
+    def _provider_attempt_sequence(self, provider: str) -> List[str]:
+        """Return the ordered list of providers to attempt for a given requested provider.
+
+        Requesting ``"playwright"`` explicitly skips the HTTP path entirely.
+        Any other value (including ``"http"``, the default) uses HTTP first
+        then falls back to Playwright.
+        """
+        if (provider or "http").lower() == "playwright":
+            return ["playwright"]
+        return ["http", "playwright"]
+
+    def _build_form_data(
+        self,
+        case_parts: Dict[str, str],
+        initial_html: str,
+        case_type_options: List[Dict[str, Any]],
+    ) -> Dict[str, str]:
+        """Build the POST body for the case-status form submission.
+
+        Parses hidden CSRF/token fields from *initial_html*, resolves the
+        numeric case_type value from *case_type_options*, and fills in the
+        standard search fields.
+        """
+        form_data: Dict[str, str] = {}
+
+        # Extract any hidden input fields (CSRF tokens, session keys)
+        soup = BeautifulSoup(initial_html, "html.parser")
+        for inp in soup.find_all("input", type="hidden"):
+            name = inp.get("name")
+            value = inp.get("value", "")
+            if name:
+                form_data[name] = value
+
+        # Resolve the numeric case_type option value from the AJAX options list
+        base_case_type = self._get_base_case_type(case_parts["case_type"])
+        resolved_case_type = base_case_type  # fallback: use label string
+        for opt in case_type_options:
+            label = str(opt.get("name") or opt.get("label") or opt.get("text") or "")
+            if label.strip().upper() == base_case_type.upper():
+                resolved_case_type = str(
+                    opt.get("value") or opt.get("id") or base_case_type
+                )
+                break
+        if resolved_case_type == base_case_type and case_type_options:
+            logger.warning(
+                "_build_form_data: case_type %r not found in options %s; using label fallback",
+                base_case_type,
+                [o.get("name") or o.get("label") for o in case_type_options[:5]],
+            )
+
+        form_data.update(
+            {
+                "side": "1",
+                "stampreg": self._get_stampreg_value(case_parts["case_type"]),
+                "case_type": resolved_case_type,
+                "case_no": case_parts["case_number"],
+                "year": case_parts["year"],
+            }
+        )
+        return form_data
+
+    def _extract_orders_from_html(
+        self,
+        html_content: str,
+        base_url: str,
+    ) -> List[Dict[str, Optional[str]]]:
+        """Extract court orders from the HTML response of the case-status portal.
+
+        Primary selector: ``#cn_CaseNoOrders table tbody tr`` — mirrors the
+        Playwright ``_extract_orders_new`` method but uses BeautifulSoup.
+        Falls back to any ``<a>`` tag whose href contains ``.pdf``, ``order``,
+        or ``judg`` when the primary table is absent or empty.
+        Deduplicates by download URL.
+        """
+        orders: List[Dict[str, Optional[str]]] = []
+        seen_urls: set = set()
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+
+            # Primary: orders table
+            table = soup.select_one("#cn_CaseNoOrders table tbody")
+            if table:
+                for row in table.find_all("tr"):
+                    cells = row.find_all("td")
+                    if len(cells) < 5:
+                        continue
+                    link = cells[4].find("a")
+                    href = link.get("href") if link else None
+                    if not href:
+                        continue
+                    full_url = requests.compat.urljoin(base_url, href)
+                    if full_url in seen_urls:
+                        continue
+                    seen_urls.add(full_url)
+                    orders.append(
+                        {
+                            "listing_date": cells[2].get_text(strip=True) or None,
+                            "download_url": full_url,
+                        }
+                    )
+
+            # Fallback: any PDF/order links when the table is absent or empty
+            if not orders:
+                for link in soup.find_all(
+                    "a",
+                    href=re.compile(r"\.(pdf)$|order|judg", re.IGNORECASE),
+                ):
+                    href = link.get("href")
+                    if not href:
+                        continue
+                    full_url = requests.compat.urljoin(base_url, href)
+                    if full_url in seen_urls:
+                        continue
+                    seen_urls.add(full_url)
+                    orders.append(
+                        {
+                            "listing_date": self._extract_listing_date_from_text(
+                                link.get_text(strip=True)
+                            ),
+                            "download_url": full_url,
+                        }
+                    )
+        except Exception as exc:
+            logger.error("_extract_orders_from_html: parse error: %s", exc)
+        return orders
+
+    def _fetch_with_http(
+        self,
+        case_ref: str,
+        date: Optional[str] = None,
+        bench: str = "mumbai",
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch case orders via direct HTTP POST — no browser required.
+
+        Flow:
+          1. GET the form page (establishes session cookies, reads hidden
+             fields and case-type option values).
+          2. GET the case-types AJAX endpoint to resolve the numeric case_type.
+          3. POST the form with the resolved fields.
+          4. Parse the response (JSON wrapper or plain HTML) with BeautifulSoup.
+
+        Returns the same dict shape as ``_fetch_with_playwright_new`` on
+        success, or ``None`` if any step fails (signals Playwright fallback).
+        """
+        del date, bench  # not used for the HTTP path — POST fetches all orders
+        case_parts = self.parse_case_number(case_ref)
+        if not case_parts:
+            return None
+
+        try:
+            # Step 1: GET form page — establishes session cookies
+            get_resp = self.session.get(
+                self.case_status_url, timeout=self.request_timeout_seconds
+            )
+            if get_resp.status_code != 200:
+                logger.warning(
+                    "_fetch_with_http: GET %s returned HTTP %d for %s",
+                    self.case_status_url,
+                    get_resp.status_code,
+                    case_ref,
+                )
+                return None
+            initial_html = get_resp.text
+
+            # Step 2: GET case-type options via AJAX endpoint
+            case_type_options: List[Dict[str, Any]] = []
+            try:
+                types_resp = self.session.get(
+                    self.case_types_url,
+                    params={"side": "1"},
+                    timeout=self.request_timeout_seconds,
+                )
+                if types_resp.status_code == 200:
+                    case_type_options = types_resp.json()
+                    if not isinstance(case_type_options, list):
+                        case_type_options = []
+            except Exception as types_exc:
+                logger.warning(
+                    "_fetch_with_http: case-types AJAX failed for %s: %s — "
+                    "using label fallback for case_type",
+                    case_ref,
+                    types_exc,
+                )
+
+            # Step 3: POST form
+            form_data = self._build_form_data(
+                case_parts, initial_html, case_type_options
+            )
+            post_resp = self.session.post(
+                self.case_status_url,
+                data=form_data,
+                timeout=self.request_timeout_seconds,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": self.case_status_url,
+                },
+                allow_redirects=True,
+            )
+            if post_resp.status_code not in (200, 302):
+                logger.warning(
+                    "_fetch_with_http: POST returned HTTP %d for %s",
+                    post_resp.status_code,
+                    case_ref,
+                )
+                return None
+
+            # Step 4: Parse response (JSON wrapper {"status": true, "page": "<html>"} or raw HTML)
+            html_content = ""
+            try:
+                data = post_resp.json()
+                if not data.get("status"):
+                    logger.info(
+                        "_fetch_with_http: portal returned status=False for %s",
+                        case_ref,
+                    )
+                    return None
+                html_content = data.get("page", "")
+            except ValueError:
+                # Plain HTML response (no JSON wrapper)
+                html_content = post_resp.text
+
+            if not html_content:
+                return None
+
+            # Step 5: Extract case details and orders
+            case_details = self._extract_case_details_from_html(html_content, case_ref)
+            if not case_details:
+                logger.info(
+                    "_fetch_with_http: could not extract case details for %s — "
+                    "Playwright fallback will be used",
+                    case_ref,
+                )
+                return None
+
+            court_orders = self._extract_orders_from_html(html_content, post_resp.url)
+            logger.info(
+                "_fetch_with_http: succeeded for %s orders_found=%d",
+                case_ref,
+                len(court_orders),
+            )
+            return {
+                "status": "found",
+                "source": "http",
+                "case_details": case_details,
+                "court_orders": court_orders,
+            }
+
+        except requests.exceptions.RequestException as exc:
+            logger.warning("_fetch_with_http: network error for %s: %s", case_ref, exc)
+            return None
+        except Exception as exc:
+            logger.warning(
+                "_fetch_with_http: unexpected error for %s: %s", case_ref, exc
+            )
+            return None
+
     def _run_provider_attempts(
         self,
         case_ref: str,
@@ -129,81 +388,159 @@ class BombayHighCourtScraper:
         bench: str,
         provider: str,
     ) -> Dict[str, Any]:
+        """Run the provider sequence for *case_ref*, returning on first success.
+
+        The sequence is determined by ``_provider_attempt_sequence``:
+        - ``"playwright"`` → Playwright only (retried up to playwright_retry_count)
+        - anything else (default ``"http"``) → HTTP first, then Playwright fallback
+        """
+        sequence = self._provider_attempt_sequence(provider)
         attempts: List[Dict[str, Any]] = []
         final_result: Optional[Dict[str, Any]] = None
 
         logger.info(
-            "Playwright fetch starting for case_ref=%s retries=%d",
+            "Provider attempt sequence starting for case_ref=%s sequence=%s",
             case_ref,
-            self.playwright_retry_count,
+            sequence,
         )
-        for attempt_num in range(1, self.playwright_retry_count + 1):
-            started = time.time()
-            logger.info(
-                "Playwright attempt %d/%d for case_ref=%s",
-                attempt_num,
-                self.playwright_retry_count,
-                case_ref,
-            )
-            try:
-                result = self._fetch_with_playwright_new(
-                    case_ref, date=date, bench=bench
-                )
-                duration_ms = int((time.time() - started) * 1000)
-                if result:
-                    logger.info(
-                        "Playwright succeeded attempt=%d for case_ref=%s in %dms orders_found=%d",
-                        attempt_num,
+
+        for step_provider in sequence:
+            if final_result:
+                break
+
+            if step_provider == "http":
+                started = time.time()
+                try:
+                    result = self._fetch_with_http(case_ref, date=date, bench=bench)
+                    duration_ms = int((time.time() - started) * 1000)
+                    if result:
+                        logger.info(
+                            "HTTP succeeded for case_ref=%s in %dms orders_found=%d",
+                            case_ref,
+                            duration_ms,
+                            len(result.get("court_orders") or []),
+                        )
+                        attempts.append(
+                            {
+                                "step": "http",
+                                "attempt": 1,
+                                "status": "success",
+                                "source": "http",
+                                "orders_found": len(result.get("court_orders") or []),
+                                "duration_ms": duration_ms,
+                            }
+                        )
+                        final_result = result
+                    else:
+                        logger.info(
+                            "HTTP returned no result for case_ref=%s in %dms — "
+                            "trying Playwright",
+                            case_ref,
+                            duration_ms,
+                        )
+                        attempts.append(
+                            {
+                                "step": "http",
+                                "attempt": 1,
+                                "status": "no_result",
+                                "duration_ms": duration_ms,
+                            }
+                        )
+                except Exception as exc:
+                    duration_ms = int((time.time() - started) * 1000)
+                    logger.warning(
+                        "HTTP attempt raised for case_ref=%s in %dms: %s — "
+                        "falling back to Playwright",
                         case_ref,
                         duration_ms,
-                        len(result.get("court_orders") or []),
+                        exc,
                     )
                     attempts.append(
                         {
-                            "attempt": attempt_num,
-                            "status": "success",
-                            "source": result.get("source"),
-                            "orders_found": len(result.get("court_orders") or []),
+                            "step": "http",
+                            "attempt": 1,
+                            "status": "error",
+                            "error": str(exc),
                             "duration_ms": duration_ms,
                         }
                     )
-                    final_result = result
-                    break
 
-                logger.warning(
-                    "Playwright attempt=%d returned no result for case_ref=%s in %dms",
-                    attempt_num,
-                    case_ref,
-                    duration_ms,
-                )
-                attempts.append(
-                    {
-                        "attempt": attempt_num,
-                        "status": "no_result",
-                        "duration_ms": duration_ms,
-                    }
-                )
-            except Exception as exc:
-                duration_ms = int((time.time() - started) * 1000)
-                logger.error(
-                    "Playwright attempt=%d raised exception for case_ref=%s in %dms: %s",
-                    attempt_num,
-                    case_ref,
-                    duration_ms,
-                    exc,
-                )
-                attempts.append(
-                    {
-                        "attempt": attempt_num,
-                        "status": "error",
-                        "error": str(exc),
-                        "duration_ms": duration_ms,
-                    }
-                )
+            elif step_provider == "playwright":
+                for attempt_num in range(1, self.playwright_retry_count + 1):
+                    if final_result:
+                        break
+                    started = time.time()
+                    logger.info(
+                        "Playwright attempt %d/%d for case_ref=%s",
+                        attempt_num,
+                        self.playwright_retry_count,
+                        case_ref,
+                    )
+                    try:
+                        result = self._fetch_with_playwright_new(
+                            case_ref, date=date, bench=bench
+                        )
+                        duration_ms = int((time.time() - started) * 1000)
+                        if result:
+                            logger.info(
+                                "Playwright succeeded attempt=%d for case_ref=%s "
+                                "in %dms orders_found=%d",
+                                attempt_num,
+                                case_ref,
+                                duration_ms,
+                                len(result.get("court_orders") or []),
+                            )
+                            attempts.append(
+                                {
+                                    "step": "playwright",
+                                    "attempt": attempt_num,
+                                    "status": "success",
+                                    "source": "playwright",
+                                    "orders_found": len(
+                                        result.get("court_orders") or []
+                                    ),
+                                    "duration_ms": duration_ms,
+                                }
+                            )
+                            final_result = result
+                        else:
+                            logger.warning(
+                                "Playwright attempt=%d returned no result for "
+                                "case_ref=%s in %dms",
+                                attempt_num,
+                                case_ref,
+                                duration_ms,
+                            )
+                            attempts.append(
+                                {
+                                    "step": "playwright",
+                                    "attempt": attempt_num,
+                                    "status": "no_result",
+                                    "duration_ms": duration_ms,
+                                }
+                            )
+                    except Exception as exc:
+                        duration_ms = int((time.time() - started) * 1000)
+                        logger.error(
+                            "Playwright attempt=%d raised for case_ref=%s in %dms: %s",
+                            attempt_num,
+                            case_ref,
+                            duration_ms,
+                            exc,
+                        )
+                        attempts.append(
+                            {
+                                "step": "playwright",
+                                "attempt": attempt_num,
+                                "status": "error",
+                                "error": str(exc),
+                                "duration_ms": duration_ms,
+                            }
+                        )
 
         return {
-            "provider": "playwright",
-            "provider_sequence": ["playwright"],
+            "provider": sequence[-1] if sequence else provider,
+            "provider_sequence": sequence,
             "provider_attempts": attempts,
             "result": final_result,
         }
