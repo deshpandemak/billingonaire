@@ -5909,7 +5909,10 @@ async def scraper_test_case(
     except asyncio.TimeoutError:
         return JSONResponse(
             status_code=504,
-            content={"error": "Scraper timed out after 120 seconds", "case_ref": case_ref},
+            content={
+                "error": "Scraper timed out after 120 seconds",
+                "case_ref": case_ref,
+            },
         )
     except Exception as exc:
         return JSONResponse(

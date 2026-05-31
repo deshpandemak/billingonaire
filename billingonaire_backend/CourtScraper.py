@@ -413,7 +413,9 @@ class BombayHighCourtScraper:
                 try:
                     result = self._fetch_with_http(case_ref, date=date, bench=bench)
                     duration_ms = int((time.time() - started) * 1000)
-                    orders_found = len(result.get("court_orders") or []) if result else 0
+                    orders_found = (
+                        len(result.get("court_orders") or []) if result else 0
+                    )
                     # Only treat HTTP as a success when it found at least one order
                     # link.  Returning a result with 0 orders means the static HTML
                     # had no downloadable links (orders may be rendered via JS after
