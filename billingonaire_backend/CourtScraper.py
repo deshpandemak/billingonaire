@@ -820,10 +820,10 @@ class BombayHighCourtScraper:
                 self.playwright_timeout_seconds,
                 exc,
             )
-            return None
+            raise
         except Exception as exc:
             logger.error("Playwright scraper failed for %s: %s", case_ref, exc)
-            return None
+            raise
 
     def debug_case_orders(
         self,
