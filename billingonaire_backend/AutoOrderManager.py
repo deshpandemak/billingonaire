@@ -624,10 +624,43 @@ class AutoOrderManager:
             "error": None,
         }
         try:
-            api_response = self.court_scraper.get_case_orders(
+            # Use include_diagnostics so we can log each provider attempt
+            diagnostics = self.court_scraper._fetch_with_provider(
                 case_ref=case_ref,
                 date=board_date,
                 bench="mumbai",
+                include_diagnostics=True,
+            )
+            attempts = diagnostics.get("provider_attempts") or []
+            logger.info(
+                "_process_all_orders_from_api scraper diagnostics for %s: "
+                "sequence=%s attempts=%s",
+                case_ref,
+                diagnostics.get("provider_sequence"),
+                [
+                    {
+                        "step": a.get("step"),
+                        "status": a.get("status"),
+                        "duration_ms": a.get("duration_ms"),
+                        "error": a.get("error"),
+                        "orders_found": a.get("orders_found"),
+                    }
+                    for a in attempts
+                ],
+            )
+            api_response = (
+                self.court_scraper._enrich_case_orders_result(diagnostics["result"])
+                if diagnostics.get("result")
+                else {
+                    "status": "not_found",
+                    "message": "All scraper providers returned no result. "
+                    + "; ".join(
+                        f"{a.get('step')} {a.get('status')}"
+                        + (f": {a.get('error')}" if a.get("error") else "")
+                        for a in attempts
+                    ),
+                    "case_orders": [],
+                }
             )
 
             if not isinstance(api_response, dict):

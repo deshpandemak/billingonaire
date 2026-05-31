@@ -198,7 +198,16 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
 
 def test_process_all_orders_from_api_success(auto_order_manager):
     """Only the order matching board_date is downloaded and analysed; others are skipped."""
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "ABC Corp",
@@ -243,7 +252,16 @@ def test_process_all_orders_from_api_success(auto_order_manager):
 
 def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
     """Already-analysed orders are skipped without re-downloading."""
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
@@ -373,7 +391,16 @@ def test_process_single_case_normalises_firestore_datetime_board_date(
 
 def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_manager):
     """When GCS upload succeeds, the HTTPS GCS URL is persisted instead of the expiring API link."""
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
@@ -489,7 +516,16 @@ def test_is_order_already_analysed_normalises_date_formats(auto_order_manager):
 
 def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manager):
     """Dates in DD/MM/YYYY from the API are normalised to YYYY-MM-DD before use."""
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
@@ -541,7 +577,16 @@ def test_process_all_orders_from_api_skips_order_not_matching_board_date(
     an old order (e.g. July 2025 for a May 2026 board trigger) would be linked
     to the current hearing, corrupting the case record.
     """
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
@@ -596,7 +641,16 @@ def test_process_all_orders_from_api_different_hearing_date_triggers_own_downloa
     When this run is for board_date 2026-03-10, only that date's order is processed.
     The May 2026 order will be handled when that board entry is processed separately.
     """
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
@@ -647,7 +701,16 @@ def test_process_all_orders_from_api_no_board_date_processes_all_orders(
     auto_order_manager,
 ):
     """When no board_date is supplied (back-fill), all orders from the API are processed."""
-    auto_order_manager.court_scraper.get_case_orders = Mock(
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
         return_value={
             "status": "found",
             "petitioner": "P",
