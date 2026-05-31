@@ -306,18 +306,29 @@ class BombayHighCourtScraper:
                     types_exc,
                 )
 
-            # Step 3: POST form
+            # Step 3: POST form.
+            # The portal uses AJAX form submission — the JS reads the CSRF token from
+            # <meta name="csrf-token"> and sends it as X-CSRF-TOKEN header (not as a
+            # hidden form field).  We also need X-Requested-With so the server treats
+            # this as an XMLHttpRequest rather than a browser form POST.
             form_data = self._build_form_data(
                 case_parts, initial_html, case_type_options
             )
+            soup_get = BeautifulSoup(initial_html, "html.parser")
+            csrf_meta = soup_get.find("meta", attrs={"name": "csrf-token"})
+            post_headers: Dict[str, str] = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": self.case_status_url,
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            }
+            if csrf_meta:
+                post_headers["X-CSRF-TOKEN"] = csrf_meta.get("content", "")
             post_resp = self.session.post(
                 self.case_status_url,
                 data=form_data,
                 timeout=self.request_timeout_seconds,
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer": self.case_status_url,
-                },
+                headers=post_headers,
                 allow_redirects=True,
             )
             if post_resp.status_code not in (200, 302):
@@ -809,10 +820,10 @@ class BombayHighCourtScraper:
                 self.playwright_timeout_seconds,
                 exc,
             )
-            return None
+            raise
         except Exception as exc:
             logger.error("Playwright scraper failed for %s: %s", case_ref, exc)
-            return None
+            raise
 
     def debug_case_orders(
         self,
