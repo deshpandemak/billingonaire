@@ -4791,7 +4791,9 @@ async def generate_bill_data(
                                 case_ids.add(case_id)
 
                                 # Determine fee and result based on order analysis
-                                fee_info = calculate_case_fee(case_data)
+                                fee_info = calculate_case_fee(
+                                    case_data, board_date=board_date_str
+                                )
 
                                 # Extract parties information
                                 parties = extract_parties_info(case_data)
@@ -4885,7 +4887,9 @@ async def generate_bill_data(
                                 case_ids.add(case_id)
 
                                 # Determine fee and result based on order analysis
-                                fee_info = calculate_case_fee(case_data)
+                                fee_info = calculate_case_fee(
+                                    case_data, board_date=board_date_str
+                                )
 
                                 # Extract parties information
                                 parties = extract_parties_info(case_data)
@@ -5176,22 +5180,49 @@ async def get_my_bills(
         )
 
 
-def calculate_case_fee(case_data: Dict) -> Dict:
+def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dict:
     """Calculate fee and result based on order analysis.
 
     Returns a dict with keys: result, fee, order_link, order_category.
     order_link and order_category are populated when the order has been
     analysed; both are None when the case has no linked order.
+
+    When *board_date* (YYYY-MM-DD) is provided, the order whose board_date
+    or order_date matches is used for fee calculation and the returned
+    order_link.  This prevents a later hearing's order from being shown
+    against an earlier bill entry for the same case.
     """
     try:
         case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
         case_details = (
             get_auto_order_manager().case_store.get_case_details(case_ref) or {}
         )
-        latest_status = case_details.get("latest_order_status", "not_linked")
-        order_link = case_details.get("latest_order_link") or None
 
-        if latest_status != "analysed":
+        orders = case_details.get("orders") or []
+
+        # Prefer the order whose board_date or order_date matches the bill date.
+        # Fall back to the most-recently analysed order when no exact match exists.
+        target_order: Dict = {}
+        if board_date and orders:
+            for o in reversed(orders):
+                if not isinstance(o, dict):
+                    continue
+                if (
+                    o.get("board_date") == board_date
+                    or o.get("order_date") == board_date
+                ):
+                    target_order = o
+                    break
+
+        if not target_order:
+            # No date match — use the last analysed order
+            for o in reversed(orders):
+                if isinstance(o, dict) and o.get("order_status") == "analysed":
+                    target_order = o
+                    break
+
+        # If we still have nothing, the case is not yet analysed
+        if not target_order or target_order.get("order_status") != "analysed":
             return {
                 "result": "*ADJOURNED*",
                 "fee": 1250,
@@ -5199,16 +5230,11 @@ def calculate_case_fee(case_data: Dict) -> Dict:
                 "order_category": None,
             }
 
-        orders = case_details.get("orders") or []
-        latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
-        order_category = (
-            case_details.get("latest_order_category")
-            or latest_order.get("order_category")
-            or ""
-        ).upper()
-        order_text = str(latest_order.get("order_text") or "").lower()
+        order_link = target_order.get("order_link") or None
+        order_category = (target_order.get("order_category") or "").upper()
+        order_text = str(target_order.get("order_text") or "").lower()
         order_disposal_reason = str(
-            latest_order.get("order_disposal_reason") or ""
+            target_order.get("order_disposal_reason") or ""
         ).lower()
 
         # Fee calculation logic based on order category and content
@@ -5236,25 +5262,15 @@ def calculate_case_fee(case_data: Dict) -> Dict:
 
         # Check for simple adjournment (lowest fee)
         elif "ADJOURNED" in order_category or "adjourned" in order_text:
-            # Check if it's due to paucity of time
-            if "paucity of time" in order_text or "due to paucity" in order_text:
-                return {
-                    "result": "ADJOURNED",
-                    "fee": 1250,
-                    "order_link": order_link,
-                    "order_category": order_category,
-                }
-            else:
-                return {
-                    "result": "ADJOURNED",
-                    "fee": 1250,
-                    "order_link": order_link,
-                    "order_category": order_category,
-                }
+            return {
+                "result": "ADJOURNED",
+                "fee": 1250,
+                "order_link": order_link,
+                "order_category": order_category,
+            }
 
-        # Default case based on order category
+        # Default
         else:
-            # If category indicates any hearing, use heard & adjourned
             if "HEARD" in order_category:
                 return {
                     "result": "HEARD & ADJN.",
@@ -5263,7 +5279,6 @@ def calculate_case_fee(case_data: Dict) -> Dict:
                     "order_category": order_category,
                 }
             else:
-                # Default to adjourned if category is unclear
                 return {
                     "result": "*ADJOURNED*",
                     "fee": 1250,
