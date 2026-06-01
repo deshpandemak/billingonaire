@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table, Alert, Modal, Spinner } from 'react-bootstrap';
-import { authenticatedFetchJSON, authenticatedFetch } from './lib/api.js';
+import { authenticatedFetchJSON, authenticatedFetch, getApiUrl } from './lib/api.js';
 import { auth } from './lib/firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -588,6 +588,23 @@ const BillGeneration = () => {
                                                 Total Entries: {billData.total_entries} |
                                                 Total Fees: ₹{billData.total_fees?.toLocaleString() || 0}
                                             </p>
+                                            {(() => {
+                                                const linked = (billData.bill_entries || []).filter(e => e.order_link).length;
+                                                const total = (billData.bill_entries || []).length;
+                                                if (!total) return null;
+                                                return (
+                                                    <p className="mb-0" style={{ fontSize: '0.85rem' }}>
+                                                        <span style={{ color: linked === total ? '#198754' : '#dc3545', fontWeight: 500 }}>
+                                                            🔗 {linked}/{total} orders linked
+                                                        </span>
+                                                        {linked < total && (
+                                                            <span className="text-muted ms-2">
+                                                                ({total - linked} not yet fetched)
+                                                            </span>
+                                                        )}
+                                                    </p>
+                                                );
+                                            })()}
                                         </div>
                                         {(() => {
                                             const lowConf = (billData.bill_entries || []).filter(e => e.confidence_score != null && e.confidence_score < 0.7);
@@ -686,6 +703,7 @@ const BillGeneration = () => {
                                                     <th>Case Year</th>
                                                     <th>Parties Name</th>
                                                     <th>Results</th>
+                                                    <th style={{ width: '70px', textAlign: 'center' }}>Order</th>
                                                     <th>Fees (₹)</th>
                                                     <th>Actions</th>
                                                 </tr>
@@ -693,7 +711,7 @@ const BillGeneration = () => {
                                             <tbody>
                                                 {billData.bill_entries.length === 0 ? (
                                                     <tr>
-                                                        <td colSpan={bulkEditMode ? "9" : "8"} className="text-center py-5">
+                                                        <td colSpan={bulkEditMode ? "10" : "9"} className="text-center py-5">
                                                             <div className="text-muted">
                                                                 <h5>📭 No cases found</h5>
                                                                 <p className="mb-0">
@@ -814,6 +832,26 @@ const BillGeneration = () => {
                                                                     entry.results.includes('ADJOURNED') ? 'bg-warning' : 'bg-info'
                                                                 }`}>
                                                                     {entry.results}
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                                            {entry.order_link ? (
+                                                                <a
+                                                                    href={getApiUrl(`/orders/pdf/${entry.id}`)}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    title={`View order PDF (${entry.order_category || 'linked'})`}
+                                                                    style={{ textDecoration: 'none', fontSize: '1.1rem' }}
+                                                                >
+                                                                    🔗
+                                                                </a>
+                                                            ) : (
+                                                                <span
+                                                                    title="No order linked yet"
+                                                                    style={{ color: '#adb5bd', fontSize: '1rem' }}
+                                                                >
+                                                                    —
                                                                 </span>
                                                             )}
                                                         </td>

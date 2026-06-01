@@ -4806,6 +4806,8 @@ async def generate_bill_data(
                                     "parties_name": parties,
                                     "results": fee_info["result"],
                                     "fees_rs": fee_info["fee"],
+                                    "order_link": fee_info.get("order_link"),
+                                    "order_category": fee_info.get("order_category"),
                                     "agp_name": matched_agp,  # Show the actual AGP name from data
                                     "user_name": user_name,  # Show the selected user name
                                     "name_match_confidence": round(
@@ -4898,6 +4900,8 @@ async def generate_bill_data(
                                     "parties_name": parties,
                                     "results": fee_info["result"],
                                     "fees_rs": fee_info["fee"],
+                                    "order_link": fee_info.get("order_link"),
+                                    "order_category": fee_info.get("order_category"),
                                     "confidence_score": mapping_data.get(
                                         "confidence_score", 0.0
                                     ),
@@ -5173,15 +5177,27 @@ async def get_my_bills(
 
 
 def calculate_case_fee(case_data: Dict) -> Dict:
-    """Calculate fee and result based on order analysis"""
+    """Calculate fee and result based on order analysis.
+
+    Returns a dict with keys: result, fee, order_link, order_category.
+    order_link and order_category are populated when the order has been
+    analysed; both are None when the case has no linked order.
+    """
     try:
         case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
         case_details = (
             get_auto_order_manager().case_store.get_case_details(case_ref) or {}
         )
         latest_status = case_details.get("latest_order_status", "not_linked")
+        order_link = case_details.get("latest_order_link") or None
+
         if latest_status != "analysed":
-            return {"result": "*ADJOURNED*", "fee": 1250}
+            return {
+                "result": "*ADJOURNED*",
+                "fee": 1250,
+                "order_link": None,
+                "order_category": None,
+            }
 
         orders = case_details.get("orders") or []
         latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
@@ -5202,32 +5218,67 @@ def calculate_case_fee(case_data: Dict) -> Dict:
             or "disposed" in order_text
             or "disposed" in order_disposal_reason
         ):
-            return {"result": "WP DISPOSED OF", "fee": 2500}
+            return {
+                "result": "WP DISPOSED OF",
+                "fee": 2500,
+                "order_link": order_link,
+                "order_category": order_category,
+            }
 
         # Check for heard & adjourned (middle fee)
         elif "HEARD" in order_category and "ADJOURNED" in order_category:
-            return {"result": "HEARD & ADJN.", "fee": 1875}
+            return {
+                "result": "HEARD & ADJN.",
+                "fee": 1875,
+                "order_link": order_link,
+                "order_category": order_category,
+            }
 
         # Check for simple adjournment (lowest fee)
         elif "ADJOURNED" in order_category or "adjourned" in order_text:
             # Check if it's due to paucity of time
             if "paucity of time" in order_text or "due to paucity" in order_text:
-                return {"result": "ADJOURNED", "fee": 1250}
+                return {
+                    "result": "ADJOURNED",
+                    "fee": 1250,
+                    "order_link": order_link,
+                    "order_category": order_category,
+                }
             else:
-                return {"result": "ADJOURNED", "fee": 1250}
+                return {
+                    "result": "ADJOURNED",
+                    "fee": 1250,
+                    "order_link": order_link,
+                    "order_category": order_category,
+                }
 
         # Default case based on order category
         else:
             # If category indicates any hearing, use heard & adjourned
             if "HEARD" in order_category:
-                return {"result": "HEARD & ADJN.", "fee": 1875}
+                return {
+                    "result": "HEARD & ADJN.",
+                    "fee": 1875,
+                    "order_link": order_link,
+                    "order_category": order_category,
+                }
             else:
                 # Default to adjourned if category is unclear
-                return {"result": "*ADJOURNED*", "fee": 1250}
+                return {
+                    "result": "*ADJOURNED*",
+                    "fee": 1250,
+                    "order_link": None,
+                    "order_category": None,
+                }
 
     except Exception as e:
         logger.error(f"Error calculating case fee for case: {e}")
-        return {"result": "*ADJOURNED*", "fee": 1250}
+        return {
+            "result": "*ADJOURNED*",
+            "fee": 1250,
+            "order_link": None,
+            "order_category": None,
+        }
 
 
 def extract_parties_info(case_data: Dict) -> str:
