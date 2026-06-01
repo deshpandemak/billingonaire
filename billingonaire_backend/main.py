@@ -4771,7 +4771,9 @@ async def generate_bill_data(
                                 case_ids.add(case_id)
 
                                 # Determine fee and result based on order analysis
-                                fee_info = calculate_case_fee(case_data, board_date=board_date_str)
+                                fee_info = calculate_case_fee(
+                                    case_data, board_date=board_date_str
+                                )
 
                                 # Extract parties information
                                 parties = extract_parties_info(case_data)
@@ -4865,7 +4867,9 @@ async def generate_bill_data(
                                 case_ids.add(case_id)
 
                                 # Determine fee and result based on order analysis
-                                fee_info = calculate_case_fee(case_data, board_date=board_date_str)
+                                fee_info = calculate_case_fee(
+                                    case_data, board_date=board_date_str
+                                )
 
                                 # Extract parties information
                                 parties = extract_parties_info(case_data)
@@ -5183,7 +5187,10 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
             for o in reversed(orders):
                 if not isinstance(o, dict):
                     continue
-                if o.get("board_date") == board_date or o.get("order_date") == board_date:
+                if (
+                    o.get("board_date") == board_date
+                    or o.get("order_date") == board_date
+                ):
                     target_order = o
                     break
 
