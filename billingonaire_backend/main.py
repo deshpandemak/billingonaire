@@ -5180,8 +5180,10 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
 
         orders = case_details.get("orders") or []
 
-        # Prefer the order whose board_date or order_date matches the bill date.
-        # Fall back to the most-recently analysed order when no exact match exists.
+        # When board_date is given, only use an order that specifically belongs
+        # to that hearing date.  Do NOT fall back to a different date's order —
+        # the bill entry for May 6 must not show April 30's order.
+        # Without board_date (legacy callers) fall back to the last analysed order.
         target_order: Dict = {}
         if board_date and orders:
             for o in reversed(orders):
@@ -5193,9 +5195,9 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                 ):
                     target_order = o
                     break
-
-        if not target_order:
-            # No date match — use the last analysed order
+            # No date-specific match → show no link for this hearing
+        else:
+            # No board_date context (legacy callers) — use last analysed order
             for o in reversed(orders):
                 if isinstance(o, dict) and o.get("order_status") == "analysed":
                     target_order = o
