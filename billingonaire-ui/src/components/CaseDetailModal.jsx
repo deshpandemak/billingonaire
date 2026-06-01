@@ -128,11 +128,15 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
           ? boardRecord.additional_respondent_lawyers : [])
       ].filter(Boolean);
 
-      const orderGP = Array.isArray(order.government_pleader)
-        ? order.government_pleader
-        : (order.government_pleader ? [order.government_pleader] : []);
-      // Fall back to top-level GP when per-order GP not yet populated (old data)
-      const gpInOrder = orderGP.length ? orderGP : topLevelGP;
+      // Distinguish between "field absent" (old data — no GP tracked per order)
+      // and "field present but empty" (order was analysed, no GP extracted).
+      // Only fall back to topLevelGP for the former; an explicit [] means no GP.
+      const gpRaw = order.government_pleader;
+      const gpFieldPresent = gpRaw !== null && gpRaw !== undefined;
+      const orderGP = Array.isArray(gpRaw)
+        ? gpRaw
+        : (gpRaw ? [gpRaw] : []);
+      const gpInOrder = (gpFieldPresent ? orderGP : topLevelGP);
 
       const rawLink = order.order_link || null;
       // Construct boardDocId deterministically if not stored on board record.
