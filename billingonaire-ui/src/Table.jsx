@@ -762,7 +762,7 @@ const Table = () => {
                   <input
                     type="text"
                     className="form-control"
-                    placeholder="Enter case number..."
+                    placeholder="e.g. 4447 or WP/4447/2018"
                     value={searchCriteria.caseNumber}
                     onChange={e => setSearchCriteria(sc => ({ ...sc, caseNumber: e.target.value }))}
                   />

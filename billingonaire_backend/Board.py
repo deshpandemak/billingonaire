@@ -791,158 +791,227 @@ class Board:
         logging.info("Processing search request")
 
         try:
-            if not any(search_criteria.values()) and not agp_filter:
-                # No criteria at all and no access restriction: return first 10 records
+            # --- Extract and normalise all criteria upfront ---
+            case_number_raw = (
+                search_criteria.get("caseNumber")
+                or search_criteria.get("case_number")
+                or ""
+            )
+            advocate_name = (
+                search_criteria.get("advocateName")
+                or search_criteria.get("advocate_name")
+                or ""
+            )
+            case_type = (
+                search_criteria.get("caseType")
+                or search_criteria.get("case_type")
+                or ""
+            )
+            case_year_raw = (
+                search_criteria.get("caseYear")
+                or search_criteria.get("case_year")
+                or ""
+            )
+            case_stage = (
+                search_criteria.get("caseStage")
+                or search_criteria.get("case_stage")
+                or ""
+            )
+            order_status = (
+                search_criteria.get("orderStatus")
+                or search_criteria.get("order_status")
+                or ""
+            )
+            order_category = (
+                search_criteria.get("orderCategory")
+                or search_criteria.get("order_category")
+                or ""
+            )
+
+            # Normalise case_year to string (frontend sends it as string from
+            # <input type="number">, but guard against numeric JSON values too).
+            case_year = (
+                str(int(case_year_raw))
+                if isinstance(case_year_raw, (int, float))
+                else str(case_year_raw).strip()
+            )
+
+            # Parse case_number: accept full format "WP/4447/2018" and extract
+            # the numeric case_no part; optionally override case_type / case_year
+            # when the user typed the complete reference.
+            case_number = case_number_raw.strip()
+            if case_number and "/" in case_number:
+                parts = [p.strip() for p in case_number.split("/")]
+                if len(parts) >= 3:
+                    if not case_type:
+                        case_type = parts[0]
+                    if not case_year:
+                        case_year = parts[2]
+                    case_number = parts[1]
+                elif len(parts) == 2:
+                    case_number = parts[0]
+
+            # --- Parse date strings to datetime objects ---
+            start_date = search_criteria.get("startDate") or search_criteria.get(
+                "start_date"
+            )
+            if start_date:
+                if isinstance(start_date, str):
+                    if "T" in start_date:
+                        start_date = start_date.split("T")[0]
+                    start_date = datetime.strptime(start_date, "%Y-%m-%d")
+                elif not hasattr(start_date, "strftime"):
+                    start_date = datetime.strptime(str(start_date), "%Y-%m-%d")
+
+            end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
+            if end_date:
+                if isinstance(end_date, str):
+                    if "T" in end_date:
+                        end_date = end_date.split("T")[0]
+                    end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                        hour=23, minute=59, second=59
+                    )
+                elif not hasattr(end_date, "strftime"):
+                    end_date = datetime.strptime(str(end_date), "%Y-%m-%d").replace(
+                        hour=23, minute=59, second=59
+                    )
+
+            has_date_filter = bool(start_date or end_date)
+
+            no_criteria = (
+                not any(
+                    [
+                        start_date,
+                        end_date,
+                        advocate_name,
+                        case_number,
+                        case_type,
+                        case_year,
+                        case_stage,
+                        order_status,
+                        order_category,
+                    ]
+                )
+                and not agp_filter
+            )
+
+            if no_criteria:
                 logging.info("No search criteria provided, returning first 10 records")
                 query = self.db.collection("daily-boards").limit(10)
-            else:
-                query = self.db.collection("daily-boards")
+                data = []
+                for doc in query.stream():
+                    doc_data = doc.to_dict()
+                    doc_data["id"] = doc.id
+                    if "board_date" in doc_data and hasattr(
+                        doc_data["board_date"], "strftime"
+                    ):
+                        doc_data["board_date"] = doc_data["board_date"].strftime(
+                            "%Y-%m-%d"
+                        )
+                    data.append(doc_data)
+                return self._hydrate_with_case_details(data)
+
+            # --- Build Firestore query ---
+            # Strategy: only push the date-range filter and the AGP legacy
+            # equality filter to Firestore.  Everything else is applied
+            # Python-side after the query returns.  This avoids requiring
+            # composite indexes (e.g. board_date range + case_type equality)
+            # which caused "requires index" 500 errors for combined filters.
+            #
+            # Exception: when there is NO date filter and the user supplied a
+            # case_no or case_type, push that single equality to Firestore so
+            # we avoid a full-collection scan.
+            query = self.db.collection("daily-boards")
 
             # Apply AGP filter if user is restricted to specific AGPs.
             # When agp_name_variations are provided, the access control check is
             # applied Python-side after hydration (so that government_pleader and
-            # additional_respondent_lawyers are also considered — matching the
-            # bill-generation algorithm).  No Firestore pre-filter is pushed in
-            # that path; the full collection is fetched and then filtered.
+            # additional_respondent_lawyers are also considered).
             if agp_filter and not agp_name_variations:
-                # Legacy path: exact/list match on respondent_lawyer only
                 logging.info("Applying AGP access filter (exact, legacy)")
                 if isinstance(agp_filter, list):
                     query = query.where("respondent_lawyer", "in", agp_filter)
                 else:
                     query = query.where("respondent_lawyer", "==", agp_filter)
 
-            # Apply search criteria - this should work for ALL users, not just those with AGP filters
-            # Handle both camelCase (frontend) and snake_case (legacy) field names
-            case_number = search_criteria.get("caseNumber") or search_criteria.get(
-                "case_number"
-            )
-            if case_number:
-                query = query.where("case_no", "==", case_number)
-
-            start_date = search_criteria.get("startDate") or search_criteria.get(
-                "start_date"
-            )
-            if start_date:
-                # Convert date to datetime object to match database storage (datetime objects)
-                if isinstance(start_date, str):
-                    if "T" in start_date:
-                        # Handle ISO date-time format (e.g., "2025-01-01T00:00:00")
-                        start_date = start_date.split("T")[0]
-                    # Convert string to datetime object
-                    start_date = datetime.strptime(start_date, "%Y-%m-%d")
-                elif not hasattr(start_date, "strftime"):
-                    # If not a string or datetime, try to parse as string
-                    start_date = datetime.strptime(str(start_date), "%Y-%m-%d")
-                logging.info(
-                    f"FILTERING BY START DATE: {start_date} (converted to datetime object) (field: board_date)"
-                )
-                query = query.where("board_date", ">=", start_date)
-
-            end_date = search_criteria.get("endDate") or search_criteria.get("end_date")
-            if end_date:
-                # Convert date to datetime object to match database storage (datetime objects)
-                if isinstance(end_date, str):
-                    if "T" in end_date:
-                        # Handle ISO date-time format (e.g., "2025-01-01T23:59:59")
-                        end_date = end_date.split("T")[0]
-                    # Convert string to datetime object - set to end of day
-                    end_date = datetime.strptime(end_date, "%Y-%m-%d")
-                    # Add 23:59:59 to include the entire end date
-                    end_date = end_date.replace(hour=23, minute=59, second=59)
-                elif not hasattr(end_date, "strftime"):
-                    # If not a string or datetime, try to parse as string
-                    end_date = datetime.strptime(str(end_date), "%Y-%m-%d")
-                    end_date = end_date.replace(hour=23, minute=59, second=59)
-                logging.info(
-                    f"FILTERING BY END DATE: {end_date} (converted to datetime object) (field: board_date)"
-                )
-                query = query.where("board_date", "<=", end_date)
-
-            has_date_filter = bool(start_date or end_date)
-
-            advocate_name = search_criteria.get("advocateName") or search_criteria.get(
-                "advocate_name"
-            )
-            if advocate_name:
-                # Note: Using range query for advocate name conflicts with date range in Firestore
-                # If date filters are present, we skip the advocate filter and apply it client-side
-                if not has_date_filter:
-                    # Safe to use range query when no date filter
-                    query = query.where("respondent_lawyer", ">=", advocate_name)
-                    query = query.where(
-                        "respondent_lawyer", "<=", advocate_name + "\uf8ff"
-                    )
-                else:
-                    # Will filter client-side after query
-                    logging.info(
-                        "ADVOCATE FILTER: Will apply client-side due to Firestore "
-                        "limitations (field: respondent_lawyer)"
-                    )
-
-            case_type = search_criteria.get("caseType") or search_criteria.get(
-                "case_type"
-            )
-            if case_type:
-                case_stage = search_criteria.get("caseStage") or search_criteria.get(
-                    "case_stage"
-                )
-                if case_stage == "Stamp":
-                    case_type += "(ST)"
-                query = query.where("case_type", "==", case_type)
-
-            case_year = search_criteria.get("caseYear") or search_criteria.get(
-                "case_year"
-            )
-            if case_year:
-                # Convert to string if it's a number
-                if isinstance(case_year, (int, float)):
-                    case_year = str(int(case_year))
-                print(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
-                logging.info(f"FILTERING BY CASE YEAR: {case_year} (field: case_year)")
-                query = query.where("case_year", "==", case_year)
-
-            # Apply order status filter
-            order_status = search_criteria.get("orderStatus") or search_criteria.get(
-                "order_status"
-            )
-
-            # Apply order category filter (from ML analysis)
-            order_category = search_criteria.get(
-                "orderCategory"
-            ) or search_criteria.get("order_category")
-
-            # Sort most-recent first and cap at the result limit.  ORDER BY on
-            # board_date is required by Firestore when a range filter on that
-            # field is in use, and it gives the user the most relevant rows first.
             if has_date_filter:
+                # Push only the range filter; equality filters go Python-side.
+                if start_date:
+                    logging.info("FILTERING BY START DATE: %s", start_date)
+                    query = query.where("board_date", ">=", start_date)
+                if end_date:
+                    logging.info("FILTERING BY END DATE: %s", end_date)
+                    query = query.where("board_date", "<=", end_date)
+                # ORDER BY on the range field is required by Firestore.
                 query = query.order_by("board_date", direction="DESCENDING")
+            else:
+                # No date range: use a single equality filter so Firestore can
+                # use a single-field auto-index rather than scanning everything.
+                if case_number:
+                    query = query.where("case_no", "==", case_number)
+                elif case_type:
+                    expected_ct = case_type + ("(ST)" if case_stage == "Stamp" else "")
+                    query = query.where("case_type", "==", expected_ct)
+
             query = query.limit(self._SEARCH_RESULT_LIMIT)
 
-            # Check which filters need to be applied client-side (when date filters present)
-            apply_advocate_filter_client_side = advocate_name and has_date_filter
+            # --- Compute expected case_type value for Python-side filter ---
+            expected_case_type = ""
+            if case_type:
+                expected_case_type = (
+                    case_type + "(ST)" if case_stage == "Stamp" else case_type
+                )
 
+            # --- Iterate docs and apply Python-side filters ---
             data = []
             for doc in query.stream():
                 doc_data = doc.to_dict()
 
-                # Apply client-side advocate name filter if needed
-                if apply_advocate_filter_client_side:
-                    respondent_lawyer = doc_data.get("respondent_lawyer", "").lower()
-                    if advocate_name.lower() not in respondent_lawyer:
+                # case_no exact match — always applied Python-side as a safety
+                # net (Firestore equality pre-filter is a performance hint only).
+                if case_number:
+                    if str(doc_data.get("case_no", "")).strip() != case_number:
+                        continue
+
+                # case_type (and implicit Stamp/Registration stage) filter —
+                # always applied Python-side; Firestore pre-filter is optional.
+                if expected_case_type:
+                    if doc_data.get("case_type", "") != expected_case_type:
+                        continue
+
+                # case_stage without case_type: filter by "(ST)" suffix presence.
+                if case_stage and not case_type:
+                    stored_ct = doc_data.get("case_type", "")
+                    if case_stage == "Stamp" and not stored_ct.endswith("(ST)"):
+                        continue
+                    if case_stage == "Registration" and stored_ct.endswith("(ST)"):
+                        continue
+
+                # case_year: compare as strings to handle int/str storage variance.
+                if case_year:
+                    stored_year = str(doc_data.get("case_year", "")).strip()
+                    if stored_year != case_year:
+                        continue
+
+                # advocate_name: case-insensitive substring across all lawyer
+                # fields, including additional_respondent_lawyers.
+                if advocate_name:
+                    lawyer_parts = [
+                        doc_data.get("respondent_lawyer") or "",
+                        doc_data.get("petitioner_lawyer") or "",
+                    ] + list(doc_data.get("additional_respondent_lawyers") or [])
+                    combined = " ".join(str(p) for p in lawyer_parts).lower()
+                    if advocate_name.lower() not in combined:
                         continue
 
                 doc_data["id"] = doc.id
-
                 if "board_date" in doc_data and hasattr(
                     doc_data["board_date"], "strftime"
                 ):
                     doc_data["board_date"] = doc_data["board_date"].strftime("%Y-%m-%d")
-
                 data.append(doc_data)
 
-            logging.info(f"Search query returned {len(data)} records")
-
+            logging.info("Search query returned %d records", len(data))
             if not data:
                 logging.warning("No records matched search criteria")
 

@@ -488,3 +488,144 @@ def test_record_matches_agp_multi_token_still_matches(mock_firestore):
         board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"])
         is True
     )
+
+
+@patch("Board.firestore.client")
+def test_getData_case_number_full_format_parsed(mock_firestore):
+    """
+    When a user types the full case reference "WP/4447/2018" in the Case
+    Number field, getData should extract case_no="4447" and filter by it.
+    """
+    from Board import Board
+
+    matching_doc = MagicMock(
+        id="2024-01-01-WP-4447-2018",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "4447",
+            "case_year": "2018",
+            "board_date": "2024-01-01",
+        },
+    )
+    non_matching_doc = MagicMock(
+        id="2024-01-01-WP-9999-2018",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "9999",
+            "case_year": "2018",
+            "board_date": "2024-01-01",
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [matching_doc, non_matching_doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+    result = board.getData({"caseNumber": "WP/4447/2018"})
+    case_nos = [r["case_no"] for r in result]
+    assert "4447" in case_nos
+    assert "9999" not in case_nos
+
+
+@patch("Board.firestore.client")
+def test_getData_advocate_name_checks_additional_respondent_lawyers(mock_firestore):
+    """
+    When filtering by advocateName with a date range, the filter must check
+    additional_respondent_lawyers (not just respondent_lawyer).
+    """
+    from Board import Board
+
+    primary_doc = MagicMock(
+        id="2024-01-01-WP-1-2024",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2024",
+            "board_date": "2024-01-01",
+            "respondent_lawyer": "SHRI PATEL, AGP",
+            "petitioner_lawyer": "SHRI CLIENT",
+            "additional_respondent_lawyers": [],
+        },
+    )
+    additional_doc = MagicMock(
+        id="2024-01-01-WP-2-2024",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "2",
+            "case_year": "2024",
+            "board_date": "2024-01-01",
+            "respondent_lawyer": "SHRI OTHER, AGP",
+            "petitioner_lawyer": "SHRI CLIENT",
+            "additional_respondent_lawyers": ["SMT. DESHPANDE, AGP"],
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [primary_doc, additional_doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+    result = board.getData(
+        {
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-07",
+            "advocateName": "deshpande",
+        }
+    )
+    case_nos = [r["case_no"] for r in result]
+    # case "2" has Deshpande in additional_respondent_lawyers — must be included
+    assert "2" in case_nos
+    # case "1" has no Deshpande at all — must be excluded
+    assert "1" not in case_nos
+
+
+@patch("Board.firestore.client")
+def test_getData_case_year_as_string_vs_numeric(mock_firestore):
+    """
+    case_year stored as string "2025" must match search criteria "2025",
+    and numeric search value 2025 must also match string stored "2025".
+    """
+    from Board import Board
+
+    doc_2025 = MagicMock(
+        id="2025-01-01-WP-1-2025",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2025",
+            "board_date": "2025-01-01",
+        },
+    )
+    doc_2024 = MagicMock(
+        id="2024-01-01-WP-1-2024",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2024",
+            "board_date": "2024-01-01",
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [doc_2025, doc_2024]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+    # String "2025"
+    result = board.getData(
+        {"startDate": "2024-01-01", "endDate": "2025-12-31", "caseYear": "2025"}
+    )
+    assert all(r["case_year"] == "2025" for r in result)
+
+    # Numeric 2025 (some callers may send int)
+    result2 = board.getData(
+        {"startDate": "2024-01-01", "endDate": "2025-12-31", "caseYear": 2025}
+    )
+    assert all(r["case_year"] == "2025" for r in result2)
