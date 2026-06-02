@@ -851,8 +851,10 @@ async def get_data(
             "advocate_name"
         )
         if advocate_name_raw and advocate_name_raw.strip():
-            advocate_name_variations = get_user_matter_matcher().generate_name_variations(
-                advocate_name_raw.strip()
+            advocate_name_variations = (
+                get_user_matter_matcher().generate_name_variations(
+                    advocate_name_raw.strip()
+                )
             )
 
         data = board.getData(
