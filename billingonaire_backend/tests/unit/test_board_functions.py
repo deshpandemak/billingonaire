@@ -629,3 +629,72 @@ def test_getData_case_year_as_string_vs_numeric(mock_firestore):
         {"startDate": "2024-01-01", "endDate": "2025-12-31", "caseYear": 2025}
     )
     assert all(r["case_year"] == "2025" for r in result2)
+
+
+@patch("Board.firestore.client")
+def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
+    mock_firestore,
+):
+    """
+    Advocate filter must match names in the government_pleader field of the
+    board doc (not only respondent_lawyer/petitioner_lawyer), and must normalize
+    punctuation so "S.D.VYAS" matches the variation "s d vyas".
+
+    This is the S D Vyas regression: bill generation checks government_pleader;
+    search orders previously did not, giving fewer results.
+    """
+    from Board import Board
+
+    matching_doc = MagicMock(
+        id="2025-01-01-WP-1-2025",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2025",
+            "board_date": "2025-01-01",
+            "government_pleader": "SHRI S.D.VYAS, AGP",
+            "respondent_lawyer": "",
+            "petitioner_lawyer": "SOME PETITIONER",
+            "additional_respondent_lawyers": [],
+        },
+    )
+    non_matching_doc = MagicMock(
+        id="2025-01-01-WP-2-2025",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "2",
+            "case_year": "2025",
+            "board_date": "2025-01-01",
+            "government_pleader": "SMT. REKHA MUSALE, AGP",
+            "respondent_lawyer": "",
+            "petitioner_lawyer": "OTHER PETITIONER",
+            "additional_respondent_lawyers": [],
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [matching_doc, non_matching_doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+
+    from UserMatterMatcher import UserMatterMatcher
+
+    matcher = UserMatterMatcher()
+    variations = matcher.generate_name_variations("S D Vyas")
+
+    result = board.getData(
+        {
+            "startDate": "2025-01-01",
+            "endDate": "2025-01-31",
+            "advocateName": "S D Vyas",
+        },
+        advocate_name_variations=variations,
+    )
+    case_nos = [r["case_no"] for r in result]
+    # Case "1" has S.D.VYAS in government_pleader — must be included
+    assert "1" in case_nos, f"Expected case 1 in results, got {case_nos}"
+    # Case "2" has a different AGP — must be excluded
+    assert "2" not in case_nos, f"Case 2 should not be in results, got {case_nos}"
