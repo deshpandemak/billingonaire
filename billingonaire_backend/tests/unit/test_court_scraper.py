@@ -110,14 +110,14 @@ def test_scraper_initialization_defaults_to_http():
 @pytest.mark.parametrize(
     "case_type, expected_side",
     [
-        ("WP", "2"),       # Civil writ petition
-        ("PIL", "2"),      # Civil public interest litigation
-        ("IA", "2"),       # Civil interlocutory application
-        ("WP(ST)", "2"),   # Civil stamp writ petition
-        ("ABA", "1"),      # Criminal anticipatory bail
-        ("APL", "1"),      # Criminal application
-        ("CRA", "1"),      # Criminal appeal
-        ("CRLP", "1"),     # Criminal leave petition
+        ("WP", "2"),  # Civil writ petition
+        ("PIL", "2"),  # Civil public interest litigation
+        ("IA", "2"),  # Civil interlocutory application
+        ("WP(ST)", "2"),  # Civil stamp writ petition
+        ("ABA", "1"),  # Criminal anticipatory bail
+        ("APL", "1"),  # Criminal application
+        ("CRA", "1"),  # Criminal appeal
+        ("CRLP", "1"),  # Criminal leave petition
         ("UNKNOWN", "2"),  # Unknown defaults to civil
     ],
 )
@@ -200,7 +200,7 @@ def test_configure_scraper_rejects_invalid_provider():
     [
         ("WP/3373/2025", _CASE_TYPES_JSON, "R", "1", "2"),  # WP is Civil → side=2
         ("PIL/294/2025", _CASE_TYPES_JSON, "R", "5", "2"),  # PIL is Civil → side=2
-        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8", "2"),   # IA is Civil → side=2
+        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8", "2"),  # IA is Civil → side=2
         ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1", "2"),  # WP(ST) Civil → side=2
         ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5", "2"),  # PIL(ST) Civil → side=2
         # Criminal case type uses side=1
