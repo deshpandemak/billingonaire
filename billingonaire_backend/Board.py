@@ -787,7 +787,13 @@ class Board:
     # Maximum rows returned from a single search — prevents unbounded full-scans.
     _SEARCH_RESULT_LIMIT = 500
 
-    def getData(self, search_criteria, agp_filter=None, agp_name_variations=None):
+    def getData(
+        self,
+        search_criteria,
+        agp_filter=None,
+        agp_name_variations=None,
+        advocate_name_variations=None,
+    ):
         logging.info("Processing search request")
 
         try:
@@ -993,16 +999,27 @@ class Board:
                     if stored_year != case_year:
                         continue
 
-                # advocate_name: case-insensitive substring across all lawyer
-                # fields, including additional_respondent_lawyers.
+                # advocate_name: case-insensitive match across all lawyer fields.
+                # When name variations are provided (from UserMatterMatcher), use
+                # the same fuzzy-variation logic as bill generation so that, e.g.,
+                # "Pooja Deshpande" matches "SMT. P.M.J.DESHPANDE, AGP".
                 if advocate_name:
                     lawyer_parts = [
                         doc_data.get("respondent_lawyer") or "",
                         doc_data.get("petitioner_lawyer") or "",
                     ] + list(doc_data.get("additional_respondent_lawyers") or [])
                     combined = " ".join(str(p) for p in lawyer_parts).lower()
-                    if advocate_name.lower() not in combined:
-                        continue
+                    if advocate_name_variations:
+                        lc_vars = [
+                            v.lower().strip()
+                            for v in advocate_name_variations
+                            if v and v.strip()
+                        ]
+                        if not any(var in combined for var in lc_vars):
+                            continue
+                    else:
+                        if advocate_name.lower() not in combined:
+                            continue
 
                 doc_data["id"] = doc.id
                 if "board_date" in doc_data and hasattr(

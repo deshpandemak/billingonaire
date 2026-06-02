@@ -165,7 +165,7 @@ const BillGeneration = () => {
                 queryUrl += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
 
-            const response = await authenticatedFetchJSON(queryUrl);
+            const response = await authenticatedFetchJSON(queryUrl, { timeoutMs: 120000 });
             setBillData(response);
             setProcessingStatus('');
         } catch (err) {
