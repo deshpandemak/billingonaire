@@ -1004,16 +1004,33 @@ class Board:
                 # the same fuzzy-variation logic as bill generation so that, e.g.,
                 # "Pooja Deshpande" matches "SMT. P.M.J.DESHPANDE, AGP".
                 if advocate_name:
-                    lawyer_parts = [
-                        doc_data.get("respondent_lawyer") or "",
-                        doc_data.get("petitioner_lawyer") or "",
-                    ] + list(doc_data.get("additional_respondent_lawyers") or [])
-                    combined = " ".join(str(p) for p in lawyer_parts).lower()
+                    # Include government_pleader from the board doc (same as
+                    # bill generation, which reads this field directly from
+                    # daily-boards without hydration).
+                    gp_raw = doc_data.get("government_pleader") or []
+                    if isinstance(gp_raw, str):
+                        gp_raw = [gp_raw]
+                    lawyer_parts = (
+                        [
+                            doc_data.get("respondent_lawyer") or "",
+                            doc_data.get("petitioner_lawyer") or "",
+                        ]
+                        + list(doc_data.get("additional_respondent_lawyers") or [])
+                        + list(gp_raw)
+                    )
+                    # Normalize punctuation the same way UserMatterMatcher does:
+                    # replace [.,;]+ with spaces so "S.D.VYAS" matches "s d vyas".
+                    raw_combined = " ".join(str(p) for p in lawyer_parts)
+                    combined = re.sub(r"[.,;]+", " ", raw_combined).lower()
+                    combined = re.sub(r"\s+", " ", combined)
                     if advocate_name_variations:
+                        # Require at least 4 chars to avoid single-letter
+                        # false positives (e.g. variation "s" matching anything
+                        # containing the letter s).
                         lc_vars = [
                             v.lower().strip()
                             for v in advocate_name_variations
-                            if v and v.strip()
+                            if v and len(v.strip()) >= 4
                         ]
                         if not any(var in combined for var in lc_vars):
                             continue
