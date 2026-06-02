@@ -843,7 +843,26 @@ async def get_data(
                 agp_filter
             )
 
-        data = board.getData(search_criteria, agp_filter, agp_name_variations)
+        # Generate name variations for the advocate name search field too, so
+        # that "Pooja Deshpande" matches "SMT. P.M.J.DESHPANDE, AGP" etc. —
+        # the same fuzzy logic used in bill generation.
+        advocate_name_variations = None
+        advocate_name_raw = search_criteria.get("advocateName") or search_criteria.get(
+            "advocate_name"
+        )
+        if advocate_name_raw and advocate_name_raw.strip():
+            advocate_name_variations = (
+                get_user_matter_matcher().generate_name_variations(
+                    advocate_name_raw.strip()
+                )
+            )
+
+        data = board.getData(
+            search_criteria,
+            agp_filter,
+            agp_name_variations,
+            advocate_name_variations=advocate_name_variations,
+        )
         return data
     except Exception as e:
         logger.error(f"Error in data retrieval: {str(e)}")
@@ -4661,8 +4680,14 @@ async def generate_bill_data(
             # Priority: 1) government_pleader (from order analysis)
             #          2) respondent_lawyer (from board data)
             #          3) additional_respondent_lawyers (from board data)
+            # Restrict to the requested date range so we don't scan the entire
+            # collection — avoids timeouts on large deployments.
             boards_ref = db.collection("daily-boards")
-            all_cases = boards_ref.stream()
+            all_cases = (
+                boards_ref.where("board_date", ">=", start_dt)
+                .where("board_date", "<=", end_dt)
+                .stream()
+            )
 
             unique_agp_names = set()
             cases_by_agp: Dict[str, List[Any]] = {}
@@ -4835,18 +4860,14 @@ async def generate_bill_data(
                     f"✅ Found {len(bill_entries)} bill entries for user '{user_name}'"
                 )
             else:
-                error_msg = f"No matching AGP found for user '{user_name}' with sufficient confidence (best match: '{matched_agp}' at {confidence:.1%}). Need at least 50%."
-                logger.warning(f"⚠️ {error_msg}")
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": error_msg,
-                        "user_name": user_name,
-                        "best_match": matched_agp,
-                        "confidence": round(confidence, 3),
-                        "threshold_required": 0.50,
-                        "suggestion": "Try using a different name format or configure the user's name to match board data format",
-                    },
+                # No AGP name in the date range matched the requested user name.
+                # bill_entries stays empty — return a valid empty bill rather than
+                # a 400, so the UI shows "0 entries" instead of an error banner.
+                logger.warning(
+                    "No AGP name in %s–%s matched '%s' above 50%% threshold",
+                    start_date,
+                    end_date,
+                    user_name,
                 )
         else:
             # Non-admin or admin generating their own bill - use user-case-mappings
