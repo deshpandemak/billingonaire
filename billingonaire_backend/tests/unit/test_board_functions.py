@@ -680,18 +680,12 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
 
     board = Board()
 
-    from UserMatterMatcher import UserMatterMatcher
-
-    matcher = UserMatterMatcher()
-    variations = matcher.generate_name_variations("S D Vyas")
-
     result = board.getData(
         {
             "startDate": "2025-01-01",
             "endDate": "2025-01-31",
             "advocateName": "S D Vyas",
         },
-        advocate_name_variations=variations,
     )
     case_nos = [r["case_no"] for r in result]
     # Case "1" has S.D.VYAS in government_pleader — must be included

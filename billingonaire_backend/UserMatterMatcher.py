@@ -748,3 +748,115 @@ class UserMatterMatcher:
         except Exception as e:
             logging.error(f"Error finding user matters for case {case_id}: {e}")
             return []
+
+
+# ---------------------------------------------------------------------------
+# Standalone matching helpers — importable by Board.py, UserManager.py, etc.
+# ---------------------------------------------------------------------------
+
+_TITLE_STRIP_RE = re.compile(
+    r"\b(shri|smt|ms|mr|mrs|dr|adv|advocate|agp|addl|gp)\b", re.IGNORECASE
+)
+_PUNCT_RE = re.compile(r"[.,*#\-/;]+")
+_WS_RE = re.compile(r"\s+")
+
+
+def score_name_match(user_name: str, candidate_name: str) -> float:
+    """
+    Score how well *candidate_name* (a raw field value from a Firestore doc,
+    e.g. "SHRI S.D.VYAS, AGP") matches *user_name* (e.g. "S D Vyas").
+
+    Uses the same weighted algorithm as UserManager.match_user_name_to_all_agps:
+      - last-name match  35 %
+      - initials match   25 %
+      - full-word match  25 %
+      - sequence score   15 %
+
+    Returns a float in [0, 1].  If the last-name fails to score >= 0.60 the
+    function short-circuits and returns 0.0 — identical to the bill-generation
+    gate that avoids false positives.
+    """
+    from difflib import SequenceMatcher as _SM
+
+    if not user_name or not candidate_name:
+        return 0.0
+
+    user_norm = _WS_RE.sub(" ", user_name.lower()).strip()
+    user_words = re.findall(r"\b\w+\b", user_norm)
+    if not user_words:
+        return 0.0
+
+    cand_norm = _PUNCT_RE.sub(" ", _TITLE_STRIP_RE.sub(" ", candidate_name.lower()))
+    cand_norm = _WS_RE.sub(" ", cand_norm).strip()
+    cand_words = [w for w in re.findall(r"\b\w+\b", cand_norm) if w]
+    if not cand_words:
+        return 0.0
+
+    # 1. Last-name gate (35 %)
+    cand_last = cand_words[-1]
+    last_score = 0.0
+    for uw in user_words:
+        if uw == cand_last:
+            last_score = 1.0
+            break
+        elif uw in cand_last or cand_last in uw:
+            last_score = max(last_score, 0.8)
+        else:
+            sim = _SM(None, uw, cand_last).ratio()
+            if sim >= 0.75:
+                last_score = max(last_score, sim * 0.9)
+    if last_score < 0.60:
+        return 0.0
+
+    scores = [last_score * 0.35]
+
+    # 2. Initials (25 %)
+    user_initials = [w[0] for w in user_words]
+    cand_initials = [
+        w[0] for w in cand_words if len(w) == 1 or (len(w) == 2 and w.endswith("."))
+    ]
+    if cand_initials and user_initials:
+        matched = sum(
+            1
+            for i, ci in enumerate(cand_initials)
+            if i < len(user_initials) and ci == user_initials[i]
+        )
+        scores.append((matched / len(user_initials)) * 0.25)
+    else:
+        scores.append(0.0)
+
+    # 3. Full-word overlap (25 %)
+    fw_matches = 0.0
+    for uw in user_words:
+        for cw in cand_words:
+            if len(uw) > 1 and len(cw) > 1:
+                if uw == cw:
+                    fw_matches += 1
+                elif uw in cw or cw in uw:
+                    fw_matches += 0.5
+    scores.append(min(fw_matches / len(user_words), 1.0) * 0.25)
+
+    # 4. Sequence similarity (15 %)
+    scores.append(_SM(None, user_norm, cand_norm).ratio() * 0.15)
+
+    return sum(scores)
+
+
+def any_name_matches(
+    user_name: str,
+    candidate_names: List[str],
+    threshold: float = 0.50,
+) -> bool:
+    """
+    Return True if *any* name in *candidate_names* scores >= *threshold*
+    against *user_name* via :func:`score_name_match`.
+
+    Used by Board.getData (search-orders advocate filter) to apply the same
+    matching logic as bill generation without requiring a pre-computed
+    variations list.
+    """
+    return any(
+        score_name_match(user_name, name) >= threshold
+        for name in candidate_names
+        if name and str(name).strip()
+    )
