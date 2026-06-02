@@ -843,26 +843,7 @@ async def get_data(
                 agp_filter
             )
 
-        # Generate name variations for the advocate name search field too, so
-        # that "Pooja Deshpande" matches "SMT. P.M.J.DESHPANDE, AGP" etc. —
-        # the same fuzzy logic used in bill generation.
-        advocate_name_variations = None
-        advocate_name_raw = search_criteria.get("advocateName") or search_criteria.get(
-            "advocate_name"
-        )
-        if advocate_name_raw and advocate_name_raw.strip():
-            advocate_name_variations = (
-                get_user_matter_matcher().generate_name_variations(
-                    advocate_name_raw.strip()
-                )
-            )
-
-        data = board.getData(
-            search_criteria,
-            agp_filter,
-            agp_name_variations,
-            advocate_name_variations=advocate_name_variations,
-        )
+        data = board.getData(search_criteria, agp_filter, agp_name_variations)
         return data
     except Exception as e:
         logger.error(f"Error in data retrieval: {str(e)}")

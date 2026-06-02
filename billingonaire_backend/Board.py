@@ -15,6 +15,11 @@ try:
 except ImportError:
     from .case_data_store import CaseDataStore
 
+try:
+    from UserMatterMatcher import any_name_matches
+except ImportError:
+    from .UserMatterMatcher import any_name_matches
+
 # Import ML Enhanced Parser
 try:
     from ml_enhanced_parser import MLEnhancedParser
@@ -792,7 +797,6 @@ class Board:
         search_criteria,
         agp_filter=None,
         agp_name_variations=None,
-        advocate_name_variations=None,
     ):
         logging.info("Processing search request")
 
@@ -999,18 +1003,16 @@ class Board:
                     if stored_year != case_year:
                         continue
 
-                # advocate_name: case-insensitive match across all lawyer fields.
-                # When name variations are provided (from UserMatterMatcher), use
-                # the same fuzzy-variation logic as bill generation so that, e.g.,
-                # "Pooja Deshpande" matches "SMT. P.M.J.DESHPANDE, AGP".
+                # advocate_name: score each lawyer field from this doc against
+                # the search name using the shared any_name_matches() function —
+                # the exact same algorithm used by bill generation.  This covers
+                # government_pleader, respondent_lawyer, petitioner_lawyer, and
+                # additional_respondent_lawyers in one call.
                 if advocate_name:
-                    # Include government_pleader from the board doc (same as
-                    # bill generation, which reads this field directly from
-                    # daily-boards without hydration).
                     gp_raw = doc_data.get("government_pleader") or []
                     if isinstance(gp_raw, str):
                         gp_raw = [gp_raw]
-                    lawyer_parts = (
+                    candidate_names = (
                         [
                             doc_data.get("respondent_lawyer") or "",
                             doc_data.get("petitioner_lawyer") or "",
@@ -1018,25 +1020,8 @@ class Board:
                         + list(doc_data.get("additional_respondent_lawyers") or [])
                         + list(gp_raw)
                     )
-                    # Normalize punctuation the same way UserMatterMatcher does:
-                    # replace [.,;]+ with spaces so "S.D.VYAS" matches "s d vyas".
-                    raw_combined = " ".join(str(p) for p in lawyer_parts)
-                    combined = re.sub(r"[.,;]+", " ", raw_combined).lower()
-                    combined = re.sub(r"\s+", " ", combined)
-                    if advocate_name_variations:
-                        # Require at least 4 chars to avoid single-letter
-                        # false positives (e.g. variation "s" matching anything
-                        # containing the letter s).
-                        lc_vars = [
-                            v.lower().strip()
-                            for v in advocate_name_variations
-                            if v and len(v.strip()) >= 4
-                        ]
-                        if not any(var in combined for var in lc_vars):
-                            continue
-                    else:
-                        if advocate_name.lower() not in combined:
-                            continue
+                    if not any_name_matches(advocate_name, candidate_names):
+                        continue
 
                 doc_data["id"] = doc.id
                 if "board_date" in doc_data and hasattr(
