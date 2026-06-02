@@ -4,13 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### Local dev (both servers)
+
+```bash
+# Linux / macOS / WSL — starts backend (:8000) and UI (:5000) together
+chmod +x start_local.sh billingonaire_backend/start_local.sh
+./start_local.sh          # Ctrl-C stops both
+
+# Windows
+start_local.bat           # opens two console windows, one per server
+```
+
 ### Backend (`billingonaire_backend/`)
 
 ```bash
 # Install
 pip install -r requirements.txt -r requirements-test.txt
 
-# Dev server
+# Dev server — preferred (handles spaCy/pydantic stub automatically)
+./start_local.sh          # Linux/macOS/WSL
+start_local.bat           # Windows
+
+# Dev server — manual (requires TESTING=true; spaCy crash workaround: use dev_server.py)
+TESTING=true python dev_server.py
+# Direct uvicorn (only if spaCy is not installed or compatible)
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Tests
@@ -28,6 +45,17 @@ flake8 . --config=.flake8
 The Stop hook in `.claude/settings.json` runs black (CI-pinned `==23.12.1` from `/tmp/black-ci-venv/`), isort, and flake8 automatically after every Claude turn. CI pins: `black==23.12.1`, `isort==5.13.2`, `flake8==6.1.0`.
 
 flake8 ignores E203/E501/W503 (line length 88, matching black). Test files suppress F401/F841.
+
+### Local GCS setup (PDF storage)
+
+`ORDER_PDF_BUCKET=billingonaire-court-orders` is already in `billingonaire_backend/.env`.
+To actually write to GCS locally, authenticate with ADC once:
+
+```bash
+gcloud auth application-default login
+```
+
+Without ADC the backend still works — PDFs are served from live court URLs, but uploads to GCS are skipped and logged at WARNING level. Use `/admin/test-gcs` (requires admin auth) to verify bucket write access. Use `/admin/gcs-bucket-info` to check for lifecycle rules that might be deleting blobs.
 
 ### Frontend (`billingonaire-ui/`)
 

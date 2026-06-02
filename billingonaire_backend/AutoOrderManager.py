@@ -52,6 +52,17 @@ class AutoOrderManager:
 
         # GCS bucket for permanent PDF storage (empty string → GCS upload disabled)
         self._gcs_bucket_name: str = os.getenv("ORDER_PDF_BUCKET", "")
+        if self._gcs_bucket_name:
+            logger.info(
+                "AutoOrderManager: GCS PDF storage configured — bucket=%s",
+                self._gcs_bucket_name,
+            )
+        else:
+            logger.warning(
+                "AutoOrderManager: ORDER_PDF_BUCKET env var not set — "
+                "court order PDFs will NOT be uploaded to GCS. "
+                "Set ORDER_PDF_BUCKET=<bucket-name> to enable permanent storage."
+            )
 
         # AGP name patterns for extraction
         self.agp_patterns = [

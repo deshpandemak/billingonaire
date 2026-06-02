@@ -73,6 +73,43 @@ class TestOrderDocumentAnalyzer:
         if result:
             assert "15/10" in result or "2024" in result
 
+    # ── GP/AGP deduplication ────────────────────────────────────────────────
+
+    def test_extract_govt_pleader_deduplicates_title_spacing(self, analyzer):
+        """Advocate appearing as 'Mr. Name' in header and 'Mr.Name' in body must
+        not produce duplicate entries in government_pleader list.
+
+        Regression for WP-3434-2026 order where Asif Patel appeared twice with
+        different spacing after 'Mr.' (header vs paragraph 1 of the order body).
+        """
+        text = (
+            "Mr. Asif Patel, Addl. G.P a/w. Mr.Ketan Joshi, 'B' Panel Council present.\n"
+            "1. Learned counsel appears. "
+            "Mr.Asif Patel, Addl. G.P a/w. Mr.Ketan Joshi, 'B' Panel Council present."
+        )
+        pleaders = analyzer._extract_govt_pleader_from_text(text, "WP-3434-2026")
+
+        names = [p.split(",")[0].strip() for p in pleaders]
+        assert (
+            names.count("Mr. Asif Patel") + names.count("Mr.Asif Patel") == 1
+        ), f"Asif Patel duplicated in output: {pleaders}"
+        assert (
+            len(pleaders) == 2
+        ), f"Expected exactly 2 pleaders, got {len(pleaders)}: {pleaders}"
+
+    def test_normalise_title_name_fixes_missing_space(self, analyzer):
+        """_normalise_title_name inserts a space between title and name."""
+        assert analyzer._normalise_title_name("Mr.Asif Patel") == "Mr. Asif Patel"
+        assert (
+            analyzer._normalise_title_name("Ms.Pooja Deshpande")
+            == "Ms. Pooja Deshpande"
+        )
+        assert analyzer._normalise_title_name("Mr. Asif Patel") == "Mr. Asif Patel"
+
+    def test_normalise_title_name_collapses_extra_whitespace(self, analyzer):
+        """_normalise_title_name collapses runs of whitespace to a single space."""
+        assert analyzer._normalise_title_name("Mr.  Asif   Patel") == "Mr. Asif Patel"
+
 
 class TestCategoryClassification:
     """Test order category classification logic"""

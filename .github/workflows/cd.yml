@@ -151,7 +151,7 @@ jobs:
 
           echo "🚀 Deploying to Cloud Run..."
 
-          BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }},COURT_SCRAPER_PROVIDER=direct_api"
+          BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }},COURT_SCRAPER_PROVIDER=direct_api,ORDER_PDF_BUCKET=billingonaire-court-orders"
 
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
             --image=gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }} \

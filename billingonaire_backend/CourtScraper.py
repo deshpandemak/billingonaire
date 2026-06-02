@@ -198,24 +198,37 @@ class BombayHighCourtScraper:
                 form_data[name] = value
 
         # Resolve the numeric case_type option value from the AJAX options list.
-        # Options may be labelled "WP - Writ Petition" or just "WP", so match on
-        # the abbreviation prefix (split on " - " then whitespace) rather than
-        # the full string.
+        # The portal AJAX endpoint returns {"type_name": "WP", "case_type": 1, ...}
+        # (new format).  Older test fixtures use {"name": "WP", "value": "1"}.
+        # Options may also be labelled "WP - Writ Petition", so match on the
+        # abbreviation prefix (split on " - ") rather than the full string.
         base_case_type = self._get_base_case_type(case_parts["case_type"])
         resolved_case_type = base_case_type  # fallback: use label string
         for opt in case_type_options:
-            label = str(opt.get("name") or opt.get("label") or opt.get("text") or "")
+            label = str(
+                opt.get("type_name")  # new portal API key
+                or opt.get("name")
+                or opt.get("label")
+                or opt.get("text")
+                or ""
+            )
             prefix = label.split(" - ")[0].split()[0] if label.strip() else ""
             if prefix.upper() == base_case_type.upper():
                 resolved_case_type = str(
-                    opt.get("value") or opt.get("id") or base_case_type
+                    opt.get("case_type")  # new portal API key (numeric ID)
+                    or opt.get("value")
+                    or opt.get("id")
+                    or base_case_type
                 )
                 break
         if resolved_case_type == base_case_type and case_type_options:
             logger.warning(
                 "_build_form_data: case_type %r not found in options %s; using label fallback",
                 base_case_type,
-                [o.get("name") or o.get("label") for o in case_type_options[:5]],
+                [
+                    o.get("type_name") or o.get("name") or o.get("label")
+                    for o in case_type_options[:5]
+                ],
             )
 
         form_data.update(
@@ -252,9 +265,13 @@ class BombayHighCourtScraper:
             if table:
                 for row in table.find_all("tr"):
                     cells = row.find_all("td")
-                    if len(cells) < 5:
+                    # Require at least 3 cells (date col + description + download link).
+                    # The portal table can have 5 or 6 columns depending on court bench;
+                    # always check the LAST cell for the download link so extra status
+                    # columns don't cause the link to be silently skipped.
+                    if len(cells) < 3:
                         continue
-                    link = cells[4].find("a")
+                    link = cells[-1].find("a")
                     href = link.get("href") if link else None
                     if not href:
                         continue
@@ -269,11 +286,16 @@ class BombayHighCourtScraper:
                         }
                     )
 
-            # Fallback: any PDF/order links when the table is absent or empty
+            # Fallback: any PDF/order/auth links when the table is absent or empty.
+            # generatenewauth.php is the Bombay HC file-server auth endpoint used for
+            # all order PDF downloads — it must be matched even when its href does not
+            # contain "order" or ".pdf".
             if not orders:
                 for link in soup.find_all(
                     "a",
-                    href=re.compile(r"\.(pdf)$|order|judg", re.IGNORECASE),
+                    href=re.compile(
+                        r"\.(pdf)$|order|judg|generatenewauth", re.IGNORECASE
+                    ),
                 ):
                     href = link.get("href")
                     if not href:
@@ -330,14 +352,15 @@ class BombayHighCourtScraper:
             initial_html = get_resp.text
 
             # Step 2: GET case-type options via AJAX endpoint.
-            # Pass the correct side (Civil=2, Criminal=1) so the portal returns
-            # the right set of case types — WP/PIL/etc. are Civil (side=2).
+            # Pass the correct side (Civil=2, Criminal=1) and stampreg so the
+            # portal returns the right set of case types for this case.
+            stampreg_value = self._get_stampreg_value(case_parts["case_type"])
             case_type_options: List[Dict[str, Any]] = []
             side_value = self._get_side_for_case_type(case_parts["case_type"])
             try:
                 types_resp = self.session.get(
                     self.case_types_url,
-                    params={"side": side_value},
+                    params={"side": side_value, "stampreg": stampreg_value},
                     timeout=self.request_timeout_seconds,
                 )
                 if types_resp.status_code == 200:
@@ -377,6 +400,34 @@ class BombayHighCourtScraper:
                 headers=post_headers,
                 allow_redirects=True,
             )
+
+            # 419 = CSRF token expired — refresh the session and retry once.
+            # This happens when the AJAX case-types GET takes long enough that
+            # the server rotates the CSRF token before our POST arrives.
+            if post_resp.status_code == 419:
+                logger.info(
+                    "_fetch_with_http: 419 CSRF expiry for %s — refreshing token and retrying",
+                    case_ref,
+                )
+                get_resp2 = self.session.get(
+                    self.case_status_url, timeout=self.request_timeout_seconds
+                )
+                soup_get2 = BeautifulSoup(get_resp2.text, "html.parser")
+                csrf_meta2 = soup_get2.find("meta", attrs={"name": "csrf-token"})
+                if csrf_meta2:
+                    post_headers["X-CSRF-TOKEN"] = csrf_meta2.get("content", "")
+                # Also rebuild hidden-field form data from the fresh page
+                form_data2 = self._build_form_data(
+                    case_parts, get_resp2.text, case_type_options
+                )
+                post_resp = self.session.post(
+                    self.case_status_url,
+                    data=form_data2,
+                    timeout=self.request_timeout_seconds,
+                    headers=post_headers,
+                    allow_redirects=True,
+                )
+
             if post_resp.status_code not in (200, 302):
                 raise requests.exceptions.HTTPError(
                     f"HTTP {post_resp.status_code} on POST for {case_ref}",
@@ -759,9 +810,11 @@ class BombayHighCourtScraper:
         rows = page.query_selector_all("#cn_CaseNoOrders table tbody tr")
         for row in rows:
             cells = row.query_selector_all("td")
-            if len(cells) < 5:
+            # Require at least 3 cells; always check the LAST cell for the download
+            # link so that 6-column variants (extra status column) still resolve.
+            if len(cells) < 3:
                 continue
-            link = cells[4].query_selector("a")
+            link = cells[-1].query_selector("a")
             href = link.get_attribute("href") if link else None
             if not href:
                 continue
@@ -811,40 +864,66 @@ class BombayHighCourtScraper:
                     timeout=timeout_ms,
                 )
 
+                stampreg_value = self._get_stampreg_value(case_parts["case_type"])
+                base_case_type = self._get_base_case_type(case_parts["case_type"])
+
                 page.select_option(
                     "select[name='side']",
                     value=self._get_side_for_case_type(case_parts["case_type"]),
                 )
-                page.select_option(
-                    "select[name='stampreg']",
-                    value=self._get_stampreg_value(case_parts["case_type"]),
-                )
-                page.wait_for_timeout(2000)
 
-                base_case_type = self._get_base_case_type(case_parts["case_type"])
-                options = page.query_selector_all("select[name='case_type'] option")
-                resolved_case_type = None
-                option_labels = []
-                for option in options:
-                    text = option.inner_text().strip()
-                    option_labels.append(text)
-                    # Options are formatted "ABBR - Full Description" or just "ABBR".
-                    # Match on the abbreviation prefix so "WP - Writ Petition" matches "WP".
-                    prefix = text.split(" - ")[0].split()[0] if text else ""
-                    if prefix.upper() == base_case_type.upper():
-                        resolved_case_type = option.get_attribute("value")
-                        break
-                if not resolved_case_type:
-                    logger.warning(
-                        "Playwright: case_type %r not found in dropdown for %s "
-                        "— options: %s",
-                        base_case_type,
-                        case_ref,
-                        option_labels[:10],
+                # Wait for the stampreg dropdown to be populated by its AJAX handler
+                # before we select from it — selecting too early can leave the wrong
+                # value or fail silently.
+                try:
+                    page.wait_for_selector(
+                        "select[name='stampreg'] option:not([value=''])",
+                        timeout=5000,
                     )
-                    resolved_case_type = base_case_type
+                except Exception:
+                    page.wait_for_timeout(1000)
 
-                page.select_option("select[name='case_type']", value=resolved_case_type)
+                page.select_option("select[name='stampreg']", value=stampreg_value)
+
+                # Wait for the case_type dropdown to reload after the stampreg
+                # selection.  The portal JS fires a second AJAX call when stampreg
+                # changes, so case_type options may differ between Stamp (S) and
+                # Registered (R).  Waiting here ensures we read the correct type list
+                # for the case — e.g. IA(ST) must select from the Stamp type list.
+                try:
+                    page.wait_for_selector(
+                        "select[name='case_type'] option:not([value=''])",
+                        timeout=8000,
+                    )
+                except Exception:
+                    # Fallback: give it a fixed wait if the selector never fires
+                    page.wait_for_timeout(3000)
+
+                # Prefer selecting by label (visible text) — avoids the label/numeric-ID
+                # mismatch where option values are "1"/"6"/… but we only know "WP"/"PIL".
+                try:
+                    page.select_option("select[name='case_type']", label=base_case_type)
+                except Exception:
+                    # Label match failed — scan the DOM and match by abbreviation prefix
+                    # (handles "WP - Writ Petition" → prefix "WP" matches base "WP").
+                    options = page.query_selector_all("select[name='case_type'] option")
+                    resolved_case_type = None
+                    option_texts = []
+                    for option in options:
+                        text = option.inner_text().strip()
+                        option_texts.append(text)
+                        prefix = text.split(" - ")[0].split()[0] if text else ""
+                        if prefix.upper() == base_case_type.upper():
+                            resolved_case_type = option.get_attribute("value")
+                            break
+                    if not resolved_case_type:
+                        raise Exception(
+                            f"Case type {base_case_type!r} not found in dropdown — "
+                            f"options: {option_texts[:10]}"
+                        )
+                    page.select_option(
+                        "select[name='case_type']", value=resolved_case_type
+                    )
                 page.fill("input[name='case_no']", case_parts["case_number"])
                 page.fill("input[name='year']", case_parts["year"])
                 page.click(
@@ -879,6 +958,16 @@ class BombayHighCourtScraper:
                 "Playwright timed out for %s (timeout=%ds): %s",
                 case_ref,
                 self.playwright_timeout_seconds,
+                exc,
+            )
+            raise
+        except AttributeError as exc:
+            # sync_playwright().__enter__() failed to set _playwright — this is a
+            # flaky init failure that occurs when called from a thread pool while an
+            # asyncio event loop is running.  Re-raise so the retry loop retries.
+            logger.warning(
+                "Playwright context init failed for %s (will retry): %s",
+                case_ref,
                 exc,
             )
             raise
