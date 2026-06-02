@@ -103,6 +103,45 @@ class BombayHighCourtScraper:
         }
         return bench_codes.get((bench or "mumbai").lower(), "2")
 
+    # Bombay HC portal: side=1 → Criminal, side=2 → Civil.
+    # Any case type not explicitly listed here is assumed to be Civil (side=2)
+    # because the vast majority of AGP matters are civil writ petitions.
+    _CRIMINAL_CASE_TYPES = frozenset(
+        [
+            "ABA",
+            "ALP",
+            "ALS",
+            "AO",
+            "APEAL",
+            "APL",
+            "APPA",
+            "APPCO",
+            "APPCP",
+            "BA",
+            "BAIL",
+            "CRA",
+            "CRB",
+            "CRBA",
+            "CRW",
+            "CRR",
+            "EXEA",
+            "EXEP",
+            "EXES",
+            "CRL",
+            "CRLP",
+            "MCA",
+        ]
+    )
+
+    def _get_side_for_case_type(self, case_type: str) -> str:
+        """Return the portal 'side' value for *case_type*.
+
+        side=1 → Criminal division
+        side=2 → Civil division (default for all unlisted types, including WP)
+        """
+        base = self._get_base_case_type(case_type).upper()
+        return "1" if base in self._CRIMINAL_CASE_TYPES else "2"
+
     def _get_base_case_type(self, case_type: str) -> str:
         return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
 
@@ -161,7 +200,8 @@ class BombayHighCourtScraper:
         # Resolve the numeric case_type option value from the AJAX options list.
         # The portal AJAX endpoint returns {"type_name": "WP", "case_type": 1, ...}
         # (new format).  Older test fixtures use {"name": "WP", "value": "1"}.
-        # Both formats are handled so unit tests and the live portal work identically.
+        # Options may also be labelled "WP - Writ Petition", so match on the
+        # abbreviation prefix (split on " - ") rather than the full string.
         base_case_type = self._get_base_case_type(case_parts["case_type"])
         resolved_case_type = base_case_type  # fallback: use label string
         for opt in case_type_options:
@@ -172,7 +212,8 @@ class BombayHighCourtScraper:
                 or opt.get("text")
                 or ""
             )
-            if label.strip().upper() == base_case_type.upper():
+            prefix = label.split(" - ")[0].split()[0] if label.strip() else ""
+            if prefix.upper() == base_case_type.upper():
                 resolved_case_type = str(
                     opt.get("case_type")  # new portal API key (numeric ID)
                     or opt.get("value")
@@ -192,7 +233,7 @@ class BombayHighCourtScraper:
 
         form_data.update(
             {
-                "side": "1",
+                "side": self._get_side_for_case_type(case_parts["case_type"]),
                 "stampreg": self._get_stampreg_value(case_parts["case_type"]),
                 "case_type": resolved_case_type,
                 "case_no": case_parts["case_number"],
@@ -311,17 +352,15 @@ class BombayHighCourtScraper:
             initial_html = get_resp.text
 
             # Step 2: GET case-type options via AJAX endpoint.
-            # Mirror what the portal JS does: include stampreg so the server
-            # returns the correct type list for Stamp (S) vs Registered (R) cases.
-            # For IA(ST) the browser sends stampreg=S; without it the server may
-            # return only Registered types where IA has a different numeric ID or
-            # is absent entirely.
+            # Pass the correct side (Civil=2, Criminal=1) and stampreg so the
+            # portal returns the right set of case types for this case.
             stampreg_value = self._get_stampreg_value(case_parts["case_type"])
             case_type_options: List[Dict[str, Any]] = []
+            side_value = self._get_side_for_case_type(case_parts["case_type"])
             try:
                 types_resp = self.session.get(
                     self.case_types_url,
-                    params={"side": "1", "stampreg": stampreg_value},
+                    params={"side": side_value, "stampreg": stampreg_value},
                     timeout=self.request_timeout_seconds,
                 )
                 if types_resp.status_code == 200:
@@ -828,7 +867,10 @@ class BombayHighCourtScraper:
                 stampreg_value = self._get_stampreg_value(case_parts["case_type"])
                 base_case_type = self._get_base_case_type(case_parts["case_type"])
 
-                page.select_option("select[name='side']", value="1")
+                page.select_option(
+                    "select[name='side']",
+                    value=self._get_side_for_case_type(case_parts["case_type"]),
+                )
 
                 # Wait for the stampreg dropdown to be populated by its AJAX handler
                 # before we select from it — selecting too early can leave the wrong
@@ -862,20 +904,22 @@ class BombayHighCourtScraper:
                 try:
                     page.select_option("select[name='case_type']", label=base_case_type)
                 except Exception:
-                    # Label match failed — read the numeric value from the DOM directly
+                    # Label match failed — scan the DOM and match by abbreviation prefix
+                    # (handles "WP - Writ Petition" → prefix "WP" matches base "WP").
                     options = page.query_selector_all("select[name='case_type'] option")
                     resolved_case_type = None
+                    option_texts = []
                     for option in options:
-                        if (
-                            option.inner_text().strip().upper()
-                            == base_case_type.upper()
-                        ):
+                        text = option.inner_text().strip()
+                        option_texts.append(text)
+                        prefix = text.split(" - ")[0].split()[0] if text else ""
+                        if prefix.upper() == base_case_type.upper():
                             resolved_case_type = option.get_attribute("value")
                             break
                     if not resolved_case_type:
                         raise Exception(
                             f"Case type {base_case_type!r} not found in dropdown — "
-                            f"options: {[o.inner_text().strip() for o in options[:10]]}"
+                            f"options: {option_texts[:10]}"
                         )
                     page.select_option(
                         "select[name='case_type']", value=resolved_case_type

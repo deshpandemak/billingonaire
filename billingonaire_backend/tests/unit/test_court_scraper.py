@@ -110,6 +110,30 @@ def test_scraper_initialization_defaults_to_http():
 
 
 # ---------------------------------------------------------------------------
+# _get_side_for_case_type
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "case_type, expected_side",
+    [
+        ("WP", "2"),  # Civil writ petition
+        ("PIL", "2"),  # Civil public interest litigation
+        ("IA", "2"),  # Civil interlocutory application
+        ("WP(ST)", "2"),  # Civil stamp writ petition
+        ("ABA", "1"),  # Criminal anticipatory bail
+        ("APL", "1"),  # Criminal application
+        ("CRA", "1"),  # Criminal appeal
+        ("CRLP", "1"),  # Criminal leave petition
+        ("UNKNOWN", "2"),  # Unknown defaults to civil
+    ],
+)
+def test_get_side_for_case_type(case_type, expected_side):
+    scraper = BombayHighCourtScraper()
+    assert scraper._get_side_for_case_type(case_type) == expected_side
+
+
+# ---------------------------------------------------------------------------
 # parse_case_number
 # ---------------------------------------------------------------------------
 
@@ -179,27 +203,29 @@ def test_configure_scraper_rejects_invalid_provider():
 
 
 @pytest.mark.parametrize(
-    "case_ref, options, expected_stampreg, expected_case_type",
+    "case_ref, options, expected_stampreg, expected_case_type, expected_side",
     [
-        ("WP/3373/2025", _CASE_TYPES_JSON, "R", "1"),
-        ("PIL/294/2025", _CASE_TYPES_JSON, "R", "5"),
-        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8"),
-        ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1"),
-        ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5"),
-        ("IA(ST)/123/2025", _CASE_TYPES_JSON, "S", "8"),
-        # Unknown case type falls back to the label string
-        ("OA/10/2025", _CASE_TYPES_JSON, "R", "OA"),
+        ("WP/3373/2025", _CASE_TYPES_JSON, "R", "1", "2"),  # WP is Civil → side=2
+        ("PIL/294/2025", _CASE_TYPES_JSON, "R", "5", "2"),  # PIL is Civil → side=2
+        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8", "2"),  # IA is Civil → side=2
+        ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1", "2"),  # WP(ST) Civil → side=2
+        ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5", "2"),  # PIL(ST) Civil → side=2
+        ("IA(ST)/123/2025", _CASE_TYPES_JSON, "S", "8", "2"),  # IA(ST) Civil → side=2
+        # Criminal case type uses side=1
+        ("ABA/10/2025", [], "R", "ABA", "1"),
+        # Unknown case type falls back to the label string, defaults to Civil (side=2)
+        ("OA/10/2025", _CASE_TYPES_JSON, "R", "OA", "2"),
     ],
 )
 def test_build_form_data_case_type_and_stampreg(
-    case_ref, options, expected_stampreg, expected_case_type
+    case_ref, options, expected_stampreg, expected_case_type, expected_side
 ):
     scraper = BombayHighCourtScraper()
     case_parts = scraper.parse_case_number(case_ref)
     form = scraper._build_form_data(case_parts, "<html></html>", options)
     assert form["stampreg"] == expected_stampreg
     assert form["case_type"] == expected_case_type
-    assert form["side"] == "1"
+    assert form["side"] == expected_side
     assert form["case_no"] == case_parts["case_number"]
     assert form["year"] == case_parts["year"]
 
@@ -239,6 +265,20 @@ def test_build_form_data_extracts_hidden_fields():
     form = scraper._build_form_data(case_parts, html, [])
     assert form["_token"] == "csrf123"
     assert form["form_secret"] == "secret1"
+
+
+def test_build_form_data_matches_full_label_options():
+    """Portal may return 'WP - Writ Petition' as the label; must still resolve to the numeric value."""
+    scraper = BombayHighCourtScraper()
+    full_label_options = [
+        {"name": "WP - Writ Petition", "value": "42"},
+        {"name": "PIL - Public Interest Litigation", "value": "43"},
+        {"name": "ABA - Cr. Anticipatory Bail Appln.", "value": "1"},
+    ]
+    case_parts = scraper.parse_case_number("WP/1234/2025")
+    form = scraper._build_form_data(case_parts, "<html></html>", full_label_options)
+    assert form["case_type"] == "42"
+    assert form["side"] == "2"  # WP is Civil
 
 
 # ---------------------------------------------------------------------------
