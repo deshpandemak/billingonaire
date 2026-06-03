@@ -487,6 +487,7 @@ class AutoOrderManager:
         order_link: Optional[str] = None,
         board_date: Optional[str] = None,
         gcs_upload_failed: bool = False,
+        date_mismatch: bool = False,
     ) -> Dict[str, Any]:
         """Analyse a PDF using the court API-provided date and party names.
 
@@ -533,6 +534,7 @@ class AutoOrderManager:
                 "order_analysis_metadata": analysis_metadata,
                 "date_source": "api",
                 "gcs_upload_failed": gcs_upload_failed,
+                "date_mismatch": date_mismatch,
             }
 
             self.case_store.transition_lifecycle(
@@ -563,6 +565,7 @@ class AutoOrderManager:
                     ],
                     "date_source": "api",
                     "gcs_upload_failed": gcs_upload_failed,
+                    "date_mismatch": date_mismatch,
                 },
             )
             self.case_store.transition_lifecycle(
@@ -704,6 +707,10 @@ class AutoOrderManager:
                 )
 
             last_order_link: Optional[str] = None
+            # Best prior-date order to use as fallback when no order exactly
+            # matches board_date (e.g. portal's listing_date is the order-signing
+            # date, which may precede the hearing date by days or weeks).
+            fallback_candidate: Optional[Dict[str, Any]] = None
 
             for order_entry in case_orders:
                 if not isinstance(order_entry, dict):
@@ -733,6 +740,20 @@ class AutoOrderManager:
                             order_date_str,
                             board_date,
                         )
+                        # Record as fallback candidate when the order predates or equals
+                        # board_date — the portal's listing_date (order-signing date) is
+                        # often earlier than the actual hearing date.  We keep the most
+                        # recent qualifying order so that if multiple orders exist we use
+                        # the closest one to the hearing.
+                        if order_date_str <= normalized_bd and download_link:
+                            if fallback_candidate is None or (
+                                order_date_str
+                                > fallback_candidate["order_date_str"]
+                            ):
+                                fallback_candidate = {
+                                    "order_date_str": order_date_str,
+                                    "download_link": download_link,
+                                }
                         continue
 
                 # Skip orders already fully analysed for this date
@@ -847,6 +868,87 @@ class AutoOrderManager:
                         case_ref,
                         order_date_str,
                         anal_err,
+                    )
+
+            # Fallback: when every portal order was skipped due to a date mismatch
+            # (no order's signing date equals the hearing/board date), use the closest
+            # prior-date order rather than returning an error.  This is needed because
+            # Bombay HC's portal stores the ORDER-SIGNING DATE in cells[2], which can
+            # precede the hearing date by several days.
+            if (
+                result["orders_processed"] == 0
+                and result["orders_skipped"] == 0
+                and fallback_candidate is not None
+            ):
+                fb_date = fallback_candidate["order_date_str"]
+                fb_link = fallback_candidate["download_link"]
+                logger.warning(
+                    "_process_all_orders_from_api: no exact-date order for "
+                    "case_ref=%s board_date=%s — using closest prior order dated %s "
+                    "(date_mismatch=True)",
+                    case_ref,
+                    board_date,
+                    fb_date,
+                )
+                try:
+                    fb_headers = {
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36"
+                        )
+                    }
+                    fb_resp = requests.get(fb_link, headers=fb_headers, timeout=30)
+                    fb_content_type = fb_resp.headers.get("Content-Type", "")
+                    fb_bytes = fb_resp.content or b""
+                    fb_is_pdf = (
+                        "application/pdf" in fb_content_type.lower()
+                        or fb_bytes.startswith(b"%PDF")
+                    )
+                    if fb_resp.status_code == 200 and fb_is_pdf:
+                        fb_stored = self._upload_order_to_gcs(
+                            fb_bytes, case_ref, fb_date
+                        )
+                        fb_final_link: str = fb_stored or fb_link
+                        fb_gcs_failed = fb_stored is None and bool(
+                            self._gcs_bucket_name
+                        )
+                        fb_anal = self._analyze_order_with_api_metadata(
+                            case_id=case_id,
+                            case_ref=case_ref,
+                            pdf_content=fb_bytes,
+                            api_order_date=fb_date,
+                            api_petitioner=api_petitioner,
+                            api_respondent=api_respondent,
+                            order_link=fb_final_link,
+                            board_date=board_date,
+                            gcs_upload_failed=fb_gcs_failed,
+                            date_mismatch=True,
+                        )
+                        if fb_anal.get("success"):
+                            result["orders_processed"] += 1
+                            last_order_link = fb_final_link
+                        else:
+                            logger.warning(
+                                "_process_all_orders_from_api: fallback analysis "
+                                "failed for case_ref=%s: %s",
+                                case_ref,
+                                fb_anal.get("error"),
+                            )
+                    else:
+                        logger.warning(
+                            "_process_all_orders_from_api: fallback download not "
+                            "PDF for case_ref=%s date=%s HTTP=%d",
+                            case_ref,
+                            fb_date,
+                            fb_resp.status_code,
+                        )
+                except Exception as fb_err:
+                    logger.warning(
+                        "_process_all_orders_from_api: fallback download failed "
+                        "for case_ref=%s date=%s: %s",
+                        case_ref,
+                        fb_date,
+                        fb_err,
                     )
 
             if result["orders_processed"] > 0 or result["orders_skipped"] > 0:
