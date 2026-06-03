@@ -793,9 +793,16 @@ def score_name_match(user_name: str, candidate_name: str) -> float:
         return 0.0
 
     # 1. Last-name gate (35 %)
+    # Only multi-character words are considered as potential last-name tokens.
+    # Single-letter initials (e.g. "S", "D") are not last names and must not
+    # be checked via substring matching against the candidate last word — that
+    # would cause "d" in "chipade" to pass the gate for unrelated names like
+    # "S D Vyas" vs "S D Chipade".
     cand_last = cand_words[-1]
     last_score = 0.0
     for uw in user_words:
+        if len(uw) <= 1:
+            continue
         if uw == cand_last:
             last_score = 1.0
             break
