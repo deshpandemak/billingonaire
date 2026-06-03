@@ -76,3 +76,36 @@ def test_get_best_match(mock_firestore):
     # Test an actual method that exists
     result = matcher.normalize_name("SHRI POOJA JOSHI, AGP")
     assert result is not None and isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# score_name_match — last-name gate false-positive regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_score_name_match_different_last_names_returns_zero():
+    """S D Vyas vs S D Chipade must NOT match — shared initials + single-letter
+    substring in last name was previously bypassing the last-name gate."""
+    from UserMatterMatcher import score_name_match
+
+    assert score_name_match("S D Vyas", "S D Chipade") == 0.0
+    assert score_name_match("S D Chipade", "S D Vyas") == 0.0
+
+
+def test_score_name_match_same_last_name_matches():
+    """Same last name with matching initials must score above threshold."""
+    from UserMatterMatcher import score_name_match
+
+    assert score_name_match("S D Vyas", "S.D.VYAS, AGP") >= 0.50
+    assert score_name_match("S D Chipade", "SHRI S D CHIPADE, AGP") >= 0.50
+
+
+def test_score_name_match_initial_only_user_words_cannot_pass_gate():
+    """A name composed entirely of initials (e.g. 'A B') must not match a
+    candidate whose last name merely contains one of those letters as a
+    substring (e.g. 'A B Naik' vs 'A B Bane' — 'b' is in 'bane' but
+    last names are different)."""
+    from UserMatterMatcher import score_name_match
+
+    # "b" is a substring of "bane" — should not pass the gate
+    assert score_name_match("A B Naik", "A B Bane") == 0.0
