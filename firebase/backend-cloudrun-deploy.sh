@@ -32,6 +32,24 @@ echo "🔑 Granting objectAdmin on ${GCS_BUCKET} to ${SA_EMAIL}..."
 gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${GCS_BUCKET}"
 echo "✅ IAM binding applied."
 
+# Apply lifecycle policy: delete objects older than 90 days to cap storage costs
+echo "♻️  Applying 90-day lifecycle policy to ${GCS_BUCKET}..."
+cat > /tmp/gcs-lifecycle.json <<'EOF'
+{
+  "lifecycle": {
+    "rule": [
+      {
+        "action": {"type": "Delete"},
+        "condition": {"age": 90}
+      }
+    ]
+  }
+}
+EOF
+gsutil lifecycle set /tmp/gcs-lifecycle.json "gs://${GCS_BUCKET}"
+rm /tmp/gcs-lifecycle.json
+echo "✅ Lifecycle policy applied (delete after 90 days)."
+
 # Navigate to the backend directory (script is run from firebase dir)
 cd ../billingonaire_backend
 
@@ -53,7 +71,7 @@ gcloud run deploy billingonaire-backend \
   --cpu=2 \
   --timeout=540s \
   --max-instances=10 \
-  --min-instances=1 \
+  --min-instances=0 \
   --cpu-boost \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
   --set-env-vars="ORDER_PROCESSING_WORKERS=3,GOOGLE_CLOUD_PROJECT=billingonaire,ORDER_PDF_BUCKET=billingonaire-court-orders"

@@ -4137,24 +4137,37 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
 
         ensure_firebase()
         db = firestore.client()
-        total_cases_docs = list(db.collection("daily-boards").limit(10000).stream())
-        total_cases = len(total_cases_docs)
 
-        case_docs = list(db.collection("case-details").limit(10000).stream())
-        cases_with_orders = 0
-        recent_successful = 0
-        recent_failed = 0
-
-        for doc in case_docs:
-            case_data = doc.to_dict() or {}
-            status = case_data.get("latest_order_status", "not_linked")
-            if status and status != "not_linked":
-                cases_with_orders += 1
-            if status == "analysed":
-                recent_successful += 1
-            if status in {"order_failed", "order_analysis_failed"}:
-                recent_failed += 1
-
+        # Use Firestore count() aggregation — reads 0 documents, billed as 1 read each
+        total_cases = (
+            db.collection("daily-boards").count().get()[0][0].value
+        )
+        recent_successful = (
+            db.collection("case-details")
+            .where("latest_order_status", "==", "analysed")
+            .count()
+            .get()[0][0].value
+        )
+        recent_failed = (
+            db.collection("case-details")
+            .where(
+                "latest_order_status",
+                "in",
+                ["order_failed", "order_analysis_failed"],
+            )
+            .count()
+            .get()[0][0].value
+        )
+        not_linked = (
+            db.collection("case-details")
+            .where("latest_order_status", "==", "not_linked")
+            .count()
+            .get()[0][0].value
+        )
+        total_case_details = (
+            db.collection("case-details").count().get()[0][0].value
+        )
+        cases_with_orders = total_case_details - not_linked
         cases_without_orders = total_cases - cases_with_orders
         analysis_completion_rate = round(
             (cases_with_orders / total_cases * 100) if total_cases > 0 else 0, 1

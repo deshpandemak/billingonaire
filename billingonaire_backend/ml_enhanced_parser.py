@@ -551,10 +551,18 @@ class MLEnhancedParser:
 
         return extracted_name if extracted_name else None
 
+    _USER_CACHE_TTL = 300  # 5 minutes
+
     def _get_user_list(self) -> List[Dict[str, str]]:
         """Get list of users for name matching"""
-        if hasattr(self, "user_cache") and self.user_cache:
-            return self.user_cache
+        import time as _time
+
+        cache = getattr(self, "_user_cache_data", None)
+        if (
+            cache is not None
+            and _time.time() - getattr(self, "_user_cache_ts", 0) < self._USER_CACHE_TTL
+        ):
+            return cache
 
         try:
             # Get users from Firestore
@@ -574,7 +582,8 @@ class MLEnhancedParser:
                         }
                     )
 
-            self.user_cache = users
+            self._user_cache_data = users
+            self._user_cache_ts = _time.time()
             return users
 
         except Exception as e:
