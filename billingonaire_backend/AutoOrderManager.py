@@ -785,8 +785,10 @@ class AutoOrderManager:
 
             last_order_link: Optional[str] = None
             normalized_bd: Optional[str] = (
-                self._normalise_order_date(board_date) or board_date
-            ) if board_date else None
+                (self._normalise_order_date(board_date) or board_date)
+                if board_date
+                else None
+            )
 
             # Fast-path: if board_date is already analysed in case-details, skip
             # the portal call entirely — just re-link the existing order to the
@@ -840,7 +842,9 @@ class AutoOrderManager:
                 # Track fallback candidates (orders predating board_date).  We keep
                 # the most recent qualifying order so that if multiple orders exist
                 # we use the closest one to the hearing.
-                is_primary = normalized_bd is not None and order_date_str == normalized_bd
+                is_primary = (
+                    normalized_bd is not None and order_date_str == normalized_bd
+                )
                 if normalized_bd and not is_primary and order_date_str <= normalized_bd:
                     if fallback_candidate is None or (
                         order_date_str > fallback_candidate["order_date_str"]
@@ -994,7 +998,11 @@ class AutoOrderManager:
             # Fallback: primary board_date was not covered by any exact-date order.
             # Use the closest prior-date order (the portal stores the ORDER-SIGNING
             # DATE which can predate the hearing by days or weeks).
-            if board_date and not primary_date_processed and fallback_candidate is not None:
+            if (
+                board_date
+                and not primary_date_processed
+                and fallback_candidate is not None
+            ):
                 fb_date = fallback_candidate["order_date_str"]
                 fb_link = fallback_candidate["download_link"]
 
@@ -1075,9 +1083,9 @@ class AutoOrderManager:
                                 result["orders_processed"] += 1
                                 last_order_link = fb_final_link
                                 primary_date_processed = True
-                                fb_category = (
-                                    fb_anal.get("data") or {}
-                                ).get("order_category")
+                                fb_category = (fb_anal.get("data") or {}).get(
+                                    "order_category"
+                                )
                                 # Link to board entries whose board_date == fb_date
                                 self._update_board_entries_for_case_date(
                                     case_ref, fb_date, fb_final_link, fb_category
