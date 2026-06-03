@@ -1,5 +1,6 @@
 import re
 import statistics
+import time as _time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
@@ -574,26 +575,29 @@ class DashboardData:
                 status_code=400, detail="Select at most 180 board dates per request"
             )
 
-        selected_dates_set = set(selected_dates)
-        docs = self.db.collection("daily-boards").stream()
         agp_counts = defaultdict(int)
         board_breakdown = defaultdict(int)
         total_cases = 0
 
-        for doc in docs:
-            data = doc.to_dict() or {}
-            date_str = self._to_date_str(data.get("board_date"))
-            if date_str not in selected_dates_set:
-                continue
-
-            respondent_lawyer = data.get("respondent_lawyer")
-            if not self._matches_agp_filter(respondent_lawyer, agp_filter):
-                continue
-
-            board_breakdown[date_str] += 1
-            total_cases += 1
-            if respondent_lawyer:
-                agp_counts[respondent_lawyer] += 1
+        # Batch into chunks of 30 (Firestore `in` limit) to avoid full-collection scan
+        _BATCH = 30
+        for i in range(0, len(selected_dates), _BATCH):
+            batch = selected_dates[i : i + _BATCH]
+            docs = (
+                self.db.collection("daily-boards")
+                .where(filter=FieldFilter("board_date", "in", batch))
+                .stream()
+            )
+            for doc in docs:
+                data = doc.to_dict() or {}
+                date_str = self._to_date_str(data.get("board_date"))
+                respondent_lawyer = data.get("respondent_lawyer")
+                if not self._matches_agp_filter(respondent_lawyer, agp_filter):
+                    continue
+                board_breakdown[date_str] += 1
+                total_cases += 1
+                if respondent_lawyer:
+                    agp_counts[respondent_lawyer] += 1
 
         if use_fuzzy_matching and len(agp_counts) > 0:
             agp_counts = self.group_similar_agp_names(agp_counts, threshold=0.85)
@@ -640,41 +644,46 @@ class DashboardData:
                 status_code=400, detail="limit must be between 1 and 5000"
             )
 
-        selected_dates_set = set(selected_dates)
-        docs = self.db.collection("daily-boards").stream()
         cases = []
 
-        for doc in docs:
-            data = doc.to_dict() or {}
-            date_str = self._to_date_str(data.get("board_date"))
-            if date_str not in selected_dates_set:
-                continue
-
-            respondent_lawyer = data.get("respondent_lawyer")
-            if not self._matches_agp_filter(respondent_lawyer, agp_filter):
-                continue
-
-            case_type = str(data.get("case_type") or "").strip().upper()
-            case_no = str(data.get("case_no") or "").strip()
-            case_year = str(data.get("case_year") or "").strip()
-            case_ref = f"{case_type}/{case_no}/{case_year}"
-
-            cases.append(
-                {
-                    "case_id": doc.id,
-                    "case_ref": case_ref,
-                    "board_date": date_str,
-                    "case_type": case_type,
-                    "case_no": case_no,
-                    "case_year": case_year,
-                    "petitioner_lawyer": data.get("petitioner_lawyer"),
-                    "respondent_lawyer": respondent_lawyer,
-                    "serial_number": data.get("serial_number"),
-                }
-            )
-
+        # Batch into chunks of 30 (Firestore `in` limit) to avoid full-collection scan
+        _BATCH = 30
+        for i in range(0, len(selected_dates), _BATCH):
             if len(cases) >= limit:
                 break
+            batch = selected_dates[i : i + _BATCH]
+            docs = (
+                self.db.collection("daily-boards")
+                .where(filter=FieldFilter("board_date", "in", batch))
+                .stream()
+            )
+            for doc in docs:
+                if len(cases) >= limit:
+                    break
+                data = doc.to_dict() or {}
+                date_str = self._to_date_str(data.get("board_date"))
+                respondent_lawyer = data.get("respondent_lawyer")
+                if not self._matches_agp_filter(respondent_lawyer, agp_filter):
+                    continue
+
+                case_type = str(data.get("case_type") or "").strip().upper()
+                case_no = str(data.get("case_no") or "").strip()
+                case_year = str(data.get("case_year") or "").strip()
+                case_ref = f"{case_type}/{case_no}/{case_year}"
+
+                cases.append(
+                    {
+                        "case_id": doc.id,
+                        "case_ref": case_ref,
+                        "board_date": date_str,
+                        "case_type": case_type,
+                        "case_no": case_no,
+                        "case_year": case_year,
+                        "petitioner_lawyer": data.get("petitioner_lawyer"),
+                        "respondent_lawyer": respondent_lawyer,
+                        "serial_number": data.get("serial_number"),
+                    }
+                )
 
         cases.sort(
             key=lambda item: (item.get("board_date"), item.get("serial_number") or "")

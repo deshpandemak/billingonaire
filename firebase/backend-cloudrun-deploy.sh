@@ -53,7 +53,7 @@ gcloud run deploy billingonaire-backend \
   --cpu=2 \
   --timeout=540s \
   --max-instances=10 \
-  --min-instances=1 \
+  --min-instances=0 \
   --cpu-boost \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
   --set-env-vars="ORDER_PROCESSING_WORKERS=3,GOOGLE_CLOUD_PROJECT=billingonaire,ORDER_PDF_BUCKET=billingonaire-court-orders"
