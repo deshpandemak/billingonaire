@@ -715,13 +715,18 @@ class BombayHighCourtScraper:
                 "#caseDetails",
             ]
 
+            # Broaden selector condition: also accept "versus/vs" formats used by
+            # the portal in addition to "filed on" / "against".
+            _PARTY_KEYWORDS = re.compile(
+                r"\b(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioner|respondent)\b",
+                re.IGNORECASE,
+            )
+
             case_text = ""
             for selector in case_info_selectors:
                 for element in soup.select(selector):
                     text = element.get_text(" ", strip=True)
-                    if case_ref in text and (
-                        "filed on" in text.lower() or "against" in text.lower()
-                    ):
+                    if case_ref in text and _PARTY_KEYWORDS.search(text):
                         case_text = text
                         break
                 if case_text:
@@ -739,22 +744,73 @@ class BombayHighCourtScraper:
 
             petitioner = ""
             respondent = ""
+
+            # Strip the leading case number from case_text so party-name patterns
+            # don't accidentally capture it.
+            stripped_text = case_text
+            if case_ref in stripped_text:
+                stripped_text = stripped_text[
+                    stripped_text.index(case_ref) + len(case_ref) :
+                ].strip()
+
+            # Pattern 1: "by PETITIONER against RESPONDENT" (with optional "filed on DATE" prefix)
             by_match = re.search(
-                r"by\s+(.+?)\s+against\s+(.+?)$", case_text, re.IGNORECASE
+                r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
+                stripped_text,
+                re.IGNORECASE,
             )
             if by_match:
                 petitioner = by_match.group(1).strip()
                 respondent = by_match.group(2).strip()
-            else:
+
+            # Pattern 2: "filed by X against Y" (with optional "through ...")
+            if not petitioner:
                 filed_match = re.search(
                     r"filed.*?by\s+(.+?)(?:\s+against\s+(.+?))?(?:\s+through|\s*$)",
-                    case_text,
+                    stripped_text,
                     re.IGNORECASE,
                 )
                 if filed_match:
                     petitioner = filed_match.group(1).strip()
                     if filed_match.group(2):
                         respondent = filed_match.group(2).strip()
+
+            # Pattern 3: "PETITIONER Versus/VS/V.S./V/S RESPONDENT" — standard Indian
+            # court title format (case number already stripped from stripped_text)
+            if not petitioner:
+                vs_match = re.search(
+                    r"^(.+?)\s+(?:versus|v\.?s\.?|v/s)\s+(.+?)(?:\s+filed|\s*$)",
+                    stripped_text,
+                    re.IGNORECASE,
+                )
+                if vs_match:
+                    petitioner = vs_match.group(1).strip()
+                    respondent = vs_match.group(2).strip()
+
+            # Pattern 4: labelled "Petitioner(s): X  Respondent(s): Y" — require
+            # explicit colon after the label so we don't match "PETITIONER NAME" mid-text.
+            if not petitioner:
+                pet_match = re.search(
+                    r"Petitioner(?:\(s\))?\s*:\s*(.+?)(?=\s*Respondent\b|\s*$)",
+                    stripped_text,
+                    re.IGNORECASE,
+                )
+                res_match = re.search(
+                    r"Respondent(?:\(s\))?\s*:\s*(.+?)(?=\s*Petitioner\b|\s*$)",
+                    stripped_text,
+                    re.IGNORECASE,
+                )
+                if pet_match:
+                    petitioner = pet_match.group(1).strip()
+                if res_match:
+                    respondent = res_match.group(1).strip()
+
+            # Strip any trailing filing-date suffix that leaked into the name
+            for _suffix in (r"\s+[Ff]iled.*$", r"\s+\d{2}/\d{2}/\d{4}.*$"):
+                if petitioner:
+                    petitioner = re.sub(_suffix, "", petitioner).strip()
+                if respondent:
+                    respondent = re.sub(_suffix, "", respondent).strip()
 
             filing_date = ""
             date_match = re.search(r"filed\s+on\s+([\d/.-]+)", case_text, re.IGNORECASE)
