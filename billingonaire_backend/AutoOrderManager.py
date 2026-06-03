@@ -476,6 +476,98 @@ class AutoOrderManager:
                 return True
         return False
 
+    def _get_analysed_order_for_date(
+        self, case_ref: str, order_date_str: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the first analysed order in case-details that matches *order_date_str*.
+
+        Both the target and stored dates are normalised to YYYY-MM-DD before
+        comparison.  Returns ``None`` when no match is found.
+        """
+        case_detail = self.case_store.get_case_details(case_ref) or {}
+        orders = case_detail.get("orders") or []
+        normalized_target = self._normalise_order_date(order_date_str)
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            if order.get("order_status") != "analysed":
+                continue
+            if self._normalise_order_date(order.get("order_date")) == normalized_target:
+                return order
+        return None
+
+    def _update_board_entries_for_case_date(
+        self,
+        case_ref: str,
+        order_date_str: str,
+        order_link: Optional[str],
+        order_category: Optional[str],
+    ) -> int:
+        """Update every daily-boards entry whose case_ref and board_date match.
+
+        Queries the collection by *case_ref* equality and *board_date* equality
+        (board_date is stored as a Python datetime / Firestore Timestamp), so the
+        composite index on ``(board_date, case_ref)`` is used.
+
+        Returns the number of documents updated.
+        """
+        if not order_link and not order_category:
+            return 0
+        try:
+            bd_datetime = datetime.strptime(order_date_str, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            logger.warning(
+                "_update_board_entries_for_case_date: cannot parse date %r for "
+                "case_ref=%s — skipping board-entry update",
+                order_date_str,
+                case_ref,
+            )
+            return 0
+        try:
+            update_payload: Dict[str, Any] = {}
+            if order_link:
+                update_payload["order_link"] = order_link
+            if order_category:
+                update_payload["order_category"] = order_category
+            docs = (
+                self.db.collection("daily-boards")
+                .where("case_ref", "==", case_ref)
+                .where("board_date", "==", bd_datetime)
+                .stream()
+            )
+            updated = 0
+            for doc in docs:
+                try:
+                    doc.reference.update(update_payload)
+                    updated += 1
+                except Exception as _ue:
+                    logger.warning(
+                        "_update_board_entries_for_case_date: failed to update "
+                        "doc=%s for case_ref=%s date=%s: %s",
+                        doc.id,
+                        case_ref,
+                        order_date_str,
+                        _ue,
+                    )
+            if updated:
+                logger.info(
+                    "_update_board_entries_for_case_date: updated %d board "
+                    "entries for case_ref=%s date=%s",
+                    updated,
+                    case_ref,
+                    order_date_str,
+                )
+            return updated
+        except Exception as exc:
+            logger.warning(
+                "_update_board_entries_for_case_date failed for case_ref=%s "
+                "date=%s: %s",
+                case_ref,
+                order_date_str,
+                exc,
+            )
+            return 0
+
     def _analyze_order_with_api_metadata(
         self,
         case_id: str,
@@ -578,25 +670,10 @@ class AutoOrderManager:
                 },
                 event_type="analysis_succeeded",
             )
-            # Propagate the GCS URL back to daily-boards so the PDF proxy reads
-            # the permanent link directly without falling back to case-details.
-            # Without this, the proxy keeps reading the expired court URL from
-            # daily-boards and re-queueing re-fetches indefinitely.
-            if order_link and order_link.startswith("https://storage.googleapis.com"):
-                try:
-                    self.db.collection("daily-boards").document(case_id).update(
-                        {
-                            "order_link": order_link,
-                            "order_category": order_analysis["order_category"],
-                        }
-                    )
-                except Exception as _db_err:
-                    logger.warning(
-                        "_analyze_order_with_api_metadata: daily-boards update "
-                        "failed for case_id=%s: %s",
-                        case_id,
-                        _db_err,
-                    )
+            # NOTE: board-entry updates (propagating order_link / order_category back
+            # to daily-boards) are now done centrally by _update_board_entries_for_case_date
+            # so that ALL board entries for the order date are updated, not only the one
+            # document whose case_id was passed here.
             logger.info(
                 "_analyze_order_with_api_metadata: analysed case_ref=%s date=%s category=%s",
                 case_ref,
@@ -707,10 +784,45 @@ class AutoOrderManager:
                 )
 
             last_order_link: Optional[str] = None
-            # Best prior-date order to use as fallback when no order exactly
-            # matches board_date (e.g. portal's listing_date is the order-signing
-            # date, which may precede the hearing date by days or weeks).
+            normalized_bd: Optional[str] = (
+                self._normalise_order_date(board_date) or board_date
+            ) if board_date else None
+
+            # Fast-path: if board_date is already analysed in case-details, skip
+            # the portal call entirely — just re-link the existing order to the
+            # board entry and return.  This is the hot path for re-uploaded boards
+            # and for secondary hearing dates after the first analysis already
+            # fetched all historical orders.
+            if normalized_bd:
+                existing_for_bd = self._get_analysed_order_for_date(
+                    case_ref, normalized_bd
+                )
+                if existing_for_bd:
+                    logger.info(
+                        "_process_all_orders_from_api: board_date=%s already "
+                        "analysed for case_ref=%s — linking to board entry and "
+                        "skipping portal call",
+                        board_date,
+                        case_ref,
+                    )
+                    self._update_board_entries_for_case_date(
+                        case_ref,
+                        normalized_bd,
+                        existing_for_bd.get("order_link"),
+                        existing_for_bd.get("order_category"),
+                    )
+                    result["orders_skipped"] += 1
+                    result["success"] = True
+                    result["order_link"] = existing_for_bd.get("order_link")
+                    return result
+
+            # Closest prior-date order tracked as fallback when no order's signing
+            # date exactly matches board_date (Bombay HC portal stores the
+            # ORDER-SIGNING DATE, which may precede the hearing date by days).
             fallback_candidate: Optional[Dict[str, Any]] = None
+            # True once the primary board_date has been covered (exact match or
+            # already-skipped) — used to decide whether the fallback is needed.
+            primary_date_processed: bool = False
 
             for order_entry in case_orders:
                 if not isinstance(order_entry, dict):
@@ -725,42 +837,41 @@ class AutoOrderManager:
                 if not download_link:
                     continue
 
-                # Only process the order that matches the board_date that triggered
-                # this download.  The court API returns ALL historical orders for the
-                # case; processing a different date's order would corrupt the hearing
-                # record.  When board_date is not supplied (back-fill), all orders are
-                # eligible.
-                if board_date:
-                    normalized_bd = self._normalise_order_date(board_date) or board_date
-                    if order_date_str != normalized_bd:
-                        logger.info(
-                            "_process_all_orders_from_api: skipping order for "
-                            "case_ref=%s order_date=%s — does not match board_date=%s",
-                            case_ref,
-                            order_date_str,
-                            board_date,
-                        )
-                        # Record as fallback candidate when the order predates or equals
-                        # board_date — the portal's listing_date (order-signing date) is
-                        # often earlier than the actual hearing date.  We keep the most
-                        # recent qualifying order so that if multiple orders exist we use
-                        # the closest one to the hearing.
-                        if order_date_str <= normalized_bd and download_link:
-                            if fallback_candidate is None or (
-                                order_date_str
-                                > fallback_candidate["order_date_str"]
-                            ):
-                                fallback_candidate = {
-                                    "order_date_str": order_date_str,
-                                    "download_link": download_link,
-                                }
-                        continue
+                # Track fallback candidates (orders predating board_date).  We keep
+                # the most recent qualifying order so that if multiple orders exist
+                # we use the closest one to the hearing.
+                is_primary = normalized_bd is not None and order_date_str == normalized_bd
+                if normalized_bd and not is_primary and order_date_str <= normalized_bd:
+                    if fallback_candidate is None or (
+                        order_date_str > fallback_candidate["order_date_str"]
+                    ):
+                        fallback_candidate = {
+                            "order_date_str": order_date_str,
+                            "download_link": download_link,
+                        }
 
-                # Skip orders already fully analysed for this date
+                # Skip orders already fully analysed for this date.
+                # Opportunistically re-link them to board entries so that any
+                # board entries inserted after the initial analysis are backfilled.
                 if order_date_str and self._is_order_already_analysed(
                     case_ref, order_date_str
                 ):
                     result["orders_skipped"] += 1
+                    ex_order = self._get_analysed_order_for_date(
+                        case_ref, order_date_str
+                    )
+                    if ex_order:
+                        self._update_board_entries_for_case_date(
+                            case_ref,
+                            order_date_str,
+                            ex_order.get("order_link"),
+                            ex_order.get("order_category"),
+                        )
+                        if is_primary:
+                            primary_date_processed = True
+                            last_order_link = (
+                                ex_order.get("order_link") or last_order_link
+                            )
                     logger.info(
                         "_process_all_orders_from_api: skipping already-analysed "
                         "order for case_ref=%s date=%s",
@@ -853,6 +964,16 @@ class AutoOrderManager:
                     if anal.get("success"):
                         result["orders_processed"] += 1
                         last_order_link = final_order_link
+                        if is_primary:
+                            primary_date_processed = True
+                        # Link this order to ALL board entries whose board_date equals
+                        # the order's signing date — covers the triggering entry when
+                        # is_primary is True, and backfills any other board entries
+                        # for the same case that happen to share this date.
+                        order_category = (anal.get("data") or {}).get("order_category")
+                        self._update_board_entries_for_case_date(
+                            case_ref, order_date_str, final_order_link, order_category
+                        )
                     else:
                         logger.warning(
                             "_process_all_orders_from_api: analysis failed for "
@@ -870,86 +991,141 @@ class AutoOrderManager:
                         anal_err,
                     )
 
-            # Fallback: when every portal order was skipped due to a date mismatch
-            # (no order's signing date equals the hearing/board date), use the closest
-            # prior-date order rather than returning an error.  This is needed because
-            # Bombay HC's portal stores the ORDER-SIGNING DATE in cells[2], which can
-            # precede the hearing date by several days.
-            if (
-                result["orders_processed"] == 0
-                and result["orders_skipped"] == 0
-                and fallback_candidate is not None
-            ):
+            # Fallback: primary board_date was not covered by any exact-date order.
+            # Use the closest prior-date order (the portal stores the ORDER-SIGNING
+            # DATE which can predate the hearing by days or weeks).
+            if board_date and not primary_date_processed and fallback_candidate is not None:
                 fb_date = fallback_candidate["order_date_str"]
                 fb_link = fallback_candidate["download_link"]
-                logger.warning(
-                    "_process_all_orders_from_api: no exact-date order for "
-                    "case_ref=%s board_date=%s — using closest prior order dated %s "
-                    "(date_mismatch=True)",
-                    case_ref,
-                    board_date,
-                    fb_date,
-                )
-                try:
-                    fb_headers = {
-                        "User-Agent": (
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            "AppleWebKit/537.36"
-                        )
-                    }
-                    fb_resp = requests.get(fb_link, headers=fb_headers, timeout=30)
-                    fb_content_type = fb_resp.headers.get("Content-Type", "")
-                    fb_bytes = fb_resp.content or b""
-                    fb_is_pdf = (
-                        "application/pdf" in fb_content_type.lower()
-                        or fb_bytes.startswith(b"%PDF")
+
+                # Re-use an already-analysed fallback order if it exists in
+                # case-details — avoids a redundant PDF download.
+                fb_existing = self._get_analysed_order_for_date(case_ref, fb_date)
+                if fb_existing:
+                    logger.info(
+                        "_process_all_orders_from_api: primary board_date=%s not "
+                        "covered; linking already-analysed fallback order dated %s "
+                        "to triggering board entry case_id=%s (date_mismatch=True)",
+                        board_date,
+                        fb_date,
+                        case_id,
                     )
-                    if fb_resp.status_code == 200 and fb_is_pdf:
-                        fb_stored = self._upload_order_to_gcs(
-                            fb_bytes, case_ref, fb_date
+                    result["orders_skipped"] += 1
+                    last_order_link = fb_existing.get("order_link") or last_order_link
+                    primary_date_processed = True
+                    try:
+                        self.db.collection("daily-boards").document(case_id).update(
+                            {
+                                "order_link": fb_existing.get("order_link"),
+                                "order_category": fb_existing.get("order_category"),
+                                "date_mismatch": True,
+                            }
                         )
-                        fb_final_link: str = fb_stored or fb_link
-                        fb_gcs_failed = fb_stored is None and bool(
-                            self._gcs_bucket_name
+                    except Exception as _be:
+                        logger.warning(
+                            "_process_all_orders_from_api: fallback board-entry "
+                            "update failed for case_id=%s: %s",
+                            case_id,
+                            _be,
                         )
-                        fb_anal = self._analyze_order_with_api_metadata(
-                            case_id=case_id,
-                            case_ref=case_ref,
-                            pdf_content=fb_bytes,
-                            api_order_date=fb_date,
-                            api_petitioner=api_petitioner,
-                            api_respondent=api_respondent,
-                            order_link=fb_final_link,
-                            board_date=board_date,
-                            gcs_upload_failed=fb_gcs_failed,
-                            date_mismatch=True,
+                else:
+                    logger.warning(
+                        "_process_all_orders_from_api: no exact-date order for "
+                        "case_ref=%s board_date=%s — downloading closest prior "
+                        "order dated %s (date_mismatch=True)",
+                        case_ref,
+                        board_date,
+                        fb_date,
+                    )
+                    try:
+                        fb_headers = {
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36"
+                            )
+                        }
+                        fb_resp = requests.get(fb_link, headers=fb_headers, timeout=30)
+                        fb_content_type = fb_resp.headers.get("Content-Type", "")
+                        fb_bytes = fb_resp.content or b""
+                        fb_is_pdf = (
+                            "application/pdf" in fb_content_type.lower()
+                            or fb_bytes.startswith(b"%PDF")
                         )
-                        if fb_anal.get("success"):
-                            result["orders_processed"] += 1
-                            last_order_link = fb_final_link
+                        if fb_resp.status_code == 200 and fb_is_pdf:
+                            fb_stored = self._upload_order_to_gcs(
+                                fb_bytes, case_ref, fb_date
+                            )
+                            fb_final_link: str = fb_stored or fb_link
+                            fb_gcs_failed = fb_stored is None and bool(
+                                self._gcs_bucket_name
+                            )
+                            fb_anal = self._analyze_order_with_api_metadata(
+                                case_id=case_id,
+                                case_ref=case_ref,
+                                pdf_content=fb_bytes,
+                                api_order_date=fb_date,
+                                api_petitioner=api_petitioner,
+                                api_respondent=api_respondent,
+                                order_link=fb_final_link,
+                                board_date=board_date,
+                                gcs_upload_failed=fb_gcs_failed,
+                                date_mismatch=True,
+                            )
+                            if fb_anal.get("success"):
+                                result["orders_processed"] += 1
+                                last_order_link = fb_final_link
+                                primary_date_processed = True
+                                fb_category = (
+                                    fb_anal.get("data") or {}
+                                ).get("order_category")
+                                # Link to board entries whose board_date == fb_date
+                                self._update_board_entries_for_case_date(
+                                    case_ref, fb_date, fb_final_link, fb_category
+                                )
+                                # Explicitly update the triggering board entry —
+                                # its board_date is board_date, not fb_date, so the
+                                # query above will not find it.
+                                try:
+                                    self.db.collection("daily-boards").document(
+                                        case_id
+                                    ).update(
+                                        {
+                                            "order_link": fb_final_link,
+                                            "order_category": fb_category,
+                                            "date_mismatch": True,
+                                        }
+                                    )
+                                except Exception as _be:
+                                    logger.warning(
+                                        "_process_all_orders_from_api: fallback "
+                                        "board-entry update failed for "
+                                        "case_id=%s: %s",
+                                        case_id,
+                                        _be,
+                                    )
+                            else:
+                                logger.warning(
+                                    "_process_all_orders_from_api: fallback "
+                                    "analysis failed for case_ref=%s: %s",
+                                    case_ref,
+                                    fb_anal.get("error"),
+                                )
                         else:
                             logger.warning(
-                                "_process_all_orders_from_api: fallback analysis "
-                                "failed for case_ref=%s: %s",
+                                "_process_all_orders_from_api: fallback download "
+                                "not PDF for case_ref=%s date=%s HTTP=%d",
                                 case_ref,
-                                fb_anal.get("error"),
+                                fb_date,
+                                fb_resp.status_code,
                             )
-                    else:
+                    except Exception as fb_err:
                         logger.warning(
-                            "_process_all_orders_from_api: fallback download not "
-                            "PDF for case_ref=%s date=%s HTTP=%d",
+                            "_process_all_orders_from_api: fallback download "
+                            "failed for case_ref=%s date=%s: %s",
                             case_ref,
                             fb_date,
-                            fb_resp.status_code,
+                            fb_err,
                         )
-                except Exception as fb_err:
-                    logger.warning(
-                        "_process_all_orders_from_api: fallback download failed "
-                        "for case_ref=%s date=%s: %s",
-                        case_ref,
-                        fb_date,
-                        fb_err,
-                    )
 
             if result["orders_processed"] > 0 or result["orders_skipped"] > 0:
                 result["success"] = True

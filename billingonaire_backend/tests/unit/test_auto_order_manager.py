@@ -197,7 +197,7 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
 
 
 def test_process_all_orders_from_api_success(auto_order_manager):
-    """Only the order matching board_date is downloaded and analysed; others are skipped."""
+    """All portal orders are downloaded, analysed, and linked to their board entries."""
     auto_order_manager.court_scraper._fetch_with_provider = Mock(
         return_value={
             "result": {"_dummy": True},
@@ -213,14 +213,16 @@ def test_process_all_orders_from_api_success(auto_order_manager):
             "petitioner": "ABC Corp",
             "respondent": "Govt of MH",
             "case_orders": [
-                # Old historical order — must be skipped (doesn't match board_date)
+                # Historical order — processed and linked to its own board entry
                 {"date": "2025-02-01", "download_link": "https://court.example/o1.pdf"},
-                # Matches board_date — must be processed
+                # Matches board_date — also processed and linked
                 {"date": "2025-03-01", "download_link": "https://court.example/o2.pdf"},
             ],
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._get_analysed_order_for_date = Mock(return_value=None)
+    auto_order_manager._update_board_entries_for_case_date = Mock(return_value=0)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     auto_order_manager._analyze_order_with_api_metadata = Mock(
         return_value={"success": True, "data": {"order_category": "interim"}}
@@ -241,13 +243,15 @@ def test_process_all_orders_from_api_success(auto_order_manager):
         )
 
     assert result["success"] is True
-    # Only the order matching board_date is processed; the Feb order is skipped
-    assert result["orders_processed"] == 1
+    # Both orders are processed — historical orders are now linked to their own board entries
+    assert result["orders_processed"] == 2
     assert result["orders_skipped"] == 0
     auto_order_manager.case_store.update_case_party_names.assert_called_once_with(
         "WP/123/2025", "ABC Corp", "Govt of MH"
     )
-    assert auto_order_manager._analyze_order_with_api_metadata.call_count == 1
+    assert auto_order_manager._analyze_order_with_api_metadata.call_count == 2
+    # _update_board_entries_for_case_date called once per analysed order
+    assert auto_order_manager._update_board_entries_for_case_date.call_count == 2
 
 
 def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
@@ -568,14 +572,15 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
     )
 
 
-def test_process_all_orders_from_api_skips_order_not_matching_board_date(
+def test_process_all_orders_from_api_links_each_order_to_its_own_board_entry(
     auto_order_manager,
 ):
-    """Only the order whose date matches board_date is processed; all others are skipped.
+    """All portal orders are processed; each is linked to its own board entry by date.
 
-    The court API returns ALL historical orders for a case. Without this filter,
-    an old order (e.g. July 2025 for a May 2026 board trigger) would be linked
-    to the current hearing, corrupting the case record.
+    The court API returns ALL historical orders for a case.  Each order is now
+    analysed and linked to the daily-boards document(s) whose board_date matches
+    the order's signing date.  The triggering board entry (board_date=2026-05-15)
+    is covered by the matching order; the old order is linked to its own entry.
     """
     auto_order_manager.court_scraper._fetch_with_provider = Mock(
         return_value={
@@ -592,12 +597,12 @@ def test_process_all_orders_from_api_skips_order_not_matching_board_date(
             "petitioner": "P",
             "respondent": "R",
             "case_orders": [
-                # Old order — must be skipped (doesn't match board_date)
+                # Old order — processed and linked to its own board entry (2025-07-10)
                 {
                     "date": "2025-07-10",
                     "download_link": "https://court.example/old.pdf",
                 },
-                # Matches board_date — must be processed
+                # Matches board_date — processed and linked to the triggering entry
                 {
                     "date": "2026-05-15",
                     "download_link": "https://court.example/new.pdf",
@@ -606,6 +611,8 @@ def test_process_all_orders_from_api_skips_order_not_matching_board_date(
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._get_analysed_order_for_date = Mock(return_value=None)
+    auto_order_manager._update_board_entries_for_case_date = Mock(return_value=0)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     captured_dates: list = []
     auto_order_manager._analyze_order_with_api_metadata = Mock(
@@ -628,18 +635,27 @@ def test_process_all_orders_from_api_skips_order_not_matching_board_date(
         )
 
     assert result["success"] is True
-    assert result["orders_processed"] == 1
-    assert captured_dates == ["2026-05-15"]
-    assert "2025-07-10" not in captured_dates
+    # Both orders analysed; each linked to its own board entry
+    assert result["orders_processed"] == 2
+    assert set(captured_dates) == {"2025-07-10", "2026-05-15"}
+    # Board entries updated for each order's own date (not the triggering board_date)
+    update_dates = {
+        call.args[1]
+        for call in auto_order_manager._update_board_entries_for_case_date.call_args_list
+    }
+    assert update_dates == {"2025-07-10", "2026-05-15"}
 
 
-def test_process_all_orders_from_api_different_hearing_date_triggers_own_download(
+def test_process_all_orders_from_api_processes_all_dates_in_one_portal_call(
     auto_order_manager,
 ):
-    """Each board entry triggers a separate download for its specific date.
+    """One portal call processes all orders and links each to its own board entry.
 
-    When this run is for board_date 2026-03-10, only that date's order is processed.
-    The May 2026 order will be handled when that board entry is processed separately.
+    When the portal returns 3 orders for different dates, all are downloaded and
+    analysed.  Each order is linked to board entries matching its own signing date,
+    not the board_date that triggered the call.  Future analyses for the other dates
+    will skip the portal call (fast-path) because the orders are already in
+    case-details.
     """
     auto_order_manager.court_scraper._fetch_with_provider = Mock(
         return_value={
@@ -656,11 +672,11 @@ def test_process_all_orders_from_api_different_hearing_date_triggers_own_downloa
             "petitioner": "P",
             "respondent": "R",
             "case_orders": [
-                # Matches board_date
+                # Matches board_date — primary order
                 {"date": "2026-03-10", "download_link": "https://court.example/o1.pdf"},
-                # Different hearing — skipped here, handled by its own board entry
+                # Future hearing — also processed and linked to its own board entry
                 {"date": "2026-05-15", "download_link": "https://court.example/o2.pdf"},
-                # Old order — skipped
+                # Old order — processed and linked to its own (past) board entry
                 {
                     "date": "2025-01-20",
                     "download_link": "https://court.example/old.pdf",
@@ -669,6 +685,8 @@ def test_process_all_orders_from_api_different_hearing_date_triggers_own_downloa
         }
     )
     auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+    auto_order_manager._get_analysed_order_for_date = Mock(return_value=None)
+    auto_order_manager._update_board_entries_for_case_date = Mock(return_value=0)
     auto_order_manager._upload_order_to_gcs = Mock(return_value=None)
     captured_dates: list = []
     auto_order_manager._analyze_order_with_api_metadata = Mock(
@@ -691,10 +709,15 @@ def test_process_all_orders_from_api_different_hearing_date_triggers_own_downloa
         )
 
     assert result["success"] is True
-    assert result["orders_processed"] == 1
-    assert captured_dates == ["2026-03-10"]
-    assert "2026-05-15" not in captured_dates
-    assert "2025-01-20" not in captured_dates
+    # All 3 orders processed in one portal call
+    assert result["orders_processed"] == 3
+    assert set(captured_dates) == {"2026-03-10", "2026-05-15", "2025-01-20"}
+    # Each order linked to its own board entry by date
+    update_dates = {
+        call.args[1]
+        for call in auto_order_manager._update_board_entries_for_case_date.call_args_list
+    }
+    assert update_dates == {"2026-03-10", "2026-05-15", "2025-01-20"}
 
 
 def test_process_all_orders_from_api_no_board_date_processes_all_orders(
