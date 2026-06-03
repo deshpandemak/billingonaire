@@ -719,6 +719,60 @@ def test_enrich_case_orders_result_builds_title_when_missing():
 
 
 # ---------------------------------------------------------------------------
+# _extract_case_details_from_html — party-name format variants
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "html, expected_petitioner, expected_respondent",
+    [
+        # Original "by X against Y" format
+        (
+            '<div id="cn_CaseNoUpdates"><div class="card-header">'
+            "WP/1/2025 filed on 01/01/2025 by Petitioner A against Respondent B"
+            "</div></div>",
+            "Petitioner A",
+            "Respondent B",
+        ),
+        # "Versus" format — standard Indian court title
+        (
+            '<div id="cn_CaseNoUpdates"><div class="card-header">'
+            "WP/2/2025 JOHN DOE & ORS. Versus STATE OF MAHARASHTRA Filed on 01/01/2025"
+            "</div></div>",
+            "JOHN DOE & ORS.",
+            "STATE OF MAHARASHTRA",
+        ),
+        # "VS" abbreviation
+        (
+            '<div id="cn_CaseNoUpdates"><div class="card-header">'
+            "WP/3/2025 PETITIONER NAME VS RESPONDENT NAME Filed on 01/01/2025"
+            "</div></div>",
+            "PETITIONER NAME",
+            "RESPONDENT NAME",
+        ),
+        # Labelled "Petitioner(s): / Respondent(s):" format
+        (
+            '<div id="cn_CaseNoUpdates"><div class="card-header">'
+            "WP/4/2025 Petitioner(s): Alice  Respondent(s): Bob"
+            "</div></div>",
+            "Alice",
+            "Bob",
+        ),
+    ],
+)
+def test_extract_case_details_from_html_party_name_formats(
+    html, expected_petitioner, expected_respondent
+):
+    scraper = BombayHighCourtScraper()
+    case_ref = html.split("WP/")[1].split(" ")[0]
+    case_ref = "WP/" + case_ref
+    result = scraper._extract_case_details_from_html(html, case_ref)
+    assert result is not None
+    assert result["petitioner_name"] == expected_petitioner
+    assert result["respondent_name"] == expected_respondent
+
+
+# ---------------------------------------------------------------------------
 # Stamp (ST) cases — stampreg forwarded to AJAX + form POST
 # ---------------------------------------------------------------------------
 
