@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from firebase_admin import firestore
@@ -381,6 +381,46 @@ class CaseDataStore:
             len(merged_pleaders),
             len(board_ids),
         )
+
+        # Backfill: if case-details already has an analysed order whose date matches
+        # this board entry's board_date, immediately propagate order_link and
+        # order_category to the daily-boards document.  This means boards uploaded
+        # after the initial order fetch are linked without a fresh portal call.
+        if board_date and existing.get("orders"):
+            for _order in existing["orders"]:
+                if not isinstance(_order, dict):
+                    continue
+                if _order.get("order_status") != "analysed":
+                    continue
+                if self._to_iso_date(_order.get("order_date")) == board_date:
+                    _link = _order.get("order_link")
+                    _cat = _order.get("order_category")
+                    if _link or _cat:
+                        try:
+                            _update: Dict[str, Any] = {}
+                            if _link:
+                                _update["order_link"] = _link
+                            if _cat:
+                                _update["order_category"] = _cat
+                            self.db.collection("daily-boards").document(
+                                board_doc_id
+                            ).update(_update)
+                            logger.info(
+                                "upsert_from_board_entry: backfilled order "
+                                "link/category for board_doc_id=%s from "
+                                "existing case-details order dated %s",
+                                board_doc_id,
+                                board_date,
+                            )
+                        except Exception as _be:
+                            logger.warning(
+                                "upsert_from_board_entry: backfill failed for "
+                                "board_doc_id=%s: %s",
+                                board_doc_id,
+                                _be,
+                            )
+                    break
+
         return case_ref
 
     def update_case_party_names(
