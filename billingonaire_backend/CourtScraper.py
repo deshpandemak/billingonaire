@@ -750,7 +750,7 @@ class BombayHighCourtScraper:
             stripped_text = case_text
             if case_ref in stripped_text:
                 stripped_text = stripped_text[
-                    stripped_text.index(case_ref) + len(case_ref):
+                    stripped_text.index(case_ref) + len(case_ref) :
                 ].strip()
 
             # Pattern 1: "by PETITIONER against RESPONDENT" (with optional "filed on DATE" prefix)
