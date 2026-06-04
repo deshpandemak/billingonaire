@@ -29,9 +29,6 @@ logger = logging.getLogger(__name__)
 
 _overview_stats_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 _queue_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
-# Tracks the last time a background re-check was triggered for date_mismatch cases.
-# Keyed by normalised case_ref; value is a float (time.time()).
-_mismatch_recheck_times: Dict[str, float] = {}
 
 # Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
 if os.getenv("K_SERVICE"):
@@ -1087,47 +1084,6 @@ async def get_case_timeline(
                     o["board_date"] = bd_str
             orders_out.append(o)
 
-        # When an analysed case has date_mismatch orders (closest-prior-date PDF
-        # used as fallback because the exact-date order wasn't yet on the portal),
-        # the portal may have since published the real order.  Trigger a background
-        # re-check so it is picked up transparently — no user action needed.
-        # A 30-minute per-case cooldown prevents hammering the portal.
-        has_date_mismatch = any(o.get("date_mismatch") for o in orders_out)
-        if has_date_mismatch and lifecycle_status == "analysed" and board_ids:
-            import time as _time
-
-            _now_ts = _time.time()
-            _last_ts = _mismatch_recheck_times.get(normalized_case_ref, 0.0)
-            if _now_ts - _last_ts > 1800:
-                _mismatch_recheck_times[normalized_case_ref] = _now_ts
-                try:
-                    _board_snap = (
-                        db.collection("daily-boards").document(board_ids[-1]).get()
-                    )
-                    if _board_snap.exists:
-                        _board_data = {
-                            **(_board_snap.to_dict() or {}),
-                            "id": board_ids[-1],
-                        }
-                        loop = asyncio.get_event_loop()
-                        loop.run_in_executor(
-                            executor,
-                            get_auto_order_manager()._process_single_case,
-                            _board_data,
-                        )
-                        logger.info(
-                            "get_case_timeline: triggered mismatch re-check for "
-                            "case_ref=%s board_id=%s",
-                            normalized_case_ref,
-                            board_ids[-1],
-                        )
-                except Exception as _re_err:
-                    logger.warning(
-                        "get_case_timeline: mismatch re-check failed for %s: %s",
-                        normalized_case_ref,
-                        _re_err,
-                    )
-
         return {
             "case_ref": normalized_case_ref,
             "lifecycle_status": lifecycle_status,
@@ -1137,7 +1093,6 @@ async def get_case_timeline(
             "orders": orders_out,
             "board_dates": board_dates,
             "lifecycle_events": lifecycle_events,
-            "has_date_mismatch": has_date_mismatch,
             # backward-compat aliases kept for any callers expecting the old shape
             "timeline": lifecycle_events,
             "count": len(lifecycle_events),
