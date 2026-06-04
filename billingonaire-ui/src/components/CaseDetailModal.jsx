@@ -117,10 +117,9 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
     });
 
     return meaningfulOrders.map(order => {
-      // Prefer board_date stored on the order (set by backend since fix),
-      // fall back to order_date for matching against board records.
-      const matchDate = order.board_date || order.order_date || null;
-      const boardRecord = findBoardRecord(matchDate);
+      // Use the order's own signing date (from the portal API) as canonical date.
+      const orderDate = order.order_date || null;
+      const boardRecord = findBoardRecord(orderDate);
 
       const gpInBoard = [
         boardRecord.respondent_lawyer,
@@ -128,9 +127,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
           ? boardRecord.additional_respondent_lawyers : [])
       ].filter(Boolean);
 
-      // Distinguish between "field absent" (old data — no GP tracked per order)
-      // and "field present but empty" (order was analysed, no GP extracted).
-      // Only fall back to topLevelGP for the former; an explicit [] means no GP.
+      // GP in order comes from the analysis of this specific order PDF.
+      // Fall back to top-level case GP only when the field is absent (old data).
       const gpRaw = order.government_pleader;
       const gpFieldPresent = gpRaw !== null && gpRaw !== undefined;
       const orderGP = Array.isArray(gpRaw)
@@ -139,40 +137,16 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       const gpInOrder = (gpFieldPresent ? orderGP : topLevelGP);
 
       const rawLink = order.order_link || null;
-      // Only use the board record's stored doc_id when the record is a close
-      // match (within 14 days of matchDate).  A fallback board record (far
-      // away in date) would yield the wrong proxy URL.
-      const boardRecordClose = boardRecord.board_date && matchDate
-        ? Math.abs(
-            new Date(boardRecord.board_date).getTime() - new Date(matchDate).getTime()
-          ) <= 14 * 86400000
-        : false;
-      // Construct boardDocId from the order's actual signing date so the proxy
-      // can look up the date-specific order_link stored on the board entry.
-      // Board.py format: {YYYY-MM-DD}-{type}-{no}-{year} e.g. "2025-07-15-WP-2316-2026"
-      const boardDocId = (boardRecordClose ? boardRecord.board_doc_id : null)
-        || (order.order_date ? `${order.order_date}-${caseRef.replace(/\//g, '-')}` : null)
-        || (matchDate ? `${matchDate}-${caseRef.replace(/\//g, '-')}` : null);
-      // Always route through the backend proxy — the GCS bucket is private so
-      // direct browser access to storage.googleapis.com returns 403. The proxy
-      // uses Cloud Run ADC to fetch the blob and triggers an automatic re-fetch
-      // when any link (GCS or court URL) is unavailable.
+      // Route through backend proxy using the order's signing date.
+      const boardDocId = orderDate
+        ? `${orderDate}-${caseRef.replace(/\//g, '-')}`
+        : null;
       const orderPdfHref = rawLink
         ? (boardDocId ? getApiUrl(`/orders/pdf/${boardDocId}`) : rawLink)
         : null;
 
-      // Use board record date as the display date only when the board record is
-      // a close match (within 14 days). The default-fallback board record may be
-      // far away and its date would be wrong.
-      const boardRecordDate = (() => {
-        if (!boardRecord.board_date || !matchDate) return null;
-        const diff = Math.abs(new Date(boardRecord.board_date).getTime() - new Date(matchDate).getTime());
-        return diff <= 14 * 86400000 ? boardRecord.board_date : null;
-      })();
-
       return {
-        date: order.board_date || boardRecordDate || order.order_date || '-',
-        orderDate: order.order_date || '-',
+        date: orderDate || '-',
         orderPdf: orderPdfHref,
         orderAnalysis: order.order_category || null,
         gpInBoard: gpInBoard.length ? [...new Set(gpInBoard)].join(' · ') : '-',
@@ -321,14 +295,7 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
                       const catCfg = ORDER_CATEGORY_CONFIG[app.orderAnalysis];
                       return (
                         <tr key={i}>
-                          <td style={{ whiteSpace: 'nowrap' }}>
-                            {app.date}
-                            {app.orderDate && app.orderDate !== app.date && (
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #6c757d)' }}>
-                                Order: {app.orderDate}
-                              </div>
-                            )}
-                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{app.date}</td>
                           <td>{app.gpInBoard}</td>
                           <td>
                             {app.orderPdf ? (

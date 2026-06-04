@@ -708,34 +708,51 @@ class BombayHighCourtScraper:
     ) -> Optional[Dict[str, Optional[str]]]:
         try:
             soup = BeautifulSoup(html_content, "html.parser")
-            case_info_selectors = [
-                "#cn_CaseNoUpdates .card-header",
-                ".case-details",
-                ".case-info",
-                "#caseDetails",
-            ]
 
-            # Broaden selector condition: also accept "versus/vs" formats used by
-            # the portal in addition to "filed on" / "against".
             _PARTY_KEYWORDS = re.compile(
                 r"\b(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioner|respondent)\b",
                 re.IGNORECASE,
             )
 
             case_text = ""
-            for selector in case_info_selectors:
-                for element in soup.select(selector):
-                    text = element.get_text(" ", strip=True)
-                    if case_ref in text and _PARTY_KEYWORDS.search(text):
-                        case_text = text
-                        break
-                if case_text:
-                    break
 
+            # Primary: use the Bombay HC portal's case-output div directly.
+            # This is authoritative for the searched case — no case_ref check
+            # needed since the portal populates it with the queried case only.
+            cn_updates = soup.find(id="cn_CaseNoUpdates")
+            if cn_updates:
+                _cn_text = cn_updates.get_text(" ", strip=True)
+                if _cn_text and _PARTY_KEYWORDS.search(_cn_text):
+                    case_text = _cn_text
+
+            # Selector-based fallback
+            if not case_text:
+                case_info_selectors = [
+                    "#cn_CaseNoUpdates .card-header",
+                    ".case-details",
+                    ".case-info",
+                    "#caseDetails",
+                ]
+                for selector in case_info_selectors:
+                    for element in soup.select(selector):
+                        text = element.get_text(" ", strip=True)
+                        if case_ref in text and _PARTY_KEYWORDS.search(text):
+                            case_text = text
+                            break
+                    if case_text:
+                        break
+
+            # Last-resort: iterate divs/paragraphs — but require both the case_ref
+            # AND a party keyword so we don't match navigation or history sections
+            # that might reference the case number alongside a different case's data.
             if not case_text:
                 for element in soup.find_all(["p", "div"]):
                     text = element.get_text(" ", strip=True)
-                    if case_ref in text and len(text) > 50:
+                    if (
+                        case_ref in text
+                        and len(text) > 50
+                        and _PARTY_KEYWORDS.search(text)
+                    ):
                         case_text = text
                         break
 
@@ -753,15 +770,28 @@ class BombayHighCourtScraper:
                     stripped_text.index(case_ref) + len(case_ref) :
                 ].strip()
 
-            # Pattern 1: "by PETITIONER against RESPONDENT" (with optional "filed on DATE" prefix)
-            by_match = re.search(
-                r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
+            # Pattern 0: Bombay HC standard format
+            # "NAME ....PETITIONER(S) V/S NAME ....RESPONDENT(S)"
+            # Dots (2+) separate the party name from the role label.
+            p0_match = re.search(
+                r"^(.+?)\s*\.{2,}\s*PETITIONERS?\s+V/?S\s+(.+?)\s*\.{2,}\s*RESPONDENTS?",
                 stripped_text,
                 re.IGNORECASE,
             )
-            if by_match:
-                petitioner = by_match.group(1).strip()
-                respondent = by_match.group(2).strip()
+            if p0_match:
+                petitioner = p0_match.group(1).strip()
+                respondent = p0_match.group(2).strip()
+
+            # Pattern 1: "by PETITIONER against RESPONDENT" (with optional "filed on DATE" prefix)
+            if not petitioner:
+                by_match = re.search(
+                    r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
+                    stripped_text,
+                    re.IGNORECASE,
+                )
+                if by_match:
+                    petitioner = by_match.group(1).strip()
+                    respondent = by_match.group(2).strip()
 
             # Pattern 2: "filed by X against Y" (with optional "through ...")
             if not petitioner:
@@ -805,12 +835,23 @@ class BombayHighCourtScraper:
                 if res_match:
                     respondent = res_match.group(1).strip()
 
-            # Strip any trailing filing-date suffix that leaked into the name
-            for _suffix in (r"\s+[Ff]iled.*$", r"\s+\d{2}/\d{2}/\d{4}.*$"):
+            # Strip any trailing filing-date suffix or role-label that leaked into the name
+            _label_suffixes = (
+                r"\s+[Ff]iled.*$",
+                r"\s+\d{2}/\d{2}/\d{4}.*$",
+                # Dots-before-label artefacts when the V/S pattern matched
+                r"\s*\.{2,}\s*PETITIONERS?\s*$",
+                r"\s*\.{2,}\s*RESPONDENTS?\s*$",
+            )
+            for _suffix in _label_suffixes:
                 if petitioner:
-                    petitioner = re.sub(_suffix, "", petitioner).strip()
+                    petitioner = re.sub(
+                        _suffix, "", petitioner, flags=re.IGNORECASE
+                    ).strip()
                 if respondent:
-                    respondent = re.sub(_suffix, "", respondent).strip()
+                    respondent = re.sub(
+                        _suffix, "", respondent, flags=re.IGNORECASE
+                    ).strip()
 
             filing_date = ""
             date_match = re.search(r"filed\s+on\s+([\d/.-]+)", case_text, re.IGNORECASE)

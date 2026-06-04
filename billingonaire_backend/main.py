@@ -3103,23 +3103,27 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
                 "doc_id": doc_id,
                 "status": lifecycle_status,
                 "error_reason": case_data.get("lifecycle_status_reason"),
-                "last_event": {
-                    "event_type": last_event.get("event_type"),
-                    "reason": last_event.get("reason"),
-                    "timestamp": last_event.get("timestamp"),
-                }
-                if last_event
-                else None,
+                "last_event": (
+                    {
+                        "event_type": last_event.get("event_type"),
+                        "reason": last_event.get("reason"),
+                        "timestamp": last_event.get("timestamp"),
+                    }
+                    if last_event
+                    else None
+                ),
                 "order_category": case_data.get("latest_order_category")
                 or board_data.get("order_category"),
                 "order_link": case_data.get("latest_order_link")
                 or board_data.get("order_link"),
                 "gcs_upload_failed": gcs_upload_failed,
-                "updated_at": updated_at.isoformat()
-                if hasattr(updated_at, "isoformat")
-                else str(updated_at)
-                if updated_at
-                else None,
+                "updated_at": (
+                    updated_at.isoformat()
+                    if hasattr(updated_at, "isoformat")
+                    else str(updated_at)
+                    if updated_at
+                    else None
+                ),
             }
         )
     except Exception as e:
