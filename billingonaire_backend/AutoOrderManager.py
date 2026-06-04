@@ -962,7 +962,11 @@ class AutoOrderManager:
                         api_petitioner=api_petitioner,
                         api_respondent=api_respondent,
                         order_link=final_order_link,
-                        board_date=board_date,
+                        # Only tag the order with board_date when it is the
+                        # primary match (order_date == board_date).  Secondary
+                        # (historical) orders must not inherit the triggering
+                        # board_date — they belong to their own board entries.
+                        board_date=board_date if is_primary else None,
                         gcs_upload_failed=gcs_upload_failed,
                     )
                     if anal.get("success"):
