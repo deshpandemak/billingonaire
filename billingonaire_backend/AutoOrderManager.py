@@ -781,6 +781,7 @@ class AutoOrderManager:
                 )
 
             last_order_link: Optional[str] = None
+            last_order_category: Optional[str] = None
             normalized_bd: Optional[str] = (
                 (self._normalise_order_date(board_date) or board_date)
                 if board_date
@@ -846,6 +847,9 @@ class AutoOrderManager:
                             ex_order.get("order_category"),
                         )
                         last_order_link = ex_order.get("order_link") or last_order_link
+                        last_order_category = (
+                            ex_order.get("order_category") or last_order_category
+                        )
                     logger.info(
                         "_process_all_orders_from_api: skipping already-analysed "
                         "order for case_ref=%s date=%s",
@@ -938,9 +942,10 @@ class AutoOrderManager:
                     if anal.get("success"):
                         result["orders_processed"] += 1
                         last_order_link = final_order_link
-                        # Link this order to all board entries whose board_date equals
-                        # the order's signing date.
                         order_category = (anal.get("data") or {}).get("order_category")
+                        last_order_category = order_category or last_order_category
+                        # Link to all board entries whose board_date equals the
+                        # order's own signing date.
                         self._update_board_entries_for_case_date(
                             case_ref, order_date_str, final_order_link, order_category
                         )
@@ -970,6 +975,18 @@ class AutoOrderManager:
                     case_detail = self.case_store.get_case_details(case_ref) or {}
                     last_order_link = case_detail.get("latest_order_link")
                 result["order_link"] = last_order_link
+
+                # Ensure the triggering board entry (hearing date = board_date) always
+                # gets an order_link even when the portal's signing date differs from
+                # the hearing date.  This is a supplementary update — the per-order
+                # call above already handles entries whose board_date == signing date.
+                if last_order_link and board_date and normalized_bd:
+                    self._update_board_entries_for_case_date(
+                        case_ref,
+                        normalized_bd,
+                        last_order_link,
+                        last_order_category,
+                    )
             else:
                 result["error"] = "No orders could be downloaded or processed"
 

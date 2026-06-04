@@ -250,8 +250,8 @@ def test_process_all_orders_from_api_success(auto_order_manager):
         "WP/123/2025", "ABC Corp", "Govt of MH"
     )
     assert auto_order_manager._analyze_order_with_api_metadata.call_count == 2
-    # _update_board_entries_for_case_date called once per analysed order
-    assert auto_order_manager._update_board_entries_for_case_date.call_count == 2
+    # _update_board_entries_for_case_date called once per order + once for board_date
+    assert auto_order_manager._update_board_entries_for_case_date.call_count == 3
 
 
 def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
