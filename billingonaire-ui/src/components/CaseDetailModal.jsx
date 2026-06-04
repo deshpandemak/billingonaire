@@ -139,9 +139,19 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       const gpInOrder = (gpFieldPresent ? orderGP : topLevelGP);
 
       const rawLink = order.order_link || null;
-      // Construct boardDocId deterministically if not stored on board record.
-      // Board.py uses format: {YYYY-MM-DD}-{type}-{no}-{year} e.g. "2026-05-15-WP-9146-2025"
-      const boardDocId = boardRecord.board_doc_id
+      // Only use the board record's stored doc_id when the record is a close
+      // match (within 14 days of matchDate).  A fallback board record (far
+      // away in date) would yield the wrong proxy URL.
+      const boardRecordClose = boardRecord.board_date && matchDate
+        ? Math.abs(
+            new Date(boardRecord.board_date).getTime() - new Date(matchDate).getTime()
+          ) <= 14 * 86400000
+        : false;
+      // Construct boardDocId from the order's actual signing date so the proxy
+      // can look up the date-specific order_link stored on the board entry.
+      // Board.py format: {YYYY-MM-DD}-{type}-{no}-{year} e.g. "2025-07-15-WP-2316-2026"
+      const boardDocId = (boardRecordClose ? boardRecord.board_doc_id : null)
+        || (order.order_date ? `${order.order_date}-${caseRef.replace(/\//g, '-')}` : null)
         || (matchDate ? `${matchDate}-${caseRef.replace(/\//g, '-')}` : null);
       // Always route through the backend proxy — the GCS bucket is private so
       // direct browser access to storage.googleapis.com returns 403. The proxy

@@ -4311,27 +4311,62 @@ async def get_order_pdf(doc_id: str):
         ensure_firebase()
         db = firestore.client()
         doc = db.collection("daily-boards").document(doc_id).get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="Case not found")
 
-        case_data = doc.to_dict() or {}
-
-        # order_link lives in case-details — daily-boards is immutable board data.
-        _ct = case_data.get("case_type", "")
-        _cn = str(case_data.get("case_no") or "")
-        _cy = str(case_data.get("case_year") or "")
+        case_data: dict = {}
         order_link = ""
-        if _ct and _cn and _cy:
-            _details_id = f"{_ct}-{_cn}-{_cy}"
-            _details_snap = db.collection("case-details").document(_details_id).get()
-            if _details_snap.exists:
-                _details = _details_snap.to_dict() or {}
-                order_link = (_details.get("latest_order_link") or "").strip()
-                if not order_link:
-                    for _o in reversed(_details.get("orders") or []):
+
+        if doc.exists:
+            case_data = doc.to_dict() or {}
+            # Prefer the board entry's own order_link — written by
+            # _update_board_entries_for_case_date so it is date-specific.
+            order_link = (case_data.get("order_link") or "").strip()
+
+            if not order_link:
+                # Fall back to case-details (covers board entries pre-dating
+                # the per-entry order_link write).
+                _ct = case_data.get("case_type", "")
+                _cn = str(case_data.get("case_no") or "")
+                _cy = str(case_data.get("case_year") or "")
+                if _ct and _cn and _cy:
+                    # doc_id format: YYYY-MM-DD-TYPE-NO-YEAR → extract date portion
+                    _order_date = doc_id[:10] if len(doc_id) > 10 and doc_id[10] == "-" else ""
+                    _details_id = f"{_ct}-{_cn}-{_cy}"
+                    _details_snap = db.collection("case-details").document(_details_id).get()
+                    if _details_snap.exists:
+                        _details = _details_snap.to_dict() or {}
+                        # Try to find the order matching this board entry's date
+                        if _order_date:
+                            for _o in (_details.get("orders") or []):
+                                if isinstance(_o, dict) and _o.get("order_link"):
+                                    if str(_o.get("order_date", ""))[:10] == _order_date:
+                                        order_link = _o["order_link"].strip()
+                                        break
+                        if not order_link:
+                            order_link = (_details.get("latest_order_link") or "").strip()
+                        if not order_link:
+                            for _o in reversed(_details.get("orders") or []):
+                                if isinstance(_o, dict) and _o.get("order_link"):
+                                    order_link = _o["order_link"].strip()
+                                    break
+        else:
+            # Board entry not found — doc_id may be a constructed ID for a historical
+            # order that has no board entry.  Parse: YYYY-MM-DD-{case-details-id}
+            # e.g. "2025-07-15-WP-2316-2026" → date "2025-07-15", details "WP-2316-2026"
+            if len(doc_id) > 11 and doc_id[10] == "-":
+                _order_date = doc_id[:10]
+                _details_id = doc_id[11:]
+                _details_snap = db.collection("case-details").document(_details_id).get()
+                if _details_snap.exists:
+                    _details = _details_snap.to_dict() or {}
+                    for _o in (_details.get("orders") or []):
                         if isinstance(_o, dict) and _o.get("order_link"):
-                            order_link = _o["order_link"].strip()
-                            break
+                            if str(_o.get("order_date", ""))[:10] == _order_date:
+                                order_link = _o["order_link"].strip()
+                                break
+                    if not order_link:
+                        order_link = (_details.get("latest_order_link") or "").strip()
+            if not order_link:
+                raise HTTPException(status_code=404, detail="Case not found")
 
         if not order_link:
             raise HTTPException(

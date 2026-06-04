@@ -496,6 +496,30 @@ class AutoOrderManager:
                 return order
         return None
 
+    def _board_entry_exists_for_date(self, case_ref: str, order_date_str: str) -> bool:
+        """Return True if at least one daily-boards entry exists for case_ref + board_date."""
+        try:
+            bd_datetime = datetime.strptime(order_date_str, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            return False
+        try:
+            docs = (
+                self.db.collection("daily-boards")
+                .where("case_ref", "==", case_ref)
+                .where("board_date", "==", bd_datetime)
+                .limit(1)
+                .stream()
+            )
+            return any(True for _ in docs)
+        except Exception as exc:
+            logger.warning(
+                "_board_entry_exists_for_date query failed for case_ref=%s date=%s: %s",
+                case_ref,
+                order_date_str,
+                exc,
+            )
+            return False
+
     def _update_board_entries_for_case_date(
         self,
         case_ref: str,
@@ -952,6 +976,20 @@ class AutoOrderManager:
                         order_date_str,
                     )
 
+                # Determine board_date for this order entry in case-details.
+                # Primary orders (order_date == board_date): always tag with board_date.
+                # Secondary (historical) orders: tag only when a board entry actually
+                # exists for their signing date — this links them to the right hearing
+                # without fabricating a board relationship when none exists.
+                if is_primary:
+                    order_board_date: Optional[str] = board_date
+                else:
+                    order_board_date = (
+                        order_date_str
+                        if self._board_entry_exists_for_date(case_ref, order_date_str)
+                        else None
+                    )
+
                 # Analyse and persist
                 try:
                     anal = self._analyze_order_with_api_metadata(
@@ -962,11 +1000,7 @@ class AutoOrderManager:
                         api_petitioner=api_petitioner,
                         api_respondent=api_respondent,
                         order_link=final_order_link,
-                        # Only tag the order with board_date when it is the
-                        # primary match (order_date == board_date).  Secondary
-                        # (historical) orders must not inherit the triggering
-                        # board_date — they belong to their own board entries.
-                        board_date=board_date if is_primary else None,
+                        board_date=order_board_date,
                         gcs_upload_failed=gcs_upload_failed,
                     )
                     if anal.get("success"):
