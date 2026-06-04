@@ -77,25 +77,8 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
       if (bd.board_date) boardByDate[bd.board_date] = bd;
     });
 
-    // Find the closest board record to a given date string (YYYY-MM-DD).
-    // Tries exact match first; then picks the nearest date within 14 days.
-    const findBoardRecord = (dateStr) => {
-      if (!dateStr) return boardDates[0] || {};
-      if (boardByDate[dateStr]) return boardByDate[dateStr];
-      // Closest-date fallback
-      const ts = new Date(dateStr).getTime();
-      if (isNaN(ts)) return boardDates[0] || {};
-      let best = null, bestDiff = Infinity;
-      boardDates.forEach(bd => {
-        const t = new Date(bd.board_date).getTime();
-        if (!isNaN(t)) {
-          const diff = Math.abs(t - ts);
-          if (diff < bestDiff) { bestDiff = diff; best = bd; }
-        }
-      });
-      // Accept if within 14 days; otherwise fall back to first board record
-      return (best && bestDiff <= 14 * 86400000) ? best : (boardDates[0] || {});
-    };
+    // Exact-date lookup: board entry is only shown when board_date == order_date.
+    const getBoardRecord = (dateStr) => (dateStr ? boardByDate[dateStr] || {} : {});
 
     // Top-level GP from case-details — used as fallback when per-order GP is absent
     const topLevelGP = Array.isArray(timeline.government_pleader)
@@ -117,9 +100,9 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
     });
 
     return meaningfulOrders.map(order => {
-      // Use the order's own signing date (from the portal API) as canonical date.
       const orderDate = order.order_date || null;
-      const boardRecord = findBoardRecord(orderDate);
+      // GP in board: only from a board entry whose date exactly matches the order date.
+      const boardRecord = getBoardRecord(orderDate);
 
       const gpInBoard = [
         boardRecord.respondent_lawyer,
