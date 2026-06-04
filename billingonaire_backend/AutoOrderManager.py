@@ -938,9 +938,9 @@ class AutoOrderManager:
                     if anal.get("success"):
                         result["orders_processed"] += 1
                         last_order_link = final_order_link
-                        # Link this order to all board entries whose board_date equals
-                        # the order's signing date.
                         order_category = (anal.get("data") or {}).get("order_category")
+                        # Link to all board entries whose board_date == order_date.
+                        # If no board entry exists for this date, nothing to update.
                         self._update_board_entries_for_case_date(
                             case_ref, order_date_str, final_order_link, order_category
                         )
