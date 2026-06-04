@@ -4329,20 +4329,29 @@ async def get_order_pdf(doc_id: str):
                 _cy = str(case_data.get("case_year") or "")
                 if _ct and _cn and _cy:
                     # doc_id format: YYYY-MM-DD-TYPE-NO-YEAR → extract date portion
-                    _order_date = doc_id[:10] if len(doc_id) > 10 and doc_id[10] == "-" else ""
+                    _order_date = (
+                        doc_id[:10] if len(doc_id) > 10 and doc_id[10] == "-" else ""
+                    )
                     _details_id = f"{_ct}-{_cn}-{_cy}"
-                    _details_snap = db.collection("case-details").document(_details_id).get()
+                    _details_snap = (
+                        db.collection("case-details").document(_details_id).get()
+                    )
                     if _details_snap.exists:
                         _details = _details_snap.to_dict() or {}
                         # Try to find the order matching this board entry's date
                         if _order_date:
-                            for _o in (_details.get("orders") or []):
+                            for _o in _details.get("orders") or []:
                                 if isinstance(_o, dict) and _o.get("order_link"):
-                                    if str(_o.get("order_date", ""))[:10] == _order_date:
+                                    if (
+                                        str(_o.get("order_date", ""))[:10]
+                                        == _order_date
+                                    ):
                                         order_link = _o["order_link"].strip()
                                         break
                         if not order_link:
-                            order_link = (_details.get("latest_order_link") or "").strip()
+                            order_link = (
+                                _details.get("latest_order_link") or ""
+                            ).strip()
                         if not order_link:
                             for _o in reversed(_details.get("orders") or []):
                                 if isinstance(_o, dict) and _o.get("order_link"):
@@ -4355,10 +4364,12 @@ async def get_order_pdf(doc_id: str):
             if len(doc_id) > 11 and doc_id[10] == "-":
                 _order_date = doc_id[:10]
                 _details_id = doc_id[11:]
-                _details_snap = db.collection("case-details").document(_details_id).get()
+                _details_snap = (
+                    db.collection("case-details").document(_details_id).get()
+                )
                 if _details_snap.exists:
                     _details = _details_snap.to_dict() or {}
-                    for _o in (_details.get("orders") or []):
+                    for _o in _details.get("orders") or []:
                         if isinstance(_o, dict) and _o.get("order_link"):
                             if str(_o.get("order_date", ""))[:10] == _order_date:
                                 order_link = _o["order_link"].strip()
