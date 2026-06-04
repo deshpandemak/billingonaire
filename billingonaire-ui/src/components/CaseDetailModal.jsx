@@ -192,6 +192,7 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
   const lifecycleEvents = Array.isArray(timeline?.lifecycle_events) ? timeline.lifecycle_events : [];
   const lifecycleStatus = timeline?.lifecycle_status;
   const lcCfg = lifecycleStatus ? getLifecycleConfig(lifecycleStatus) : null;
+  const hasMismatch = timeline?.has_date_mismatch === true;
 
   return (
     <Modal show={show} onHide={onHide} size="xl" centered scrollable>
@@ -278,6 +279,18 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
                 onClose={() => setResetMessage('')}
               >
                 {resetMessage}
+              </Alert>
+            )}
+
+            {/* Date-mismatch notice — shown when the stored order uses an earlier
+                signing date because the exact-date order wasn't yet on the portal.
+                A background re-check has already been triggered; the new order will
+                appear after the re-fetch completes (usually < 1 min). */}
+            {hasMismatch && (
+              <Alert variant="info" className="py-2 mb-3" style={{ fontSize: '0.85rem' }}>
+                Some orders use the closest available signing date — a re-check has been
+                triggered in the background. Reopen this panel in a minute to see any
+                newly available orders.
               </Alert>
             )}
 

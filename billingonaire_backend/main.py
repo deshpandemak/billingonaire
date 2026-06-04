@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 _overview_stats_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 _queue_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+# Tracks the last time a background re-check was triggered for date_mismatch cases.
+# Keyed by normalised case_ref; value is a float (time.time()).
+_mismatch_recheck_times: Dict[str, float] = {}
 
 # Integrate with Google Cloud Logging when running on GCP (Cloud Run sets K_SERVICE)
 if os.getenv("K_SERVICE"):
@@ -157,7 +160,9 @@ def ensure_firebase():
                 except Exception as e:
                     # Final attempt: try with explicit project ID
                     try:
-                        logger.info("🔄 Retrying with explicit project configuration...")
+                        logger.info(
+                            "🔄 Retrying with explicit project configuration..."
+                        )
                         project_id = os.environ.get(
                             "GCP_PROJECT",
                             os.environ.get("GOOGLE_CLOUD_PROJECT", "billingonaire"),
@@ -1084,6 +1089,47 @@ async def get_case_timeline(
                     o["board_date"] = bd_str
             orders_out.append(o)
 
+        # When an analysed case has date_mismatch orders (closest-prior-date PDF
+        # used as fallback because the exact-date order wasn't yet on the portal),
+        # the portal may have since published the real order.  Trigger a background
+        # re-check so it is picked up transparently — no user action needed.
+        # A 30-minute per-case cooldown prevents hammering the portal.
+        has_date_mismatch = any(o.get("date_mismatch") for o in orders_out)
+        if has_date_mismatch and lifecycle_status == "analysed" and board_ids:
+            import time as _time
+
+            _now_ts = _time.time()
+            _last_ts = _mismatch_recheck_times.get(normalized_case_ref, 0.0)
+            if _now_ts - _last_ts > 1800:
+                _mismatch_recheck_times[normalized_case_ref] = _now_ts
+                try:
+                    _board_snap = (
+                        db.collection("daily-boards").document(board_ids[-1]).get()
+                    )
+                    if _board_snap.exists:
+                        _board_data = {
+                            **(_board_snap.to_dict() or {}),
+                            "id": board_ids[-1],
+                        }
+                        loop = asyncio.get_event_loop()
+                        loop.run_in_executor(
+                            executor,
+                            get_auto_order_manager()._process_single_case,
+                            _board_data,
+                        )
+                        logger.info(
+                            "get_case_timeline: triggered mismatch re-check for "
+                            "case_ref=%s board_id=%s",
+                            normalized_case_ref,
+                            board_ids[-1],
+                        )
+                except Exception as _re_err:
+                    logger.warning(
+                        "get_case_timeline: mismatch re-check failed for %s: %s",
+                        normalized_case_ref,
+                        _re_err,
+                    )
+
         return {
             "case_ref": normalized_case_ref,
             "lifecycle_status": lifecycle_status,
@@ -1093,6 +1139,7 @@ async def get_case_timeline(
             "orders": orders_out,
             "board_dates": board_dates,
             "lifecycle_events": lifecycle_events,
+            "has_date_mismatch": has_date_mismatch,
             # backward-compat aliases kept for any callers expecting the old shape
             "timeline": lifecycle_events,
             "count": len(lifecycle_events),
@@ -1568,9 +1615,9 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         if hasattr(board, "ml_parser") and board.ml_parser:
             status = board.ml_parser.get_enhancement_status()
             status["ml_parser_available"] = True
-            status[
-                "message"
-            ] = "ML Enhanced Parser is active and improving PDF processing quality"
+            status["message"] = (
+                "ML Enhanced Parser is active and improving PDF processing quality"
+            )
         else:
             status = {
                 "ml_parser_available": False,
@@ -2034,9 +2081,9 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
                         if analysis_result.get("success"):
                             result["analysis_completed"] = True
-                            result[
-                                "analysis_message"
-                            ] = "Order linked and analyzed successfully"
+                            result["analysis_message"] = (
+                                "Order linked and analyzed successfully"
+                            )
                             logger.info(
                                 f"Auto-analysis completed for manually linked order: {case_id}"
                             )
@@ -3103,23 +3150,25 @@ async def get_job_status(doc_id: str, current_user=Depends(get_current_user)):
                 "doc_id": doc_id,
                 "status": lifecycle_status,
                 "error_reason": case_data.get("lifecycle_status_reason"),
-                "last_event": {
-                    "event_type": last_event.get("event_type"),
-                    "reason": last_event.get("reason"),
-                    "timestamp": last_event.get("timestamp"),
-                }
-                if last_event
-                else None,
+                "last_event": (
+                    {
+                        "event_type": last_event.get("event_type"),
+                        "reason": last_event.get("reason"),
+                        "timestamp": last_event.get("timestamp"),
+                    }
+                    if last_event
+                    else None
+                ),
                 "order_category": case_data.get("latest_order_category")
                 or board_data.get("order_category"),
                 "order_link": case_data.get("latest_order_link")
                 or board_data.get("order_link"),
                 "gcs_upload_failed": gcs_upload_failed,
-                "updated_at": updated_at.isoformat()
-                if hasattr(updated_at, "isoformat")
-                else str(updated_at)
-                if updated_at
-                else None,
+                "updated_at": (
+                    updated_at.isoformat()
+                    if hasattr(updated_at, "isoformat")
+                    else str(updated_at) if updated_at else None
+                ),
             }
         )
     except Exception as e:
@@ -4420,9 +4469,9 @@ async def get_order_pdf(doc_id: str):
                 if _case_type and _case_no:
                     _refetch_data = {**case_data, "id": doc_id}
                     if not _refetch_data.get("case_ref") and _case_type and _case_year:
-                        _refetch_data[
-                            "case_ref"
-                        ] = f"{_case_type}/{_case_no}/{_case_year}"
+                        _refetch_data["case_ref"] = (
+                            f"{_case_type}/{_case_no}/{_case_year}"
+                        )
                     loop = asyncio.get_event_loop()
                     loop.run_in_executor(
                         executor,
@@ -5490,26 +5539,26 @@ async def export_bill_excel(
         # Header Section
         # Title
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        ws[f"A{current_row}"] = (
+            f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
+        )
         ws[f"A{current_row}"].font = title_font
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Subtitle
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        ws[f"A{current_row}"] = (
+            "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
         # Government Resolution
         ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        ws[f"A{current_row}"] = (
+            "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
+        )
         ws[f"A{current_row}"].alignment = center_align
         current_row += 1
 
