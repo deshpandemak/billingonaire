@@ -710,19 +710,21 @@ class BombayHighCourtScraper:
             soup = BeautifulSoup(html_content, "html.parser")
 
             _PARTY_KEYWORDS = re.compile(
-                r"\b(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioner|respondent)\b",
+                r"(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioners?|respondents?)",
                 re.IGNORECASE,
             )
 
             case_text = ""
 
             # Primary: use the Bombay HC portal's case-output div directly.
-            # This is authoritative for the searched case — no case_ref check
-            # needed since the portal populates it with the queried case only.
+            # This is authoritative for the searched case — no party-keyword
+            # check needed here; if the div is present with non-trivial content
+            # it IS the case section.  Party keywords only guard the loose
+            # fallback loops below where false-positive matches are possible.
             cn_updates = soup.find(id="cn_CaseNoUpdates")
             if cn_updates:
                 _cn_text = cn_updates.get_text(" ", strip=True)
-                if _cn_text and _PARTY_KEYWORDS.search(_cn_text):
+                if len(_cn_text) > 20:
                     case_text = _cn_text
 
             # Selector-based fallback
