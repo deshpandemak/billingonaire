@@ -710,19 +710,21 @@ class BombayHighCourtScraper:
             soup = BeautifulSoup(html_content, "html.parser")
 
             _PARTY_KEYWORDS = re.compile(
-                r"\b(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioner|respondent)\b",
+                r"(?:filed\s+on|against|versus|vs\.?|v/s\.?|petitioners?|respondents?)",
                 re.IGNORECASE,
             )
 
             case_text = ""
 
             # Primary: use the Bombay HC portal's case-output div directly.
-            # This is authoritative for the searched case — no case_ref check
-            # needed since the portal populates it with the queried case only.
+            # This is authoritative for the searched case — no party-keyword
+            # check needed here; if the div is present with non-trivial content
+            # it IS the case section.  Party keywords only guard the loose
+            # fallback loops below where false-positive matches are possible.
             cn_updates = soup.find(id="cn_CaseNoUpdates")
             if cn_updates:
                 _cn_text = cn_updates.get_text(" ", strip=True)
-                if _cn_text and _PARTY_KEYWORDS.search(_cn_text):
+                if len(_cn_text) > 20:
                     case_text = _cn_text
 
             # Selector-based fallback
@@ -770,30 +772,20 @@ class BombayHighCourtScraper:
                     stripped_text.index(case_ref) + len(case_ref) :
                 ].strip()
 
-            # Pattern 0: Bombay HC standard format
-            # "NAME ....PETITIONER(S) V/S NAME ....RESPONDENT(S)"
-            # Dots (2+) separate the party name from the role label.
-            p0_match = re.search(
-                r"^(.+?)\s*\.{2,}\s*PETITIONERS?\s+V/?S\s+(.+?)\s*\.{2,}\s*RESPONDENTS?",
+            # Pattern 0: Bombay HC portal filing format (primary)
+            # "#cn_CaseNoUpdates" text: "Case No. X was filed on DATE at Bombay High Court
+            # by PETITIONER against RESPONDENT"
+            # After case_ref strip: "...by PETITIONER against RESPONDENT"
+            by_match = re.search(
+                r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
                 stripped_text,
                 re.IGNORECASE,
             )
-            if p0_match:
-                petitioner = p0_match.group(1).strip()
-                respondent = p0_match.group(2).strip()
+            if by_match:
+                petitioner = by_match.group(1).strip()
+                respondent = by_match.group(2).strip()
 
-            # Pattern 1: "by PETITIONER against RESPONDENT" (with optional "filed on DATE" prefix)
-            if not petitioner:
-                by_match = re.search(
-                    r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
-                    stripped_text,
-                    re.IGNORECASE,
-                )
-                if by_match:
-                    petitioner = by_match.group(1).strip()
-                    respondent = by_match.group(2).strip()
-
-            # Pattern 2: "filed by X against Y" (with optional "through ...")
+            # Pattern 1: "filed by X against Y" (fallback)
             if not petitioner:
                 filed_match = re.search(
                     r"filed.*?by\s+(.+?)(?:\s+against\s+(.+?))?(?:\s+through|\s*$)",
@@ -805,8 +797,7 @@ class BombayHighCourtScraper:
                     if filed_match.group(2):
                         respondent = filed_match.group(2).strip()
 
-            # Pattern 3: "PETITIONER Versus/VS/V.S./V/S RESPONDENT" — standard Indian
-            # court title format (case number already stripped from stripped_text)
+            # Pattern 2: "PETITIONER Versus/VS/V.S./V/S RESPONDENT"
             if not petitioner:
                 vs_match = re.search(
                     r"^(.+?)\s+(?:versus|v\.?s\.?|v/s)\s+(.+?)(?:\s+filed|\s*$)",
@@ -817,8 +808,7 @@ class BombayHighCourtScraper:
                     petitioner = vs_match.group(1).strip()
                     respondent = vs_match.group(2).strip()
 
-            # Pattern 4: labelled "Petitioner(s): X  Respondent(s): Y" — require
-            # explicit colon after the label so we don't match "PETITIONER NAME" mid-text.
+            # Pattern 3: labelled "Petitioner(s): X  Respondent(s): Y"
             if not petitioner:
                 pet_match = re.search(
                     r"Petitioner(?:\(s\))?\s*:\s*(.+?)(?=\s*Respondent\b|\s*$)",
@@ -835,13 +825,10 @@ class BombayHighCourtScraper:
                 if res_match:
                     respondent = res_match.group(1).strip()
 
-            # Strip any trailing filing-date suffix or role-label that leaked into the name
+            # Strip any trailing filing-date suffix that leaked into the name
             _label_suffixes = (
                 r"\s+[Ff]iled.*$",
                 r"\s+\d{2}/\d{2}/\d{4}.*$",
-                # Dots-before-label artefacts when the V/S pattern matched
-                r"\s*\.{2,}\s*PETITIONERS?\s*$",
-                r"\s*\.{2,}\s*RESPONDENTS?\s*$",
             )
             for _suffix in _label_suffixes:
                 if petitioner:
