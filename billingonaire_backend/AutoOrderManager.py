@@ -762,23 +762,21 @@ class AutoOrderManager:
                 result["error"] = "Direct API returned non-dict response"
                 return result
 
+            # Party names from the API are deterministic — same values every call.
+            # Persist them unconditionally, even if there are no orders to process.
+            api_petitioner: str = str(api_response.get("petitioner") or "").strip()
+            api_respondent: str = str(api_response.get("respondent") or "").strip()
+            if api_petitioner or api_respondent:
+                self.case_store.update_case_party_names(
+                    case_ref, api_petitioner, api_respondent
+                )
+
             case_orders = api_response.get("case_orders") or []
             if not case_orders:
                 result["error"] = api_response.get(
                     "message", "Direct API returned no orders"
                 )
                 return result
-
-            # Party names from the API — preferred over PDF extraction
-            api_petitioner: str = str(api_response.get("petitioner") or "").strip()
-            api_respondent: str = str(api_response.get("respondent") or "").strip()
-
-            # Eagerly persist party names directly on the case document without
-            # creating a dummy order entry (which would corrupt latest_order_*).
-            if api_petitioner or api_respondent:
-                self.case_store.update_case_party_names(
-                    case_ref, api_petitioner, api_respondent
-                )
 
             last_order_link: Optional[str] = None
             normalized_bd: Optional[str] = (
