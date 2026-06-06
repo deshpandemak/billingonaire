@@ -452,10 +452,36 @@ class BombayHighCourtScraper:
             if not html_content:
                 return None
 
-            # Step 5: Extract case details and orders
+            # Step 5: Diagnose what the HTML contains before extraction
+            soup_diag = BeautifulSoup(html_content, "html.parser")
+            orders_div = soup_diag.find(id="cn_CaseNoOrders")
+            orders_table = soup_diag.select_one("#cn_CaseNoOrders table tbody")
+            orders_rows = orders_table.find_all("tr") if orders_table else []
+            all_links = soup_diag.find_all("a", href=True)
+            pdf_links = [
+                a["href"]
+                for a in all_links
+                if any(
+                    kw in a["href"].lower() for kw in (".pdf", "order", "judg", "view")
+                )
+            ]
+            logger.warning(
+                "_fetch_with_http html_diag for %s: "
+                "cn_CaseNoOrders_present=%s table_present=%s rows=%d "
+                "total_links=%d pdf_like_links=%d sample=%s",
+                case_ref,
+                orders_div is not None,
+                orders_table is not None,
+                len(orders_rows),
+                len(all_links),
+                len(pdf_links),
+                pdf_links[:3],
+            )
+
+            # Step 6: Extract case details and orders
             case_details = self._extract_case_details_from_html(html_content, case_ref)
             if not case_details:
-                logger.info(
+                logger.warning(
                     "_fetch_with_http: could not extract case details for %s — "
                     "Playwright fallback will be used",
                     case_ref,
@@ -463,7 +489,7 @@ class BombayHighCourtScraper:
                 return None
 
             court_orders = self._extract_orders_from_html(html_content, post_resp.url)
-            logger.info(
+            logger.warning(
                 "_fetch_with_http: succeeded for %s orders_found=%d",
                 case_ref,
                 len(court_orders),
@@ -525,7 +551,7 @@ class BombayHighCourtScraper:
                     # page load), so we fall through to Playwright which executes the
                     # full page lifecycle.
                     if result and orders_found > 0:
-                        logger.info(
+                        logger.warning(
                             "HTTP succeeded for case_ref=%s in %dms orders_found=%d",
                             case_ref,
                             duration_ms,
@@ -548,8 +574,9 @@ class BombayHighCourtScraper:
                             if result and orders_found == 0
                             else "no_result"
                         )
-                        logger.info(
-                            "HTTP %s for case_ref=%s in %dms — trying Playwright",
+                        logger.warning(
+                            "HTTP %s for case_ref=%s in %dms — order table not in "
+                            "static HTML (JS-rendered), trying Playwright",
                             reason,
                             case_ref,
                             duration_ms,
@@ -586,7 +613,7 @@ class BombayHighCourtScraper:
                     if final_result:
                         break
                     started = time.time()
-                    logger.info(
+                    logger.warning(
                         "Playwright attempt %d/%d for case_ref=%s",
                         attempt_num,
                         self.playwright_retry_count,
@@ -1013,7 +1040,14 @@ class BombayHighCourtScraper:
                 page.click(
                     "button[type='submit'], input[type='submit']", timeout=timeout_ms
                 )
-                page.wait_for_timeout(3000)
+
+                # Wait for case details section — confirms form was processed.
+                # The orders table (#cn_CaseNoOrders) loads via a separate AJAX call
+                # AFTER case details appear, so we wait for each independently.
+                try:
+                    page.wait_for_selector("#cn_CaseNoUpdates", timeout=timeout_ms)
+                except Exception:
+                    page.wait_for_timeout(3000)
 
                 case_details = self._extract_case_details_new(page, case_ref)
                 if not case_details:
@@ -1024,7 +1058,22 @@ class BombayHighCourtScraper:
                     browser.close()
                     return None
 
+                # Wait up to 10 s for the orders table — it loads via a second AJAX
+                # call triggered after case details appear.  Cases with no orders will
+                # time out here (safe — we just get an empty list).
+                try:
+                    page.wait_for_selector(
+                        "#cn_CaseNoOrders table tbody tr", timeout=10000
+                    )
+                except Exception:
+                    pass
+
                 court_orders = self._extract_orders_new(page, self.case_status_url)
+                logger.warning(
+                    "Playwright orders_found=%d for case_ref=%s",
+                    len(court_orders),
+                    case_ref,
+                )
                 browser.close()
                 logger.info(
                     "Playwright fetch succeeded for case_ref=%s orders_found=%d",
