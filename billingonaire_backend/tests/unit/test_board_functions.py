@@ -636,12 +636,14 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
     mock_firestore,
 ):
     """
-    Advocate filter must match names in the government_pleader field of the
-    board doc (not only respondent_lawyer/petitioner_lawyer), and must normalize
-    punctuation so "S.D.VYAS" matches the variation "s d vyas".
+    Advocate filter must match names in the government_pleader field from
+    case-details (set by order analysis), not the daily-boards document.
 
-    This is the S D Vyas regression: bill generation checks government_pleader;
-    search orders previously did not, giving fewer results.
+    government_pleader is never stored in daily-boards — hydration fetches it
+    from case-details and overwrites the field.  The advocate_name filter is
+    therefore applied post-hydration so it can see the case-details value.
+
+    Also verifies punctuation normalisation: "S.D.VYAS" matches "S D Vyas".
     """
     from Board import Board
 
@@ -652,7 +654,6 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
             "case_no": "1",
             "case_year": "2025",
             "board_date": "2025-01-01",
-            "government_pleader": "SHRI S.D.VYAS, AGP",
             "respondent_lawyer": "",
             "petitioner_lawyer": "SOME PETITIONER",
             "additional_respondent_lawyers": [],
@@ -665,7 +666,6 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
             "case_no": "2",
             "case_year": "2025",
             "board_date": "2025-01-01",
-            "government_pleader": "SMT. REKHA MUSALE, AGP",
             "respondent_lawyer": "",
             "petitioner_lawyer": "OTHER PETITIONER",
             "additional_respondent_lawyers": [],
@@ -678,6 +678,20 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
     mock_query.stream.return_value = [matching_doc, non_matching_doc]
     mock_firestore.return_value.collection.return_value.where.return_value = mock_query
 
+    # case-details for WP/1/2025 has the GP; WP/2/2025 has a different AGP.
+    # get_case_details_map uses db.get_all() — mock it to return both snaps.
+    snap1 = MagicMock(exists=True)
+    snap1.to_dict.return_value = {
+        "case_ref": "WP/1/2025",
+        "government_pleader": ["SHRI S.D.VYAS, AGP"],
+    }
+    snap2 = MagicMock(exists=True)
+    snap2.to_dict.return_value = {
+        "case_ref": "WP/2/2025",
+        "government_pleader": ["SMT. REKHA MUSALE, AGP"],
+    }
+    mock_firestore.return_value.get_all.return_value = [snap1, snap2]
+
     board = Board()
 
     result = board.getData(
@@ -688,7 +702,7 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
         },
     )
     case_nos = [r["case_no"] for r in result]
-    # Case "1" has S.D.VYAS in government_pleader — must be included
+    # Case "1" has S.D.VYAS in government_pleader from case-details — must be included
     assert "1" in case_nos, f"Expected case 1 in results, got {case_nos}"
     # Case "2" has a different AGP — must be excluded
     assert "2" not in case_nos, f"Case 2 should not be in results, got {case_nos}"
