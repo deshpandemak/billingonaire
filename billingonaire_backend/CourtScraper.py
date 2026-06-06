@@ -103,9 +103,11 @@ class BombayHighCourtScraper:
         }
         return bench_codes.get((bench or "mumbai").lower(), "2")
 
-    # Bombay HC portal: side=1 → Criminal, side=2 → Civil.
-    # Any case type not explicitly listed here is assumed to be Civil (side=2)
-    # because the vast majority of AGP matters are civil writ petitions.
+    # Case types whose portal ``type_flag`` is "2" (Criminal).
+    # Used only to disambiguate duplicate type_name entries in the AJAX response
+    # (e.g. both Civil WP type_flag="1" and Criminal WP type_flag="2" share the
+    # abbreviation "WP").  This set has NO effect on the ``side`` form field —
+    # all searches use side=1 (Appellate Side) regardless of criminal/civil.
     _CRIMINAL_CASE_TYPES = frozenset(
         [
             "ABA",
@@ -134,13 +136,21 @@ class BombayHighCourtScraper:
     )
 
     def _get_side_for_case_type(self, case_type: str) -> str:
-        """Return the portal 'side' value for *case_type*.
+        """Return the portal 'side' value for a case search.
 
-        side=1 → Criminal division
-        side=2 → Civil division (default for all unlisted types, including WP)
+        On the BHC portal the ``side`` dropdown controls which bench division
+        is searched:
+            side=1 → Appellate Side  (Writ Petitions, Appeals, etc.)
+            side=2 → Original Side   (Suits, Company Petitions, etc.)
+
+        This application only handles Appellate Side matters, so this always
+        returns "1".  The ``_CRIMINAL_CASE_TYPES`` set is kept separately for
+        disambiguating duplicate ``type_name`` entries in the AJAX response
+        (Civil WP = type_flag "1", Criminal WP = type_flag "2") — it does NOT
+        affect the side value.
         """
-        base = self._get_base_case_type(case_type).upper()
-        return "1" if base in self._CRIMINAL_CASE_TYPES else "2"
+        del case_type  # unused — all searches are Appellate Side
+        return "1"
 
     def _get_base_case_type(self, case_type: str) -> str:
         return re.sub(r"\(ST\)$", "", case_type, flags=re.IGNORECASE).strip()
@@ -198,12 +208,20 @@ class BombayHighCourtScraper:
                 form_data[name] = value
 
         # Resolve the numeric case_type option value from the AJAX options list.
-        # The portal AJAX endpoint returns {"type_name": "WP", "case_type": 1, ...}
-        # (new format).  Older test fixtures use {"name": "WP", "value": "1"}.
-        # Options may also be labelled "WP - Writ Petition", so match on the
-        # abbreviation prefix (split on " - ") rather than the full string.
+        # The portal AJAX endpoint returns {"type_name": "WP", "case_type": 1,
+        # "type_flag": "1", ...} where type_flag "1"=Civil and "2"=Criminal.
+        # The list contains BOTH "WP" (Civil Writ Petition, type_flag=1, case_type=1)
+        # and "WP" (Cr. Writ Petition, type_flag=2, case_type=308).  We must pick
+        # the correct entry — the first match is not necessarily the right one.
+        # Strategy: prefer the entry whose type_flag matches the case type's
+        # division (Criminal types in _CRIMINAL_CASE_TYPES → type_flag "2",
+        # everything else including WP/PIL/IA → type_flag "1" = Civil).
         base_case_type = self._get_base_case_type(case_parts["case_type"])
+        preferred_type_flag = (
+            "2" if base_case_type.upper() in self._CRIMINAL_CASE_TYPES else "1"
+        )
         resolved_case_type = base_case_type  # fallback: use label string
+        first_match_value: Optional[str] = None  # best non-preferred match
         for opt in case_type_options:
             label = str(
                 opt.get("type_name")  # new portal API key
@@ -213,14 +231,27 @@ class BombayHighCourtScraper:
                 or ""
             )
             prefix = label.split(" - ")[0].split()[0] if label.strip() else ""
-            if prefix.upper() == base_case_type.upper():
-                resolved_case_type = str(
-                    opt.get("case_type")  # new portal API key (numeric ID)
-                    or opt.get("value")
-                    or opt.get("id")
-                    or base_case_type
-                )
+            if prefix.upper() != base_case_type.upper():
+                continue
+            opt_value = str(
+                opt.get("case_type")  # new portal API key (numeric ID)
+                or opt.get("value")
+                or opt.get("id")
+                or base_case_type
+            )
+            if str(opt.get("type_flag", "")) == preferred_type_flag:
+                # Exact Civil/Criminal match — use immediately
+                resolved_case_type = opt_value
+                first_match_value = None  # clear fallback, we have the winner
                 break
+            if first_match_value is None:
+                first_match_value = opt_value  # keep first match as fallback
+
+        if resolved_case_type == base_case_type and first_match_value is not None:
+            # No preferred type_flag match — use first match (old-format fixtures
+            # that lack type_flag will always take this path)
+            resolved_case_type = first_match_value
+
         if resolved_case_type == base_case_type and case_type_options:
             logger.warning(
                 "_build_form_data: case_type %r not found in options %s; using label fallback",
@@ -352,15 +383,17 @@ class BombayHighCourtScraper:
             initial_html = get_resp.text
 
             # Step 2: GET case-type options via AJAX endpoint.
-            # Pass the correct side (Civil=2, Criminal=1) and stampreg so the
-            # portal returns the right set of case types for this case.
+            # The portal filters case types by side (Appellate=1, Original=2).
+            # This app only handles Appellate Side so side is always "1".
+            # stampreg is a POST-only field — do NOT include it in the AJAX call;
+            # passing stampreg here returns a different (wrong) numeric type ID.
+            side_value = self._get_side_for_case_type(case_parts["case_type"])
             stampreg_value = self._get_stampreg_value(case_parts["case_type"])
             case_type_options: List[Dict[str, Any]] = []
-            side_value = self._get_side_for_case_type(case_parts["case_type"])
             try:
                 types_resp = self.session.get(
                     self.case_types_url,
-                    params={"side": side_value, "stampreg": stampreg_value},
+                    params={"side": side_value},
                     timeout=self.request_timeout_seconds,
                 )
                 if types_resp.status_code == 200:
@@ -1001,6 +1034,7 @@ class BombayHighCourtScraper:
                 stampreg_value = self._get_stampreg_value(case_parts["case_type"])
                 base_case_type = self._get_base_case_type(case_parts["case_type"])
 
+                # side=1 → Appellate Side (the only side this app searches)
                 page.select_option(
                     "select[name='side']",
                     value=self._get_side_for_case_type(case_parts["case_type"]),
@@ -1033,44 +1067,61 @@ class BombayHighCourtScraper:
                     # Fallback: give it a fixed wait if the selector never fires
                     page.wait_for_timeout(3000)
 
-                # Prefer selecting by label (visible text) — avoids the label/numeric-ID
-                # mismatch where option values are "1"/"6"/… but we only know "WP"/"PIL".
-                try:
-                    page.select_option("select[name='case_type']", label=base_case_type)
-                except Exception:
-                    # Label match failed — scan the DOM and match by abbreviation prefix
-                    # (handles "WP - Writ Petition" → prefix "WP" matches base "WP").
-                    options = page.query_selector_all("select[name='case_type'] option")
-                    resolved_case_type = None
-                    option_texts = []
-                    for option in options:
-                        text = option.inner_text().strip()
-                        option_texts.append(text)
-                        prefix = text.split(" - ")[0].split()[0] if text else ""
-                        if prefix.upper() == base_case_type.upper():
-                            resolved_case_type = option.get_attribute("value")
-                            break
-                    if not resolved_case_type:
-                        raise Exception(
-                            f"Case type {base_case_type!r} not found in dropdown — "
-                            f"options: {option_texts[:10]}"
-                        )
-                    page.select_option(
-                        "select[name='case_type']", value=resolved_case_type
+                # Portal renders options as "WP - Writ Petition" (abbreviation + full form).
+                # select_option(label=) requires an exact text match, so we read the DOM
+                # directly.  Two WP entries exist: Civil (value=1) and Criminal (value=308).
+                # Pick the right one using the same Civil/Criminal logic as _build_form_data:
+                # presence of "Cr." in the label text indicates the Criminal variant.
+                is_criminal = base_case_type.upper() in self._CRIMINAL_CASE_TYPES
+                all_opts = page.query_selector_all("select[name='case_type'] option")
+                resolved_case_type = None
+                fallback_value: Optional[str] = None
+                for option in all_opts:
+                    text = option.inner_text().strip()
+                    prefix = text.split(" - ")[0].strip() if text else ""
+                    if prefix.upper() != base_case_type.upper():
+                        continue
+                    val = option.get_attribute("value") or ""
+                    text_upper = text.upper()
+                    is_opt_criminal = "CR." in text_upper or " CR " in text_upper
+                    if is_criminal == is_opt_criminal:
+                        resolved_case_type = val
+                        break
+                    if fallback_value is None:
+                        fallback_value = val
+
+                if not resolved_case_type:
+                    resolved_case_type = fallback_value
+                if not resolved_case_type:
+                    sample = [
+                        o.inner_text().strip()
+                        for o in page.query_selector_all(
+                            "select[name='case_type'] option"
+                        )[:10]
+                    ]
+                    raise Exception(
+                        f"Case type {base_case_type!r} not found in dropdown — "
+                        f"options: {sample}"
                     )
+                page.select_option("select[name='case_type']", value=resolved_case_type)
                 page.fill("input[name='case_no']", case_parts["case_number"])
-                page.fill("input[name='year']", case_parts["year"])
+                # year is a <select> on the portal, not an <input>
+                page.select_option("select[name='year']", value=case_parts["year"])
+                # The page has multiple Search buttons (one per form tab).
+                # Scope click to #CaseNumber to avoid triggering the wrong form.
                 page.click(
-                    "button[type='submit'], input[type='submit']", timeout=timeout_ms
+                    "#CaseNumber button[type='submit'], #CaseNumber input[type='submit']",
+                    timeout=timeout_ms,
                 )
 
-                # Wait for case details section — confirms form was processed.
-                # The orders table (#cn_CaseNoOrders) loads via a separate AJAX call
-                # AFTER case details appear, so we wait for each independently.
+                # Wait for AJAX result to be injected into the DOM
                 try:
-                    page.wait_for_selector("#cn_CaseNoUpdates", timeout=timeout_ms)
+                    page.wait_for_selector(
+                        "#cn_CaseNoUpdates, #cn_CaseNoOrders",
+                        timeout=15000,
+                    )
                 except Exception:
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(4000)
 
                 case_details = self._extract_case_details_new(page, case_ref)
                 if not case_details:

@@ -117,18 +117,19 @@ def test_scraper_initialization_defaults_to_http():
 @pytest.mark.parametrize(
     "case_type, expected_side",
     [
-        ("WP", "2"),  # Civil writ petition
-        ("PIL", "2"),  # Civil public interest litigation
-        ("IA", "2"),  # Civil interlocutory application
-        ("WP(ST)", "2"),  # Civil stamp writ petition
-        ("ABA", "1"),  # Criminal anticipatory bail
-        ("APL", "1"),  # Criminal application
-        ("CRA", "1"),  # Criminal appeal
-        ("CRLP", "1"),  # Criminal leave petition
-        ("UNKNOWN", "2"),  # Unknown defaults to civil
+        ("WP", "1"),  # Petitioner-side search (always 1)
+        ("PIL", "1"),
+        ("IA", "1"),
+        ("WP(ST)", "1"),
+        ("ABA", "1"),  # Criminal types also use Petitioner side
+        ("APL", "1"),
+        ("CRA", "1"),
+        ("CRLP", "1"),
+        ("UNKNOWN", "1"),
     ],
 )
 def test_get_side_for_case_type(case_type, expected_side):
+    """side=1 means Appellate Side — this app only searches the Appellate Side."""
     scraper = BombayHighCourtScraper()
     assert scraper._get_side_for_case_type(case_type) == expected_side
 
@@ -205,16 +206,15 @@ def test_configure_scraper_rejects_invalid_provider():
 @pytest.mark.parametrize(
     "case_ref, options, expected_stampreg, expected_case_type, expected_side",
     [
-        ("WP/3373/2025", _CASE_TYPES_JSON, "R", "1", "2"),  # WP is Civil → side=2
-        ("PIL/294/2025", _CASE_TYPES_JSON, "R", "5", "2"),  # PIL is Civil → side=2
-        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8", "2"),  # IA is Civil → side=2
-        ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1", "2"),  # WP(ST) Civil → side=2
-        ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5", "2"),  # PIL(ST) Civil → side=2
-        ("IA(ST)/123/2025", _CASE_TYPES_JSON, "S", "8", "2"),  # IA(ST) Civil → side=2
-        # Criminal case type uses side=1
+        ("WP/3373/2025", _CASE_TYPES_JSON, "R", "1", "1"),
+        ("PIL/294/2025", _CASE_TYPES_JSON, "R", "5", "1"),
+        ("IA/500/2024", _CASE_TYPES_JSON, "R", "8", "1"),
+        ("WP(ST)/100/2025", _CASE_TYPES_JSON, "S", "1", "1"),
+        ("PIL(ST)/77/2024", _CASE_TYPES_JSON, "S", "5", "1"),
+        ("IA(ST)/123/2025", _CASE_TYPES_JSON, "S", "8", "1"),
+        # All case types use side=1 (Petitioner)
         ("ABA/10/2025", [], "R", "ABA", "1"),
-        # Unknown case type falls back to the label string, defaults to Civil (side=2)
-        ("OA/10/2025", _CASE_TYPES_JSON, "R", "OA", "2"),
+        ("OA/10/2025", _CASE_TYPES_JSON, "R", "OA", "1"),
     ],
 )
 def test_build_form_data_case_type_and_stampreg(
@@ -278,7 +278,7 @@ def test_build_form_data_matches_full_label_options():
     case_parts = scraper.parse_case_number("WP/1234/2025")
     form = scraper._build_form_data(case_parts, "<html></html>", full_label_options)
     assert form["case_type"] == "42"
-    assert form["side"] == "2"  # WP is Civil
+    assert form["side"] == "1"  # always Appellate Side
 
 
 # ---------------------------------------------------------------------------
@@ -795,13 +795,10 @@ _SUCCESS_IA_JSON = {
 }
 
 
-def test_fetch_with_http_sends_stampreg_to_ajax_for_stamp_case():
-    """The case-types AJAX call must include stampreg=S for IA(ST) cases so the
-    portal returns the Stamp-specific case type list.
-
-    Regression: the AJAX call previously only sent side=1, meaning Stamp cases
-    received the Registered case type list where IA may have a different numeric
-    ID or be absent.
+def test_fetch_with_http_ajax_uses_side1_not_stampreg():
+    """The case-types AJAX call must use side=1 (Petitioner) for all cases.
+    stampreg is a form-POST-only field — it does NOT filter the AJAX type list,
+    and including it returns a different (wrong) type ID for the same case type.
     """
     scraper = BombayHighCourtScraper()
     ajax_params_seen = []
@@ -835,18 +832,20 @@ def test_fetch_with_http_sends_stampreg_to_ajax_for_stamp_case():
     assert result is not None, "Expected a result for IA(ST) case"
     assert ajax_params_seen, "case-types AJAX was never called"
     assert (
-        ajax_params_seen[0].get("stampreg") == "S"
-    ), f"AJAX call did not include stampreg=S for Stamp case; params={ajax_params_seen[0]}"
+        ajax_params_seen[0].get("side") == "1"
+    ), f"AJAX must use side=1 (Appellate Side); params={ajax_params_seen[0]}"
+    assert (
+        "stampreg" not in ajax_params_seen[0]
+    ), f"stampreg must NOT appear in AJAX params; params={ajax_params_seen[0]}"
 
 
-def test_fetch_with_http_sends_stampreg_r_to_ajax_for_registered_case():
-    """Registered (non-ST) cases must send stampreg=R to the AJAX endpoint."""
+def test_fetch_with_http_post_includes_stampreg_s_for_stamp_case():
+    """stampreg=S must be in the form POST body for IA(ST) cases (not the AJAX)."""
     scraper = BombayHighCourtScraper()
-    ajax_params_seen = []
+    post_data_seen = []
 
     def fake_get(url, params=None, **kwargs):
         if "get-case-types" in url:
-            ajax_params_seen.append(dict(params or {}))
             r = Mock()
             r.status_code = 200
             r.json = Mock(return_value=_CASE_TYPES_WITH_IA)
@@ -857,10 +856,11 @@ def test_fetch_with_http_sends_stampreg_r_to_ajax_for_registered_case():
         return r
 
     def fake_post(url, data=None, headers=None, **kwargs):
+        post_data_seen.append(dict(data or {}))
         r = Mock()
         r.status_code = 200
         r.url = url
-        r.json = Mock(return_value=_SUCCESS_JSON)
+        r.json = Mock(return_value=_SUCCESS_IA_JSON)
         r.text = ""
         return r
 
@@ -868,11 +868,15 @@ def test_fetch_with_http_sends_stampreg_r_to_ajax_for_registered_case():
     scraper.session.get = Mock(side_effect=fake_get)
     scraper.session.post = Mock(side_effect=fake_post)
 
-    scraper._fetch_with_http("WP/3373/2025")
+    scraper._fetch_with_http("IA(ST)/123/2025")
 
+    assert post_data_seen, "POST was never called"
     assert (
-        ajax_params_seen[0].get("stampreg") == "R"
-    ), f"AJAX call should include stampreg=R for Registered case; params={ajax_params_seen[0]}"
+        post_data_seen[0].get("stampreg") == "S"
+    ), f"POST body must include stampreg=S for Stamp case; data={post_data_seen[0]}"
+    assert (
+        post_data_seen[0].get("side") == "1"
+    ), f"POST body must include side=1 (Appellate Side); data={post_data_seen[0]}"
 
 
 # ---------------------------------------------------------------------------
