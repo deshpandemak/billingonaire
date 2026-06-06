@@ -1003,26 +1003,6 @@ class Board:
                     if stored_year != case_year:
                         continue
 
-                # advocate_name: score each lawyer field from this doc against
-                # the search name using the shared any_name_matches() function —
-                # the exact same algorithm used by bill generation.  This covers
-                # government_pleader, respondent_lawyer, petitioner_lawyer, and
-                # additional_respondent_lawyers in one call.
-                if advocate_name:
-                    gp_raw = doc_data.get("government_pleader") or []
-                    if isinstance(gp_raw, str):
-                        gp_raw = [gp_raw]
-                    candidate_names = (
-                        [
-                            doc_data.get("respondent_lawyer") or "",
-                            doc_data.get("petitioner_lawyer") or "",
-                        ]
-                        + list(doc_data.get("additional_respondent_lawyers") or [])
-                        + list(gp_raw)
-                    )
-                    if not any_name_matches(advocate_name, candidate_names):
-                        continue
-
                 doc_data["id"] = doc.id
                 if "board_date" in doc_data and hasattr(
                     doc_data["board_date"], "strftime"
@@ -1035,6 +1015,34 @@ class Board:
                 logging.warning("No records matched search criteria")
 
             hydrated_data = self._hydrate_with_case_details(data)
+
+            # advocate_name: applied post-hydration so that government_pleader
+            # (written to case-details by order analysis, not to daily-boards)
+            # is visible.  Pre-hydration the field is always [] in daily-boards.
+            if advocate_name:
+
+                def _row_matches_advocate(row: dict) -> bool:
+                    gp_raw = row.get("government_pleader") or []
+                    if isinstance(gp_raw, str):
+                        gp_raw = [gp_raw]
+                    candidate_names = (
+                        [
+                            row.get("respondent_lawyer") or "",
+                            row.get("petitioner_lawyer") or "",
+                        ]
+                        + list(row.get("additional_respondent_lawyers") or [])
+                        + list(gp_raw)
+                    )
+                    return any_name_matches(advocate_name, candidate_names)
+
+                hydrated_data = [
+                    row for row in hydrated_data if _row_matches_advocate(row)
+                ]
+                logging.info(
+                    "advocate_name filter '%s' retained %d records",
+                    advocate_name,
+                    len(hydrated_data),
+                )
 
             # Apply AGP filter Python-side after hydration when name variations
             # are provided.  This matches the bill-generation algorithm: it
