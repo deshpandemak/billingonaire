@@ -97,6 +97,32 @@ class TestOrderDocumentAnalyzer:
             len(pleaders) == 2
         ), f"Expected exactly 2 pleaders, got {len(pleaders)}: {pleaders}"
 
+    def test_extract_govt_pleader_excludes_petitioner_side_advocate(self, analyzer):
+        """Advocate listed 'for the petitioner' must never appear in the GP list.
+
+        Regression for WP-7810-2013 order where 'Mr.Balasaheb Deshmukh for the
+        petitioner in WP.' was captured by the simple_pattern because the lazy
+        group-1 regex spanned across the newline into 'Ms. A.A. Nadkarni, AGP'.
+        """
+        text = (
+            "Mr.Balasaheb Deshmukh for the petitioner in WP.\n"
+            "Ms. A.A. Nadkarni, AGP with Mr. Hamid Mulla, AGP\n"
+            "for State.\n"
+            "Mr. Vinayak T. Padvi, In-charge Deputy Collector, is present."
+        )
+        pleaders = analyzer._extract_govt_pleader_from_text(text, "WP/7810/2013")
+
+        names = [p.split(",")[0].strip() for p in pleaders]
+        assert (
+            "Mr. Balasaheb Deshmukh" not in names
+        ), f"Petitioner's lawyer incorrectly included: {pleaders}"
+        assert any(
+            "Nadkarni" in n for n in names
+        ), f"AGP Nadkarni missing from output: {pleaders}"
+        assert any(
+            "Mulla" in n for n in names
+        ), f"AGP Mulla missing from output: {pleaders}"
+
     def test_normalise_title_name_fixes_missing_space(self, analyzer):
         """_normalise_title_name inserts a space between title and name."""
         assert analyzer._normalise_title_name("Mr.Asif Patel") == "Mr. Asif Patel"
