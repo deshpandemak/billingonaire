@@ -525,7 +525,7 @@ class BombayHighCourtScraper:
                     # page load), so we fall through to Playwright which executes the
                     # full page lifecycle.
                     if result and orders_found > 0:
-                        logger.info(
+                        logger.warning(
                             "HTTP succeeded for case_ref=%s in %dms orders_found=%d",
                             case_ref,
                             duration_ms,
@@ -548,8 +548,9 @@ class BombayHighCourtScraper:
                             if result and orders_found == 0
                             else "no_result"
                         )
-                        logger.info(
-                            "HTTP %s for case_ref=%s in %dms — trying Playwright",
+                        logger.warning(
+                            "HTTP %s for case_ref=%s in %dms — order table not in "
+                            "static HTML (JS-rendered), trying Playwright",
                             reason,
                             case_ref,
                             duration_ms,
@@ -586,7 +587,7 @@ class BombayHighCourtScraper:
                     if final_result:
                         break
                     started = time.time()
-                    logger.info(
+                    logger.warning(
                         "Playwright attempt %d/%d for case_ref=%s",
                         attempt_num,
                         self.playwright_retry_count,
