@@ -833,17 +833,7 @@ async def get_data(
             uid
         )  # This will raise 403 if invalid
 
-        # Compute name variations so the search screen uses the same
-        # case-matching algorithm as bill generation (checks
-        # government_pleader, respondent_lawyer and
-        # additional_respondent_lawyers with name-variation matching).
-        agp_name_variations = None
-        if agp_filter and isinstance(agp_filter, str):
-            agp_name_variations = get_user_matter_matcher().generate_name_variations(
-                agp_filter
-            )
-
-        data = board.getData(search_criteria, agp_filter, agp_name_variations)
+        data = board.getData(search_criteria, agp_filter)
         return data
     except Exception as e:
         logger.error(f"Error in data retrieval: {str(e)}")

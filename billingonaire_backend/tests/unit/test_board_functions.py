@@ -440,7 +440,7 @@ def test_record_matches_agp_checks_government_pleader(mock_firestore):
         "additional_respondent_lawyers": [],
     }
     # Variation that is a substring of the government_pleader value
-    assert board._record_matches_agp(record, ["Pooja Joshi Deshpande"]) is True
+    assert board._record_matches_agp(record, "Pooja Joshi Deshpande") is True
 
 
 @patch("Board.firestore.client")
@@ -458,7 +458,7 @@ def test_record_matches_agp_checks_additional_respondent_lawyers(mock_firestore)
         "government_pleader": [],
         "additional_respondent_lawyers": ["Pooja Deshpande"],
     }
-    assert board._record_matches_agp(record, ["Pooja Deshpande"]) is True
+    assert board._record_matches_agp(record, "Pooja Deshpande") is True
 
 
 @patch("Board.firestore.client")
@@ -476,7 +476,7 @@ def test_record_matches_agp_returns_false_no_match(mock_firestore):
         "government_pleader": ["Another AGP"],
         "additional_respondent_lawyers": ["Third Lawyer"],
     }
-    assert board._record_matches_agp(record, ["Pooja Deshpande"]) is False
+    assert board._record_matches_agp(record, "Pooja Deshpande") is False
 
 
 @patch("Board.firestore.client")
@@ -545,11 +545,6 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
     result = board.getData(
         {},
         agp_filter="Pooja Deshpande",
-        agp_name_variations=[
-            "Pooja Deshpande",
-            "P. Deshpande",
-            "Pooja M. Joshi Deshpande",
-        ],
     )
 
     # Only the matching record should remain
@@ -573,7 +568,7 @@ def test_record_matches_agp_single_token_variation_not_over_broad(mock_firestore
         "additional_respondent_lawyers": [],
     }
     # Single-token "pooja" must NOT cause a match
-    assert board._record_matches_agp(record, ["Pooja"]) is False
+    assert board._record_matches_agp(record, "Pooja") is False
 
 
 @patch("Board.firestore.client")
@@ -590,10 +585,7 @@ def test_record_matches_agp_multi_token_still_matches(mock_firestore):
         "government_pleader": [],
         "additional_respondent_lawyers": [],
     }
-    assert (
-        board._record_matches_agp(record, ["Pooja Deshpande", "Pooja Joshi Deshpande"])
-        is True
-    )
+    assert board._record_matches_agp(record, "Pooja Deshpande") is True
 
 
 @patch("Board.firestore.client")
