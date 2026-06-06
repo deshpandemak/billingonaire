@@ -452,10 +452,36 @@ class BombayHighCourtScraper:
             if not html_content:
                 return None
 
-            # Step 5: Extract case details and orders
+            # Step 5: Diagnose what the HTML contains before extraction
+            soup_diag = BeautifulSoup(html_content, "html.parser")
+            orders_div = soup_diag.find(id="cn_CaseNoOrders")
+            orders_table = soup_diag.select_one("#cn_CaseNoOrders table tbody")
+            orders_rows = orders_table.find_all("tr") if orders_table else []
+            all_links = soup_diag.find_all("a", href=True)
+            pdf_links = [
+                a["href"]
+                for a in all_links
+                if any(
+                    kw in a["href"].lower() for kw in (".pdf", "order", "judg", "view")
+                )
+            ]
+            logger.warning(
+                "_fetch_with_http html_diag for %s: "
+                "cn_CaseNoOrders_present=%s table_present=%s rows=%d "
+                "total_links=%d pdf_like_links=%d sample=%s",
+                case_ref,
+                orders_div is not None,
+                orders_table is not None,
+                len(orders_rows),
+                len(all_links),
+                len(pdf_links),
+                pdf_links[:3],
+            )
+
+            # Step 6: Extract case details and orders
             case_details = self._extract_case_details_from_html(html_content, case_ref)
             if not case_details:
-                logger.info(
+                logger.warning(
                     "_fetch_with_http: could not extract case details for %s — "
                     "Playwright fallback will be used",
                     case_ref,
@@ -463,7 +489,7 @@ class BombayHighCourtScraper:
                 return None
 
             court_orders = self._extract_orders_from_html(html_content, post_resp.url)
-            logger.info(
+            logger.warning(
                 "_fetch_with_http: succeeded for %s orders_found=%d",
                 case_ref,
                 len(court_orders),
