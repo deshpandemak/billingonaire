@@ -393,7 +393,9 @@ class BombayHighCourtScraper:
                 form_data.get("case_type"),
                 form_data.get("case_no"),
                 form_data.get("year"),
-                "present" if soup_get.find("meta", attrs={"name": "csrf-token"}) else "MISSING",
+                "present"
+                if soup_get.find("meta", attrs={"name": "csrf-token"})
+                else "MISSING",
             )
             csrf_meta = soup_get.find("meta", attrs={"name": "csrf-token"})
             post_headers: Dict[str, str] = {
