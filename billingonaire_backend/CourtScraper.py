@@ -1019,9 +1019,7 @@ class BombayHighCourtScraper:
                 # The orders table (#cn_CaseNoOrders) loads via a separate AJAX call
                 # AFTER case details appear, so we wait for each independently.
                 try:
-                    page.wait_for_selector(
-                        "#cn_CaseNoUpdates", timeout=timeout_ms
-                    )
+                    page.wait_for_selector("#cn_CaseNoUpdates", timeout=timeout_ms)
                 except Exception:
                     page.wait_for_timeout(3000)
 
