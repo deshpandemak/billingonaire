@@ -1705,6 +1705,15 @@ class OrderDocumentAnalyzer:
             r"(?=\s*(?:for\s+(?:the\s+)?Respondent|(?:is\s+)?present[,\.]?))"
         )
 
+        # Phrases that mark a petitioner/applicant-side advocate — any name
+        # group that contains these is a cross-line regex over-match and must
+        # be rejected before it contaminates the GP list.
+        _petitioner_side_re = re.compile(
+            r"\bfor\s+(?:the\s+)?(?:petitioner|applicant|appellant|accused"
+            r"|defendant|contemnor)\b",
+            re.IGNORECASE,
+        )
+
         for match in re.finditer(simple_pattern, text, re.IGNORECASE):
             title1_name1 = self._normalise_title_name(match.group(1))
             role1 = match.group(2).strip()
@@ -1718,11 +1727,16 @@ class OrderDocumentAnalyzer:
             # Accept GP/AGP/G.P./Addl. roles and 'B'/'A' Panel Counsel roles
             _gp_role_re = r"(?:AGP|GP|G\.?\s*P\.?|Addl|Panel\s+Coun)"
             if re.search(_gp_role_re, role1, re.IGNORECASE):
-                role1_normalized = self._normalize_agp_role(role1)
-                formatted1 = f"{title1_name1.strip()}, {role1_normalized}"
-                if formatted1 not in pleaders:
-                    pleaders.append(formatted1)
-                    logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
+                if _petitioner_side_re.search(title1_name1):
+                    logging.info(
+                        f"      ⛔ Skipping Pattern 1.1 — name spans petitioner context: '{title1_name1}'"
+                    )
+                else:
+                    role1_normalized = self._normalize_agp_role(role1)
+                    formatted1 = f"{title1_name1.strip()}, {role1_normalized}"
+                    if formatted1 not in pleaders:
+                        pleaders.append(formatted1)
+                        logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
 
             if re.search(_gp_role_re, role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
@@ -1897,6 +1911,11 @@ class OrderDocumentAnalyzer:
 
             # Add all matches to pleaders list
             pleaders.extend(all_matches)
+
+        # Safety filter: drop any entry whose name portion contains a
+        # petitioner/applicant-side phrase.  This catches over-broad matches
+        # from any code path (e.g. simple_pattern spanning multiple lines).
+        pleaders = [p for p in pleaders if not _petitioner_side_re.search(p)]
 
         # Remove duplicates while preserving order.
         # Use a normalised key so "Mr. Asif Patel" and "Mr.Asif Patel" collapse
