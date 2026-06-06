@@ -1014,7 +1014,16 @@ class BombayHighCourtScraper:
                 page.click(
                     "button[type='submit'], input[type='submit']", timeout=timeout_ms
                 )
-                page.wait_for_timeout(3000)
+
+                # Wait for case details section — confirms form was processed.
+                # The orders table (#cn_CaseNoOrders) loads via a separate AJAX call
+                # AFTER case details appear, so we wait for each independently.
+                try:
+                    page.wait_for_selector(
+                        "#cn_CaseNoUpdates", timeout=timeout_ms
+                    )
+                except Exception:
+                    page.wait_for_timeout(3000)
 
                 case_details = self._extract_case_details_new(page, case_ref)
                 if not case_details:
@@ -1025,7 +1034,22 @@ class BombayHighCourtScraper:
                     browser.close()
                     return None
 
+                # Wait up to 10 s for the orders table — it loads via a second AJAX
+                # call triggered after case details appear.  Cases with no orders will
+                # time out here (safe — we just get an empty list).
+                try:
+                    page.wait_for_selector(
+                        "#cn_CaseNoOrders table tbody tr", timeout=10000
+                    )
+                except Exception:
+                    pass
+
                 court_orders = self._extract_orders_new(page, self.case_status_url)
+                logger.warning(
+                    "Playwright orders_found=%d for case_ref=%s",
+                    len(court_orders),
+                    case_ref,
+                )
                 browser.close()
                 logger.info(
                     "Playwright fetch succeeded for case_ref=%s orders_found=%d",
