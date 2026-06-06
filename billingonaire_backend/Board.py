@@ -767,7 +767,8 @@ class Board:
         # fall through to board GP (same as when no order exists yet).
         gp_raw = record.get("government_pleader")
         gp_from_order: List[str] = (
-            [gp_raw] if isinstance(gp_raw, str) and gp_raw
+            [gp_raw]
+            if isinstance(gp_raw, str) and gp_raw
             else [str(g) for g in (gp_raw or []) if g]
         )
         if gp_from_order:
