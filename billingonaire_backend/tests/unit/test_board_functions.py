@@ -246,6 +246,112 @@ def test_validate_case_format(mock_firestore):
 
 
 @patch("Board.firestore.client")
+def test_hydrate_uses_board_date_matched_order_not_latest(mock_firestore):
+    """
+    When a case has orders for multiple board dates, _hydrate_with_case_details
+    must pick the order whose board_date matches the record's board_date —
+    not the latest_order_* fields which reflect a different (more recent) date.
+
+    Regression: Search Orders showed the latest analysis for any appearance of
+    the case instead of the analysis for the specific board date searched.
+    """
+    from Board import Board
+
+    board = Board()
+    board.case_store = MagicMock()
+    board.case_store.build_case_ref.return_value = "WP/1/2024"
+    board.case_store.get_case_details_map.return_value = {
+        "WP/1/2024": {
+            "latest_order_status": "analysed",
+            "latest_order_category": "HEARD_AND_ADJOURNED",
+            "latest_order_date": "2026-06-05",
+            "latest_order_link": "http://example.com/june.pdf",
+            "orders": [
+                {
+                    "board_date": "2026-03-01",
+                    "order_date": "2026-03-01",
+                    "order_status": "analysed",
+                    "order_category": "ADJOURNED",
+                    "order_link": "http://example.com/march.pdf",
+                    "government_pleader": ["Ms. A. Nadkarni, AGP"],
+                },
+                {
+                    "board_date": "2026-06-05",
+                    "order_date": "2026-06-05",
+                    "order_status": "analysed",
+                    "order_category": "HEARD_AND_ADJOURNED",
+                    "order_link": "http://example.com/june.pdf",
+                    "government_pleader": ["Mr. H. Mulla, AGP"],
+                },
+            ],
+            "lifecycle_status": "analysed",
+        }
+    }
+
+    records = [
+        {
+            "case_ref": "WP/1/2024",
+            "board_date": "2026-03-01",
+        }
+    ]
+    result = board._hydrate_with_case_details(records)
+
+    assert (
+        result[0]["order_category"] == "ADJOURNED"
+    ), "Should show March order category, not latest June category"
+    assert result[0]["order_date"] == "2026-03-01"
+    assert result[0]["order_link"] == "http://example.com/march.pdf"
+    assert result[0]["government_pleader"] == ["Ms. A. Nadkarni, AGP"]
+
+
+@patch("Board.firestore.client")
+def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
+    """
+    When no order in case-details matches the record's board_date (e.g. the
+    case exists in case-details from a different date but hasn't been analysed
+    for this appearance yet), fall back to latest_order_* fields.
+    """
+    from Board import Board
+
+    board = Board()
+    board.case_store = MagicMock()
+    board.case_store.build_case_ref.return_value = "WP/1/2024"
+    board.case_store.get_case_details_map.return_value = {
+        "WP/1/2024": {
+            "latest_order_status": "analysed",
+            "latest_order_category": "ADJOURNED",
+            "latest_order_date": "2026-03-01",
+            "latest_order_link": "http://example.com/march.pdf",
+            "orders": [
+                {
+                    "board_date": "2026-03-01",
+                    "order_date": "2026-03-01",
+                    "order_status": "analysed",
+                    "order_category": "ADJOURNED",
+                    "order_link": "http://example.com/march.pdf",
+                    "government_pleader": ["Ms. A. Nadkarni, AGP"],
+                },
+            ],
+            "government_pleader": ["Ms. A. Nadkarni, AGP"],
+            "lifecycle_status": "analysed",
+        }
+    }
+
+    # Record for a NEW board date not yet in orders
+    records = [
+        {
+            "case_ref": "WP/1/2024",
+            "board_date": "2026-06-05",
+        }
+    ]
+    result = board._hydrate_with_case_details(records)
+
+    # Falls back to latest_* fields since 2026-06-05 has no matching order
+    assert result[0]["order_category"] == "ADJOURNED"
+    assert result[0]["order_link"] == "http://example.com/march.pdf"
+
+
+@patch("Board.firestore.client")
 def test_hydrate_order_status_defaults_to_not_linked_when_none(mock_firestore):
     """
     When a case-details document exists but both latest_order_status and

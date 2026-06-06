@@ -690,24 +690,46 @@ class Board:
             orders = case_detail.get("orders") or []
             latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
 
-            record["order_link"] = case_detail.get(
-                "latest_order_link"
-            ) or latest_order.get("order_link")
-            record["order_status"] = (
-                case_detail.get("latest_order_status")
-                or latest_order.get("order_status")
-                or "not_linked"
-            )
-            record["order_category"] = case_detail.get(
-                "latest_order_category"
-            ) or latest_order.get("order_category")
-            record["order_date"] = case_detail.get(
-                "latest_order_date"
-            ) or latest_order.get("order_date")
+            # Find the order entry whose board_date matches this record's
+            # board_date so Search Orders shows analysis for that specific
+            # appearance, not always the latest order across all appearances.
+            record_board_date = record.get("board_date")  # YYYY-MM-DD string
+            date_matched_order = None
+            if record_board_date:
+                for o in reversed(orders):
+                    if isinstance(o, dict) and o.get("board_date") == record_board_date:
+                        date_matched_order = o
+                        break
+
+            if date_matched_order:
+                record["order_link"] = date_matched_order.get("order_link")
+                record["order_status"] = (
+                    date_matched_order.get("order_status") or "not_linked"
+                )
+                record["order_category"] = date_matched_order.get("order_category")
+                record["order_date"] = date_matched_order.get("order_date")
+                record["government_pleader"] = (
+                    date_matched_order.get("government_pleader") or []
+                )
+            else:
+                record["order_link"] = case_detail.get(
+                    "latest_order_link"
+                ) or latest_order.get("order_link")
+                record["order_status"] = (
+                    case_detail.get("latest_order_status")
+                    or latest_order.get("order_status")
+                    or "not_linked"
+                )
+                record["order_category"] = case_detail.get(
+                    "latest_order_category"
+                ) or latest_order.get("order_category")
+                record["order_date"] = case_detail.get(
+                    "latest_order_date"
+                ) or latest_order.get("order_date")
+                record["government_pleader"] = case_detail.get("government_pleader", [])
 
             record["order_petitioner"] = case_detail.get("petitioner")
             record["order_respondent"] = case_detail.get("respondent")
-            record["government_pleader"] = case_detail.get("government_pleader", [])
 
             record["assigned_government_pleaders"] = case_detail.get(
                 "assigned_government_pleaders", []
