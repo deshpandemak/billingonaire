@@ -745,71 +745,46 @@ class Board:
 
         return records
 
-    def _record_matches_agp(self, record: Dict, agp_name_variations: List[str]) -> bool:
+    def _record_matches_agp(self, record: Dict, agp_filter: str) -> bool:
+        """Check whether a hydrated record belongs to the given AGP.
+
+        Priority order (same as bill generation):
+          1. government_pleader from order analysis — used exclusively when present.
+             If the order has been analysed and GP names were extracted, only those
+             names are matched; board GP is not consulted.
+          2. respondent_lawyer / additional_respondent_lawyers from board data —
+             fallback used only when government_pleader is absent (order not yet
+             analysed or no GP extracted).
+
+        Matching uses the same score_name_match fuzzy logic as bill generation
+        (via any_name_matches, threshold 0.50).
         """
-        Check whether a hydrated record belongs to any of the given AGP name variations.
-
-        Uses the same priority order as bill generation:
-          1. government_pleader (from order analysis – most accurate)
-          2. respondent_lawyer  (from board data)
-          3. additional_respondent_lawyers (from board data)
-
-        Only multi-token variations (at least two space-separated words) are used
-        for matching.  Single-token variants such as a bare first name or last name
-        are intentionally skipped to prevent over-broad matches that could expose
-        cases belonging to a different government pleader who happens to share one
-        name token.
-
-        Returns:
-            bool: True if the record matches any AGP name variation, False otherwise.
-        """
-        if not agp_name_variations:
+        if not agp_filter:
             return True
 
-        # Only keep multi-token variations to avoid false positives from
-        # single-word variants (e.g. "Pooja" or "Deshpande" matching unrelated
-        # lawyers).  Variations with at least two space-separated words are
-        # specific enough to be used safely.  If the list contains no multi-token
-        # entry, return False rather than falling back to single-token matching.
-        safe_variations = [
-            v.lower().strip() for v in agp_name_variations if v and len(v.split()) >= 2
-        ]
-        if not safe_variations:
-            return False
+        # Priority 1: GP from order analysis — used exclusively when non-empty.
+        # An empty list means the order was analysed but no GP was found, so we
+        # fall through to board GP (same as when no order exists yet).
+        gp_raw = record.get("government_pleader")
+        gp_from_order: List[str] = (
+            [gp_raw]
+            if isinstance(gp_raw, str) and gp_raw
+            else [str(g) for g in (gp_raw or []) if g]
+        )
+        if gp_from_order:
+            return any_name_matches(agp_filter, gp_from_order)
 
-        def _name_matches(candidate: str) -> bool:
-            if not candidate:
-                return False
-            candidate_lower = candidate.lower().strip()
-            for variation in safe_variations:
-                # Only check whether the variation appears inside the candidate.
-                # The reverse direction (candidate inside variation) is intentionally
-                # omitted to prevent short/partial candidate strings from matching.
-                if variation and variation in candidate_lower:
-                    return True
-            return False
-
-        # Priority 1: government_pleader (list or string from case-details)
-        government_pleader = record.get("government_pleader") or []
-        if isinstance(government_pleader, str):
-            government_pleader = [government_pleader]
-        for gp in government_pleader:
-            if _name_matches(str(gp)):
-                return True
-
-        # Priority 2: respondent_lawyer (string from board data)
-        if _name_matches(record.get("respondent_lawyer", "")):
-            return True
-
-        # Priority 3: additional_respondent_lawyers (list from board data)
+        # Priority 2 (fallback): Board GP — consulted when no GP in order.
+        board_gp: List[str] = []
+        rl = record.get("respondent_lawyer")
+        if rl:
+            board_gp.append(str(rl))
         additional = record.get("additional_respondent_lawyers") or []
         if isinstance(additional, str):
             additional = [additional]
-        for lawyer in additional:
-            if _name_matches(str(lawyer)):
-                return True
+        board_gp.extend(str(x) for x in additional if x)
 
-        return False
+        return any_name_matches(agp_filter, board_gp)
 
     # Maximum rows returned from a single search — prevents unbounded full-scans.
     _SEARCH_RESULT_LIMIT = 500
@@ -818,7 +793,6 @@ class Board:
         self,
         search_criteria,
         agp_filter=None,
-        agp_name_variations=None,
     ):
         logging.info("Processing search request")
 
@@ -955,16 +929,8 @@ class Board:
             # we avoid a full-collection scan.
             query = self.db.collection("daily-boards")
 
-            # Apply AGP filter if user is restricted to specific AGPs.
-            # When agp_name_variations are provided, the access control check is
-            # applied Python-side after hydration (so that government_pleader and
-            # additional_respondent_lawyers are also considered).
-            if agp_filter and not agp_name_variations:
-                logging.info("Applying AGP access filter (exact, legacy)")
-                if isinstance(agp_filter, list):
-                    query = query.where("respondent_lawyer", "in", agp_filter)
-                else:
-                    query = query.where("respondent_lawyer", "==", agp_filter)
+            # AGP filter is applied Python-side after hydration via _record_matches_agp
+            # (fuzzy match against government_pleader / board GP fields).
 
             if has_date_filter:
                 # Push only the range filter; equality filters go Python-side.
@@ -1066,20 +1032,17 @@ class Board:
                     len(hydrated_data),
                 )
 
-            # Apply AGP filter Python-side after hydration when name variations
-            # are provided.  This matches the bill-generation algorithm: it
-            # checks government_pleader (order analysis), respondent_lawyer
-            # (board data) and additional_respondent_lawyers (board data) in
-            # priority order.
-            if agp_filter and agp_name_variations:
+            # Apply AGP filter Python-side after hydration using the same
+            # fuzzy matching as bill generation: order GP first, board GP fallback.
+            if agp_filter:
                 logging.info(
-                    "Applying AGP filter post-hydration with %d name variations",
-                    len(agp_name_variations),
+                    "Applying AGP filter post-hydration for agp_filter=%r",
+                    agp_filter,
                 )
                 hydrated_data = [
                     row
                     for row in hydrated_data
-                    if self._record_matches_agp(row, agp_name_variations)
+                    if self._record_matches_agp(row, agp_filter)
                 ]
                 logging.info("AGP filter retained %d records", len(hydrated_data))
 
