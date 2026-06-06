@@ -384,6 +384,17 @@ class BombayHighCourtScraper:
                 case_parts, initial_html, case_type_options
             )
             soup_get = BeautifulSoup(initial_html, "html.parser")
+            logger.warning(
+                "_fetch_with_http POST form_data for %s: "
+                "side=%r stampreg=%r case_type=%r case_no=%r year=%r csrf=%s",
+                case_ref,
+                form_data.get("side"),
+                form_data.get("stampreg"),
+                form_data.get("case_type"),
+                form_data.get("case_no"),
+                form_data.get("year"),
+                "present" if soup_get.find("meta", attrs={"name": "csrf-token"}) else "MISSING",
+            )
             csrf_meta = soup_get.find("meta", attrs={"name": "csrf-token"})
             post_headers: Dict[str, str] = {
                 "Content-Type": "application/x-www-form-urlencoded",
@@ -439,9 +450,14 @@ class BombayHighCourtScraper:
             try:
                 data = post_resp.json()
                 if not data.get("status"):
-                    logger.info(
-                        "_fetch_with_http: portal returned status=False for %s",
+                    logger.warning(
+                        "_fetch_with_http: portal returned status=False for %s "
+                        "(case_type_used=%r http_status=%d response_keys=%s msg=%r)",
                         case_ref,
+                        form_data.get("case_type"),
+                        post_resp.status_code,
+                        list(data.keys()),
+                        data.get("message") or data.get("error") or data.get("msg"),
                     )
                     return None
                 html_content = data.get("page", "")
@@ -450,6 +466,11 @@ class BombayHighCourtScraper:
                 html_content = post_resp.text
 
             if not html_content:
+                logger.warning(
+                    "_fetch_with_http: empty html_content for %s http_status=%d",
+                    case_ref,
+                    post_resp.status_code,
+                )
                 return None
 
             # Step 5: Diagnose what the HTML contains before extraction
