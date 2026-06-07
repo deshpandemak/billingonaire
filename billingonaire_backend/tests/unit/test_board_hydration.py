@@ -2,7 +2,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 
-def test_hydrate_with_case_details_fills_missing_order_fields():
+def test_hydrate_with_case_details_fills_order_fields_when_board_date_matches():
     with patch.dict(sys.modules, {"spacy": MagicMock()}):
         with patch("firebase_admin.firestore.client"):
             from Board import Board
@@ -17,16 +17,14 @@ def test_hydrate_with_case_details_fills_missing_order_fields():
             "respondent": "XYZ Industries",
             "government_pleader": ["Pooja Deshpande"],
             "assigned_government_pleaders": ["A. Kulkarni"],
-            "latest_order_link": "https://example.com/latest.pdf",
-            "latest_order_status": "analysed",
-            "latest_order_category": "ADJOURNED",
-            "latest_order_date": "2026-03-13",
             "orders": [
                 {
+                    "board_date": "2026-03-13",
                     "order_link": "https://example.com/latest.pdf",
                     "order_status": "analysed",
                     "order_category": "ADJOURNED",
                     "order_date": "2026-03-13",
+                    "government_pleader": ["Pooja Deshpande"],
                 }
             ],
         }
@@ -37,6 +35,7 @@ def test_hydrate_with_case_details_fills_missing_order_fields():
             "case_type": "WP",
             "case_no": "123",
             "case_year": "2026",
+            "board_date": "2026-03-13",
             "order_link": None,
             "order_status": None,
             "order_category": None,
@@ -62,7 +61,7 @@ def test_hydrate_with_case_details_fills_missing_order_fields():
     assert isinstance(row["order_history"], list)
 
 
-def test_hydrate_with_case_details_overrides_with_normalized_latest_order_fields():
+def test_hydrate_with_case_details_no_order_when_no_board_date_match():
     with patch.dict(sys.modules, {"spacy": MagicMock()}):
         with patch("firebase_admin.firestore.client"):
             from Board import Board
@@ -73,30 +72,35 @@ def test_hydrate_with_case_details_overrides_with_normalized_latest_order_fields
     board.case_store.get_case_details_map.return_value = {
         "WP/555/2026": {
             "case_ref": "WP/555/2026",
-            "latest_order_link": "https://example.com/from-store.pdf",
-            "latest_order_status": "analysed",
-            "latest_order_category": "DISPOSED_OFF",
-            "latest_order_date": "2026-03-10",
-            "orders": [],
+            "government_pleader": ["Pooja Deshpande"],
+            "orders": [
+                {
+                    "board_date": "2026-03-10",
+                    "order_link": "https://example.com/march.pdf",
+                    "order_status": "analysed",
+                    "order_category": "DISPOSED_OFF",
+                    "order_date": "2026-03-10",
+                }
+            ],
         }
     }
 
+    # Board date is May — no order exists for this date
     records = [
         {
             "case_type": "WP",
             "case_no": "555",
             "case_year": "2026",
-            "order_link": "https://example.com/already-set.pdf",
-            "order_status": "linked",
-            "order_category": "ADJOURNED",
-            "order_date": "2026-03-12",
+            "board_date": "2026-05-08",
         }
     ]
 
     hydrated = board._hydrate_with_case_details(records)
     row = hydrated[0]
 
-    assert row["order_link"] == "https://example.com/from-store.pdf"
-    assert row["order_status"] == "analysed"
-    assert row["order_category"] == "DISPOSED_OFF"
-    assert row["order_date"] == "2026-03-10"
+    # No order for 2026-05-08 — display fields must be empty
+    assert row["order_link"] is None
+    assert row["order_date"] is None
+    assert row["order_category"] is None
+    # Case-level GP still available for AGP filter
+    assert row["government_pleader"] == ["Pooja Deshpande"]
