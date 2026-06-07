@@ -701,14 +701,16 @@ class Board:
                         date_matched_order = o
                         break
 
-            display_order = date_matched_order or latest_order
-            record["order_link"] = display_order.get("order_link")
-            record["order_status"] = display_order.get("order_status") or "not_linked"
-            record["order_category"] = display_order.get("order_category")
-            record["order_date"] = display_order.get("order_date")
-            record["government_pleader"] = display_order.get(
-                "government_pleader"
-            ) or case_detail.get("government_pleader", [])
+            if date_matched_order:
+                record["order_link"] = date_matched_order.get("order_link")
+                record["order_status"] = (
+                    date_matched_order.get("order_status") or "not_linked"
+                )
+                record["order_category"] = date_matched_order.get("order_category")
+                record["order_date"] = date_matched_order.get("order_date")
+                record["government_pleader"] = (
+                    date_matched_order.get("government_pleader") or []
+                )
 
             record["order_petitioner"] = case_detail.get("petitioner")
             record["order_respondent"] = case_detail.get("respondent")
