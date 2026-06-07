@@ -305,11 +305,10 @@ def test_hydrate_uses_board_date_matched_order_not_latest(mock_firestore):
 
 
 @patch("Board.firestore.client")
-def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
+def test_hydrate_shows_latest_order_when_no_board_date_match(mock_firestore):
     """
-    When no order in case-details matches the record's board_date (e.g. the
-    case exists in case-details from a different date but hasn't been analysed
-    for this appearance yet), fall back to latest_order_* fields.
+    When no order matches the record's board_date, the latest analyzed order
+    is shown using its own date so analysis results remain visible in the modal.
     """
     from Board import Board
 
@@ -318,10 +317,6 @@ def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
     board.case_store.build_case_ref.return_value = "WP/1/2024"
     board.case_store.get_case_details_map.return_value = {
         "WP/1/2024": {
-            "latest_order_status": "analysed",
-            "latest_order_category": "ADJOURNED",
-            "latest_order_date": "2026-03-01",
-            "latest_order_link": "http://example.com/march.pdf",
             "orders": [
                 {
                     "board_date": "2026-03-01",
@@ -332,12 +327,11 @@ def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
                     "government_pleader": ["Ms. A. Nadkarni, AGP"],
                 },
             ],
-            "government_pleader": ["Ms. A. Nadkarni, AGP"],
             "lifecycle_status": "analysed",
         }
     }
 
-    # Record for a NEW board date not yet in orders
+    # Record for a new board date not yet in orders
     records = [
         {
             "case_ref": "WP/1/2024",
@@ -346,9 +340,11 @@ def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
     ]
     result = board._hydrate_with_case_details(records)
 
-    # Falls back to latest_* fields since 2026-06-05 has no matching order
-    assert result[0]["order_category"] == "ADJOURNED"
-    assert result[0]["order_link"] == "http://example.com/march.pdf"
+    # No order for 2026-06-05 — order display fields must be empty
+    assert result[0]["order_category"] is None
+    assert result[0]["order_link"] is None
+    assert result[0]["order_date"] is None
+    assert result[0]["government_pleader"] == []
 
 
 @patch("Board.firestore.client")
@@ -522,7 +518,8 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
         unrelated_doc,
     ]
 
-    # Hydration: matching case has government_pleader set; unrelated does not
+    # Hydration: matching case has an order whose board_date matches the
+    # record's board_date and carries the GP; unrelated does not.
     board.case_store = MagicMock()
 
     def build_ref_side_effect(case_type, case_no, case_year):
@@ -531,13 +528,17 @@ def test_getData_with_agp_name_variations_filters_by_all_fields(mock_firestore):
     board.case_store.build_case_ref.side_effect = build_ref_side_effect
     board.case_store.get_case_details_map.return_value = {
         "WP/1/2024": {
-            "government_pleader": ["Pooja M. Joshi Deshpande"],
-            "latest_order_status": "analysed",
-            "orders": [],
+            "orders": [
+                {
+                    "board_date": "2024-10-01",
+                    "order_date": "2024-10-01",
+                    "order_status": "analysed",
+                    "order_category": "ADJOURNED",
+                    "government_pleader": ["Pooja M. Joshi Deshpande"],
+                }
+            ],
         },
         "WP/2/2024": {
-            "government_pleader": [],
-            "latest_order_status": None,
             "orders": [],
         },
     }
@@ -776,17 +777,31 @@ def test_getData_advocate_filter_matches_government_pleader_with_dot_initials(
     mock_query.stream.return_value = [matching_doc, non_matching_doc]
     mock_firestore.return_value.collection.return_value.where.return_value = mock_query
 
-    # case-details for WP/1/2025 has the GP; WP/2/2025 has a different AGP.
-    # get_case_details_map uses db.get_all() — mock it to return both snaps.
+    # case-details for WP/1/2025 has an order whose board_date matches the
+    # board record; WP/2/2025 has a different AGP in its matched order.
     snap1 = MagicMock(exists=True)
     snap1.to_dict.return_value = {
         "case_ref": "WP/1/2025",
-        "government_pleader": ["SHRI S.D.VYAS, AGP"],
+        "orders": [
+            {
+                "board_date": "2025-01-01",
+                "order_date": "2025-01-01",
+                "order_status": "analysed",
+                "government_pleader": ["SHRI S.D.VYAS, AGP"],
+            }
+        ],
     }
     snap2 = MagicMock(exists=True)
     snap2.to_dict.return_value = {
         "case_ref": "WP/2/2025",
-        "government_pleader": ["SMT. REKHA MUSALE, AGP"],
+        "orders": [
+            {
+                "board_date": "2025-01-01",
+                "order_date": "2025-01-01",
+                "order_status": "analysed",
+                "government_pleader": ["SMT. REKHA MUSALE, AGP"],
+            }
+        ],
     }
     mock_firestore.return_value.get_all.return_value = [snap1, snap2]
 

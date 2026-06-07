@@ -711,22 +711,6 @@ class Board:
                 record["government_pleader"] = (
                     date_matched_order.get("government_pleader") or []
                 )
-            else:
-                record["order_link"] = case_detail.get(
-                    "latest_order_link"
-                ) or latest_order.get("order_link")
-                record["order_status"] = (
-                    case_detail.get("latest_order_status")
-                    or latest_order.get("order_status")
-                    or "not_linked"
-                )
-                record["order_category"] = case_detail.get(
-                    "latest_order_category"
-                ) or latest_order.get("order_category")
-                record["order_date"] = case_detail.get(
-                    "latest_order_date"
-                ) or latest_order.get("order_date")
-                record["government_pleader"] = case_detail.get("government_pleader", [])
 
             record["order_petitioner"] = case_detail.get("petitioner")
             record["order_respondent"] = case_detail.get("respondent")
