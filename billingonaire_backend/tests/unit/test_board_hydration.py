@@ -61,7 +61,13 @@ def test_hydrate_with_case_details_fills_order_fields_when_board_date_matches():
     assert isinstance(row["order_history"], list)
 
 
-def test_hydrate_with_case_details_no_order_when_no_board_date_match():
+def test_hydrate_shows_latest_order_when_no_board_date_match():
+    """
+    When no order matches the record's board_date, fall back to the latest
+    analyzed order so analysis results are always visible in the modal.
+    order_date shows the actual order date (not the board date) so the user
+    can see it is from a different hearing.
+    """
     with patch.dict(sys.modules, {"spacy": MagicMock()}):
         with patch("firebase_admin.firestore.client"):
             from Board import Board
@@ -72,7 +78,6 @@ def test_hydrate_with_case_details_no_order_when_no_board_date_match():
     board.case_store.get_case_details_map.return_value = {
         "WP/555/2026": {
             "case_ref": "WP/555/2026",
-            "government_pleader": ["Pooja Deshpande"],
             "orders": [
                 {
                     "board_date": "2026-03-10",
@@ -80,12 +85,13 @@ def test_hydrate_with_case_details_no_order_when_no_board_date_match():
                     "order_status": "analysed",
                     "order_category": "DISPOSED_OFF",
                     "order_date": "2026-03-10",
+                    "government_pleader": ["Ms. A. Nadkarni, AGP"],
                 }
             ],
         }
     }
 
-    # Board date is May — no order exists for this date
+    # Board date is May — no order exists for this date yet
     records = [
         {
             "case_type": "WP",
@@ -98,9 +104,8 @@ def test_hydrate_with_case_details_no_order_when_no_board_date_match():
     hydrated = board._hydrate_with_case_details(records)
     row = hydrated[0]
 
-    # No order for 2026-05-08 — display fields must be empty
-    assert row["order_link"] is None
-    assert row["order_date"] is None
-    assert row["order_category"] is None
-    # Case-level GP still available for AGP filter
-    assert row["government_pleader"] == ["Pooja Deshpande"]
+    # Falls back to the latest (March) order — shows its own date, not the board date
+    assert row["order_link"] == "https://example.com/march.pdf"
+    assert row["order_date"] == "2026-03-10"
+    assert row["order_category"] == "DISPOSED_OFF"
+    assert row["government_pleader"] == ["Ms. A. Nadkarni, AGP"]

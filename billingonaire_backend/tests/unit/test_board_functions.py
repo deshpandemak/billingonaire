@@ -305,12 +305,10 @@ def test_hydrate_uses_board_date_matched_order_not_latest(mock_firestore):
 
 
 @patch("Board.firestore.client")
-def test_hydrate_no_fallback_when_no_board_date_match(mock_firestore):
+def test_hydrate_shows_latest_order_when_no_board_date_match(mock_firestore):
     """
-    When no order in case-details matches the record's board_date, order
-    display fields (order_link, order_date, order_category) must be left
-    empty — never show an order from a different hearing date.
-    The case-level government_pleader is still populated so AGP filtering works.
+    When no order matches the record's board_date, the latest analyzed order
+    is shown using its own date so analysis results remain visible in the modal.
     """
     from Board import Board
 
@@ -319,10 +317,6 @@ def test_hydrate_no_fallback_when_no_board_date_match(mock_firestore):
     board.case_store.build_case_ref.return_value = "WP/1/2024"
     board.case_store.get_case_details_map.return_value = {
         "WP/1/2024": {
-            "latest_order_status": "analysed",
-            "latest_order_category": "ADJOURNED",
-            "latest_order_date": "2026-03-01",
-            "latest_order_link": "http://example.com/march.pdf",
             "orders": [
                 {
                     "board_date": "2026-03-01",
@@ -333,12 +327,11 @@ def test_hydrate_no_fallback_when_no_board_date_match(mock_firestore):
                     "government_pleader": ["Ms. A. Nadkarni, AGP"],
                 },
             ],
-            "government_pleader": ["Ms. A. Nadkarni, AGP"],
             "lifecycle_status": "analysed",
         }
     }
 
-    # Record for a NEW board date not yet in orders
+    # Record for a new board date not yet in orders
     records = [
         {
             "case_ref": "WP/1/2024",
@@ -347,11 +340,10 @@ def test_hydrate_no_fallback_when_no_board_date_match(mock_firestore):
     ]
     result = board._hydrate_with_case_details(records)
 
-    # No order matches 2026-06-05 — display fields must be empty
-    assert result[0]["order_category"] is None
-    assert result[0]["order_link"] is None
-    assert result[0]["order_date"] is None
-    # Case-level GP is still available for AGP filter
+    # Falls back to the latest (March) order — shows its own date
+    assert result[0]["order_category"] == "ADJOURNED"
+    assert result[0]["order_link"] == "http://example.com/march.pdf"
+    assert result[0]["order_date"] == "2026-03-01"
     assert result[0]["government_pleader"] == ["Ms. A. Nadkarni, AGP"]
 
 
