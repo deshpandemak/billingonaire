@@ -748,33 +748,33 @@ class Board:
     def _record_matches_agp(self, record: Dict, agp_filter: str) -> bool:
         """Check whether a hydrated record belongs to the given AGP.
 
-        Priority order (same as bill generation):
-          1. government_pleader from order analysis — used exclusively when present.
-             If the order has been analysed and GP names were extracted, only those
-             names are matched; board GP is not consulted.
-          2. respondent_lawyer / additional_respondent_lawyers from board data —
-             fallback used only when government_pleader is absent (order not yet
-             analysed or no GP extracted).
+        Matches against ALL available GP sources (union), mirroring bill generation:
+          - government_pleader from case-details (order analysis) — names extracted
+            from the actual court order PDF.  Present only after order analysis.
+          - respondent_lawyer / additional_respondent_lawyers from daily-boards —
+            the board-assigned GP for that hearing date.
 
-        Matching uses the same score_name_match fuzzy logic as bill generation
-        (via any_name_matches, threshold 0.50).
+        Bill generation reads government_pleader from daily-boards directly, which
+        is never written by the analysis pipeline, so it always matches on
+        respondent_lawyer.  Using a union here ensures search-orders and bill
+        generation agree: a case is included if the AGP was assigned (board GP)
+        OR if they appear in the court order (order GP).
+
+        Matching uses score_name_match fuzzy logic (threshold 0.50).
         """
         if not agp_filter:
             return True
 
-        # Priority 1: GP from order analysis — used exclusively when non-empty.
-        # An empty list means the order was analysed but no GP was found, so we
-        # fall through to board GP (same as when no order exists yet).
+        # Order GP: from case-details, populated after order PDF analysis.
         gp_raw = record.get("government_pleader")
         gp_from_order: List[str] = (
             [gp_raw]
             if isinstance(gp_raw, str) and gp_raw
             else [str(g) for g in (gp_raw or []) if g]
         )
-        if gp_from_order:
-            return any_name_matches(agp_filter, gp_from_order)
 
-        # Priority 2 (fallback): Board GP — consulted when no GP in order.
+        # Board GP: respondent_lawyer and additional_respondent_lawyers from
+        # daily-boards, set when the board PDF is uploaded.
         board_gp: List[str] = []
         rl = record.get("respondent_lawyer")
         if rl:
@@ -784,7 +784,8 @@ class Board:
             additional = [additional]
         board_gp.extend(str(x) for x in additional if x)
 
-        return any_name_matches(agp_filter, board_gp)
+        # Union: include the case if either source matches.
+        return any_name_matches(agp_filter, gp_from_order + board_gp)
 
     # Maximum rows returned from a single search — prevents unbounded full-scans.
     _SEARCH_RESULT_LIMIT = 500
