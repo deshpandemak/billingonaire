@@ -1697,11 +1697,17 @@ class OrderDocumentAnalyzer:
         #   • Mr.Name — no space between title and name (\s*)
         #   • 'B' Panel Council — non-standard GP role keyword
         #   • ends with "present" instead of "for Respondent"
+        # Name groups use (?:(?!\s+for\s)[A-Za-z\s\.])*? so the match
+        # stops before " for the Petitioner" (or any " for <role>").
+        # This prevents the greedy span from absorbing a preceding
+        # petitioner-side line and hiding the actual AGP who follows.
+        # Role 2 uses [\s\S]+? (allows one newline) so "Raghuwanshi,\nAGP"
+        # is captured even when the role wraps to the next line.
         simple_pattern = (
-            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z][A-Za-z\s\.]+?),"
+            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z](?:(?!\s+for\s)[A-Za-z\s\.])*?),"
             r"\s*([A-Za-z\.\s]+?)\s+(?:a/w\.?|with)\s*"
-            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z][A-Za-z\s\.]+?),"
-            r"\s*([^\n]+?)"
+            r"((?:Mr\.?|Ms\.?|Smt\.?|Adv\.)\s*[A-Z](?:(?!\s+for\s)[A-Za-z\s\.])*?),"
+            r"\s*([\s\S]+?)"
             r"(?=\s*(?:for\s+(?:the\s+)?Respondent|(?:is\s+)?present[,\.]?))"
         )
 
