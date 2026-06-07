@@ -711,7 +711,16 @@ class Board:
                 record["government_pleader"] = (
                     date_matched_order.get("government_pleader") or []
                 )
+            elif record_board_date:
+                # Record has a board_date but no matching order — leave all
+                # order display fields empty so a wrong-date order is never
+                # shown against this hearing.  Still expose the case-level GP
+                # so the AGP filter can match cases pending re-analysis.
+                record["government_pleader"] = case_detail.get(
+                    "government_pleader", []
+                )
             else:
+                # Legacy records with no board_date — fall back to latest order.
                 record["order_link"] = case_detail.get(
                     "latest_order_link"
                 ) or latest_order.get("order_link")

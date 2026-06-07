@@ -305,11 +305,12 @@ def test_hydrate_uses_board_date_matched_order_not_latest(mock_firestore):
 
 
 @patch("Board.firestore.client")
-def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
+def test_hydrate_no_fallback_when_no_board_date_match(mock_firestore):
     """
-    When no order in case-details matches the record's board_date (e.g. the
-    case exists in case-details from a different date but hasn't been analysed
-    for this appearance yet), fall back to latest_order_* fields.
+    When no order in case-details matches the record's board_date, order
+    display fields (order_link, order_date, order_category) must be left
+    empty — never show an order from a different hearing date.
+    The case-level government_pleader is still populated so AGP filtering works.
     """
     from Board import Board
 
@@ -346,9 +347,12 @@ def test_hydrate_falls_back_to_latest_when_no_board_date_match(mock_firestore):
     ]
     result = board._hydrate_with_case_details(records)
 
-    # Falls back to latest_* fields since 2026-06-05 has no matching order
-    assert result[0]["order_category"] == "ADJOURNED"
-    assert result[0]["order_link"] == "http://example.com/march.pdf"
+    # No order matches 2026-06-05 — display fields must be empty
+    assert result[0]["order_category"] is None
+    assert result[0]["order_link"] is None
+    assert result[0]["order_date"] is None
+    # Case-level GP is still available for AGP filter
+    assert result[0]["government_pleader"] == ["Ms. A. Nadkarni, AGP"]
 
 
 @patch("Board.firestore.client")
