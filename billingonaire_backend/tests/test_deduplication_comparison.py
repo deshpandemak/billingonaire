@@ -79,9 +79,7 @@ def test_old_vs_new_deduplication():
             print(f"  Old logic (fixed subset): {len(df_old_logic)} records preserved")
 
             if len(df) != len(df_old_logic):
-                print(
-                    f"  ❌ Old logic would lose {len(df) - len(df_old_logic)} records"
-                )
+                print(f"  ❌ Old logic would lose {len(df) - len(df_old_logic)} records")
             else:
                 print("  ✅ Both methods give same result for this PDF")
 
