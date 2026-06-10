@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -388,7 +389,6 @@ class BombayHighCourtScraper:
             # stampreg is a POST-only field — do NOT include it in the AJAX call;
             # passing stampreg here returns a different (wrong) numeric type ID.
             side_value = self._get_side_for_case_type(case_parts["case_type"])
-            stampreg_value = self._get_stampreg_value(case_parts["case_type"])
             case_type_options: List[Dict[str, Any]] = []
             try:
                 types_resp = self.session.get(
@@ -426,9 +426,11 @@ class BombayHighCourtScraper:
                 form_data.get("case_type"),
                 form_data.get("case_no"),
                 form_data.get("year"),
-                "present"
-                if soup_get.find("meta", attrs={"name": "csrf-token"})
-                else "MISSING",
+                (
+                    "present"
+                    if soup_get.find("meta", attrs={"name": "csrf-token"})
+                    else "MISSING"
+                ),
             )
             csrf_meta = soup_get.find("meta", attrs={"name": "csrf-token"})
             post_headers: Dict[str, str] = {
@@ -668,6 +670,15 @@ class BombayHighCourtScraper:
                 for attempt_num in range(1, self.playwright_retry_count + 1):
                     if final_result:
                         break
+                    if attempt_num > 1:
+                        delay = min(2 ** (attempt_num - 1), 30) + random.uniform(0, 1)
+                        logger.info(
+                            "Playwright retry back-off %.1fs before attempt %d for case_ref=%s",
+                            delay,
+                            attempt_num,
+                            case_ref,
+                        )
+                        time.sleep(delay)
                     started = time.time()
                     logger.warning(
                         "Playwright attempt %d/%d for case_ref=%s",
