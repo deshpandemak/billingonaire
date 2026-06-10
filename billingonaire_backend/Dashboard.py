@@ -528,7 +528,7 @@ class DashboardData:
             if petitioner_lawyer:
                 row["unique_petitioner_lawyers"].add(petitioner_lawyer)
 
-            if data.get("lifecycle_status") == "analysed":
+            if data.get("order_category"):
                 row["analysed_count"] += 1
 
         rows = []
