@@ -515,6 +515,7 @@ class DashboardData:
                     "cases_count": 0,
                     "unique_respondent_lawyers": set(),
                     "unique_petitioner_lawyers": set(),
+                    "analysed_count": 0,
                 },
             )
             row["cases_count"] += 1
@@ -527,6 +528,9 @@ class DashboardData:
             if petitioner_lawyer:
                 row["unique_petitioner_lawyers"].add(petitioner_lawyer)
 
+            if data.get("lifecycle_status") == "analysed":
+                row["analysed_count"] += 1
+
         rows = []
         for board_date in sorted(summary.keys(), reverse=True):
             row = summary[board_date]
@@ -536,6 +540,7 @@ class DashboardData:
                     "cases_count": row["cases_count"],
                     "unique_respondent_lawyers": len(row["unique_respondent_lawyers"]),
                     "unique_petitioner_lawyers": len(row["unique_petitioner_lawyers"]),
+                    "analysed_count": row["analysed_count"],
                 }
             )
             if len(rows) >= limit:

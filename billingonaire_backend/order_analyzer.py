@@ -573,7 +573,9 @@ class OrderDocumentAnalyzer:
         ):
             confidence = min(confidence * 1.2, 1.0)
 
-        logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})")
+        logging.info(
+            f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})"
+        )
         return best_category, confidence
 
     def _parse_document_structure(self, text: str) -> Dict[str, Any]:
@@ -1688,7 +1690,9 @@ class OrderDocumentAnalyzer:
         # Simpler, more robust pattern that handles both "a/w" and "with"
         # Match format: "Title Name, Role (a/w|with) Title Name, Role for Respondent"
         logging.info("      🔍 Testing Pattern 1 for AGP/GP extraction...")
-        logging.info(f"      📄 Text snippet being searched (100 chars): '{text[:100]}'")
+        logging.info(
+            f"      📄 Text snippet being searched (100 chars): '{text[:100]}'"
+        )
 
         # Handles "Mr. Name, Role a/w[.] Mr[.]Name, Role for Respondent" and
         # the Lok Adalat variant "Mr. Name, Role a/w. Mr.Name, Role present."
@@ -1742,7 +1746,9 @@ class OrderDocumentAnalyzer:
                     formatted1 = f"{title1_name1.strip()}, {role1_normalized}"
                     if formatted1 not in pleaders:
                         pleaders.append(formatted1)
-                        logging.info(f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'")
+                        logging.info(
+                            f"      ✅ AGP Pattern 1.1 matched: '{formatted1}'"
+                        )
 
             if re.search(_gp_role_re, role2, re.IGNORECASE):
                 role2_normalized = self._normalize_agp_role(role2)
@@ -2178,7 +2184,9 @@ class OrderDocumentAnalyzer:
     ) -> List[Dict[str, Any]]:
         """Extract AGP names using enhanced patterns and existing ML results"""
         agp_names = []
-        logging.info(f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)")
+        logging.info(
+            f"🔍 Extracting AGP/GP names from text (length: {len(text)} chars)"
+        )
 
         # Use existing ML parser results
         ml_count = 0

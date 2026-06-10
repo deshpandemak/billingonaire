@@ -478,12 +478,21 @@ const Dashboard = () => {
                 {/* Selection toolbar */}
                 <div className="d-flex flex-wrap gap-2 mb-3" style={{ alignItems: 'center' }}>
                   <button className="btn-professional btn-secondary" onClick={selectPageDates}>Select Page</button>
+                  <button className="btn-professional btn-secondary" onClick={() => setSelectedDates((boardSummary.rows || []).map(r => r.board_date))}>Select All</button>
                   <button className="btn-professional btn-secondary" onClick={clearSelection} disabled={!selectedDates.length}>Clear ({selectedDates.length})</button>
                   <button className="btn-professional btn-primary" onClick={fetchDistribution} disabled={!selectedDates.length || distLoading}>
                     {distLoading ? 'Analyzing…' : 'Analyse Selected'}
                   </button>
                   {selectedDates.length > 0 && (
-                    <span style={{ fontSize: '0.82rem', color: 'var(--gray-600)' }}>{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</span>
+                    <>
+                      <button className="btn-professional btn-primary" onClick={queueFetch} disabled={jobLoading === 'fetch'} title="Queue court PDF fetch for selected dates">
+                        {jobLoading === 'fetch' ? 'Queueing…' : 'Fetch Orders'}
+                      </button>
+                      <button className="btn-professional btn-primary" onClick={queueAnalysis} disabled={jobLoading === 'analysis'} title="Queue order analysis for selected dates">
+                        {jobLoading === 'analysis' ? 'Queueing…' : 'Analyse Orders'}
+                      </button>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--gray-600)' }}>{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</span>
+                    </>
                   )}
                 </div>
 
@@ -494,13 +503,23 @@ const Dashboard = () => {
                         <th style={{ width: 40 }}></th>
                         <th>Board Date</th>
                         <th>Cases</th>
-                        <th>Respondent Lawyers</th>
-                        <th>Petitioner Lawyers</th>
+                        <th title="Count of unique respondent lawyers on this date">Resp. Lawyers</th>
+                        <th title="Count of unique petitioner lawyers on this date">Pet. Lawyers</th>
+                        <th title="Cases with completed order analysis">Analysed</th>
                       </tr>
                     </thead>
                     <tbody>
                       {paginate(boardSummary.rows || [], boardPage).map(row => {
                         const sel = selectedDates.includes(row.board_date);
+                        const analysed = row.analysed_count ?? 0;
+                        const total = row.cases_count || 0;
+                        const allDone = total > 0 && analysed === total;
+                        const noneDone = analysed === 0;
+                        const analysisBadgeColor = allDone
+                          ? 'var(--secondary-color)'
+                          : noneDone
+                          ? 'var(--gray-400)'
+                          : 'var(--accent-gold, #f59e0b)';
                         return (
                           <tr key={row.board_date} onClick={() => toggleDate(row.board_date)} style={{ cursor: 'pointer', background: sel ? 'rgba(37,99,235,0.07)' : undefined }}>
                             <td><input type="checkbox" checked={sel} onChange={() => toggleDate(row.board_date)} onClick={e => e.stopPropagation()} /></td>
@@ -508,6 +527,11 @@ const Dashboard = () => {
                             <td>{row.cases_count}</td>
                             <td>{row.unique_respondent_lawyers}</td>
                             <td>{row.unique_petitioner_lawyers}</td>
+                            <td>
+                              <span style={{ color: analysisBadgeColor, fontWeight: 500 }}>
+                                {analysed}/{total}
+                              </span>
+                            </td>
                           </tr>
                         );
                       })}
@@ -519,6 +543,10 @@ const Dashboard = () => {
                 )}
               </>
             )}
+
+          {/* Job feedback (from Fetch/Analyse buttons in selection toolbar) */}
+          {jobMessage && <p style={{ color: 'var(--success-color)', margin: '0.75rem 0 0' }}>{jobMessage}</p>}
+          {jobError   && <p style={{ color: 'var(--error-color)',   margin: '0.75rem 0 0' }}>{jobError}</p>}
 
           {/* AGP distribution for selected dates */}
           {distError && <p style={{ color: 'var(--error-color)', marginTop: '0.75rem' }}>{distError}</p>}

@@ -688,7 +688,6 @@ class Board:
                 continue
 
             orders = case_detail.get("orders") or []
-            latest_order = orders[-1] if orders and isinstance(orders[-1], dict) else {}
 
             # Find the order entry whose board_date matches this record's
             # board_date so Search Orders shows analysis for that specific
