@@ -42,7 +42,7 @@ except ImportError:
 # comma and a government role keyword.
 # Examples: "N S B, GP"  "G R R , AGP"  "K B D, ADDL GP"  "S M, B'PNL"
 _GP_INITIALS_PATTERN = re.compile(
-    r"(?<!\w)([A-Z](?:\s+[A-Z]){1,3})(?!\w)\s*,\s*(ADDL\s*GP|AGP|B'PNL|GP)",
+    r"(?<![/\w])([A-Z](?:\s+[A-Z]){1,3})(?!\w)\s*,\s*(ADDL\s*GP|AGP|B'PNL|GP)",
     re.IGNORECASE,
 )
 
