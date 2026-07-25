@@ -37,6 +37,16 @@ except ImportError:
         )
 
 
+# Pattern for initials-based GP/AGP names used in modern Bombay HC boards.
+# Matches 2-4 single uppercase letters separated by spaces, followed by a
+# comma and a government role keyword.
+# Examples: "N S B, GP"  "G R R , AGP"  "K B D, ADDL GP"  "S M, B'PNL"
+_GP_INITIALS_PATTERN = re.compile(
+    r"(?<!\w)([A-Z](?:\s+[A-Z]){1,3})(?!\w)\s*,\s*(ADDL\s*GP|AGP|B'PNL|GP)",
+    re.IGNORECASE,
+)
+
+
 class Board:
     def __init__(self):
         self.db = firestore.client()
@@ -311,16 +321,49 @@ class Board:
         case_year,
     ):
         court_data = court_details.strip()
-        # Updated pattern to stop at page header markers and case references
+        # Updated pattern: removed spaces from year part ([\d ]+) -> (\d+)
+        # This prevents greedy matching like "IA/1808/2025 11" instead of "IA/1808/2025"
+        additional_cases = re.findall(r"([A-Za-z()]+/\s*\d+/\d+)", court_data)
+
+        # New: detect initials-based GP/AGP names (modern board format).
+        # When government lawyers appear as single-letter initials followed by a
+        # role keyword (e.g. "N S B, GP", "G R R , AGP", "K B D, ADDL GP"),
+        # use those markers to split petitioner from government lawyers and return
+        # early.  Falls through to the legacy SHRI/SMT/MS logic when absent.
+        gp_matches = list(_GP_INITIALS_PATTERN.finditer(court_data))
+        if gp_matches:
+            first_gp = gp_matches[0]
+            petitioner_lawyer = court_data[: first_gp.start()].strip()
+            # Strip trailing column-layout artifacts ("WITH", "IN") but keep
+            # "AND" since it appears in law firm names (e.g. "MEHTA AND PARTNERS")
+            petitioner_lawyer = re.sub(
+                r"\s+(?:WITH|IN)\s*$",
+                "",
+                petitioner_lawyer,
+                flags=re.IGNORECASE,
+            ).strip()
+            gov_lawyers = [m.group(1).strip() for m in gp_matches]
+            return {
+                "file_name": file_name,
+                "board_date": board_date,
+                "case_type": case_type,
+                "case_no": case_no,
+                "case_year": case_year,
+                "serial_number": serial_no,
+                "petitioner_lawyer": petitioner_lawyer,
+                "respondent_lawyer": gov_lawyers[0] if gov_lawyers else "",
+                "additional_cases": [c.strip() for c in additional_cases],
+                "additional_respondent_lawyers": gov_lawyers[1:],
+            }
+
+        # Legacy: title-based parsing for boards where the respondent lawyer's
+        # name starts with a salutation (SHRI / SMT / MS).
         # Stops at: WITH, IN THE COURT, IN CASE/, Page:, C.R. No:, * (section markers)
         # This prevents capturing page header content in respondent_lawyer field
         lawyers = re.match(
             r"(.*?)(SHRI.*?|SMT.*?|MS.*?)(WITH|IN THE COURT|IN \w+/|Page:|C\.R\. No:|\*|$)",
             court_data,
         )
-        # Updated pattern: removed spaces from year part ([\d ]+) -> (\d+)
-        # This prevents greedy matching like "IA/1808/2025 11" instead of "IA/1808/2025"
-        additional_cases = re.findall(r"([A-Za-z()]+/\s*\d+/\d+)", court_data)
         # print(str(court_data))
         # print(str(lawyers.group(1)))
         # print(str(lawyers.group(2)))
