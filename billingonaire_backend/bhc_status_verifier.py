@@ -58,9 +58,8 @@ import re
 import sys
 import threading
 import time
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin
 
 try:
     import requests
@@ -76,11 +75,20 @@ DELAY_SECONDS = 6
 OUT_DIR = Path("bhc_status_check")
 DEBUG_DIR = OUT_DIR / "debug_html"
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
 
 # Keywords that indicate a disposed / closed matter when found in the status text
-DISPOSAL_KEYWORDS = ["DISPOSED", "WITHDRAWN", "DISMISSED", "STRUCK", "DECIDED", "CLOSED"]
+DISPOSAL_KEYWORDS = [
+    "DISPOSED",
+    "WITHDRAWN",
+    "DISMISSED",
+    "STRUCK",
+    "DECIDED",
+    "CLOSED",
+]
 PENDING_KEYWORDS = ["PENDING", "ONGOING", "ADMITTED", "ADMIT"]
 
 
@@ -117,7 +125,8 @@ class Portal:
         self.csrf = meta.get("content", "") if meta else ""
         self.hidden = {
             i.get("name"): i.get("value", "")
-            for i in soup.find_all("input", type="hidden") if i.get("name")
+            for i in soup.find_all("input", type="hidden")
+            if i.get("name")
         }
 
     def load_types(self):
@@ -140,8 +149,10 @@ class Portal:
             label = str(opt.get("type_name") or opt.get("name") or "").upper().strip()
             head = label.split(" - ")[0].strip()
             fw = head.split()[0] if head else ""
-            matched = any(fw == a or head == a or head.startswith(a + " ")
-                          for a in aliases.get(want, (want,)))
+            matched = any(
+                fw == a or head == a or head.startswith(a + " ")
+                for a in aliases.get(want, (want,))
+            )
             if not matched:
                 continue
             v = str(opt.get("case_type") or opt.get("value") or want)
@@ -153,13 +164,15 @@ class Portal:
 
     def _post_search(self, ct, number, year):
         form = dict(self.hidden)
-        form.update({
-            "side": SIDE,
-            "stampreg": stampreg(ct),
-            "case_type": self.resolve_type(ct),
-            "case_no": number,
-            "year": year,
-        })
+        form.update(
+            {
+                "side": SIDE,
+                "stampreg": stampreg(ct),
+                "case_type": self.resolve_type(ct),
+                "case_no": number,
+                "year": year,
+            }
+        )
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Referer": CASE_STATUS_URL,
@@ -167,14 +180,24 @@ class Portal:
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "X-CSRF-TOKEN": self.csrf or "",
         }
-        r = self.s.post(CASE_STATUS_URL, data=form, headers=headers,
-                         timeout=TIMEOUT, allow_redirects=True)
+        r = self.s.post(
+            CASE_STATUS_URL,
+            data=form,
+            headers=headers,
+            timeout=TIMEOUT,
+            allow_redirects=True,
+        )
         if r.status_code == 419:
             self.refresh()
             form.update(self.hidden)
             headers["X-CSRF-TOKEN"] = self.csrf or ""
-            r = self.s.post(CASE_STATUS_URL, data=form, headers=headers,
-                             timeout=TIMEOUT, allow_redirects=True)
+            r = self.s.post(
+                CASE_STATUS_URL,
+                data=form,
+                headers=headers,
+                timeout=TIMEOUT,
+                allow_redirects=True,
+            )
         if r.status_code not in (200, 302):
             raise requests.HTTPError(f"HTTP {r.status_code} on POST")
         try:
@@ -199,14 +222,20 @@ class Portal:
         for attempt in range(1, 4):
             try:
                 return self._post_search(ct, number, year)
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.ChunkedEncodingError) as e:
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+            ) as e:
                 last_err = e
                 if attempt == 1:
-                    print(f"   connection dropped, retrying in 10s (attempt {attempt}/3)...")
+                    print(
+                        f"   connection dropped, retrying in 10s (attempt {attempt}/3)..."
+                    )
                     time.sleep(10)
                 elif attempt == 2:
-                    print(f"   connection dropped again, reiniting session and retrying in 20s (attempt {attempt}/3)...")
+                    print(
+                        f"   connection dropped again, reiniting session and retrying in 20s (attempt {attempt}/3)..."
+                    )
                     time.sleep(20)
                     try:
                         self.reinit()
@@ -268,14 +297,19 @@ def extract_status_and_parties(html):
             if kw in upper_text:
                 # grab a short window of context around the keyword
                 idx = upper_text.find(kw)
-                status_text = full_text[max(0, idx - 20):idx + 40].strip()
+                status_text = full_text[max(0, idx - 20) : idx + 40].strip()
                 method = f"KEYWORD_SCAN:{kw}"
                 break
 
     # Party name: look for "Petitioner" / "Respondent" / "Party" labels
     for tag in soup.find_all(["label", "th", "td", "span", "div", "strong"]):
         label = tag.get_text(strip=True)
-        if label.upper() in ("PETITIONER", "PARTY NAME", "PARTIES", "PETITIONER VS RESPONDENT"):
+        if label.upper() in (
+            "PETITIONER",
+            "PARTY NAME",
+            "PARTIES",
+            "PETITIONER VS RESPONDENT",
+        ):
             sib = tag.find_next_sibling()
             if sib and sib.get_text(strip=True):
                 party_text = sib.get_text(strip=True)
@@ -324,18 +358,37 @@ def process_case(portal, row, args, writer, write_lock, print_lock, idx, total):
         with print_lock:
             print(f"   Sr {sr} SEARCH FAILED: {e}")
         with write_lock:
-            writer.writerow([sr, label, billing_status, "SEARCH_ERROR", "", "", "", "", "", ""])
+            writer.writerow(
+                [sr, label, billing_status, "SEARCH_ERROR", "", "", "", "", "", ""]
+            )
         return
 
     if not html:
         with print_lock:
-            print(f"   Sr {sr}: portal returned no result (status=false) — case not found")
+            print(
+                f"   Sr {sr}: portal returned no result (status=false) — case not found"
+            )
         with write_lock:
-            writer.writerow([sr, label, billing_status, "NOT_FOUND_ON_PORTAL", "", "", "", "", "", ""])
+            writer.writerow(
+                [
+                    sr,
+                    label,
+                    billing_status,
+                    "NOT_FOUND_ON_PORTAL",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                ]
+            )
         return
 
     if args.debug:
-        debug_file = DEBUG_DIR / f"sr{sr}_{ct.replace('(', '').replace(')', '')}_{no}_{yr}.html"
+        debug_file = (
+            DEBUG_DIR / f"sr{sr}_{ct.replace('(', '').replace(')', '')}_{no}_{yr}.html"
+        )
         debug_file.write_text(html, encoding="utf-8", errors="ignore")
 
     status_raw, party_name, method = extract_status_and_parties(html)
@@ -351,14 +404,32 @@ def process_case(portal, row, args, writer, write_lock, print_lock, idx, total):
     else:
         match = "MISMATCH"
 
-    still_ongoing_2627 = "No" if portal_is_disposed else ("Yes" if portal_status == "PENDING" else "UNVERIFIED")
+    still_ongoing_2627 = (
+        "No"
+        if portal_is_disposed
+        else ("Yes" if portal_status == "PENDING" else "UNVERIFIED")
+    )
 
     with print_lock:
-        print(f"   Sr {sr}: '{status_raw[:60]}' -> {portal_status}  ({method})  | match: {match}")
+        print(
+            f"   Sr {sr}: '{status_raw[:60]}' -> {portal_status}  ({method})  | match: {match}"
+        )
 
     with write_lock:
-        writer.writerow([sr, label, billing_status, status_raw, portal_status, method,
-                          party_name, match, still_ongoing_2627, datetime.now().strftime("%Y-%m-%d %H:%M")])
+        writer.writerow(
+            [
+                sr,
+                label,
+                billing_status,
+                status_raw,
+                portal_status,
+                method,
+                party_name,
+                match,
+                still_ongoing_2627,
+                datetime.now().strftime("%Y-%m-%d %H:%M"),
+            ]
+        )
 
 
 def worker_loop(worker_id, case_queue, args, writer, write_lock, print_lock, total):
@@ -387,16 +458,43 @@ def worker_loop(worker_id, case_queue, args, writer, write_lock, print_lock, tot
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True, help="CSV with columns: Sr,CaseType,CaseNo,CaseYear,CaseLabel,BillingStatus,...")
-    ap.add_argument("--only", type=str, default="", help="comma-separated Sr numbers to check, e.g. --only 1,2,3")
-    ap.add_argument("--only-ongoing", action="store_true", help="only check cases where BillingStatus == ONGOING")
-    ap.add_argument("--all", action="store_true", help="check every case in the input file")
-    ap.add_argument("--debug", action="store_true", help="dump raw HTML for each checked case to debug_html/")
-    ap.add_argument("--delay", type=float, default=DELAY_SECONDS,
-                     help="seconds each worker waits between its own requests (default 6)")
-    ap.add_argument("--workers", type=int, default=1,
-                     help="number of parallel sessions to run (default 1 = sequential, same as before). "
-                          "Try 3-4 for a meaningful speedup without hammering the portal.")
+    ap.add_argument(
+        "--input",
+        required=True,
+        help="CSV with columns: Sr,CaseType,CaseNo,CaseYear,CaseLabel,BillingStatus,...",
+    )
+    ap.add_argument(
+        "--only",
+        type=str,
+        default="",
+        help="comma-separated Sr numbers to check, e.g. --only 1,2,3",
+    )
+    ap.add_argument(
+        "--only-ongoing",
+        action="store_true",
+        help="only check cases where BillingStatus == ONGOING",
+    )
+    ap.add_argument(
+        "--all", action="store_true", help="check every case in the input file"
+    )
+    ap.add_argument(
+        "--debug",
+        action="store_true",
+        help="dump raw HTML for each checked case to debug_html/",
+    )
+    ap.add_argument(
+        "--delay",
+        type=float,
+        default=DELAY_SECONDS,
+        help="seconds each worker waits between its own requests (default 6)",
+    )
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="number of parallel sessions to run (default 1 = sequential, same as before). "
+        "Try 3-4 for a meaningful speedup without hammering the portal.",
+    )
     args = ap.parse_args()
 
     OUT_DIR.mkdir(exist_ok=True)
@@ -413,7 +511,9 @@ def main():
     elif args.only_ongoing:
         cases = [c for c in cases if c.get("BillingStatus", "").upper() == "ONGOING"]
     else:
-        print("Specify --only-ongoing, --all, or --only <Sr,Sr,...>. Defaulting to --only-ongoing.")
+        print(
+            "Specify --only-ongoing, --all, or --only <Sr,Sr,...>. Defaulting to --only-ongoing."
+        )
         cases = [c for c in cases if c.get("BillingStatus", "").upper() == "ONGOING"]
 
     # Skip Sr numbers already successfully logged (so a re-run after a crash
@@ -428,20 +528,37 @@ def main():
         if already_done:
             before = len(cases)
             cases = [c for c in cases if c["Sr"] not in already_done]
-            print(f"Skipping {before - len(cases)} case(s) already logged successfully in a previous run.")
-            print(f"({len(already_done)} total previously logged; SEARCH_ERROR rows will be retried)")
+            print(
+                f"Skipping {before - len(cases)} case(s) already logged successfully in a previous run."
+            )
+            print(
+                f"({len(already_done)} total previously logged; SEARCH_ERROR rows will be retried)"
+            )
 
     total = len(cases)
-    print(f"Checking {total} case(s) against the live BHC portal with {args.workers} worker(s)...")
+    print(
+        f"Checking {total} case(s) against the live BHC portal with {args.workers} worker(s)..."
+    )
 
     log_path = OUT_DIR / "portal_status_verification_log.csv"
     new_log = not log_path.exists()
     lf = open(log_path, "a", newline="")
     writer = csv.writer(lf)
     if new_log:
-        writer.writerow(["Sr", "Case", "BillingStatus", "PortalStatusRaw", "PortalStatusClassified",
-                          "ExtractionMethod", "PartyName", "Match", "StillOngoing2026-27",
-                          "DateChecked"])
+        writer.writerow(
+            [
+                "Sr",
+                "Case",
+                "BillingStatus",
+                "PortalStatusRaw",
+                "PortalStatusClassified",
+                "ExtractionMethod",
+                "PartyName",
+                "Match",
+                "StillOngoing2026-27",
+                "DateChecked",
+            ]
+        )
         lf.flush()
 
     write_lock = threading.Lock()
@@ -466,7 +583,10 @@ def main():
 
         threads = []
         for wid in range(args.workers):
-            t = threading.Thread(target=worker_loop, args=(wid, case_queue, args, writer, write_lock, print_lock, total))
+            t = threading.Thread(
+                target=worker_loop,
+                args=(wid, case_queue, args, writer, write_lock, print_lock, total),
+            )
             t.start()
             threads.append(t)
 
@@ -483,11 +603,19 @@ def main():
     print(f"\nDone. Log: {log_path}")
     if args.debug:
         print(f"Debug HTML dumped to: {DEBUG_DIR}/")
-        print("If PortalStatusClassified shows UNKNOWN often, open a couple of these HTML files,")
-        print("find the actual status element, and send it to me so I can hardcode the right selector.")
+        print(
+            "If PortalStatusClassified shows UNKNOWN often, open a couple of these HTML files,"
+        )
+        print(
+            "find the actual status element, and send it to me so I can hardcode the right selector."
+        )
     print("\nColumns:")
-    print("  Match = MATCH / MISMATCH / COULD_NOT_VERIFY  (billing-derived vs portal-derived status)")
-    print("  StillOngoing2026-27 = No (portal confirms disposed) / Yes (portal confirms pending) / UNVERIFIED")
+    print(
+        "  Match = MATCH / MISMATCH / COULD_NOT_VERIFY  (billing-derived vs portal-derived status)"
+    )
+    print(
+        "  StillOngoing2026-27 = No (portal confirms disposed) / Yes (portal confirms pending) / UNVERIFIED"
+    )
 
 
 if __name__ == "__main__":
