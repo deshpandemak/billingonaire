@@ -58,7 +58,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
