@@ -812,11 +812,9 @@ const Table = () => {
                     onChange={e => setSearchCriteria(sc => ({ ...sc, orderStatus: e.target.value }))}
                   >
                     <option value="">All Cases</option>
-                    <option value="not_linked">Not Linked</option>
-                    <option value="linked">Order Linked (Not Analysed)</option>
-                    <option value="analysed">Linked & Analysed</option>
-                    <option value="order_failed">Order Failed</option>
-                    <option value="order_analysis_failed">Analysis Failed</option>
+                    <option value="analysed">Analysed</option>
+                    <option value="pending">Pending / In Progress</option>
+                    <option value="failed">Failed / Needs Review</option>
                   </select>
                 </div>
                 <div className="form-group">

@@ -994,18 +994,26 @@ class Board:
             if advocate_name:
 
                 def _row_matches_advocate(row: dict) -> bool:
+                    # Priority 1: order-analysed GP (from case-details, most accurate).
                     gp_raw = row.get("government_pleader") or []
                     if isinstance(gp_raw, str):
                         gp_raw = [gp_raw]
-                    candidate_names = (
-                        [
-                            row.get("respondent_lawyer") or "",
-                            row.get("petitioner_lawyer") or "",
-                        ]
-                        + list(row.get("additional_respondent_lawyers") or [])
-                        + list(gp_raw)
-                    )
-                    return any_name_matches(advocate_name, candidate_names)
+                    order_gp = [str(g) for g in gp_raw if g]
+
+                    # Priority 2: board-assigned GP — respondent_lawyer and
+                    # additional_respondent_lawyers from daily-boards.
+                    # Mirrors bill generation's source priority; petitioner_lawyer
+                    # is excluded to avoid false positives.
+                    board_gp: List[str] = []
+                    rl = row.get("respondent_lawyer")
+                    if rl:
+                        board_gp.append(str(rl))
+                    additional = row.get("additional_respondent_lawyers") or []
+                    if isinstance(additional, str):
+                        additional = [additional]
+                    board_gp.extend(str(x) for x in additional if x)
+
+                    return any_name_matches(advocate_name, order_gp + board_gp)
 
                 hydrated_data = [
                     row for row in hydrated_data if _row_matches_advocate(row)
@@ -1031,10 +1039,30 @@ class Board:
                 logging.info("AGP filter retained %d records", len(hydrated_data))
 
             if order_status:
+                _FAILED_LIFECYCLE_STATES = {
+                    "fetch_failed",
+                    "fetch_failed_retryable",
+                    "fetch_failed_terminal",
+                    "manual_review_required",
+                }
+
+                def _matches_lifecycle_status(row: dict, wanted: str) -> bool:
+                    status = row.get("lifecycle_status") or "board_ingested"
+                    if wanted == "analysed":
+                        return status == "analysed"
+                    if wanted == "failed":
+                        return status in _FAILED_LIFECYCLE_STATES
+                    if wanted == "pending":
+                        return (
+                            status not in _FAILED_LIFECYCLE_STATES
+                            and status != "analysed"
+                        )
+                    return True
+
                 hydrated_data = [
                     row
                     for row in hydrated_data
-                    if (row.get("order_status") or "not_linked") == order_status
+                    if _matches_lifecycle_status(row, order_status)
                 ]
 
             if order_category:
