@@ -124,3 +124,86 @@ describe('getOrderStatusConfig', () => {
     expect(cfg.label).toBe('Unknown');
   });
 });
+
+// ─── Simple status + order vocabulary ───────────────────────────────────────
+
+import {
+  SIMPLE_STATUS,
+  getSimpleStatus,
+  ORDER_CATEGORY_LABELS,
+  getOrderCategoryLabel,
+  canonicalOrderCategory,
+} from '../lib/lifecycleUtils';
+
+describe('getSimpleStatus', () => {
+  it('maps every one of the 13 lifecycle states to exactly one simple status', () => {
+    const valid = new Set(Object.keys(SIMPLE_STATUS));
+    const states = Object.keys(LIFECYCLE_CONFIG);
+    expect(states.length).toBe(13);
+    states.forEach((s) => {
+      const simple = getSimpleStatus(s);
+      expect(simple, `no simple status for ${s}`).toBeTruthy();
+      expect(valid.has(simple.key), `${s} -> ${simple.key}`).toBe(true);
+    });
+  });
+
+  it('puts billable work in Ready and only analysed there', () => {
+    expect(getSimpleStatus('analysed').key).toBe('ready');
+    Object.keys(LIFECYCLE_CONFIG)
+      .filter((s) => s !== 'analysed')
+      .forEach((s) => expect(getSimpleStatus(s).key).not.toBe('ready'));
+  });
+
+  it('routes every failure and review state to Needs you', () => {
+    [
+      'fetch_failed_retryable',
+      'fetch_failed_terminal',
+      'analysis_failed_retryable',
+      'analysis_failed_terminal',
+      'manual_review_required',
+    ].forEach((s) => expect(getSimpleStatus(s).key).toBe('attention'));
+  });
+
+  it('handles legacy/extra states that are absent from LIFECYCLE_CONFIG', () => {
+    // These used to fall through and render as raw snake_case.
+    expect(getSimpleStatus('fetch_not_due').key).toBe('waiting');
+    expect(getSimpleStatus('order_failed').key).toBe('attention');
+    expect(getSimpleStatus('order_analysis_failed').key).toBe('attention');
+    expect(getSimpleStatus('not_linked').key).toBe('waiting');
+    expect(getSimpleStatus('linked').key).toBe('working');
+  });
+
+  it('never returns a raw snake_case label', () => {
+    ['fetch_not_due', 'analysis_failed', 'something_unknown', null, undefined].forEach(
+      (s) => expect(getSimpleStatus(s).label).not.toMatch(/_/)
+    );
+  });
+});
+
+describe('order category vocabulary', () => {
+  it('labels all three canonical categories', () => {
+    ['ADJOURNED', 'HEARD_AND_ADJOURNED', 'DISPOSED_OFF'].forEach((c) => {
+      expect(ORDER_CATEGORY_LABELS[c]).toBeTruthy();
+      expect(getOrderCategoryLabel(c)).toBe(ORDER_CATEGORY_LABELS[c]);
+    });
+  });
+
+  it('folds the legacy spellings onto the same three categories', () => {
+    expect(canonicalOrderCategory('WP DISPOSED OF')).toBe('DISPOSED_OFF');
+    expect(canonicalOrderCategory('DISPOSAL')).toBe('DISPOSED_OFF');
+    expect(canonicalOrderCategory('HEARD & ADJN')).toBe('HEARD_AND_ADJOURNED');
+    expect(canonicalOrderCategory('HEARD & ADJRN')).toBe('HEARD_AND_ADJOURNED');
+    expect(canonicalOrderCategory('ADJOURNMENT')).toBe('ADJOURNED');
+  });
+
+  it('gives one display string per outcome regardless of input spelling', () => {
+    ['DISPOSED_OFF', 'WP DISPOSED OF', 'DISPOSAL', 'Disposed of'].forEach((v) =>
+      expect(getOrderCategoryLabel(v)).toBe('Disposed of')
+    );
+  });
+
+  it('passes unknown values through rather than blanking them', () => {
+    expect(getOrderCategoryLabel('SOMETHING_ELSE')).toBe('SOMETHING_ELSE');
+    expect(getOrderCategoryLabel(null)).toBe('—');
+  });
+});

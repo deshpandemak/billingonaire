@@ -49,6 +49,48 @@ FAILED_LIFECYCLE_STATES = {
     "manual_review_required",
 }
 
+# The 13 lifecycle states collapsed into the four buckets users actually see.
+# Mirrors getSimpleStatus() in billingonaire-ui/src/lib/lifecycleUtils.js — keep
+# the two in step, they are the contract for the Search Orders status filter.
+SIMPLE_STATUS_KEYS = ("waiting", "working", "ready", "attention")
+
+_WAITING_STATES = {"board_ingested", "fetch_not_due", "fetch_queued", "not_linked"}
+_WORKING_STATES = {
+    "fetch_in_progress",
+    "fetch_succeeded",
+    "analysis_queued",
+    "analysis_in_progress",
+    "linked",
+    "manually_uploaded",
+}
+
+# Older filter values still accepted so existing links keep working.
+_LEGACY_STATUS_FILTERS = {
+    "analysed": "ready",
+    "pending": "waiting",
+    "failed": "attention",
+}
+
+
+def simple_status_for(lifecycle_status: str) -> str:
+    """Collapse a lifecycle state into one of SIMPLE_STATUS_KEYS."""
+    status = lifecycle_status or "board_ingested"
+    if status == "analysed":
+        return "ready"
+    if status in FAILED_LIFECYCLE_STATES or status in {
+        "fetch_failed",
+        "analysis_failed",
+        "order_failed",
+        "order_analysis_failed",
+    }:
+        return "attention"
+    if status in _WORKING_STATES:
+        return "working"
+    if status in _WAITING_STATES:
+        return "waiting"
+    return "waiting"
+
+
 # Pattern for initials-based GP/AGP names used in modern Bombay HC boards.
 # Matches 2-4 single uppercase letters separated by spaces, followed by a
 # comma and a government role keyword.
@@ -1097,15 +1139,12 @@ class Board:
 
                 def _matches_lifecycle_status(row: dict, wanted: str) -> bool:
                     status = row.get("lifecycle_status") or "board_ingested"
-                    if wanted == "analysed":
-                        return status == "analysed"
-                    if wanted == "failed":
-                        return status in FAILED_LIFECYCLE_STATES
-                    if wanted == "pending":
-                        return (
-                            status not in FAILED_LIFECYCLE_STATES
-                            and status != "analysed"
-                        )
+                    bucket = simple_status_for(status)
+                    # Legacy filter values kept working so old bookmarks and
+                    # saved links do not silently return nothing.
+                    wanted = _LEGACY_STATUS_FILTERS.get(wanted, wanted)
+                    if wanted in SIMPLE_STATUS_KEYS:
+                        return bucket == wanted
                     return True
 
                 hydrated_data = [

@@ -8,6 +8,12 @@ export const LIFECYCLE_CONFIG = {
     next: 'Order fetch will be queued automatically.',
     group: 'pending',
   },
+  fetch_not_due: {
+    label: 'Not Due Yet', icon: '📅', variant: 'secondary',
+    tooltip: 'Board date is in the future — the court has not heard this matter yet.',
+    next: 'Order fetch will start once the board date arrives.',
+    group: 'pending',
+  },
   fetch_queued: {
     label: 'Awaiting Fetch', icon: '⏳', variant: 'primary',
     tooltip: 'Waiting to download order PDF from the BHC website.',
@@ -90,3 +96,85 @@ export const getLifecycleConfig = (status) =>
 
 export const getOrderStatusConfig = (status) =>
   ORDER_STATUS_CONFIG[status] || { label: status || 'Unknown', variant: 'secondary', tooltip: '' };
+
+// ─── Simple status ──────────────────────────────────────────────────────────
+// The 13 lifecycle states are an engineering model. Users only need to know
+// whether a case is waiting, moving, billable, or stuck — four buckets, derived
+// from the `group` field already on every LIFECYCLE_CONFIG entry so there is
+// one source of truth. The full state (and its timeline) stays visible in the
+// case detail modal and the Admin area.
+//
+// These four keys are also the values the Search Orders status filter sends to
+// the backend; Board.getData() matches on the same names.
+
+export const SIMPLE_STATUS = {
+  waiting:  { key: 'waiting',  label: 'Waiting',     icon: '🕐', variant: 'secondary', tooltip: 'The court has not published this order yet.' },
+  working:  { key: 'working',  label: 'In progress', icon: '🔄', variant: 'info',      tooltip: 'Downloading or reading the order now.' },
+  ready:    { key: 'ready',    label: 'Ready',       icon: '✅', variant: 'success',   tooltip: 'Order read and categorised — ready to bill.' },
+  attention:{ key: 'attention',label: 'Needs you',   icon: '⚠️', variant: 'warning',   tooltip: 'Could not be completed automatically — needs a person.' },
+};
+
+// group (from LIFECYCLE_CONFIG) → simple status key
+const GROUP_TO_SIMPLE = {
+  pending: 'waiting',
+  active:  'working',
+  done:    'ready',
+  warning: 'attention',
+  error:   'attention',
+};
+
+// States that predate LIFECYCLE_CONFIG or are written by older code paths.
+// Mapping them here stops them rendering as raw snake_case.
+const EXTRA_STATE_TO_SIMPLE = {
+  fetch_not_due:   'waiting',
+  fetch_failed:    'attention',
+  analysis_failed: 'attention',
+  not_linked:      'waiting',
+  linked:          'working',
+  order_failed:    'attention',
+  order_analysis_failed: 'attention',
+  manually_uploaded: 'working',
+};
+
+export const getSimpleStatus = (lifecycleStatus) => {
+  if (!lifecycleStatus) return SIMPLE_STATUS.waiting;
+  const direct = EXTRA_STATE_TO_SIMPLE[lifecycleStatus];
+  if (direct) return SIMPLE_STATUS[direct];
+  const group = LIFECYCLE_CONFIG[lifecycleStatus]?.group;
+  return SIMPLE_STATUS[GROUP_TO_SIMPLE[group]] || SIMPLE_STATUS.waiting;
+};
+
+// ─── Order outcome vocabulary ───────────────────────────────────────────────
+// The same three outcomes were previously spelled four different ways across
+// Table.jsx and BillGeneration.jsx. Canonical values on the wire are unchanged;
+// this map is display-only.
+
+export const ORDER_CATEGORY_LABELS = {
+  ADJOURNED:           'Adjourned',
+  HEARD_AND_ADJOURNED: 'Heard & adjourned',
+  DISPOSED_OFF:        'Disposed of',
+};
+
+// Legacy/display spellings that mean the same three things.
+const CATEGORY_ALIASES = {
+  'HEARD & ADJN': 'HEARD_AND_ADJOURNED',
+  'HEARD & ADJN.': 'HEARD_AND_ADJOURNED',
+  'HEARD & ADJRN': 'HEARD_AND_ADJOURNED',
+  'HEARD AND ADJOURNED': 'HEARD_AND_ADJOURNED',
+  'WP DISPOSED OF': 'DISPOSED_OFF',
+  'DISPOSED OF': 'DISPOSED_OFF',
+  'DISPOSAL': 'DISPOSED_OFF',
+  'ADJOURNMENT': 'ADJOURNED',
+};
+
+export const canonicalOrderCategory = (value) => {
+  if (!value) return null;
+  const raw = String(value).trim().toUpperCase();
+  if (ORDER_CATEGORY_LABELS[raw]) return raw;
+  return CATEGORY_ALIASES[raw] || null;
+};
+
+export const getOrderCategoryLabel = (value) => {
+  const canonical = canonicalOrderCategory(value);
+  return canonical ? ORDER_CATEGORY_LABELS[canonical] : (value || '—');
+};

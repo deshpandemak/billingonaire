@@ -6,7 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { authenticatedFetchJSON, getApiUrl } from './lib/api';
 import './styles/professional.css';
 import CaseDetailModal from './components/CaseDetailModal';
-import { getLifecycleConfig, getOrderStatusConfig } from './lib/lifecycleUtils';
+import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory } from './lib/lifecycleUtils';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -175,6 +175,17 @@ const Table = () => {
     setEditedData((prev) => [...prev, {}]);
   };
 
+  // One colour per outcome, keyed off the canonical category so every stored
+  // spelling ("WP DISPOSED OF", "DISPOSAL", "DISPOSED_OFF") colours the same.
+  const orderCategoryCellStyle = (value) => {
+    switch (canonicalOrderCategory(value)) {
+      case 'DISPOSED_OFF':        return { backgroundColor: '#d4edda', color: '#155724' };
+      case 'ADJOURNED':           return { backgroundColor: '#fff3cd', color: '#856404' };
+      case 'HEARD_AND_ADJOURNED': return { backgroundColor: '#cce7ff', color: '#004085' };
+      default:                    return null;
+    }
+  };
+
   // AG Grid column definitions
   const columnDefs = [
     {
@@ -290,12 +301,7 @@ const Table = () => {
       editable: true,
       width: 200,
       cellRenderer: 'courtOrderRenderer',
-      cellStyle: params => {
-        if (params.value === 'DISPOSAL') return { backgroundColor: '#d4edda', color: '#155724' };
-        if (params.value === 'ADJOURNMENT') return { backgroundColor: '#fff3cd', color: '#856404' };
-        if (params.value === 'HEARD & ADJRN') return { backgroundColor: '#cce7ff', color: '#004085' };
-        return null;
-      }
+      cellStyle: params => orderCategoryCellStyle(params.value)
     },
     {
       // Whether the order PDF itself is on file (and the inline Analyse action).
@@ -320,40 +326,44 @@ const Table = () => {
       cellRenderer: 'lifecycleStatusRenderer'
     },
     {
-      headerName: 'Order Analysis',
+      headerName: 'Outcome',
       field: 'order_category',
       sortable: true,
       filter: 'agTextColumnFilter',
-      width: 150,
+      width: 160,
       flex: 0,
-      cellStyle: params => {
-        if (params.value === 'WP DISPOSED OF') return { backgroundColor: '#d4edda', color: '#155724' };
-        if (params.value === 'ADJOURNED') return { backgroundColor: '#fff3cd', color: '#856404' };
-        if (params.value === 'HEARD & ADJN') return { backgroundColor: '#cce7ff', color: '#004085' };
-        return null;
-      }
+      // One display spelling per outcome, whatever the stored value looks like.
+      valueFormatter: params => (params.value ? getOrderCategoryLabel(params.value) : ''),
+      cellStyle: params => orderCategoryCellStyle(params.value)
     }
   ];
 
-  // Cell renderer for lifecycle status chips
+  // Status chip. Shows one of the four plain-English statuses; the precise
+  // lifecycle state and its "what happens next" text stay in the tooltip and
+  // in the case detail modal's timeline for anyone who needs them.
   const LifecycleStatusRenderer = (props) => {
     const status = props.data?.lifecycle_status;
     if (!status) return <span className="text-muted" style={{ fontSize: '0.75rem' }}>—</span>;
-    const cfg = getLifecycleConfig(status);
+    const simple = getSimpleStatus(status);
+    const detail = getLifecycleConfig(status);
     const variantColors = {
       secondary: '#6c757d', info: '#17a2b8', success: '#28a745',
       danger: '#dc3545', warning: '#fd7e14', primary: '#0d6efd',
     };
-    const bg = variantColors[cfg.variant] || '#6c757d';
-    const color = cfg.variant === 'warning' ? '#212529' : 'white';
-    const tipText = cfg.tooltip + (cfg.next ? `\n→ ${cfg.next}` : '');
+    const bg = variantColors[simple.variant] || '#6c757d';
+    const color = simple.variant === 'warning' ? '#212529' : 'white';
+    const tipText = [
+      simple.tooltip,
+      detail.label ? `Stage: ${detail.label}` : '',
+      detail.next ? `→ ${detail.next}` : '',
+    ].filter(Boolean).join('\n');
     return (
       <span
         className="badge"
         style={{ backgroundColor: bg, color, cursor: 'help', fontSize: '0.7rem' }}
         title={tipText}
       >
-        {cfg.icon} {cfg.label}
+        {simple.icon} {simple.label}
       </span>
     );
   };
@@ -565,7 +575,8 @@ const Table = () => {
       analysis_failed_terminal: 'Analysis failed',
       manual_review_required: 'Needs review',
     };
-    return labels[status] || status;
+    // Never fall through to the raw snake_case state name.
+    return labels[status] || getSimpleStatus(status).label;
   };
 
   const jobVariant = (status) => {
@@ -816,22 +827,23 @@ const Table = () => {
                     onChange={e => setSearchCriteria(sc => ({ ...sc, orderStatus: e.target.value }))}
                   >
                     <option value="">All Cases</option>
-                    <option value="analysed">✅ Analysed</option>
-                    <option value="pending">⏳ Pending / In Progress</option>
-                    <option value="failed">⚠️ Failed / Needs Review</option>
+                    <option value="ready">✅ Ready — order read, billable</option>
+                    <option value="working">🔄 In progress — being fetched or read</option>
+                    <option value="waiting">🕐 Waiting — order not published yet</option>
+                    <option value="attention">⚠️ Needs you — could not finish automatically</option>
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Order Category</label>
+                  <label className="form-label" title="What the court decided — matches the Outcome column">Outcome</label>
                   <select
                     className="form-control"
                     value={searchCriteria.orderCategory}
                     onChange={e => setSearchCriteria(sc => ({ ...sc, orderCategory: e.target.value }))}
                   >
-                    <option value="">All Categories</option>
+                    <option value="">All Outcomes</option>
                     <option value="ADJOURNED">Adjourned</option>
-                    <option value="HEARD_AND_ADJOURNED">Heard & Adjourned</option>
-                    <option value="DISPOSED_OFF">Disposed Off</option>
+                    <option value="HEARD_AND_ADJOURNED">Heard &amp; adjourned</option>
+                    <option value="DISPOSED_OFF">Disposed of</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'end', gap: 'var(--spacing-md)' }}>
@@ -968,7 +980,7 @@ const Table = () => {
               { key: 'caseType',     label: 'Type',          value: appliedCriteria.caseType },
               { key: 'caseYear',     label: 'Year',          value: appliedCriteria.caseYear },
               { key: 'caseStage',    label: 'Stage',         value: appliedCriteria.caseStage },
-              { key: 'orderStatus',  label: 'Order Status',  value: appliedCriteria.orderStatus },
+              { key: 'orderStatus',  label: 'Status',  value: appliedCriteria.orderStatus },
               { key: 'orderCategory',label: 'Category',      value: appliedCriteria.orderCategory },
             ].filter(f => f.value).map(f => (
               <span
