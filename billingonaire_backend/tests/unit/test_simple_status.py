@@ -9,9 +9,9 @@ between the status dropdown and Board.getData().
 import pytest
 
 from Board import (
+    _LEGACY_STATUS_FILTERS,
     FAILED_LIFECYCLE_STATES,
     SIMPLE_STATUS_KEYS,
-    _LEGACY_STATUS_FILTERS,
     simple_status_for,
 )
 

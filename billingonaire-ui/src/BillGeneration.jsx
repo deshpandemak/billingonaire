@@ -3,6 +3,15 @@ import { Container, Row, Col, Card, Form, Button, Table, Alert, Modal, Spinner }
 import { authenticatedFetchJSON, authenticatedFetch, getApiUrl } from './lib/api.js';
 import { auth } from './lib/firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
+import {
+    BILLING_OUTCOMES,
+    DEFAULT_OUTCOME,
+    UNVERIFIED_RESULT,
+    feeForResult,
+    isUnverifiedResult,
+    labelForResult,
+    formatFee,
+} from './lib/billing.js';
 
 const BillGeneration = () => {
     const [dateRange, setDateRange] = useState({
@@ -201,11 +210,12 @@ const BillGeneration = () => {
 
     const saveEdit = () => {
         const updatedEntries = [...billData.bill_entries];
-        const feeAmount = Number(tempEditData.fees_rs) || 0;
+        // The outcome is what the user chose; the fee follows from it.
+        const resultText = tempEditData.results || DEFAULT_OUTCOME.result;
         const updatedEntry = {
             ...tempEditData,
-            fees_rs: feeAmount,
-            results: getResultFromFee(feeAmount)
+            results: resultText,
+            fees_rs: feeForResult(resultText)
         };
         updatedEntries[editingRow] = updatedEntry;
 
@@ -242,7 +252,6 @@ const BillGeneration = () => {
     };
 
     const addNewRow = () => {
-        const feeAmount = 1875;
         const newEntry = {
             id: `new_${Date.now()}`,
             date: formatDateSafe(new Date()),
@@ -251,8 +260,8 @@ const BillGeneration = () => {
             case_no: '',
             case_year: '',
             parties_name: '',
-            results: getResultFromFee(feeAmount),
-            fees_rs: feeAmount,
+            results: DEFAULT_OUTCOME.result,
+            fees_rs: DEFAULT_OUTCOME.fee,
             confidence_score: 1.0,
             match_source: 'manual',
             editable: true
@@ -288,14 +297,15 @@ const BillGeneration = () => {
         if (!bulkFeeValue || selectedRows.size === 0) return;
 
         const updatedEntries = [...billData.bill_entries];
-        const feeAmount = Number(bulkFeeValue) || 0;
-        const resultText = getResultFromFee(feeAmount);
+        // bulkFeeValue now holds an outcome, not a rupee amount.
+        const resultText = bulkFeeValue;
+        const feeAmount = feeForResult(resultText);
 
         selectedRows.forEach(index => {
             updatedEntries[index] = {
                 ...updatedEntries[index],
-                fees_rs: feeAmount,
-                results: resultText
+                results: resultText,
+                fees_rs: feeAmount
             };
         });
 
@@ -379,21 +389,6 @@ const BillGeneration = () => {
             return `"${stringField.replace(/"/g, '""')}"`;
         }
         return stringField;
-    };
-
-    const getFeeOptions = () => [
-        { value: 1250, label: 'ADJOURNED (₹1,250)' },
-        { value: 1875, label: 'HEARD & ADJN. (₹1,875)' },
-        { value: 2500, label: 'WP DISPOSED OF (₹2,500)' }
-    ];
-
-    const getResultFromFee = (fee) => {
-        switch (fee) {
-            case 1250: return 'ADJOURNED';
-            case 1875: return 'HEARD & ADJN.';
-            case 2500: return 'WP DISPOSED OF';
-            default: return 'HEARD & ADJN.';
-        }
     };
 
     return (
@@ -611,16 +606,19 @@ const BillGeneration = () => {
                                                     </Col>
                                                     <Col md={4}>
                                                         <Form.Group>
-                                                            <Form.Label className="small mb-1">Update Fee for Selected Rows</Form.Label>
+                                                            <Form.Label className="small mb-1">Set outcome for selected rows</Form.Label>
                                                             <Form.Select
                                                                 size="sm"
                                                                 value={bulkFeeValue}
                                                                 onChange={(e) => setBulkFeeValue(e.target.value)}
+                                                                title="The fee is set automatically from the outcome."
                                                             >
-                                                                <option value="">Select Fee Amount</option>
-                                                                <option value="1250">ADJOURNED (₹1,250)</option>
-                                                                <option value="1875">HEARD & ADJN. (₹1,875)</option>
-                                                                <option value="2500">WP DISPOSED OF (₹2,500)</option>
+                                                                <option value="">Select outcome…</option>
+                                                                {BILLING_OUTCOMES.map(option => (
+                                                                    <option key={option.result} value={option.result}>
+                                                                        {option.label} — {formatFee(option.fee)}
+                                                                    </option>
+                                                                ))}
                                                             </Form.Select>
                                                         </Form.Group>
                                                     </Col>
@@ -758,28 +756,42 @@ const BillGeneration = () => {
                                                         <td>
                                                             {editingRow === index ? (
                                                                 <Form.Select
-                                                                    value={tempEditData.fees_rs || 1875}
+                                                                    value={tempEditData.results || DEFAULT_OUTCOME.result}
                                                                     onChange={(e) => {
-                                                                        const fee = parseInt(e.target.value);
+                                                                        const result = e.target.value;
                                                                         setTempEditData({
                                                                             ...tempEditData,
-                                                                            fees_rs: fee,
-                                                                            results: getResultFromFee(fee)
+                                                                            results: result,
+                                                                            fees_rs: feeForResult(result)
                                                                         });
                                                                     }}
+                                                                    title="What the court did. The fee follows from this."
                                                                 >
-                                                                    {getFeeOptions().map(option => (
-                                                                        <option key={option.value} value={option.value}>
-                                                                            {option.label}
+                                                                    {/* An unverified entry keeps its marker as an option so
+                                                                        editing another field cannot silently confirm it. */}
+                                                                    {isUnverifiedResult(tempEditData.results) && (
+                                                                        <option value={UNVERIFIED_RESULT}>
+                                                                            {labelForResult(UNVERIFIED_RESULT)}
+                                                                        </option>
+                                                                    )}
+                                                                    {BILLING_OUTCOMES.map(option => (
+                                                                        <option key={option.result} value={option.result}>
+                                                                            {option.label} — {formatFee(option.fee)}
                                                                         </option>
                                                                     ))}
                                                                 </Form.Select>
                                                             ) : (
-                                                                <span className={`badge ${
-                                                                    entry.results.includes('DISPOSED') ? 'bg-success' :
-                                                                    entry.results.includes('ADJOURNED') ? 'bg-warning' : 'bg-info'
-                                                                }`}>
-                                                                    {entry.results}
+                                                                <span
+                                                                    className={`badge ${
+                                                                        isUnverifiedResult(entry.results) ? 'bg-secondary' :
+                                                                        entry.results.includes('DISPOSED') ? 'bg-success' :
+                                                                        entry.results.includes('ADJOURNED') ? 'bg-warning' : 'bg-info'
+                                                                    }`}
+                                                                    title={isUnverifiedResult(entry.results)
+                                                                        ? 'No analysed order on file for this hearing — adjournment assumed. Check before billing.'
+                                                                        : undefined}
+                                                                >
+                                                                    {labelForResult(entry.results)}
                                                                 </span>
                                                             )}
                                                         </td>
