@@ -37,6 +37,17 @@ const BillGeneration = () => {
     const [exportMessage, setExportMessage] = useState(null);
     const [saveMessage, setSaveMessage] = useState(null);
 
+    // My Bills — surfaces GET /bills/my-bills, GET /bills/{id} (via export),
+    // and DELETE /bills/{id}. All three already existed on the backend with
+    // proper ownership checks; the UI never called them, so a saved bill's
+    // number was allocated and then unreachable — no way to see it, re-export
+    // it, or delete it again after the confirmation toast disappeared.
+    const [showMyBills, setShowMyBills] = useState(false);
+    const [myBills, setMyBills] = useState([]);
+    const [myBillsLoading, setMyBillsLoading] = useState(false);
+    const [myBillsError, setMyBillsError] = useState('');
+    const [myBillsActionId, setMyBillsActionId] = useState(null);
+
     // Set default date range to current month
     useEffect(() => {
         const today = new Date();
@@ -374,10 +385,67 @@ const BillGeneration = () => {
                 text: `Bill saved — #${response.bill_number} · ${response.month_description} · ₹${response.total_fees?.toLocaleString()} · ${response.total_entries} entries`
             });
             setShowSaveModal(false);
+            // Keep the list in step if it happens to already be open.
+            if (showMyBills) loadMyBills();
         } catch (err) {
             setSaveMessage({ type: 'error', text: `Failed to save bill: ${err.message}` });
         } finally {
             setSaveBillLoading(false);
+        }
+    };
+
+    const loadMyBills = async () => {
+        setMyBillsLoading(true);
+        setMyBillsError('');
+        try {
+            const response = await authenticatedFetchJSON('/bills/my-bills');
+            setMyBills(response.bills || []);
+        } catch (err) {
+            setMyBillsError(`Failed to load saved bills: ${err.message}`);
+        } finally {
+            setMyBillsLoading(false);
+        }
+    };
+
+    const openMyBills = () => {
+        setShowMyBills(true);
+        loadMyBills();
+    };
+
+    // Re-downloads a previously saved bill by id, via the same
+    // /bills/export/excel endpoint and blob-download mechanism as the
+    // primary Export Excel button — bill_id there reads the saved entries
+    // straight from Firestore rather than regenerating from a date range.
+    const exportSavedBill = async (bill) => {
+        setMyBillsActionId(bill.id);
+        try {
+            const response = await authenticatedFetch(`/bills/export/excel?bill_id=${bill.id}`);
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `AGP_Bill_${bill.bill_number || bill.id}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            setMyBillsError(`Failed to export bill: ${err.message}`);
+        } finally {
+            setMyBillsActionId(null);
+        }
+    };
+
+    const deleteSavedBill = async (bill) => {
+        if (!window.confirm(`Delete bill #${bill.bill_number}? This cannot be undone.`)) return;
+        setMyBillsActionId(bill.id);
+        try {
+            await authenticatedFetchJSON(`/bills/${bill.id}`, { method: 'DELETE' });
+            setMyBills(prev => prev.filter(b => b.id !== bill.id));
+        } catch (err) {
+            setMyBillsError(`Failed to delete bill: ${err.message}`);
+        } finally {
+            setMyBillsActionId(null);
         }
     };
 
@@ -396,8 +464,11 @@ const BillGeneration = () => {
             <Row>
                 <Col>
                     <Card className="shadow-sm">
-                        <Card.Header className="bg-primary text-white">
+                        <Card.Header className="bg-primary text-white d-flex justify-content-between align-items-center">
                             <h4 className="mb-0">📊 Bill Generation</h4>
+                            <Button variant="light" size="sm" onClick={openMyBills}>
+                                📋 My Bills
+                            </Button>
                         </Card.Header>
                         <Card.Body>
                             {/* Date Range Selection */}
@@ -920,6 +991,82 @@ const BillGeneration = () => {
                         ) : (
                             'Save Bill'
                         )}
+                    </Button>
+                </Modal.Footer>
+            </Modal>
+
+            {/* My Bills — list of everything saved via Save Bill, with export
+                and delete. Own bills only, unless the account is an admin, in
+                which case /bills/my-bills already returns everyone's. */}
+            <Modal show={showMyBills} onHide={() => setShowMyBills(false)} size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>My Bills</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    {myBillsError && (
+                        <Alert variant="danger" dismissible onClose={() => setMyBillsError('')}>
+                            {myBillsError}
+                        </Alert>
+                    )}
+                    {myBillsLoading ? (
+                        <div className="text-center py-4">
+                            <Spinner animation="border" variant="primary" size="sm" />
+                            <p className="text-muted mt-2 mb-0">Loading saved bills…</p>
+                        </div>
+                    ) : myBills.length === 0 ? (
+                        <p className="text-muted text-center py-4 mb-0">
+                            No saved bills yet. Use "Save Bill" after generating one to keep a numbered record here.
+                        </p>
+                    ) : (
+                        <div className="table-responsive">
+                            <table className="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Bill #</th>
+                                        <th>Period</th>
+                                        <th className="text-end">Entries</th>
+                                        <th className="text-end">Total Fees</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {myBills.map(bill => (
+                                        <tr key={bill.id}>
+                                            <td>{bill.bill_number || '—'}</td>
+                                            <td>{bill.month_description || '—'}</td>
+                                            <td className="text-end">{bill.total_entries ?? '—'}</td>
+                                            <td className="text-end">₹{Number(bill.total_fees || 0).toLocaleString('en-IN')}</td>
+                                            <td className="text-end" style={{ whiteSpace: 'nowrap' }}>
+                                                <Button
+                                                    variant="outline-success"
+                                                    size="sm"
+                                                    className="me-2"
+                                                    disabled={myBillsActionId === bill.id}
+                                                    onClick={() => exportSavedBill(bill)}
+                                                    title="Re-download as Excel"
+                                                >
+                                                    {myBillsActionId === bill.id ? <Spinner size="sm" /> : '⬇️'}
+                                                </Button>
+                                                <Button
+                                                    variant="outline-danger"
+                                                    size="sm"
+                                                    disabled={myBillsActionId === bill.id}
+                                                    onClick={() => deleteSavedBill(bill)}
+                                                    title="Delete this saved bill"
+                                                >
+                                                    🗑️
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </Modal.Body>
+                <Modal.Footer>
+                    <Button variant="secondary" onClick={() => setShowMyBills(false)}>
+                        Close
                     </Button>
                 </Modal.Footer>
             </Modal>
