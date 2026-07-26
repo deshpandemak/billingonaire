@@ -3603,26 +3603,45 @@ async def admin_override_order_category(
                 status_code=400, content={"error": "order_category is required"}
             )
 
-        db = firestore.client()
-        doc_ref = db.collection("case-details").document(doc_id)
-        doc_snap = doc_ref.get()
-        if not doc_snap.exists:
-            return JSONResponse(status_code=404, content={"error": "Case not found"})
+        # doc_id is the case-details document id, i.e. case_ref with "/" -> "-".
+        case_ref = doc_id.replace("-", "/")
+        manager = get_auto_order_manager()
 
-        doc_ref.update(
-            {
-                "order_category": order_category,
-                "lifecycle_status": "analysed",
-                "order_manual_override": True,
-                "order_manual_override_by": current_user.get("uid"),
-                "order_analysis_timestamp": datetime.now().isoformat(),
-            }
+        result = manager.case_store.apply_category_override(
+            case_ref,
+            order_category,
+            actor_uid=current_user.get("uid"),
+            notes=body.get("notes"),
         )
+        if not result.get("success"):
+            return JSONResponse(
+                status_code=404,
+                content={"error": result.get("error") or "Case not found"},
+            )
+
+        case_ref = result.get("case_ref") or case_ref
+        # Propagate to daily-boards so the board view and the "analysed" counts
+        # agree with the correction.
+        order_date = result.get("order_date") or result.get("board_date")
+        if order_date:
+            try:
+                manager._update_board_entries_for_case_date(
+                    case_ref, order_date, None, order_category
+                )
+            except Exception as propagate_error:
+                logger.warning(
+                    "override: could not propagate to daily-boards for %s: %s",
+                    case_ref,
+                    propagate_error,
+                )
+
         return JSONResponse(
             content={
                 "success": True,
                 "doc_id": doc_id,
+                "case_ref": case_ref,
                 "order_category": order_category,
+                "previous_category": result.get("previous_category"),
             }
         )
     except Exception as e:

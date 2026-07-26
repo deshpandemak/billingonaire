@@ -550,6 +550,108 @@ class CaseDataStore:
             len(orders),
         )
 
+    def apply_category_override(
+        self,
+        case_ref: str,
+        order_category: str,
+        actor_uid: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record a human's correction of an order's category.
+
+        The manual-review override used to write a *top-level* ``order_category``
+        field on the case document with a raw ``update()``. Nothing read that
+        field — billing reads the category from inside the ``orders[]`` entry
+        (``calculate_case_fee``) and the rest of the app reads the
+        ``latest_order_category`` rollup — so a reviewer's correction never
+        reached the bill, and because ``transition_lifecycle`` was bypassed the
+        decision left no audit trail either.
+
+        This writes the correction where the readers actually look, keeps the
+        rollup in step, and emits a lifecycle event.
+
+        Returns ``{"success", "order_date", "board_date", "previous_category"}``
+        so the caller can propagate the change to daily-boards.
+        """
+        doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        snapshot = doc_ref.get()
+        if not snapshot.exists:
+            return {"success": False, "error": "Case not found"}
+
+        data = snapshot.to_dict() or {}
+        # Prefer the stored case_ref over the caller's derived one.
+        case_ref = data.get("case_ref") or case_ref
+        orders = [o for o in (data.get("orders") or []) if isinstance(o, dict)]
+
+        # Correct the order the readers use: the most recent one carrying a
+        # link, falling back to the most recent entry of any kind.
+        orders_with_link = [o for o in orders if o.get("order_link")]
+        target = (
+            orders_with_link[-1]
+            if orders_with_link
+            else (orders[-1] if orders else None)
+        )
+
+        if target is None:
+            # No order on file at all — record the human's decision as the order.
+            target = {
+                "order_status": "analysed",
+                "order_date": self._to_iso_date(data.get("latest_order_date")),
+                "board_date": None,
+            }
+            orders.append(target)
+
+        previous_category = target.get("order_category")
+        target["order_category"] = order_category
+        target["order_status"] = "analysed"
+        target["order_manual_override"] = True
+        target["order_manual_override_by"] = actor_uid
+        target["order_manual_override_notes"] = notes
+        target["updated_at"] = datetime.now().isoformat()
+
+        orders_with_link = [o for o in orders if o.get("order_link")]
+        latest_with_link = orders_with_link[-1] if orders_with_link else {}
+
+        doc_ref.set(
+            {
+                "orders": orders,
+                # Keep the rollup in step with the corrected entry.
+                "latest_order_category": (
+                    latest_with_link.get("order_category") or order_category
+                ),
+                "latest_order_status": "analysed",
+                "order_manual_override": True,
+                "order_manual_override_by": actor_uid,
+                "order_analysis_timestamp": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            },
+            merge=True,
+        )
+
+        self.transition_lifecycle(
+            case_ref,
+            "analysed",
+            reason=notes or "Category corrected by reviewer",
+            metadata={
+                "source": "manual-override",
+                "actor_uid": actor_uid,
+                "previous_category": previous_category,
+                "order_category": order_category,
+            },
+            event_type="manual_override",
+            force=True,
+        )
+
+        return {
+            "success": True,
+            "case_ref": case_ref,
+            "order_date": target.get("order_date"),
+            "board_date": target.get("board_date"),
+            "previous_category": previous_category,
+        }
+
     def get_case_details_map(self, case_refs: List[str]) -> Dict[str, Dict]:
         refs = [ref for ref in case_refs if ref]
         if not refs:

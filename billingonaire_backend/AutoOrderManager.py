@@ -40,6 +40,15 @@ class AutoOrderManager:
     Handles automatic fetching, linking, and analysis of court orders
     """
 
+    # Classifications below this confidence go to manual_review_required rather
+    # than analysed, so a person confirms them before they can reach a bill.
+    # Per docs/CURRENT_WORKFLOW.md section 7.3.  For scale: the classifier
+    # returns 0.50 when no patterns matched at all and it fell back to
+    # ADJOURNED, and 0.95 when a hard gate fired.
+    REVIEW_CONFIDENCE_THRESHOLD = float(
+        os.getenv("ORDER_REVIEW_CONFIDENCE_THRESHOLD", "0.55")
+    )
+
     def __init__(self):
         self.db = firestore.client()
         self.order_analyzer = OrderDocumentAnalyzer()
@@ -725,16 +734,42 @@ class AutoOrderManager:
                     "gcs_upload_failed": gcs_upload_failed,
                 },
             )
+            # Route a low-confidence classification to a human instead of
+            # letting it flow silently into a bill.  Until now nothing ever set
+            # manual_review_required, so the review queue was structurally empty
+            # while guesses (the scorer returns 0.50 for "no patterns matched")
+            # were billed as if they were certain.  Threshold per
+            # docs/CURRENT_WORKFLOW.md section 7.3.
+            confidence = float(order_analysis.get("order_category_confidence") or 0.0)
+            needs_review = confidence < self.REVIEW_CONFIDENCE_THRESHOLD
             self.case_store.transition_lifecycle(
                 case_ref,
-                "analysed",
+                "manual_review_required" if needs_review else "analysed",
+                reason=(
+                    f"Classified {order_analysis['order_category']} with low "
+                    f"confidence ({confidence:.2f}) — needs review"
+                    if needs_review
+                    else None
+                ),
                 metadata={
                     "source": "auto_order_manager",
                     "case_id": case_id,
                     "order_category": order_analysis["order_category"],
+                    "order_category_confidence": confidence,
                 },
-                event_type="analysis_succeeded",
+                event_type=(
+                    "analysis_low_confidence" if needs_review else "analysis_succeeded"
+                ),
             )
+            if needs_review:
+                logger.info(
+                    "_analyze_order_with_api_metadata: case_ref=%s category=%s "
+                    "confidence=%.2f below %.2f — queued for manual review",
+                    case_ref,
+                    order_analysis["order_category"],
+                    confidence,
+                    self.REVIEW_CONFIDENCE_THRESHOLD,
+                )
             # NOTE: board-entry updates (propagating order_link / order_category back
             # to daily-boards) are now done centrally by _update_board_entries_for_case_date
             # so that ALL board entries for the order date are updated, not only the one
@@ -1227,15 +1262,25 @@ class AutoOrderManager:
             if api_result.get("orders_processed", 0) == 0:
                 # All orders already analysed — restore lifecycle so the case does
                 # not stay permanently stuck at fetch_in_progress.
-                self.case_store.transition_lifecycle(
-                    case_ref,
-                    "analysed",
-                    metadata={
-                        "source": "auto_order_manager",
-                        "reason": "already_analysed",
-                    },
-                    event_type="analysis_skipped",
+                #
+                # Exception: a case awaiting human review must not be quietly
+                # marked analysed by a re-fetch.  Its order entries already read
+                # order_status="analysed", so without this guard a re-fetch would
+                # clear the review flag and the low-confidence result would reach
+                # a bill unconfirmed.
+                current_status = (self.case_store.get_case_details(case_ref) or {}).get(
+                    "lifecycle_status"
                 )
+                if current_status != "manual_review_required":
+                    self.case_store.transition_lifecycle(
+                        case_ref,
+                        "analysed",
+                        metadata={
+                            "source": "auto_order_manager",
+                            "reason": "already_analysed",
+                        },
+                        event_type="analysis_skipped",
+                    )
             logger.info(
                 "✅ _process_single_case: scraper succeeded for %s "
                 "(processed=%d skipped=%d)",

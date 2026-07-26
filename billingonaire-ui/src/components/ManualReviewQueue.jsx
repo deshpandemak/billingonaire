@@ -54,9 +54,11 @@ const ManualReviewQueue = () => {
     <Container fluid className="py-4">
       <Row className="mb-3 align-items-center">
         <Col>
-          <h2 className="mb-1">Manual Review Queue</h2>
+          <h2 className="mb-1">Needs Review</h2>
           <p className="text-muted mb-0">
-            Cases where ML confidence was too low to auto-classify — confirm the correct order category.
+            Orders the system could not classify confidently. Confirm the outcome
+            here and it will be used for billing — these cases are held back until
+            you do.
           </p>
         </Col>
         <Col xs="auto">
