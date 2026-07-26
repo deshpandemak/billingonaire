@@ -267,6 +267,63 @@ class TestCategoryClassification:
         category, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Due to paucity of time, the matter did not reach. S.O. to 12/08/2026.",
+            "For want of time the matter is not reached today.",
+            "On account of shortage of time, the matter could not be taken up.",
+            "The matter was not reached. Stand over.",
+            "Due to lack of time the petition could not be reached.",
+            "Balance Daily Board cannot be taken up today.",
+            "Owing to insufficient time, matters are not taken up today.",
+            "Since there is no time available, stand over to next week.",
+        ],
+    )
+    def test_matter_did_not_reach_is_adjourned(self, analyzer, text):
+        """Every 'the matter never reached the bench' phrasing must be ADJOURNED."""
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
+    def test_no_time_gate_beats_disposal_phrase_from_citation(self, analyzer):
+        """A disposal phrase quoted from a cited judgment must not turn a
+        not-reached matter into DISPOSED_OFF.
+
+        This is the regression: the strong-disposal override used to fire on the
+        cited 'petition was dismissed' before the no-hearing check ran.
+        """
+        text = (
+            "Due to paucity of time, the matter did not reach. "
+            "In Sharma vs State of Maharashtra the petition was dismissed. "
+            "Stand over to 12/08/2026."
+        )
+        category, confidence = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+        assert confidence >= 0.9
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            # "not reached"/"did not reach" about a settlement is NOT a no-time
+            # phrase and must not trip the gate.
+            (
+                "The parties have not reached a settlement. The petition is dismissed.",
+                "DISPOSED_OFF",
+            ),
+            (
+                "Since the parties did not reach any agreement, the writ petition "
+                "is allowed.",
+                "DISPOSED_OFF",
+            ),
+            # 'want of prosecution' must not be read as 'want of time'.
+            ("The petition is dismissed for want of prosecution.", "DISPOSED_OFF"),
+        ],
+    )
+    def test_no_time_gate_does_not_over_trigger(self, analyzer, text, expected):
+        """Genuine disposals must survive the expanded no-time vocabulary."""
+        category, _ = analyzer._classify_order(text)
+        assert category == expected
+
 
 class TestEntityExtraction:
     """Test entity extraction from orders"""

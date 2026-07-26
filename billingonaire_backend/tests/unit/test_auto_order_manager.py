@@ -795,3 +795,37 @@ def test_process_single_case_analysis_success_when_all_orders_skipped(
     assert result["download_success"] is True
     # Must be True even though orders_processed == 0 because success is True
     assert result["analysis_success"] is True
+
+
+class TestBoardDateQueryCoercion:
+    """`board_date` is written to Firestore by Board.saveData as a midnight
+    datetime.  Query values must therefore be datetimes — comparing the field
+    against a raw "YYYY-MM-DD" string matches nothing, because Firestore sorts
+    all timestamps before all strings.  This silently returned zero candidates
+    for every date-filtered fetch job.
+    """
+
+    def test_iso_string_is_coerced_to_midnight_datetime(self):
+        assert AutoOrderManager._to_board_date_query_value("2026-07-24") == datetime(
+            2026, 7, 24
+        )
+
+    def test_datetime_passes_through_unchanged(self):
+        value = datetime(2026, 7, 24, 10, 30)
+        assert AutoOrderManager._to_board_date_query_value(value) is value
+
+    def test_date_is_promoted_to_datetime(self):
+        from datetime import date as _date
+
+        assert AutoOrderManager._to_board_date_query_value(_date(2026, 7, 24)) == (
+            datetime(2026, 7, 24)
+        )
+
+    @pytest.mark.parametrize("value", [None, "", "   ", "not-a-date"])
+    def test_unusable_values_return_none(self, value):
+        assert AutoOrderManager._to_board_date_query_value(value) is None
+
+    def test_timestamp_string_is_truncated_to_date(self):
+        assert AutoOrderManager._to_board_date_query_value(
+            "2026-07-24 00:00:00"
+        ) == datetime(2026, 7, 24)

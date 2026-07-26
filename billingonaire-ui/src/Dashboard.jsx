@@ -287,7 +287,14 @@ const Dashboard = () => {
         method: 'POST',
         body: JSON.stringify({ filters, board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300) }),
       });
-      setJobMessage(`Queued ${r.queued || 0} fetch jobs, skipped ${r.skipped_not_due || 0}`);
+      const queued = r.queued || 0, notDue = r.skipped_not_due || 0;
+      if (queued > 0) {
+        setJobMessage(`Queued ${queued} order fetch${queued > 1 ? 'es' : ''}.${notDue ? ` ${notDue} skipped — board date is still in the future.` : ''}`);
+      } else if (notDue > 0) {
+        setJobMessage(`Nothing queued — all ${notDue} case(s) have a future board date, so their orders are not published yet.`);
+      } else {
+        setJobMessage('Nothing to fetch — every case on the selected date(s) already has its order downloaded.');
+      }
       await fetchQueueStatus();
     } catch (_) { setJobError('Failed to queue fetch jobs — admin access required.'); }
     finally { setJobLoading(''); }
@@ -300,7 +307,14 @@ const Dashboard = () => {
         method: 'POST',
         body: JSON.stringify({ board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300) }),
       });
-      setJobMessage(`Queued ${r.queued || 0} analysis jobs, skipped ${r.skipped || 0}`);
+      const queued = r.queued || 0, skipped = r.skipped || 0;
+      if (queued > 0) {
+        setJobMessage(`Queued ${queued} order analys${queued > 1 ? 'es' : 'is'}.${skipped ? ` ${skipped} skipped — no order PDF on file yet.` : ''}`);
+      } else if (skipped > 0) {
+        setJobMessage(`Nothing to analyse — ${skipped} case(s) have no order PDF yet. Run “Fetch Orders” first, then analyse once the fetch queue drains.`);
+      } else {
+        setJobMessage('Nothing to analyse — every case on the selected date(s) is already analysed.');
+      }
       await fetchQueueStatus();
     } catch (_) { setJobError('Failed to queue analysis jobs — admin access required.'); }
     finally { setJobLoading(''); }

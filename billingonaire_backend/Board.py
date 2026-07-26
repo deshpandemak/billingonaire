@@ -37,6 +37,18 @@ except ImportError:
         )
 
 
+# Lifecycle states that mean the pipeline could not complete on its own and a
+# human may need to act.  Mirrors the 'warning'/'error' groups in the frontend's
+# lifecycleUtils config so the Search Orders status filter and the status chips
+# always agree.  Everything not listed here and not "analysed" counts as pending.
+FAILED_LIFECYCLE_STATES = {
+    "fetch_failed_retryable",
+    "fetch_failed_terminal",
+    "analysis_failed_retryable",
+    "analysis_failed_terminal",
+    "manual_review_required",
+}
+
 # Pattern for initials-based GP/AGP names used in modern Bombay HC boards.
 # Matches 2-4 single uppercase letters separated by spaces, followed by a
 # comma and a government role keyword.
@@ -1082,22 +1094,16 @@ class Board:
                 logging.info("AGP filter retained %d records", len(hydrated_data))
 
             if order_status:
-                _FAILED_LIFECYCLE_STATES = {
-                    "fetch_failed",
-                    "fetch_failed_retryable",
-                    "fetch_failed_terminal",
-                    "manual_review_required",
-                }
 
                 def _matches_lifecycle_status(row: dict, wanted: str) -> bool:
                     status = row.get("lifecycle_status") or "board_ingested"
                     if wanted == "analysed":
                         return status == "analysed"
                     if wanted == "failed":
-                        return status in _FAILED_LIFECYCLE_STATES
+                        return status in FAILED_LIFECYCLE_STATES
                     if wanted == "pending":
                         return (
-                            status not in _FAILED_LIFECYCLE_STATES
+                            status not in FAILED_LIFECYCLE_STATES
                             and status != "analysed"
                         )
                     return True

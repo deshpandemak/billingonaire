@@ -2465,12 +2465,25 @@ async def queue_fetch_orders_jobs(
             )
 
         manager = get_auto_order_manager()
-        candidate_cases = manager._get_filtered_matters(filters, limit)
         selected_case_refs = {
             str(value or "").strip().upper()
             for value in case_refs
             if str(value or "").strip()
         }
+        selected_board_dates = {
+            str(value or "").strip()
+            for value in board_dates
+            if str(value or "").strip()
+        }
+
+        # Push the selected board dates into the Firestore query.  Filtering
+        # after the limit used to return zero candidates whenever the selected
+        # dates fell outside the first `limit` documents scanned.
+        candidate_cases = manager._get_filtered_matters(
+            filters,
+            limit,
+            board_dates=sorted(selected_board_dates) or None,
+        )
 
         if selected_case_refs:
             candidate_cases = [
@@ -2478,24 +2491,6 @@ async def queue_fetch_orders_jobs(
                 for case_data in candidate_cases
                 if str(case_data.get("case_ref") or "").strip().upper()
                 in selected_case_refs
-            ]
-
-        selected_board_dates = {
-            str(value or "").strip()
-            for value in board_dates
-            if str(value or "").strip()
-        }
-        if selected_board_dates and not selected_case_refs:
-            candidate_cases = [
-                case_data
-                for case_data in candidate_cases
-                if (
-                    (
-                        manager._parse_board_date(case_data.get("board_date"))
-                        or datetime.min.date()
-                    ).isoformat()
-                    in selected_board_dates
-                )
             ]
 
         queued = 0
@@ -2608,6 +2603,25 @@ async def queue_analysis_jobs(
                 rows = list(query.stream())
                 if rows:
                     candidate_rows.append(rows[0])
+        elif selected_board_dates:
+            # One equality query per selected date.  Filtering after a blanket
+            # limit used to yield zero rows whenever the selected dates were not
+            # among the first `limit * 4` documents scanned.
+            seen_row_ids = set()
+            for date_str in sorted(selected_board_dates):
+                board_dt = manager._to_board_date_query_value(date_str)
+                if not board_dt:
+                    continue
+                query = (
+                    db.collection("daily-boards")
+                    .where("board_date", "==", board_dt)
+                    .limit(limit * 4)
+                )
+                for row in query.stream():
+                    if row.id in seen_row_ids:
+                        continue
+                    seen_row_ids.add(row.id)
+                    candidate_rows.append(row)
         else:
             query = db.collection("daily-boards")
             if days_back:

@@ -432,9 +432,29 @@ class OrderDocumentAnalyzer:
     # circuits the ML scorer and returns ADJOURNED with high confidence.
     # "stand over" is NOT here — it also appears in "heard, stand over to [date]"
     # (HEARD_AND_ADJOURNED) so it cannot be a hard gate.
+    # Phrases meaning the matter was never taken up / never reached the bench.
+    # These are a hard gate: whatever else the order text contains (including a
+    # disposal phrase quoted from a cited judgment), a matter that did not reach
+    # cannot have been disposed of on this date — it is an ADJOURNED entry.
+    #
+    # Keep every pattern here unambiguous.  "not reached" is guarded with a
+    # negative lookahead so "the parties have not reached a settlement" does not
+    # trip the gate.
     NO_TIME_PATTERNS: List[str] = [
-        r"\bpaucity\s+of\s+time\b",
-        r"\bwant\s+of\s+time\b",
+        # Explicit shortage-of-time wording
+        r"\b(?:paucity|want|shortage|lack|dearth)\s+of\s+time\b",
+        r"\binsufficient\s+time\b",
+        r"\bno\s+time\s+available\b",
+        r"\btime\s+constraints?\b",
+        # Matter never called out / never reached
+        r"\bnot\s+reached\b(?!\s+(?:a|an|any)\b)",
+        r"\b(?:did|do|does|could|can|would)\s*not\s+reach\b(?!\s+(?:a|an|any)\b)",
+        r"\bcould\s+not\s+be\s+reached\b",
+        # Matter could not be taken up
+        r"\b(?:could|can|shall|will)\s*not\s+be\s+taken\s+up\b",
+        r"\bcannot\s+be\s+taken\s+up\b",
+        r"\bnot\s+taken\s+up\s+today\b",
+        r"\bremained?\s+part[-\s]?heard\s+for\s+want\s+of\s+time\b",
     ]
 
     # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker
@@ -465,6 +485,20 @@ class OrderDocumentAnalyzer:
         """Classify order into categories with confidence score"""
         scores: Dict[str, Dict[str, float]] = {}
         logging.info(f"🔍 Classifying order text (length: {len(text)} chars)")
+
+        # Gate: a matter that never reached / ran out of time was not heard and
+        # cannot have been disposed of today.  Checked before the weighted
+        # scorer AND before the strong-disposal override below, so a disposal
+        # phrase quoted from a cited judgment cannot flip the classification.
+        no_time_hit = next(
+            (p.pattern for p in self._compiled_no_time if p.search(text)), None
+        )
+        if no_time_hit:
+            logging.info(
+                "⏱️ NO_TIME gate triggered by %r — classifying as ADJOURNED",
+                no_time_hit,
+            )
+            return "ADJOURNED", 0.95
 
         for category, patterns in self.order_patterns.items():
             score = 0.0
@@ -524,20 +558,12 @@ class OrderDocumentAnalyzer:
         best_category = max(scores.keys(), key=lambda x: scores[x]["score"])
         confidence = scores[best_category]["confidence"]
 
-        # CRITICAL: Check for non-hearing adjournments (no actual hearing took place)
-        # Patterns indicating no hearing occurred
-        no_hearing_patterns = [
-            r"Balance\s+Daily\s+Board\s+cannot\s+be\s+taken\s+up",
-            r"paucity\s+of\s+time",
-            r"cannot\s+be\s+taken\s+up\s+today",
-            r"no\s+time\s+available",
-            r"matter\s+not\s+reached",
-            r"insufficient\s+time",
-        ]
-
-        is_non_hearing_adjournment = any(
-            re.search(pattern, text, re.IGNORECASE) for pattern in no_hearing_patterns
-        )
+        # CRITICAL: Check for non-hearing adjournments (no actual hearing took
+        # place).  Uses the same NO_TIME_PATTERNS as the gate above so there is a
+        # single source of truth for "this matter never reached" vocabulary.
+        # The gate normally returns before this point; this stays as a safety net
+        # for the HEARD_AND_ADJOURNED tie-break.
+        is_non_hearing_adjournment = any(p.search(text) for p in self._compiled_no_time)
 
         # CRITICAL FIX: Prioritize HEARD_AND_ADJOURNED over ADJOURNED when both match
         # BUT: If it's clearly a non-hearing adjournment, stay with ADJOURNED

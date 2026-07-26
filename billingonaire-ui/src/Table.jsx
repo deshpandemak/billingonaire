@@ -298,7 +298,10 @@ const Table = () => {
       }
     },
     {
-      headerName: 'Order Status',
+      // Whether the order PDF itself is on file (and the inline Analyse action).
+      // Renamed from "Order Status" so it is not confused with the workflow
+      // Status column / filter below, which tracks the lifecycle state machine.
+      headerName: 'Order File',
       field: 'order_status',
       sortable: true,
       filter: false,
@@ -307,7 +310,8 @@ const Table = () => {
       cellRenderer: 'orderStatusRenderer'
     },
     {
-      headerName: 'Lifecycle',
+      // The workflow state the "Status" search filter matches against.
+      headerName: 'Status',
       field: 'lifecycle_status',
       sortable: true,
       filter: 'agTextColumnFilter',
@@ -805,16 +809,16 @@ const Table = () => {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Order Status</label>
+                  <label className="form-label" title="Matches the Status column — where the case is in the fetch → analyse workflow">Status</label>
                   <select
                     className="form-control"
                     value={searchCriteria.orderStatus}
                     onChange={e => setSearchCriteria(sc => ({ ...sc, orderStatus: e.target.value }))}
                   >
                     <option value="">All Cases</option>
-                    <option value="analysed">Analysed</option>
-                    <option value="pending">Pending / In Progress</option>
-                    <option value="failed">Failed / Needs Review</option>
+                    <option value="analysed">✅ Analysed</option>
+                    <option value="pending">⏳ Pending / In Progress</option>
+                    <option value="failed">⚠️ Failed / Needs Review</option>
                   </select>
                 </div>
                 <div className="form-group">
