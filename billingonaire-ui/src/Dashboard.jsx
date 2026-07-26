@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
-import { useToast } from './components/ToastProvider';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -41,6 +40,41 @@ const StatCard = ({ value, label, color, loading }) => (
       ? <div className="loading-text"><span className="loading" /></div>
       : <h4 style={{ color: color || 'var(--primary-color)', fontSize: '1.6rem', margin: 0 }}>{value ?? '—'}</h4>}
     <p style={{ margin: '0.25rem 0 0', color: 'var(--gray-600)', fontSize: '0.82rem' }}>{label}</p>
+  </div>
+);
+
+// The four stages a matter passes through, in order. Nothing in the app used
+// to state the sequence — the only hint lived inside a failure message — so a
+// new user had no way to know that orders must be fetched before they can be
+// analysed, or analysed before they can be billed.
+const WorkflowStrip = ({ steps }) => (
+  <div
+    style={{
+      display: 'grid',
+      gridTemplateColumns: `repeat(${steps.length}, 1fr)`,
+      gap: '0.5rem',
+      background: 'var(--white)',
+      border: '1px solid var(--gray-200)',
+      borderRadius: 'var(--radius-md)',
+      padding: '0.9rem 1rem',
+    }}
+  >
+    {steps.map((s, i) => (
+      <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--gray-500)' }}>
+            {i + 1}. {s.label}
+          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 600, color: s.color || 'var(--primary-color)', lineHeight: 1.2 }}>
+            {s.loading ? <span className="loading" /> : (s.value ?? '—')}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--gray-600)' }}>{s.hint}</div>
+        </div>
+        {i < steps.length - 1 && (
+          <span aria-hidden="true" style={{ color: 'var(--gray-300)', fontSize: '1.1rem' }}>→</span>
+        )}
+      </div>
+    ))}
   </div>
 );
 
@@ -97,7 +131,6 @@ const CHART_COLORS = [
 
 // ─── Main component ───────────────────────────────────────────────────────────
 const Dashboard = () => {
-  const { addToast } = useToast();
   const currentDate  = new Date();
   const currentYear  = currentDate.getFullYear();
   const currentQuarter = Math.floor(currentDate.getMonth() / 3) + 1;
@@ -361,10 +394,6 @@ const Dashboard = () => {
   const toggleCase = ref => setSelectedCaseRefs(prev => prev.includes(ref) ? prev.filter(r => r !== ref) : [...prev, ref]);
 
   // ─── Chart data ───────────────────────────────────────────────────────────────
-  const agpChartData = {
-    labels: agpStats.slice(0, 10).map(i => i.agp_name),
-    datasets: [{ label: 'Total Matters', data: agpStats.slice(0, 10).map(i => i.matters), backgroundColor: 'rgba(59,130,246,0.65)', borderColor: 'rgba(59,130,246,1)', borderWidth: 1 }],
-  };
   const agpDoughnutData = {
     labels: agpStats.slice(0, 8).map(i => i.agp_name),
     datasets: [{ data: agpStats.slice(0, 8).map(i => i.matters), backgroundColor: CHART_COLORS, borderWidth: 2, borderColor: '#fff' }],
@@ -394,40 +423,38 @@ const Dashboard = () => {
 
       {/* ── 1. Summary stat cards ── */}
       <div className="dashboard-section">
-        <div className="row g-3">
-          <div className="col-6 col-md-3">
-            <StatCard
-              value={overviewStats?.total_cases?.toLocaleString()}
-              label="Total Board Cases"
-              color="var(--primary-color)"
-              loading={overviewLoading}
-            />
-          </div>
-          <div className="col-6 col-md-3">
-            <StatCard
-              value={overviewStats?.cases_with_orders?.toLocaleString()}
-              label="Orders Fetched"
-              color="var(--secondary-color)"
-              loading={overviewLoading}
-            />
-          </div>
-          <div className="col-6 col-md-3">
-            <StatCard
-              value={overviewStats ? `${overviewStats.analysis_completion_rate}%` : null}
-              label="Analysis Complete"
-              color={overviewStats?.analysis_completion_rate >= 80 ? 'var(--success-color)' : 'var(--warning-color, #f59e0b)'}
-              loading={overviewLoading}
-            />
-          </div>
-          <div className="col-6 col-md-3">
-            <StatCard
-              value={queueLoading ? null : pipelineOk ? 'Healthy' : `${totalQueued} queued`}
-              label="Pipeline Status"
-              color={pipelineOk ? 'var(--success-color)' : workersStalled ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)'}
-              loading={queueLoading}
-            />
-          </div>
-        </div>
+        <WorkflowStrip
+          steps={[
+            {
+              label: 'Upload boards',
+              value: overviewStats?.total_cases?.toLocaleString(),
+              hint: 'cases on boards',
+              color: 'var(--primary-color)',
+              loading: overviewLoading,
+            },
+            {
+              label: 'Fetch orders',
+              value: overviewStats?.cases_with_orders?.toLocaleString(),
+              hint: 'order PDFs downloaded',
+              color: 'var(--secondary-color)',
+              loading: overviewLoading,
+            },
+            {
+              label: 'Analyse',
+              value: overviewStats ? `${overviewStats.analysis_completion_rate}%` : null,
+              hint: 'read and categorised',
+              color: overviewStats?.analysis_completion_rate >= 80 ? 'var(--success-color)' : 'var(--warning-color, #f59e0b)',
+              loading: overviewLoading,
+            },
+            {
+              label: 'Bill',
+              value: queueLoading ? null : pipelineOk ? 'Ready' : `${totalQueued} queued`,
+              hint: pipelineOk ? 'nothing pending' : 'still processing',
+              color: pipelineOk ? 'var(--success-color)' : workersStalled ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)',
+              loading: queueLoading,
+            },
+          ]}
+        />
       </div>
 
       {/* ── 2. Board Date Inventory (primary operational view) ── */}
@@ -487,15 +514,29 @@ const Dashboard = () => {
 
           {boardLoading ? <LoadingPlaceholder text="Loading board dates…" />
             : boardError ? <ErrorPlaceholder msg={boardError} onRetry={fetchBoardSummary} />
-            : (
+            : !(boardSummary.rows || []).length ? (
+              // This is the screen a new user lands on after logging in. It
+              // used to render a headed, scrollable, entirely blank box.
+              <div className="text-center" style={{ padding: '2.5rem 1rem' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📋</div>
+                <h5 style={{ marginBottom: '0.35rem' }}>No board dates yet</h5>
+                <p style={{ color: 'var(--gray-600)', maxWidth: 460, margin: '0 auto 1rem' }}>
+                  Upload a daily board PDF to get started. Orders are fetched and read
+                  automatically once the board date has passed.
+                </p>
+                <a href="/upload" className="btn-professional btn-primary">Upload a board PDF</a>
+              </div>
+            ) : (
               <>
                 {/* Selection toolbar */}
                 <div className="d-flex flex-wrap gap-2 mb-3" style={{ alignItems: 'center' }}>
                   <button className="btn-professional btn-secondary" onClick={selectPageDates}>Select Page</button>
                   <button className="btn-professional btn-secondary" onClick={() => setSelectedDates((boardSummary.rows || []).map(r => r.board_date))}>Select All</button>
                   <button className="btn-professional btn-secondary" onClick={clearSelection} disabled={!selectedDates.length}>Clear ({selectedDates.length})</button>
-                  <button className="btn-professional btn-primary" onClick={fetchDistribution} disabled={!selectedDates.length || distLoading}>
-                    {distLoading ? 'Analyzing…' : 'Analyse Selected'}
+                  {/* "Show AGP split" charts a distribution; "Analyse Orders"
+                      below queues ML jobs. Both used to be called "Analyse". */}
+                  <button className="btn-professional btn-secondary" onClick={fetchDistribution} disabled={!selectedDates.length || distLoading} title="Chart how the selected dates' matters are split between AGPs">
+                    {distLoading ? 'Loading…' : 'Show AGP split'}
                   </button>
                   {selectedDates.length > 0 && (
                     <>
@@ -716,11 +757,9 @@ const Dashboard = () => {
           </SectionCard>
         </div>
 
-        {!agpLoading && agpStats.length > 0 && (
-          <SectionCard title="Top 10 AGPs by Case Load">
-            <div style={{ height: 280, position: 'relative' }}><Bar data={agpChartData} options={chartOptions} /></div>
-          </SectionCard>
-        )}
+        {/* "Top 10 AGPs by Case Load" removed: it was a third rendering of the
+            same agpStats already shown above as an exact table and as a
+            distribution doughnut. */}
       </div>
 
       {/* ── 5. Monthly Averages ── */}
