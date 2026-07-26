@@ -550,11 +550,29 @@ const BillGeneration = () => {
                                             })()}
                                         </div>
                                         {(() => {
-                                            const lowConf = (billData.bill_entries || []).filter(e => e.confidence_score != null && e.confidence_score < 0.7);
-                                            if (!lowConf.length) return null;
+                                            // Three separate ways an entry can be a guess. All of
+                                            // them change what you are claiming, so all of them are
+                                            // stated before you submit.
+                                            const entries = billData.bill_entries || [];
+                                            const lowName = entries.filter(e => e.confidence_score != null && e.confidence_score < 0.7);
+                                            const lowCat = entries.filter(e => e.order_category_confidence != null && e.order_category_confidence < 0.55);
+                                            const assumed = entries.filter(e => isUnverifiedResult(e.results));
+                                            if (!lowName.length && !lowCat.length && !assumed.length) return null;
+                                            const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
                                             return (
                                                 <Alert variant="warning" className="mb-0 py-2" style={{ fontSize: '0.85rem' }}>
-                                                    <strong>{lowConf.length} {lowConf.length === 1 ? 'entry has' : 'entries have'} a low confidence score</strong> — highlighted below. Review before saving.
+                                                    <strong>Check these before saving — highlighted below.</strong>
+                                                    <ul className="mb-0 mt-1" style={{ paddingLeft: '1.1rem' }}>
+                                                        {assumed.length > 0 && (
+                                                            <li>{plural(assumed.length, 'entry has', 'entries have')} no order on file — adjournment assumed.</li>
+                                                        )}
+                                                        {lowCat.length > 0 && (
+                                                            <li>{plural(lowCat.length, 'outcome was', 'outcomes were')} classified with low confidence — the outcome sets the fee.</li>
+                                                        )}
+                                                        {lowName.length > 0 && (
+                                                            <li>{plural(lowName.length, 'entry was', 'entries were')} matched to your name with low confidence — they may not be yours.</li>
+                                                        )}
+                                                    </ul>
                                                 </Alert>
                                             );
                                         })()}
@@ -674,14 +692,18 @@ const BillGeneration = () => {
                                                         </td>
                                                     </tr>
                                                 ) : billData.bill_entries.map((entry, index) => {
-                                                    const isLowConf = !selectedRows.has(index)
-                                                        && entry.confidence_score != null
-                                                        && entry.confidence_score < 0.7;
+                                                    // Flag any of the three kinds of guess, so the
+                                                    // marker on the row matches the banner above.
+                                                    const needsCheck = !selectedRows.has(index) && (
+                                                        (entry.confidence_score != null && entry.confidence_score < 0.7)
+                                                        || (entry.order_category_confidence != null && entry.order_category_confidence < 0.55)
+                                                        || isUnverifiedResult(entry.results)
+                                                    );
                                                     return (
                                                     <tr
                                                         key={index}
                                                         className={selectedRows.has(index) ? 'table-warning' : ''}
-                                                        style={isLowConf ? { borderLeft: '3px solid #ffc107' } : undefined}
+                                                        style={needsCheck ? { borderLeft: '3px solid #ffc107' } : undefined}
                                                     >
                                                         {bulkEditMode && (
                                                             <td>

@@ -76,3 +76,33 @@ def test_the_three_fees_are_distinct_and_ordered():
             fees[category] = calculate_case_fee(CASE, board_date="2025-03-01")["fee"]
     assert fees["ADJOURNED"] < fees["HEARD_AND_ADJOURNED"] < fees["DISPOSED_OFF"]
     assert len(set(fees.values())) == 3
+
+
+class TestConfidenceReachesTheBill:
+    """The bill screen warns about guesses only if the backend sends the
+    numbers. Two separate bill-entry paths previously disagreed on the field
+    name (name_match_confidence vs confidence_score) and neither sent the
+    classification confidence at all, so the warning could not fire."""
+
+    def test_fee_calculation_returns_the_classification_confidence(self):
+        order = _order("ADJOURNED")
+        order["order_category_confidence"] = 0.42
+        with _with_orders([order]):
+            out = calculate_case_fee(CASE, board_date="2025-03-01")
+        assert out["order_category_confidence"] == 0.42
+
+    @pytest.mark.parametrize(
+        "category", ["ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"]
+    )
+    def test_every_classified_outcome_carries_its_confidence(self, category):
+        order = _order(category)
+        order["order_category_confidence"] = 0.91
+        with _with_orders([order]):
+            out = calculate_case_fee(CASE, board_date="2025-03-01")
+        assert out["order_category_confidence"] == 0.91
+
+    def test_absent_confidence_is_none_not_zero(self):
+        """None means 'unknown' and must not be rendered as 0% confidence."""
+        with _with_orders([_order("ADJOURNED")]):
+            out = calculate_case_fee(CASE, board_date="2025-03-01")
+        assert out["order_category_confidence"] is None

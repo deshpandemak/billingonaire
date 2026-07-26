@@ -56,7 +56,7 @@ describe('ManualReviewQueue', () => {
   it('renders the heading after data loads', async () => {
     render(<ManualReviewQueue />);
     await waitFor(() => {
-      expect(screen.getByText('Manual Review Queue')).toBeTruthy();
+      expect(screen.getByText('Needs Review')).toBeTruthy();
     });
   });
 

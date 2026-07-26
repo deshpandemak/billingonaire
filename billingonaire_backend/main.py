@@ -4854,9 +4854,15 @@ async def generate_bill_data(
                                     "order_category": fee_info.get("order_category"),
                                     "agp_name": matched_agp,  # Show the actual AGP name from data
                                     "user_name": user_name,  # Show the selected user name
-                                    "name_match_confidence": round(
-                                        confidence, 3
-                                    ),  # Include confidence score
+                                    "name_match_confidence": round(confidence, 3),
+                                    # The UI reads confidence_score; the other
+                                    # bill-entry path already emitted that name,
+                                    # so this one did too — meaning its
+                                    # low-confidence warning never fired.
+                                    "confidence_score": round(confidence, 3),
+                                    "order_category_confidence": fee_info.get(
+                                        "order_category_confidence"
+                                    ),
                                     "editable": True,
                                 }
                                 bill_entries.append(bill_entry)
@@ -4946,6 +4952,9 @@ async def generate_bill_data(
                                     "order_category": fee_info.get("order_category"),
                                     "confidence_score": mapping_data.get(
                                         "confidence_score", 0.0
+                                    ),
+                                    "order_category_confidence": fee_info.get(
+                                        "order_category_confidence"
                                     ),
                                     "match_source": mapping_data.get("match_source"),
                                     "agp_name": case_data.get("agp_name", "N/A"),
@@ -5272,6 +5281,9 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
 
         order_link = target_order.get("order_link") or None
         order_category = (target_order.get("order_category") or "").upper()
+        # How sure the classifier was. Surfaced on the bill so a low-confidence
+        # categorisation — which sets the fee — is visible before submission.
+        category_confidence = target_order.get("order_category_confidence")
         order_text = str(target_order.get("order_text") or "").lower()
         order_disposal_reason = str(
             target_order.get("order_disposal_reason") or ""
@@ -5289,6 +5301,7 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                 "fee": 2500,
                 "order_link": order_link,
                 "order_category": order_category,
+                "order_category_confidence": category_confidence,
             }
 
         # Check for heard & adjourned (middle fee)
@@ -5298,6 +5311,7 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                 "fee": 1875,
                 "order_link": order_link,
                 "order_category": order_category,
+                "order_category_confidence": category_confidence,
             }
 
         # Check for simple adjournment (lowest fee)
@@ -5307,6 +5321,7 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                 "fee": 1250,
                 "order_link": order_link,
                 "order_category": order_category,
+                "order_category_confidence": category_confidence,
             }
 
         # Default
@@ -5317,6 +5332,7 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                     "fee": 1875,
                     "order_link": order_link,
                     "order_category": order_category,
+                    "order_category_confidence": category_confidence,
                 }
             else:
                 return {
