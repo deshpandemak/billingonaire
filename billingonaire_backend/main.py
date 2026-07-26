@@ -1972,9 +1972,12 @@ async def get_cases_without_orders(
 @app.post("/orders/create-link", tags=["Order Management"])
 async def create_order_link(request: Request, current_user=Depends(get_current_user)):
     """
-    Create or update an order link for a case
-    Body should contain: case_id, status, order_link, order_text, court_bench, notes
-    When manual linking is done, automatically triggers order analysis
+    Create or update an order link for a case.
+
+    Body: case_id, status, order_link, order_text, court_bench, notes.
+    When an order_link is supplied the order is analysed automatically, via the
+    same _analyze_existing_order path used by the analysis queue and the
+    per-row Analyse button.
     """
     try:
         order_data = await request.json()
@@ -1987,55 +1990,50 @@ async def create_order_link(request: Request, current_user=Depends(get_current_u
 
         result = get_order_manager().create_order_link(case_id, order_data)
 
-        # AUTO-ANALYSIS: If order link is provided, automatically analyze the order
-        if result.get("success") and order_data.get("order_link"):
+        order_link = order_data.get("order_link")
+        if result.get("success") and order_link:
             try:
                 db = firestore.client()
-                # Get case data for analysis
                 case_doc = db.collection("daily-boards").document(case_id).get()
                 if case_doc.exists:
                     case_data = case_doc.to_dict()
-                    case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
-
-                    # Download and analyze the order
-                    import requests
-
-                    order_link = order_data.get("order_link")
-                    response = requests.get(order_link, timeout=30)
-
-                    content_type = response.headers.get("Content-Type", "")
-                    if response.status_code == 200 and content_type.lower().startswith(
-                        "application/pdf"
-                    ):
-                        analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
-                            case_id,
-                            case_ref,
-                            response.content,
-                            case_data.get("board_date"),
-                            order_link,
-                        )
-
-                        if analysis_result.get("success"):
-                            result["analysis_completed"] = True
-                            result[
-                                "analysis_message"
-                            ] = "Order linked and analyzed successfully"
-                            logger.info(
-                                f"Auto-analysis completed for manually linked order: {case_id}"
-                            )
-                        else:
-                            result["analysis_completed"] = False
-                            result["analysis_error"] = analysis_result.get("error")
+                    case_ref = (
+                        f"{case_data.get('case_type')}/"
+                        f"{case_data.get('case_no')}/{case_data.get('case_year')}"
+                    )
+                    analysis = get_auto_order_manager()._analyze_existing_order(
+                        {
+                            "id": case_id,
+                            "case_ref": case_ref,
+                            "order_link": order_link,
+                            "board_date": case_data.get("board_date"),
+                        },
+                        {
+                            "case_id": case_id,
+                            "case_ref": case_ref,
+                            "download_success": True,
+                            "analysis_success": False,
+                            "order_link": order_link,
+                            "analysis_data": None,
+                            "error": None,
+                            "retry_attempts": [],
+                            "has_existing_order": True,
+                        },
+                    )
+                    if analysis.get("analysis_success"):
+                        result["analysis_completed"] = True
+                        result["analysis_message"] = "Order analysed successfully"
                     else:
                         result["analysis_completed"] = False
-                        result["analysis_error"] = "Could not download PDF from link"
-
+                        result["analysis_message"] = analysis.get("error")
             except Exception as analysis_error:
-                logger.error(
-                    f"Auto-analysis failed for manual link {case_id}: {analysis_error}"
+                logger.warning(
+                    "create-link: auto-analysis failed for case_id=%s: %s",
+                    case_id,
+                    analysis_error,
                 )
                 result["analysis_completed"] = False
-                result["analysis_error"] = str(analysis_error)
+                result["analysis_message"] = str(analysis_error)
 
         return JSONResponse(content=result)
     except Exception as e:
@@ -3176,120 +3174,73 @@ async def analyze_single_case(case_id: str, current_user=Depends(get_current_use
                 }
             )
 
-        # Download the PDF from the link and analyze
-        # If stored link fails, fallback to fresh download from court website
+        # Analyse the already-downloaded order.  This delegates to the same
+        # _analyze_existing_order the analysis queue uses, so the per-row
+        # "Analyse" button and POST /jobs/analyze-orders share one code path
+        # (and one definition of "already analysed").
+        manager = get_auto_order_manager()
         try:
-            import requests
-
-            order_link = latest_order_link
-            logger.info(f"Downloading order from: {order_link}")
-
-            try:
-                response = requests.get(order_link, timeout=30)
-
-                # More lenient Content-Type check (handles variations like 'application/pdf;charset=UTF-8')
-                content_type = response.headers.get("Content-Type", "").lower()
-                is_pdf = "application/pdf" in content_type
-
-                # Check if stored link is valid
-                if (
-                    response.status_code != 200
-                    or not is_pdf
-                    or len(response.content) < 100
-                ):
-                    # Stored link failed - fallback to fresh download
-                    reason = f"Stored link failed: status={response.status_code}, content_type={content_type}, size={len(response.content) if response.content else 0}"
-                    logger.warning(
-                        f"⚠️ {reason}. Attempting fresh download from court website..."
-                    )
-
-                    # Prepare case_data for fresh download (same as Download Order button)
-                    case_data_with_refs = {
-                        **case_data,
-                        "id": case_id,
-                        "case_ref": case_ref,
-                    }
-
-                    # Use the same fallback logic as Download Order button
-                    result = {
-                        "case_id": case_id,
-                        "case_ref": case_ref,
-                        "download_success": False,
-                        "analysis_success": False,
-                    }
-                    fresh_result = get_auto_order_manager()._fallback_to_fresh_download(
-                        case_data_with_refs, result, reason
-                    )
-
-                    if fresh_result.get("analysis_success"):
-                        return JSONResponse(
-                            content={
-                                "success": True,
-                                "data": fresh_result.get("analysis_data"),
-                                "message": "Order re-downloaded and analyzed successfully",
-                            }
-                        )
-                    else:
-                        return JSONResponse(
-                            status_code=500,
-                            content={
-                                "error": fresh_result.get(
-                                    "error", "Failed to re-download and analyze order"
-                                )
-                            },
-                        )
-
-                # Stored link is valid - proceed with analysis
-                logger.info(f"Analyzing order for case: {case_ref}")
-
-                analysis_result = (
-                    get_auto_order_manager()._analyze_order_with_date_validation(
-                        case_id,
-                        case_ref,
-                        response.content,
-                        case_data.get("board_date"),
-                        order_link,
-                    )
-                )
-                if analysis_result.get("success") and analysis_result.get("data"):
-                    analysis_result["data"].pop("order_cases", None)
-                return JSONResponse(content=analysis_result)
-
-            except requests.RequestException as req_error:
-                # Network error accessing stored link - try fresh download
-                logger.warning(
-                    f"Network error accessing stored link: {req_error}. Attempting fresh download..."
-                )
-
-                case_data_with_refs = {**case_data, "id": case_id, "case_ref": case_ref}
-
-                result = {
+            analysis = manager._analyze_existing_order(
+                {
+                    "id": case_id,
+                    "case_ref": case_ref,
+                    "order_link": latest_order_link,
+                    "board_date": case_data.get("board_date"),
+                    "order_status": latest_status,
+                },
+                {
                     "case_id": case_id,
                     "case_ref": case_ref,
-                    "download_success": False,
+                    "download_success": True,
                     "analysis_success": False,
-                }
-                fresh_result = get_auto_order_manager()._fallback_to_fresh_download(
-                    case_data_with_refs, result, f"Network error: {str(req_error)}"
-                )
+                    "order_link": latest_order_link,
+                    "analysis_data": None,
+                    "error": None,
+                    "retry_attempts": [],
+                    "has_existing_order": True,
+                },
+            )
 
-                if fresh_result.get("analysis_success"):
-                    return JSONResponse(
-                        content={
-                            "success": True,
-                            "data": fresh_result.get("analysis_data"),
-                            "message": "Order re-downloaded and analyzed successfully",
-                        }
-                    )
-                else:
-                    return JSONResponse(
-                        status_code=500,
-                        content={
-                            "error": fresh_result.get(
-                                "error", "Failed to re-download and analyze order"
-                            )
-                        },
-                    )
+            if analysis.get("analysis_success"):
+                data = dict(analysis.get("analysis_data") or {})
+                data.pop("order_cases", None)
+                return JSONResponse(content={"success": True, "data": data})
+
+            # Stored link is stale or unreadable — re-fetch from the court and
+            # analyse, which is exactly what _process_single_case already does.
+            logger.warning(
+                "analyze-case: stored link unusable for %s (%s). Re-fetching from court.",
+                case_ref,
+                analysis.get("error"),
+            )
+            fresh = manager._process_single_case(
+                {
+                    "id": case_id,
+                    "case_ref": case_ref,
+                    "case_type": case_data.get("case_type"),
+                    "case_no": case_data.get("case_no"),
+                    "case_year": case_data.get("case_year"),
+                    "board_date": case_data.get("board_date"),
+                }
+            )
+            if fresh.get("analysis_success"):
+                fresh_data = dict(fresh.get("analysis_data") or {})
+                fresh_data.pop("order_cases", None)
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "data": fresh_data,
+                        "message": "Order re-downloaded and analysed successfully",
+                    }
+                )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": fresh.get("error")
+                    or analysis.get("error")
+                    or "Failed to analyse order"
+                },
+            )
 
         except Exception as e:
             logger.error(f"Unexpected error in download/analyze: {e}", exc_info=True)
@@ -3360,35 +3311,42 @@ async def upload_manual_order(
         # Read PDF content
         pdf_content = await file.read()
 
-        # Store the PDF (you might want to upload to Firebase Storage or similar)
-        # For now, we'll just analyze it directly
+        manager = get_auto_order_manager()
+        # A manually uploaded order carries no court-API date, so the board date
+        # is the best available order date.
+        order_date_str = manager._normalise_order_date(
+            case_data.get("board_date")
+        ) or datetime.now().strftime("%Y-%m-%d")
 
-        # Create a temporary order link (or upload to storage)
-        order_link = f"manual_upload_{case_id}_{file.filename}"
-
-        # Record manual link in case-details.
-        get_auto_order_manager()._create_order_link(
-            case_id,
-            {
-                "order_link": order_link,
-                "filename": file.filename,
-                "source": "manual_upload",
-            },
+        # Store the PDF permanently so the resulting link is actually viewable.
+        # Falls back to a marker string when GCS is not configured.
+        order_link = (
+            manager._upload_order_to_gcs(pdf_content, case_ref, order_date_str)
+            or f"manual_upload_{case_id}_{file.filename}"
         )
 
-        # AUTOMATICALLY ANALYZE THE UPLOADED ORDER
-        analysis_result = get_auto_order_manager()._analyze_order_with_date_validation(
-            case_id, case_ref, pdf_content, case_data.get("board_date"), order_link
+        # Analyse via the same path the automatic pipeline uses, which also
+        # records the lifecycle transitions and writes the case-details order.
+        analysis_result = manager._analyze_order_with_api_metadata(
+            case_id=case_id,
+            case_ref=case_ref,
+            pdf_content=pdf_content,
+            api_order_date=order_date_str,
+            api_petitioner="",
+            api_respondent="",
+            order_link=order_link,
+            board_date=case_data.get("board_date"),
         )
 
         if analysis_result.get("success"):
-            # Create search index
-            try:
-                get_auto_order_manager()._create_search_index_entry(
-                    case_id, case_data, analysis_result["data"]
-                )
-            except Exception as index_error:
-                logger.warning(f"Failed to create search index: {index_error}")
+            # Propagate the link/category back to daily-boards, as the
+            # automatic path does.
+            manager._update_board_entries_for_case_date(
+                case_ref,
+                order_date_str,
+                order_link,
+                (analysis_result.get("data") or {}).get("order_category"),
+            )
 
             return JSONResponse(
                 content={
@@ -5743,273 +5701,6 @@ async def delete_bill(bill_id: str, current_user=Depends(get_current_user)):
         logger.error(f"Error deleting bill: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to delete bill: {str(e)}"}
-        )
-
-
-@app.get("/auto-orders/search", tags=["Auto Order Management"])
-async def search_orders(
-    petitioner_search: str = Query(None, description="Search in petitioner names"),
-    respondent_search: str = Query(None, description="Search in respondent names"),
-    case_type: str = Query(None, description="Filter by case type"),
-    case_year: str = Query(None, description="Filter by case year"),
-    order_category: str = Query(None, description="Filter by order category"),
-    limit: int = Query(100, description="Maximum results to return"),
-    current_user=Depends(get_current_user),
-):
-    """Search orders with petitioner, respondent, and order links"""
-    try:
-        search_params: Dict[str, Any] = {}
-        search_params: Dict[str, Any] = {}
-
-        if petitioner_search:
-            search_params["petitioner_search"] = petitioner_search
-        if respondent_search:
-            search_params["respondent_search"] = respondent_search
-        if case_type:
-            search_params["case_type"] = case_type
-        if case_year:
-            search_params["case_year"] = case_year
-        if order_category:
-            search_params["order_category"] = order_category
-
-        search_params["limit"] = limit
-
-        result = get_auto_order_manager().search_orders(search_params)
-
-        if result.get("success"):
-            return JSONResponse(content=result)
-        else:
-            return JSONResponse(
-                status_code=500, content={"error": result.get("error", "Unknown error")}
-            )
-
-    except Exception as e:
-        logger.error(f"Error in search-orders: {e}")
-        return JSONResponse(
-            status_code=500, content={"error": f"Failed to search orders: {str(e)}"}
-        )
-
-
-@app.get("/auto-orders/search-index-stats", tags=["Auto Order Management"])
-async def get_search_index_stats(current_user=Depends(get_current_user)):
-    """Get statistics about the search index"""
-    try:
-        db = firestore.client()
-
-        # Count total indexed orders
-        search_docs = list(db.collection("order-search-index").stream())
-        total_indexed = len(search_docs)
-
-        # Count by categories
-        categories = {}
-        case_types = {}
-        years = {}
-
-        for doc in search_docs:
-            data = doc.to_dict()
-
-            # Count categories
-            category = data.get("order_category", "UNKNOWN")
-            categories[category] = categories.get(category, 0) + 1
-
-            # Count case types
-            case_type = data.get("case_type", "UNKNOWN")
-            case_types[case_type] = case_types.get(case_type, 0) + 1
-
-            # Count years
-            year = data.get("case_year", "UNKNOWN")
-            years[year] = years.get(year, 0) + 1
-
-        return JSONResponse(
-            content={
-                "total_indexed_orders": total_indexed,
-                "category_distribution": categories,
-                "case_type_distribution": case_types,
-                "year_distribution": years,
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting search index stats: {e}")
-        return JSONResponse(
-            status_code=500, content={"error": f"Failed to get search stats: {str(e)}"}
-        )
-
-
-@app.post("/auto-orders/rebuild-search-index", tags=["Auto Order Management"])
-async def rebuild_search_index(
-    limit: int = Query(100, description="Number of cases to rebuild"),
-    current_user=Depends(get_current_user),
-):
-    """Rebuild search index for analyzed orders to pick up flattened data structure"""
-    try:
-        db = firestore.client()
-
-        query = db.collection("daily-boards").limit(limit * 3)
-
-        docs = query.stream()
-
-        rebuilt_count = 0
-        errors = []
-
-        for doc in docs:
-            try:
-                case_id = doc.id
-                case_data = doc.to_dict()
-                case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-                case_details = (
-                    get_auto_order_manager().case_store.get_case_details(case_ref) or {}
-                )
-                if case_details.get("latest_order_status") != "analysed":
-                    continue
-                orders = case_details.get("orders") or []
-                latest_order = (
-                    orders[-1] if orders and isinstance(orders[-1], dict) else {}
-                )
-
-                # Rebuild search index entry
-                get_auto_order_manager()._create_search_index_entry(
-                    case_id,
-                    case_data,
-                    {
-                        "order_petitioner": case_details.get("petitioner"),
-                        "order_respondent": case_details.get("respondent"),
-                        "government_pleader": case_details.get(
-                            "government_pleader", []
-                        ),
-                        "order_category": case_details.get("latest_order_category")
-                        or latest_order.get("order_category"),
-                        "order_category_confidence": latest_order.get(
-                            "order_category_confidence"
-                        ),
-                        "order_date": case_details.get("latest_order_date")
-                        or latest_order.get("order_date"),
-                        "order_date_validation": latest_order.get(
-                            "order_date_validation", {}
-                        ),
-                        "order_link": case_details.get("latest_order_link")
-                        or latest_order.get("order_link"),
-                        "order_analysis_timestamp": latest_order.get(
-                            "order_analysis_timestamp"
-                        ),
-                    },
-                )
-                rebuilt_count += 1
-                if rebuilt_count >= limit:
-                    break
-
-            except Exception as e:
-                logger.error(f"Error rebuilding search index for {doc.id}: {e}")
-                errors.append({"case_id": doc.id, "error": str(e)})
-
-        return JSONResponse(
-            content={
-                "success": True,
-                "rebuilt_count": rebuilt_count,
-                "errors": errors,
-                "message": f"Rebuilt search index for {rebuilt_count} cases",
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error rebuilding search index: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to rebuild search index: {str(e)}"},
-        )
-
-
-@app.get("/auto-orders/tabular-data", tags=["Auto Order Management"])
-async def get_order_tabular_data(
-    petitioner_search: str = Query(None),
-    respondent_search: str = Query(None),
-    case_type: str = Query(None),
-    case_year: str = Query(None),
-    order_category: str = Query(None),
-    date_validation_valid: bool = Query(None),
-    limit: int = Query(100, le=1000),
-    current_user=Depends(get_current_user),
-):
-    """Get structured tabular data from order-search-index."""
-    try:
-        db = firestore.client()
-        query_ref = db.collection("order-search-index")
-
-        # Apply filters - only filter on indexed fields
-        if order_category:
-            query_ref = query_ref.where("order_category", "==", order_category)
-        if date_validation_valid is not None:
-            query_ref = query_ref.where(
-                "date_validation_valid", "==", date_validation_valid
-            )
-
-        # Execute query with limit
-        docs = query_ref.limit(limit).stream()
-
-        results = []
-        for doc in docs:
-            data = doc.to_dict() or {}
-
-            # Apply text-based filters (post-query)
-            if petitioner_search:
-                petitioner_text = str(data.get("petitioner") or "").lower()
-                if petitioner_search.lower() not in petitioner_text:
-                    continue
-
-            if respondent_search:
-                respondent_text = str(data.get("respondent") or "").lower()
-                if respondent_search.lower() not in respondent_text:
-                    continue
-
-            # Apply additional filters (post-query)
-            if case_type and data.get("case_type") != case_type:
-                continue
-            if case_year and str(data.get("case_year")) != str(case_year):
-                continue
-
-            result = {
-                "case_id": data.get("case_id"),
-                "case_ref": data.get("case_ref"),
-                "case_type": data.get("case_type"),
-                "case_number": data.get("case_number"),
-                "case_year": data.get("case_year"),
-                "board_date": data.get("board_date"),
-                "order_date": data.get("order_date"),
-                "order_category": data.get("order_category"),
-                "category_confidence": data.get("order_category_confidence"),
-                "petitioner": data.get("petitioner", ""),
-                "respondent": data.get("respondent", ""),
-                "agp_names": data.get("agp_names", []),
-                "key_phrases": data.get("key_phrases", []),
-                "date_validation": {"valid": data.get("date_validation_valid", False)},
-                "order_link": data.get("order_link"),
-                "analysis_timestamp": data.get("order_analysis_timestamp"),
-                "created_at": data.get("created_at"),
-            }
-
-            results.append(result)
-
-        return JSONResponse(
-            content={
-                "success": True,
-                "results": results,
-                "count": len(results),
-                "filters_applied": {
-                    "petitioner_search": petitioner_search,
-                    "respondent_search": respondent_search,
-                    "case_type": case_type,
-                    "case_year": case_year,
-                    "order_category": order_category,
-                    "date_validation_valid": date_validation_valid,
-                    "limit": limit,
-                },
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting tabular data: {e}")
-        return JSONResponse(
-            status_code=500, content={"error": f"Failed to get tabular data: {str(e)}"}
         )
 
 

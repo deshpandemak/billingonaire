@@ -57,7 +57,6 @@ def test_auto_order_manager_initialization():
         assert manager is not None
         assert manager.boards_collection == "daily-boards"
         # orders_collection removed - order status now consolidated in daily-boards
-        assert manager.search_index_collection == "order-search-index"
 
 
 # ---------------------------------------------------------------------------
@@ -829,3 +828,141 @@ class TestBoardDateQueryCoercion:
         assert AutoOrderManager._to_board_date_query_value(
             "2026-07-24 00:00:00"
         ) == datetime(2026, 7, 24)
+
+
+class TestAnalyzeExistingOrder:
+    """`main._run_case_analysis_job` (main.py:620) calls
+    `_analyze_existing_order`, which did not exist. Every job queued by
+    POST /jobs/analyze-orders therefore raised AttributeError inside the
+    worker, got swallowed, and was marked analysis_failed_retryable — the
+    whole analysis queue was a silent no-op.
+    """
+
+    def _template(self):
+        return {
+            "case_id": "board-1",
+            "case_ref": "WP/123/2025",
+            "download_success": True,
+            "analysis_success": False,
+            "order_link": "https://example.test/o.pdf",
+            "analysis_data": None,
+            "error": None,
+            "retry_attempts": [],
+            "has_existing_order": True,
+        }
+
+    def _case(self, **over):
+        base = {
+            "id": "board-1",
+            "case_ref": "WP/123/2025",
+            "order_link": "https://example.test/o.pdf",
+            "board_date": "2025-03-01",
+            "order_status": "linked",
+        }
+        base.update(over)
+        return base
+
+    def test_method_exists_on_the_manager(self, auto_order_manager):
+        """Regression guard for the AttributeError itself."""
+        assert callable(getattr(auto_order_manager, "_analyze_existing_order", None))
+
+    def test_happy_path_analyses_and_updates_boards(self, auto_order_manager):
+        auto_order_manager._get_case_order_context = Mock(
+            return_value={
+                "latest_order": {
+                    "order_date": "2025-03-01",
+                    "petitioner": "P Ltd",
+                    "respondent": "State",
+                }
+            }
+        )
+        auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+        auto_order_manager._analyze_order_with_api_metadata = Mock(
+            return_value={"success": True, "data": {"order_category": "ADJOURNED"}}
+        )
+        auto_order_manager._update_board_entries_for_case_date = Mock(return_value=2)
+
+        resp = Mock(
+            status_code=200,
+            content=b"%PDF-1.4 x",
+            headers={"Content-Type": "application/pdf"},
+        )
+        with patch(
+            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+        ):
+            result = auto_order_manager._analyze_existing_order(
+                self._case(), self._template()
+            )
+
+        assert result["analysis_success"] is True
+        assert result["analysis_data"]["order_category"] == "ADJOURNED"
+        # party metadata from the stored order entry must be passed through
+        kwargs = auto_order_manager._analyze_order_with_api_metadata.call_args.kwargs
+        assert kwargs["api_order_date"] == "2025-03-01"
+        assert kwargs["api_petitioner"] == "P Ltd"
+        # daily-boards must be updated for the case+date
+        auto_order_manager._update_board_entries_for_case_date.assert_called_once()
+
+    def test_already_analysed_is_idempotent_and_does_not_refetch(
+        self, auto_order_manager
+    ):
+        """Re-queues and the fetch worker's auto-retry must not re-download."""
+        auto_order_manager._get_case_order_context = Mock(
+            return_value={"latest_order": {"order_date": "2025-03-01"}}
+        )
+        auto_order_manager._is_order_already_analysed = Mock(return_value=True)
+        auto_order_manager._get_analysed_order_for_date = Mock(
+            return_value={"order_category": "DISPOSED_OFF"}
+        )
+
+        with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+            result = auto_order_manager._analyze_existing_order(
+                self._case(), self._template()
+            )
+
+        assert result["analysis_success"] is True
+        assert result["analysis_data"]["order_category"] == "DISPOSED_OFF"
+        mock_get.assert_not_called()
+
+    def test_missing_order_link_reports_error(self, auto_order_manager):
+        result = auto_order_manager._analyze_existing_order(
+            self._case(order_link=None), self._template()
+        )
+        assert result["analysis_success"] is False
+        assert "No order link" in result["error"]
+
+    def test_non_pdf_response_reports_error(self, auto_order_manager):
+        auto_order_manager._get_case_order_context = Mock(
+            return_value={"latest_order": {"order_date": "2025-03-01"}}
+        )
+        auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+        resp = Mock(
+            status_code=200,
+            content=b"<html>nope",
+            headers={"Content-Type": "text/html"},
+        )
+        with patch(
+            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+        ):
+            result = auto_order_manager._analyze_existing_order(
+                self._case(), self._template()
+            )
+        assert result["analysis_success"] is False
+        assert "did not return a PDF" in result["error"]
+
+    def test_download_exception_is_caught(self, auto_order_manager):
+        import requests as _rq
+
+        auto_order_manager._get_case_order_context = Mock(
+            return_value={"latest_order": {"order_date": "2025-03-01"}}
+        )
+        auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+        with patch(
+            "billingonaire_backend.AutoOrderManager.requests.get",
+            side_effect=_rq.exceptions.ConnectionError("boom"),
+        ):
+            result = auto_order_manager._analyze_existing_order(
+                self._case(), self._template()
+            )
+        assert result["analysis_success"] is False
+        assert "Could not download" in result["error"]

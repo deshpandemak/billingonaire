@@ -48,7 +48,6 @@ class AutoOrderManager:
 
         # Collections - consolidated order status into daily-boards
         self.boards_collection = "daily-boards"
-        self.search_index_collection = "order-search-index"
 
         # GCS bucket for permanent PDF storage (empty string → GCS upload disabled)
         self._gcs_bucket_name: str = os.getenv("ORDER_PDF_BUCKET", "")
@@ -756,6 +755,118 @@ class AutoOrderManager:
             )
             return {"success": False, "error": str(exc)}
 
+    def _analyze_existing_order(
+        self,
+        case_data: Dict[str, Any],
+        result_template: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Analyse an order whose PDF has already been fetched and linked.
+
+        This is the analysis-queue counterpart to
+        ``_process_all_orders_from_api``: the fetch stage already ran and stored
+        an ``order_link``, so here we download that single PDF and run the
+        analyser over it instead of re-querying the court for the order list.
+
+        Called by ``main._run_case_analysis_job`` for every job on the analysis
+        queue (i.e. everything queued by ``POST /jobs/analyze-orders``).
+
+        The order date and party names are taken from the stored order entry
+        written by the fetch stage; they came from the court API and are more
+        reliable than re-deriving them from the PDF text.  Analysis, lifecycle
+        transitions and the case-details write are all delegated to
+        ``_analyze_order_with_api_metadata`` so there is exactly one code path
+        that records an analysed order.
+        """
+        result = dict(result_template)
+        case_ref = case_data.get("case_ref") or ""
+        case_id = case_data.get("id") or ""
+        order_link = case_data.get("order_link")
+        board_date = case_data.get("board_date")
+
+        if not order_link:
+            result["error"] = "No order link available for analysis"
+            return result
+
+        # Recover the metadata the fetch stage stored alongside the link.
+        latest_order = self._get_case_order_context(case_ref).get("latest_order") or {}
+        order_date_str = self._normalise_order_date(
+            latest_order.get("order_date")
+        ) or self._normalise_order_date(board_date)
+        if not order_date_str:
+            result["error"] = "Could not determine an order date for analysis"
+            return result
+
+        # Nothing to do if this date was already analysed — keeps re-queues and
+        # the fetch worker's auto-retry idempotent.
+        if self._is_order_already_analysed(case_ref, order_date_str):
+            logger.info(
+                "_analyze_existing_order: case_ref=%s date=%s already analysed, skipping",
+                case_ref,
+                order_date_str,
+            )
+            existing = self._get_analysed_order_for_date(case_ref, order_date_str) or {}
+            result["analysis_success"] = True
+            result["analysis_data"] = existing
+            return result
+
+        try:
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " "AppleWebKit/537.36"
+                )
+            }
+            response = requests.get(order_link, headers=headers, timeout=30)
+            content_type = response.headers.get("Content-Type", "")
+            pdf_content = response.content or b""
+            is_pdf = (
+                "application/pdf" in content_type.lower()
+                or pdf_content.startswith(b"%PDF")
+            )
+            if response.status_code != 200 or not is_pdf:
+                result["error"] = (
+                    f"Order link did not return a PDF "
+                    f"(HTTP {response.status_code}, {content_type or 'unknown type'})"
+                )
+                return result
+        except requests.exceptions.RequestException as exc:
+            result["error"] = f"Could not download stored order PDF: {exc}"
+            return result
+
+        analysis = self._analyze_order_with_api_metadata(
+            case_id=case_id,
+            case_ref=case_ref,
+            pdf_content=pdf_content,
+            api_order_date=order_date_str,
+            api_petitioner=latest_order.get("petitioner") or "",
+            api_respondent=latest_order.get("respondent") or "",
+            order_link=order_link,
+            board_date=board_date,
+        )
+
+        if not analysis.get("success"):
+            result["error"] = analysis.get("error") or "Order analysis failed"
+            return result
+
+        order_analysis = analysis.get("data") or {}
+        # Propagate order_link / order_category back to every daily-boards row
+        # for this case+date, exactly as the fetch path does.
+        self._update_board_entries_for_case_date(
+            case_ref,
+            order_date_str,
+            order_link,
+            order_analysis.get("order_category"),
+        )
+
+        result["analysis_success"] = True
+        result["analysis_data"] = order_analysis
+        logger.info(
+            "_analyze_existing_order: analysed case_ref=%s date=%s category=%s",
+            case_ref,
+            order_date_str,
+            order_analysis.get("order_category"),
+        )
+        return result
+
     def _process_all_orders_from_api(
         self,
         case_ref: str,
@@ -1150,52 +1261,3 @@ class AutoOrderManager:
         )
         result["error"] = error_msg
         return result
-
-    def search_orders(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Search orders with optimized query
-
-        Args:
-            search_params: Dictionary with search criteria
-
-        Returns:
-            Search results with petitioner, respondent, and order links
-        """
-        try:
-            query = self.db.collection(self.search_index_collection)
-
-            # Apply filters
-            if search_params.get("case_type"):
-                query = query.where("case_type", "==", search_params["case_type"])
-
-            if search_params.get("case_year"):
-                query = query.where("case_year", "==", search_params["case_year"])
-
-            if search_params.get("order_category"):
-                query = query.where(
-                    "order_category", "==", search_params["order_category"]
-                )
-
-            # Text search (basic implementation)
-            results = []
-            for doc in query.limit(search_params.get("limit", 100)).stream():
-                data = doc.to_dict()
-
-                # Apply text filters
-                if search_params.get("petitioner_search"):
-                    search_text = search_params["petitioner_search"].lower()
-                    if search_text not in data.get("petitioner_text", ""):
-                        continue
-
-                if search_params.get("respondent_search"):
-                    search_text = search_params["respondent_search"].lower()
-                    if search_text not in data.get("respondent_text", ""):
-                        continue
-
-                results.append(data)
-
-            return {"success": True, "results": results, "total_found": len(results)}
-
-        except Exception as e:
-            logger.error(f"Error searching orders: {e}")
-            return {"success": False, "error": str(e)}

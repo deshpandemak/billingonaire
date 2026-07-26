@@ -103,41 +103,6 @@ const AdminOrderManagement = () => {
         return () => clearInterval(interval);
     }, [currentUser, loadOverview, loadQueueStatus]);
 
-    const rebuildSearchIndex = async () => {
-        try {
-            setProcessing(true);
-            setMessage(null);
-
-            const idToken = await currentUser.getIdToken();
-
-            const response = await fetch(`${API_URL}/auto-orders/rebuild-search-index?limit=500`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                setMessage({
-                    type: 'success',
-                    text: `✅ Search index rebuilt! ${data.rebuilt_count} cases updated.`
-                });
-                loadOverview();
-            } else {
-                setMessage({
-                    type: 'danger',
-                    text: data.error || 'Rebuild failed'
-                });
-            }
-        } catch (error) {
-            setMessage({ type: 'danger', text: `Error rebuilding search index: ${error.message}` });
-        } finally {
-            setProcessing(false);
-        }
-    };
-
     const startBulkProcessing = async () => {
         try {
             setProcessing(true);
@@ -516,27 +481,6 @@ const AdminOrderManagement = () => {
                                                 </>
                                             ) : (
                                                 'Start Bulk Processing'
-                                            )}
-                                        </Button>
-                                        <Button
-                                            variant="warning"
-                                            size="lg"
-                                            onClick={() => requireConfirm(
-                                            'Rebuild Search Index',
-                                            'Rebuild search index for all analyzed orders? This updates petitioner/respondent data in search results.',
-                                            rebuildSearchIndex
-                                        )}
-                                            disabled={processing}
-                                            className="me-2"
-                                            title="Rebuild search index to update petitioner/respondent data"
-                                        >
-                                            {processing ? (
-                                                <>
-                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                                    Rebuilding...
-                                                </>
-                                            ) : (
-                                                'Rebuild Search Index'
                                             )}
                                         </Button>
                                         <Button
