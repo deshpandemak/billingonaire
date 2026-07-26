@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table, Modal } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table, Modal, Nav } from 'react-bootstrap';
 import { auth } from './lib/firebase';
+import ManualReviewQueue from './components/ManualReviewQueue';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -22,6 +23,13 @@ const AdminOrderManagement = () => {
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
     const [confirmState, setConfirmState] = useState({ show: false, title: '', body: '', onConfirm: null });
+    // /admin/review now redirects here with ?tab=review.
+    const [activeTab, setActiveTab] = useState(
+        () => (new URLSearchParams(window.location.search).get('tab') === 'review' ? 'review' : 'pipeline')
+    );
+    const reviewCount = queueStatus?.review_queue_count
+        ?? queueStatus?.status_counts?.manual_review_required
+        ?? 0;
 
     const requireConfirm = (title, body, onConfirm) => {
         setConfirmState({ show: true, title, body, onConfirm });
@@ -253,13 +261,31 @@ const AdminOrderManagement = () => {
 
     return (
         <Container fluid className="py-4">
-            <Row className="mb-4">
+            <Row className="mb-3">
                 <Col>
-                    <h2 className="mb-0">Admin Order Management</h2>
-                    <p className="text-muted">Manage automatic order processing for all cases</p>
+                    <h2 className="mb-0">Pipeline &amp; Review</h2>
+                    <p className="text-muted">Order processing across all cases, and cases the system could not decide on its own.</p>
                 </Col>
             </Row>
 
+            {/* Review Queue used to be a separate nav destination. It is one
+                tab here so all operator work lives behind a single entry. */}
+            <Nav variant="tabs" className="mb-4" activeKey={activeTab} onSelect={(k) => setActiveTab(k || 'pipeline')}>
+                <Nav.Item>
+                    <Nav.Link eventKey="pipeline">Pipeline</Nav.Link>
+                </Nav.Item>
+                <Nav.Item>
+                    <Nav.Link eventKey="review">
+                        Needs Review
+                        {reviewCount > 0 && <Badge bg="danger" className="ms-2">{reviewCount}</Badge>}
+                    </Nav.Link>
+                </Nav.Item>
+            </Nav>
+
+            {activeTab === 'review' && <ManualReviewQueue />}
+
+            {activeTab === 'pipeline' && (
+            <>
             {message && (
                 <Row className="mb-3">
                     <Col>
@@ -509,6 +535,8 @@ const AdminOrderManagement = () => {
                     </Card>
                 </Col>
             </Row>
+            </>
+            )}
             {/* Confirmation Modal */}
             <Modal
                 show={confirmState.show}

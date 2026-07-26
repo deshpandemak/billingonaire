@@ -19,7 +19,6 @@ const BillGeneration = () => {
     const [bulkEditMode, setBulkEditMode] = useState(false);
     const [selectedRows, setSelectedRows] = useState(new Set());
     const [bulkFeeValue, setBulkFeeValue] = useState('');
-    const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStatus, setProcessingStatus] = useState('');
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [isAdmin, setIsAdmin] = useState(false);
@@ -382,50 +381,6 @@ const BillGeneration = () => {
         return stringField;
     };
 
-    const exportToExcel = () => {
-        if (!billData?.bill_entries?.length) return;
-
-        // Create CSV content with proper escaping (matching Excel format)
-        const headers = ['SR. NO.', 'DATE', 'CASE TYPE', 'CASE NO', 'CASE YEAR', 'RESULTS', 'PARTIES NAME', 'FEES (RS.)'];
-        const totalFees = billData.bill_entries.reduce((sum, entry) => sum + Number(entry.fees_rs || 0), 0);
-
-        const csvContent = [
-            headers.map(escapeCSVField).join(','),
-            ...billData.bill_entries.map((entry, index) => [
-                escapeCSVField(index + 1),
-                escapeCSVField(entry.date),
-                escapeCSVField(entry.case_type || ''),
-                escapeCSVField(entry.case_no || ''),
-                escapeCSVField(entry.case_year || ''),
-                escapeCSVField(entry.results),
-                escapeCSVField(entry.parties_name),
-                escapeCSVField(entry.fees_rs)
-            ].join(',')),
-            '', // Empty line before total
-            [
-                escapeCSVField(''),
-                escapeCSVField(''),
-                escapeCSVField(''),
-                escapeCSVField(''),
-                escapeCSVField(''),
-                escapeCSVField(''),
-                escapeCSVField('TOTAL:'),
-                escapeCSVField(totalFees)
-            ].join(',')
-        ].join('\n');
-
-        // Download file
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `bill_${dateRange.startDate}_to_${dateRange.endDate}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-    };
-
     const getFeeOptions = () => [
         { value: 1250, label: 'ADJOURNED (₹1,250)' },
         { value: 1875, label: 'HEARD & ADJN. (₹1,875)' },
@@ -537,13 +492,6 @@ const BillGeneration = () => {
                                             'Generate Bill Data'
                                         )}
                                     </Button>
-                                </Col>
-                                <Col md={3} className="d-flex align-items-end">
-                                    <div className="d-grid gap-2 w-100">
-                                        <Button variant="outline-primary" size="sm" href="/user-matters/role-config">
-                                            Configure Role
-                                        </Button>
-                                    </div>
                                 </Col>
                             </Row>
 

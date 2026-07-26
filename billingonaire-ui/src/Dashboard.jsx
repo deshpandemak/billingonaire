@@ -764,7 +764,10 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ── 6. Admin / Pipeline Operations (collapsible) ── */}
+      {/* ── 6. Admin / Pipeline Operations (collapsible, admins only) ──
+           isAdmin was computed but never applied, so every user saw the
+           pipeline controls and got permission errors on using them. */}
+      {isAdmin && (
       <div className="dashboard-section">
         <div style={{ border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
           <button
@@ -791,9 +794,9 @@ const Dashboard = () => {
                       {(queueStatus.analysis_queue_size || 0) > 0 && <span><span className="badge bg-info me-1">{queueStatus.analysis_queue_size}</span>Analysis queued</span>}
                     </div>
                     {workersStalled && (
-                      <button className="btn-professional btn-primary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.75rem' }} onClick={restartWorkers} disabled={jobLoading === 'restart'}>
-                        {jobLoading === 'restart' ? 'Restarting…' : 'Restart Workers'}
-                      </button>
+                      <span style={{ fontSize: '0.83rem', color: 'var(--gray-600)' }}>
+                        Use <strong>Restart Workers</strong> below.
+                      </span>
                     )}
                   </div>
                 </div>
@@ -817,29 +820,27 @@ const Dashboard = () => {
 
                     {queueStatus.message && <p style={{ color: 'var(--gray-600)', marginBottom: '1rem', fontSize: '0.875rem' }}>{queueStatus.message}</p>}
 
+                    {/* Worker controls only. Fetch/Analyse are queued from the
+                        board inventory toolbar above, where the dates being
+                        targeted are actually visible — having a second copy
+                        here meant two buttons doing the same thing against an
+                        invisible selection. */}
                     <div className="d-flex flex-wrap gap-2 mb-2">
-                      <button className="btn-professional btn-primary" onClick={queueFetch} disabled={jobLoading === 'fetch'}>{jobLoading === 'fetch' ? 'Queueing…' : 'Queue Fetch Jobs'}</button>
-                      <button className="btn-professional btn-primary" onClick={queueAnalysis} disabled={jobLoading === 'analysis'}>{jobLoading === 'analysis' ? 'Queueing…' : 'Queue Analysis Jobs'}</button>
                       <button className="btn-professional btn-secondary" onClick={restartWorkers} disabled={jobLoading === 'restart'}>{jobLoading === 'restart' ? 'Restarting…' : 'Restart Workers'}</button>
                       <button className="btn-professional btn-secondary" onClick={fetchQueueStatus}>Refresh Status</button>
                     </div>
 
                     <p style={{ color: 'var(--gray-600)', fontSize: '0.83rem' }}>
-                      {selectedCaseRefs.length
-                        ? `Actions will target ${selectedCaseRefs.length} selected case${selectedCaseRefs.length > 1 ? 's' : ''}.`
-                        : selectedDates.length
-                        ? `Actions will target ${selectedDates.length} selected board date${selectedDates.length > 1 ? 's' : ''}.`
-                        : 'Actions will target the active board filter.'}
+                      To queue work, select board dates in <strong>Board Upload Inventory</strong> above and use <strong>Fetch Orders</strong> / <strong>Analyse Orders</strong>.
                     </p>
 
-                    {jobMessage && <p style={{ color: 'var(--success-color)', marginTop: '0.5rem' }}>{jobMessage}</p>}
-                    {jobError   && <p style={{ color: 'var(--error-color)',   marginTop: '0.5rem' }}>{jobError}</p>}
                   </>
                 )}
             </div>
           )}
         </div>
       </div>
+      )}
     </div>
   );
 };

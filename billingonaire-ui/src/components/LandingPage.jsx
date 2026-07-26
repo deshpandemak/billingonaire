@@ -31,6 +31,7 @@ const LandingPage = () => {
                   size="lg"
                   className="btn-professional btn-outline"
                   style={{ minWidth: '150px' }}
+                  onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
                 >
                   Learn More
                 </Button>
@@ -62,7 +63,7 @@ const LandingPage = () => {
       </section>
 
       {/* Features Section */}
-      <section style={{ padding: '4rem 0', backgroundColor: 'var(--gray-50)' }}>
+      <section id="features" style={{ padding: '4rem 0', backgroundColor: 'var(--gray-50)' }}>
         <Container>
           <Row>
             <Col lg={12} className="text-center mb-5">

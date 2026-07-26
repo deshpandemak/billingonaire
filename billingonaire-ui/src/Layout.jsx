@@ -144,8 +144,8 @@ const Layout = ({ children }) => {
                   <Nav.Link as={Link} to="/upload" className={isActive('/upload')} title="Ctrl+U">
                     Upload Files
                   </Nav.Link>
-                  <Nav.Link as={Link} to="/table" className={isActive('/table', '/order-center')}>
-                    Search & Orders
+                  <Nav.Link as={Link} to="/table" className={isActive('/table')}>
+                    Search &amp; Orders
                   </Nav.Link>
                   <Nav.Link as={Link} to="/bills" className={isActive('/bills')} title="Ctrl+B">
                     Bill Generation
@@ -173,19 +173,16 @@ const Layout = ({ children }) => {
                       id="admin-nav-dropdown"
                       className={isActive('/admin/users', '/admin/orders', '/admin/review')}
                     >
-                      <NavDropdown.Item as={Link} to="/admin/users">
-                        User Management
-                      </NavDropdown.Item>
                       <NavDropdown.Item as={Link} to="/admin/orders">
-                        Order Management
-                      </NavDropdown.Item>
-                      <NavDropdown.Item as={Link} to="/admin/review">
-                        Review Queue
+                        Pipeline &amp; Review
                         {reviewCount > 0 && (
                           <span className="badge bg-danger ms-2" style={{ fontSize: '0.65rem' }}>
                             {reviewCount}
                           </span>
                         )}
+                      </NavDropdown.Item>
+                      <NavDropdown.Item as={Link} to="/admin/users">
+                        User Management
                       </NavDropdown.Item>
                     </NavDropdown>
                   )}
@@ -229,6 +226,53 @@ const Layout = ({ children }) => {
   );
 };
 
+// Admin routes were reachable by typing the URL: only the nav entry was
+// hidden, so a non-admin landing on /admin/orders saw the full UI and a wall
+// of failing API calls. Backend authorisation was always enforced; this stops
+// showing controls that cannot work.
+const RequireAdmin = ({ children }) => {
+  const [state, setState] = useState('checking');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const profile = await authenticatedFetchJSON('/user/profile');
+        if (!cancelled) setState(profile?.role === 'admin' ? 'allowed' : 'denied');
+      } catch {
+        if (!cancelled) setState('denied');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (state === 'checking') {
+    return (
+      <Container className="py-5 text-center">
+        <div className="loading-text"><span className="loading" />Checking access…</div>
+      </Container>
+    );
+  }
+  if (state === 'denied') {
+    return (
+      <Container className="py-5">
+        <div className="card-professional">
+          <div className="card-body text-center">
+            <h3 style={{ marginBottom: '0.5rem' }}>Access denied</h3>
+            <p style={{ color: 'var(--gray-600)' }}>
+              This area is for administrators. If you need access, ask your administrator.
+            </p>
+            <Button as={Link} to="/dashboard" className="btn-professional btn-primary">
+              Back to Dashboard
+            </Button>
+          </div>
+        </div>
+      </Container>
+    );
+  }
+  return children;
+};
+
 const App = () => (
   <Router>
     <Layout>
@@ -238,12 +282,12 @@ const App = () => (
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
-        <Route path="/order-center" element={<Navigate to="/table" replace />} />
         <Route path="/bills" element={<BillGeneration />} />
         <Route path="/profile" element={<UserProfile />} />
-        <Route path="/admin/users" element={<AdminUserManagement />} />
-        <Route path="/admin/orders" element={<AdminOrderManagement />} />
-        <Route path="/admin/review" element={<ManualReviewQueue />} />
+        <Route path="/admin/users" element={<RequireAdmin><AdminUserManagement /></RequireAdmin>} />
+        <Route path="/admin/orders" element={<RequireAdmin><AdminOrderManagement /></RequireAdmin>} />
+        {/* Review queue is now a tab inside Order Management. */}
+        <Route path="/admin/review" element={<Navigate to="/admin/orders?tab=review" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
