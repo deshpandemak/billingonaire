@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
+import { AGP_FULL, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -439,7 +440,7 @@ const Dashboard = () => {
       {/* ── Header ── */}
       <div className="dashboard-header">
         <h1 className="dashboard-title">Legal Practice Dashboard</h1>
-        <p className="dashboard-subtitle">Court matters, order analysis and AGP performance at a glance</p>
+        <p className="dashboard-subtitle">Court matters, order analysis and AGP ({AGP_FULL}) performance at a glance</p>
       </div>
 
       {/* ── 1. Summary stat cards ── */}
@@ -662,7 +663,7 @@ const Dashboard = () => {
                 <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
                   <table className="table-professional" style={{ margin: 0 }}>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--gray-50)' }}>
-                      <tr><th>Government Pleader</th><th>Cases</th><th>Share</th></tr>
+                      <tr><th title={GOVERNMENT_ROLES_NOTE}>AGP Name</th><th>Cases</th><th>Share</th></tr>
                     </thead>
                     <tbody>
                       {(distribution.distribution || []).map(r => (

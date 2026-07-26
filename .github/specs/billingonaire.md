@@ -2,13 +2,13 @@
 
 ## Overview
 
-Billingonaire is a professional legal billing management system built for Additional Government Pleaders (AGPs) working in the Indian legal system. It automates the end-to-end workflow from daily court board PDF ingestion through court order retrieval, ML-powered order analysis, and AGP-compliant billing report generation.
+Billingonaire is a professional legal billing management system built for Assistant Government Pleaders (AGPs) working in the Indian legal system. It automates the end-to-end workflow from daily court board PDF ingestion through court order retrieval, ML-powered order analysis, and AGP-compliant billing report generation.
 
 ## Domain Concepts
 
 | Term | Definition |
 |------|-----------|
-| **AGP** | Additional Government Pleader — a government-appointed advocate representing the State in High Court matters |
+| **AGP** | Assistant Government Pleader — a government-appointed advocate representing the State in High Court matters. Distinct from a GP (Government Pleader), an Addl. GP (Additional Government Pleader) and a B'Panel advocate; the daily board lists all four and the parser matches each separately |
 | **Court Board** | A daily PDF published by the High Court listing all matters scheduled for hearing, with assigned AGPs |
 | **Court Order** | A PDF document issued by the court after a hearing, describing the outcome of the matter |
 | **Matter** | A single case reference (e.g. `WP/3373/2024`) appearing on a court board |

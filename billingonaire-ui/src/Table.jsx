@@ -6,7 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { authenticatedFetchJSON, getApiUrl } from './lib/api';
 import './styles/professional.css';
 import CaseDetailModal from './components/CaseDetailModal';
-import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory } from './lib/lifecycleUtils';
+import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory, AGP_FULL, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -272,13 +272,15 @@ const Table = () => {
       }
     },
     {
-      headerName: 'GP in Board',
+      headerName: 'AGP on board',
       field: 'gp_in_board',
       sortable: true,
       filter: 'agTextColumnFilter',
       editable: false,
       width: 220,
-      tooltipValueGetter: () => 'Government Pleader assigned on the daily board',
+      // The cell pools names from every government role the board lists, so the
+      // tooltip must not claim it is one specific role.
+      tooltipValueGetter: () => `Listed on the daily board. ${GOVERNMENT_ROLES_NOTE}`,
       valueGetter: params => {
         const lawyers = [];
         if (params.data?.respondent_lawyer) lawyers.push(params.data.respondent_lawyer);
@@ -289,13 +291,13 @@ const Table = () => {
       }
     },
     {
-      headerName: 'GP in Order',
+      headerName: 'AGP in order',
       field: 'gp_in_order',
       sortable: true,
       filter: 'agTextColumnFilter',
       editable: false,
       width: 220,
-      tooltipValueGetter: () => 'Government Pleader named in the downloaded court order',
+      tooltipValueGetter: () => `Named in the downloaded court order. ${GOVERNMENT_ROLES_NOTE}`,
       valueGetter: params => {
         const gps = [
           ...asArray(params.data?.government_pleader),
@@ -774,11 +776,11 @@ const Table = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">AGP/Advocate Name</label>
+                  <label className="form-label" title={`AGP — ${AGP_FULL}. ${GOVERNMENT_ROLES_NOTE}`}>AGP Name</label>
                   <input
                     type="text"
                     className="form-control"
-                    placeholder="Enter advocate name..."
+                    placeholder="Enter AGP name..."
                     value={searchCriteria.advocateName}
                     onChange={e => setSearchCriteria(sc => ({ ...sc, advocateName: e.target.value }))}
                   />
@@ -986,7 +988,7 @@ const Table = () => {
             {[
               { key: 'startDate',    label: 'From',          value: appliedCriteria.startDate },
               { key: 'endDate',      label: 'To',            value: appliedCriteria.endDate },
-              { key: 'advocateName', label: 'Advocate',      value: appliedCriteria.advocateName },
+              { key: 'advocateName', label: 'AGP',           value: appliedCriteria.advocateName },
               { key: 'caseNumber',   label: 'Case No',       value: appliedCriteria.caseNumber },
               { key: 'caseType',     label: 'Type',          value: appliedCriteria.caseType },
               { key: 'caseYear',     label: 'Year',          value: appliedCriteria.caseYear },

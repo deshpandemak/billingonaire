@@ -451,7 +451,7 @@ const BillGeneration = () => {
                                         <Form.Group>
                                             <Form.Label>
                                                 <span className="badge bg-success me-2">Admin</span>
-                                                Select User (Optional - leave empty for your own cases)
+                                                Select AGP (optional — leave empty for your own cases)
                                             </Form.Label>
                                             <Form.Select
                                                 value={selectedUser}
@@ -896,7 +896,7 @@ const BillGeneration = () => {
                             </tr>
                             {isAdmin && selectedUser && (
                                 <tr>
-                                    <td className="text-muted fw-semibold">Advocate</td>
+                                    <td className="text-muted fw-semibold">AGP</td>
                                     <td>{selectedUser}</td>
                                 </tr>
                             )}

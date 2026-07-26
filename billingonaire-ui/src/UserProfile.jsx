@@ -300,13 +300,13 @@ const UserProfile = () => {
                 <div className="status-item">
                   <strong>Role:</strong>
                   <span className={`role-badge ${profile.role}`}>
-                    {profile.role === 'admin' ? 'Administrator' : 'AGP User'}
+                    {profile.role === 'admin' ? 'Administrator' : 'AGP'}
                   </span>
                 </div>
 
                 {profile.role === 'agp' && profile.agp_name && (
                   <div className="status-item">
-                    <strong>AGP Assignment:</strong>
+                    <strong title="AGP — Assistant Government Pleader">AGP Assignment:</strong>
                     <span>{profile.agp_name}</span>
                   </div>
                 )}

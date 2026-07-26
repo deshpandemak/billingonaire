@@ -1,5 +1,5 @@
 Feature: AGP Bill Generation
-  As an Additional Government Pleader (AGP)
+  As an Assistant Government Pleader (AGP)
   I want to generate billing reports for my court appearances
   So that I can submit accurate fee claims for my work
 

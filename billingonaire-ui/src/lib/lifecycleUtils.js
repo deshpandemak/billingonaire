@@ -178,3 +178,19 @@ export const getOrderCategoryLabel = (value) => {
   const canonical = canonicalOrderCategory(value);
   return canonical ? ORDER_CATEGORY_LABELS[canonical] : (value || '—');
 };
+
+// ─── Terminology ────────────────────────────────────────────────────────────
+// AGP = Assistant Government Pleader. The app previously used six different
+// labels for this person (AGP, GP, Government Pleader, Advocate,
+// AGP/Advocate Name, User) and expanded the acronym exactly once — on the
+// public landing page, where it said "Additional Government Pleader", which is
+// a different role entirely. One term, expanded on first use per screen.
+
+export const AGP_FULL = 'Assistant Government Pleader';
+export const AGP_WITH_EXPANSION = `AGP (${AGP_FULL})`;
+
+// The daily board lists four government roles and the parser matches each
+// separately, but the extracted names are deliberately pooled — you bill for
+// appearing, whatever your designation. Labels must not imply a single role.
+export const GOVERNMENT_ROLES_NOTE =
+  'Includes every government lawyer listed for this matter — GP, Addl. GP, AGP or B’Panel.';

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Table, Badge, Spinner, Alert } from 'react-bootstrap';
 import { authenticatedFetchJSON, getApiUrl } from '../lib/api';
-import { getLifecycleConfig } from '../lib/lifecycleUtils';
+import { getLifecycleConfig, GOVERNMENT_ROLES_NOTE } from '../lib/lifecycleUtils';
 
 const ORDER_CATEGORY_CONFIG = {
   ADJOURNED:           { label: 'Adjourned',         bg: 'warning'  },
@@ -260,10 +260,10 @@ const CaseDetailModal = ({ caseRef, show, onHide }) => {
                 <thead style={{ backgroundColor: 'var(--gray-100)' }}>
                   <tr>
                     <th style={{ whiteSpace: 'nowrap' }}>Date</th>
-                    <th style={{ whiteSpace: 'nowrap' }}>GP in Board</th>
+                    <th style={{ whiteSpace: 'nowrap' }} title={GOVERNMENT_ROLES_NOTE}>AGP on board</th>
                     <th style={{ whiteSpace: 'nowrap' }}>Order PDF</th>
                     <th style={{ whiteSpace: 'nowrap' }}>Order Analysis</th>
-                    <th style={{ whiteSpace: 'nowrap' }}>GP in Order</th>
+                    <th style={{ whiteSpace: 'nowrap' }} title={GOVERNMENT_ROLES_NOTE}>AGP in order</th>
                   </tr>
                 </thead>
                 <tbody>

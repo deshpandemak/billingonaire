@@ -15,7 +15,7 @@ const LandingPage = () => {
                 Professional Legal Billing Management
               </h1>
               <p className="hero-subtitle">
-                Streamline your court matter tracking, AGP assignments, and billing generation with our comprehensive legal practice management system.
+                Streamline your court matter tracking, AGP (Assistant Government Pleader) assignments, and billing generation with our comprehensive legal practice management system.
               </p>
               <div className="d-flex gap-3 flex-wrap">
                 <Button
@@ -113,7 +113,7 @@ const LandingPage = () => {
               </div>
               <h3 className="feature-title">AGP Management</h3>
               <p className="feature-description">
-                Efficiently track and manage Additional Government Pleader assignments with detailed matter categorization and billing tracking.
+                Efficiently track and manage Assistant Government Pleader (AGP) assignments with detailed matter categorization and billing tracking.
               </p>
             </div>
 

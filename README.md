@@ -1,6 +1,6 @@
 # Billingonaire - Legal Billing Management System
 
-A professional legal billing management system designed for the legal industry. Automates processing of daily court board PDF files, extracts AGP assignments, fetches court orders, and generates comprehensive billing analytics.
+A professional legal billing management system designed for the legal industry. Automates processing of daily court board PDF files, extracts AGP (Assistant Government Pleader) assignments, fetches court orders, and generates comprehensive billing analytics.
 
 ## 🚀 Production URLs
 

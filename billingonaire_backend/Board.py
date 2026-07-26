@@ -396,6 +396,17 @@ class Board:
                 petitioner_lawyer,
                 flags=re.IGNORECASE,
             ).strip()
+            # Only the initials (group 1) are kept; the role keyword (group 2 —
+            # GP / ADDL GP / AGP / B'PNL) is deliberately discarded. Billing is
+            # for appearing, whatever the designation, so the names are pooled.
+            #
+            # Read the two fields below literally:
+            #   respondent_lawyer            = the government lawyer printed
+            #                                  FIRST — may be any of the roles.
+            #   additional_respondent_lawyers = THE REMAINING government lawyers.
+            # Neither is tied to the "Additional Government Pleader" role, despite
+            # the unfortunate similarity to UserManager's
+            # `additional_government_pleader` legal category.
             gov_lawyers = [m.group(1).strip() for m in gp_matches]
             return {
                 "file_name": file_name,

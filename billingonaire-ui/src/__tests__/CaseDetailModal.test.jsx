@@ -65,8 +65,8 @@ describe('CaseDetailModal', () => {
   it('renders the appearances table with correct column headers', async () => {
     render(<CaseDetailModal caseRef="WP/3373/2024" show={true} onHide={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText('GP in Board')).toBeTruthy();
-      expect(screen.getByText('GP in Order')).toBeTruthy();
+      expect(screen.getByText('AGP on board')).toBeTruthy();
+      expect(screen.getByText('AGP in order')).toBeTruthy();
       expect(screen.getByText('Order PDF')).toBeTruthy();
       expect(screen.getByText('Order Analysis')).toBeTruthy();
     });

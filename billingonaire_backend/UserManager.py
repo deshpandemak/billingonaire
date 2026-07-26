@@ -36,7 +36,9 @@ class UserManager:
         self.legal_category_display_names = {
             "government_pleader": "Government Pleader",
             "additional_government_pleader": "Additional Government Pleader",
-            "assistant_government_pleader": "Assistant to Government Pleader",
+            # "Assistant Government Pleader" is a designation in its own right,
+            # not "assistant to the Government Pleader".
+            "assistant_government_pleader": "Assistant Government Pleader",
             "b_panel_advocate": "B Panel Advocate",
             "advocate_general": "Advocate General",
         }

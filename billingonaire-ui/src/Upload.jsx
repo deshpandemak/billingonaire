@@ -148,7 +148,7 @@ const Upload = () => {
       <div className="dashboard-header">
         <h1 className="dashboard-title">Upload Board Files</h1>
         <p className="dashboard-subtitle">
-          Upload daily board PDF files to extract case information and AGP assignments
+          Upload daily board PDF files to extract case information and AGP (Assistant Government Pleader) assignments
         </p>
       </div>
 
