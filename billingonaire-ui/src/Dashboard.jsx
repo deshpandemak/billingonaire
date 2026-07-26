@@ -353,6 +353,25 @@ const Dashboard = () => {
     finally { setJobLoading(''); }
   }, [boardLimit, fetchQueueStatus, selectedCaseRefs, selectedDates]);
 
+  // Re-queue everything the pipeline could not finish. Targets the stuck cases
+  // themselves, so the user does not have to first work out which dates they
+  // are on and select them.
+  const retryStuck = useCallback(async () => {
+    setJobLoading('retry'); setJobError(''); setJobMessage('');
+    try {
+      const r = await authenticatedFetchJSON('/jobs/retry-failed', {
+        method: 'POST',
+        body: JSON.stringify({ limit: 200 }),
+      });
+      const n = (r.fetch_queued || 0) + (r.analysis_queued || 0);
+      setJobMessage(n > 0
+        ? `Retrying ${n} case${n > 1 ? 's' : ''}. This runs in the background — check back shortly.`
+        : 'Nothing could be retried automatically. These cases may need an order PDF uploaded manually.');
+      await fetchQueueStatus();
+    } catch (_) { setJobError('Failed to retry — admin access required.'); }
+    finally { setJobLoading(''); }
+  }, [fetchQueueStatus]);
+
   const restartWorkers = useCallback(async () => {
     setJobLoading('restart'); setJobError(''); setJobMessage('');
     try {
@@ -411,6 +430,8 @@ const Dashboard = () => {
   const workersStalled = !queueLoading && queueStatus.fetch_queue_size > 0 && !queueStatus.fetch_processing_active;
   const totalQueued = (queueStatus.fetch_queue_size || 0) + (queueStatus.analysis_queue_size || 0);
   const pipelineOk = !workersStalled && totalQueued === 0;
+  // Cases the pipeline gave up on — the only thing a user must actually act on.
+  const needsAttention = queueStatus.needs_attention_count || 0;
 
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -540,16 +561,39 @@ const Dashboard = () => {
                   </button>
                   {selectedDates.length > 0 && (
                     <>
-                      <button className="btn-professional btn-primary" onClick={queueFetch} disabled={jobLoading === 'fetch'} title="Queue court PDF fetch for selected dates">
-                        {jobLoading === 'fetch' ? 'Queueing…' : 'Fetch Orders'}
+                      {/* Fetching and analysing already happen automatically
+                          after upload, so these are recovery tools, not steps
+                          in the workflow. They stay available but no longer
+                          look like the thing you are supposed to press. */}
+                      <button className="btn-professional btn-secondary" onClick={queueFetch} disabled={jobLoading === 'fetch'} title="Normally automatic. Use this to re-fetch orders for the selected dates.">
+                        {jobLoading === 'fetch' ? 'Queueing…' : 'Re-fetch orders'}
                       </button>
-                      <button className="btn-professional btn-primary" onClick={queueAnalysis} disabled={jobLoading === 'analysis'} title="Queue order analysis for selected dates">
-                        {jobLoading === 'analysis' ? 'Queueing…' : 'Analyse Orders'}
+                      <button className="btn-professional btn-secondary" onClick={queueAnalysis} disabled={jobLoading === 'analysis'} title="Normally automatic. Use this to re-read orders already downloaded for the selected dates.">
+                        {jobLoading === 'analysis' ? 'Queueing…' : 'Re-read orders'}
                       </button>
                       <span style={{ fontSize: '0.82rem', color: 'var(--gray-600)' }}>{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</span>
                     </>
                   )}
                 </div>
+
+                {/* The one thing that genuinely needs a person. Only appears
+                    when something actually failed. */}
+                {needsAttention > 0 && (
+                  <div className="d-flex flex-wrap gap-2 mb-3" style={{ alignItems: 'center', padding: '0.7rem 0.9rem', background: 'rgba(245,158,11,0.07)', border: '1px solid var(--warning-color, #f59e0b)', borderRadius: 'var(--radius-sm)' }}>
+                    <strong style={{ fontSize: '0.9rem' }}>
+                      ⚠️ {needsAttention} case{needsAttention > 1 ? 's' : ''} could not be completed automatically
+                    </strong>
+                    {/* Retrying calls an admin-only endpoint, so only offer the
+                        button to admins rather than letting it fail. Everyone
+                        still sees that something needs attention and can look. */}
+                    {isAdmin && (
+                      <button className="btn-professional btn-primary" onClick={retryStuck} disabled={jobLoading === 'retry'} style={{ fontSize: '0.82rem', padding: '0.3rem 0.75rem' }}>
+                        {jobLoading === 'retry' ? 'Retrying…' : 'Retry them'}
+                      </button>
+                    )}
+                    <a href="/table?status=attention" style={{ fontSize: '0.82rem' }}>See which cases</a>
+                  </div>
+                )}
 
                 <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
                   <table className="table-professional" style={{ margin: 0 }}>

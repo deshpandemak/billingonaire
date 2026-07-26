@@ -3833,6 +3833,29 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         except Exception:
             review_count = 0
 
+        # Cases the pipeline could not finish on its own.  The fetch/analyse
+        # pipeline runs automatically after upload, so the only thing a user
+        # ever needs to act on is this number — it drives the single "needs
+        # attention" action on the Dashboard.
+        stuck_count = 0
+        try:
+            db = firestore.client()
+            for state in (
+                "fetch_failed_retryable",
+                "fetch_failed_terminal",
+                "analysis_failed_retryable",
+                "analysis_failed_terminal",
+            ):
+                stuck_count += (
+                    db.collection("case-details")
+                    .where("lifecycle_status", "==", state)
+                    .count()
+                    .get()[0][0]
+                    .value
+                )
+        except Exception:
+            stuck_count = 0
+
         result = {
             "fetch_queue_size": queue_size,
             "analysis_queue_size": analysis_queue_size,
@@ -3841,6 +3864,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
                 "analysis_pending_cases", 0
             ),
             "review_queue_count": review_count,
+            "needs_attention_count": stuck_count,
             "distributed_metrics": distributed_metrics,
             "fetch_processing_active": processing_active,
             "analysis_processing_active": analysis_processing_active,

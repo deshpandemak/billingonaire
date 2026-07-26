@@ -11,6 +11,13 @@ import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCate
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 
+// Allow other screens to deep-link into a filtered view, e.g. the Dashboard's
+// "See which cases" link for cases that need attention: /table?status=attention
+const statusFromUrl = () => {
+  const value = new URLSearchParams(window.location.search).get('status') || '';
+  return ['ready', 'working', 'waiting', 'attention'].includes(value) ? value : '';
+};
+
 const Table = () => {
   const [data, setData] = useState([]);
   const [editedData, setEditedData] = useState([]);
@@ -22,7 +29,7 @@ const Table = () => {
     caseType: '',
     caseYear: '',
     caseStage: '',
-    orderStatus: '',
+    orderStatus: statusFromUrl(),
     orderCategory: ''
   });
   const [appliedCriteria, setAppliedCriteria] = useState({
@@ -33,7 +40,7 @@ const Table = () => {
     caseType: '',
     caseYear: '',
     caseStage: '',
-    orderStatus: '',
+    orderStatus: statusFromUrl(),
     orderCategory: ''
   });
   const [searchOpen, setSearchOpen] = useState(false);
@@ -62,15 +69,19 @@ const Table = () => {
     const endDate = today.toISOString().split('T')[0];
     const startDate = thirtyDaysAgo.toISOString().split('T')[0];
 
+    const deepLinkedStatus = statusFromUrl();
     const initialCriteria = {
-      startDate,
-      endDate,
+      // A deep link that asks for a specific status wants every matching case,
+      // not just the last 30 days — otherwise "See which cases" can land on an
+      // empty table while cases are still stuck outside the window.
+      startDate: deepLinkedStatus ? '' : startDate,
+      endDate: deepLinkedStatus ? '' : endDate,
       advocateName: '',
       caseNumber: '',
       caseType: '',
       caseYear: '',
       caseStage: '',
-      orderStatus: '',
+      orderStatus: deepLinkedStatus,
       orderCategory: ''
     };
 
