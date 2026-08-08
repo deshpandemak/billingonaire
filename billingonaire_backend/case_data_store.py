@@ -237,6 +237,7 @@ class CaseDataStore:
         metadata: Optional[Dict] = None,
         force: bool = False,
         event_type: str = "status_transition",
+        extra_fields: Optional[Dict] = None,
     ) -> Dict:
         if not case_ref or not to_status:
             return {"applied": False, "reason": "missing_case_or_status"}
@@ -283,6 +284,10 @@ class CaseDataStore:
         }
         if reason:
             update_data["lifecycle_status_reason"] = reason
+        if extra_fields:
+            for key, value in extra_fields.items():
+                if value is not None:
+                    update_data[key] = value
         if not snapshot.exists:
             update_data["created_at"] = now
 
@@ -300,6 +305,102 @@ class CaseDataStore:
             "from_status": from_status,
             "to_status": to_status,
         }
+
+    @staticmethod
+    def _is_stale(updated_at_iso: Optional[str], stale_after_minutes: int) -> bool:
+        if not updated_at_iso:
+            return True
+        try:
+            updated_at = datetime.fromisoformat(updated_at_iso)
+        except (TypeError, ValueError):
+            return True
+        age_seconds = (datetime.now() - updated_at).total_seconds()
+        return age_seconds >= stale_after_minutes * 60
+
+    def claim_for_processing(
+        self,
+        case_ref: str,
+        to_status: str,
+        from_statuses,
+        stale_after_minutes: Optional[int] = None,
+        reason: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        event_type: str = "claimed_for_processing",
+    ) -> Dict:
+        """Atomically move a case into ``to_status`` iff its current
+        lifecycle_status is one of ``from_statuses``, or -- when
+        ``stale_after_minutes`` is given -- iff it is already at ``to_status``
+        but has sat there past the staleness window (a worker died mid-run
+        without ever reaching a terminal status). Multiple Cloud Run
+        instances can poll and attempt this concurrently for the same case;
+        Firestore's transaction guarantees only one caller ever wins.
+        """
+        if not case_ref or not to_status:
+            return {"applied": False, "reason": "missing_case_or_status"}
+
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        from_statuses = set(from_statuses or [])
+
+        @firestore.transactional
+        def _attempt_claim(transaction):
+            snapshot = case_doc_ref.get(transaction=transaction)
+            existing = snapshot.to_dict() if snapshot.exists else {}
+            current_status = self._current_lifecycle_status(existing)
+
+            eligible = current_status in from_statuses
+            if not eligible and stale_after_minutes is not None:
+                eligible = current_status == to_status and self._is_stale(
+                    existing.get("lifecycle_status_updated_at"),
+                    stale_after_minutes,
+                )
+            if not eligible:
+                return {
+                    "applied": False,
+                    "reason": "not_claimable",
+                    "from_status": current_status,
+                    "to_status": to_status,
+                }
+
+            lifecycle_events = self._append_lifecycle_event(
+                existing.get("lifecycle_events") or [],
+                to_status,
+                event_type,
+                reason,
+                metadata,
+            )
+            now = datetime.now().isoformat()
+            update_data = {
+                "case_ref": case_ref,
+                "lifecycle_status": to_status,
+                "lifecycle_status_updated_at": now,
+                "lifecycle_events": lifecycle_events,
+                "updated_at": now,
+            }
+            if reason:
+                update_data["lifecycle_status_reason"] = reason
+            if not snapshot.exists:
+                update_data["created_at"] = now
+
+            transaction.set(case_doc_ref, update_data, merge=True)
+            return {
+                "applied": True,
+                "from_status": current_status,
+                "to_status": to_status,
+            }
+
+        transaction = self.db.transaction()
+        result = _attempt_claim(transaction)
+        if result["applied"]:
+            logger.info(
+                "Claimed %s for processing: %s -> %s (event_type=%s)",
+                case_ref,
+                result["from_status"],
+                to_status,
+                event_type,
+            )
+        return result
 
     def get_case_timeline(self, case_ref: str, limit: int = 50) -> List[Dict]:
         case_detail = self.get_case_details(case_ref) or {}

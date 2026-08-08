@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from case_data_store import CaseDataStore
 
 
@@ -15,7 +17,7 @@ class FakeDocumentRef:
         self._storage = storage
         self._doc_id = doc_id
 
-    def get(self):
+    def get(self, transaction=None):
         data = self._storage.get(self._doc_id)
         return FakeDocSnapshot(data is not None, data)
 
@@ -30,6 +32,34 @@ class FakeDocumentRef:
             self._storage[self._doc_id] = merged
         else:
             self._storage[self._doc_id] = dict(data)
+
+
+class FakeTransaction:
+    """Minimal stand-in satisfying the protocol firestore.transactional's
+    generated wrapper expects (_clean_up/_begin/_id/_commit/_rollback), plus
+    a .set() that applies synchronously -- adequate for single-threaded
+    tests where "concurrent" claims are simulated as sequential calls."""
+
+    _read_only = False
+    _max_attempts = 1
+
+    def __init__(self):
+        self._id = 1
+
+    def _clean_up(self):
+        pass
+
+    def _begin(self, retry_id=None):
+        pass
+
+    def _commit(self):
+        pass
+
+    def _rollback(self):
+        pass
+
+    def set(self, ref, data, merge=False):
+        ref.set(data, merge=merge)
 
 
 class FakeQuery:
@@ -74,6 +104,9 @@ class FakeFirestore:
 
     def get_all(self, doc_refs):
         return [ref.get() for ref in doc_refs]
+
+    def transaction(self):
+        return FakeTransaction()
 
 
 def test_upsert_from_board_entry_merges_pleaders_and_board_ids():
@@ -283,6 +316,85 @@ def test_fetch_in_progress_can_reach_analysed_directly():
 
     transition = store.transition_lifecycle("WP/14/2026", "analysed")
     assert transition["applied"] is True
+
+
+def test_claim_for_processing_succeeds_once_then_fails_on_replay():
+    """Simulates two Cloud Run instances racing to claim the same
+    fetch_queued case: only the first claim (sequential, since the fake is
+    single-threaded) applies; a second attempt against the now-changed
+    status must be rejected, not double-processed."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    db.collection("case-details").document("WP-20-2026").set(
+        {
+            "case_ref": "WP/20/2026",
+            "lifecycle_status": "fetch_queued",
+            "lifecycle_events": [],
+        }
+    )
+
+    first = store.claim_for_processing(
+        "WP/20/2026", "fetch_in_progress", from_statuses={"fetch_queued"}
+    )
+    assert first["applied"] is True
+    assert first["from_status"] == "fetch_queued"
+
+    second = store.claim_for_processing(
+        "WP/20/2026", "fetch_in_progress", from_statuses={"fetch_queued"}
+    )
+    assert second["applied"] is False
+    assert second["reason"] == "not_claimable"
+
+    updated_case = db.get_collection("case-details")["WP-20-2026"]
+    assert updated_case["lifecycle_status"] == "fetch_in_progress"
+
+
+def test_claim_for_processing_reclaims_stale_in_progress_case():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    stale_timestamp = (datetime.now() - timedelta(minutes=30)).isoformat()
+    db.collection("case-details").document("WP-21-2026").set(
+        {
+            "case_ref": "WP/21/2026",
+            "lifecycle_status": "fetch_in_progress",
+            "lifecycle_status_updated_at": stale_timestamp,
+            "lifecycle_events": [],
+        }
+    )
+
+    claim = store.claim_for_processing(
+        "WP/21/2026",
+        "fetch_in_progress",
+        from_statuses={"fetch_queued"},
+        stale_after_minutes=10,
+    )
+
+    assert claim["applied"] is True
+    assert claim["from_status"] == "fetch_in_progress"
+
+
+def test_claim_for_processing_does_not_reclaim_fresh_in_progress_case():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    fresh_timestamp = (datetime.now() - timedelta(minutes=1)).isoformat()
+    db.collection("case-details").document("WP-22-2026").set(
+        {
+            "case_ref": "WP/22/2026",
+            "lifecycle_status": "fetch_in_progress",
+            "lifecycle_status_updated_at": fresh_timestamp,
+            "lifecycle_events": [],
+        }
+    )
+
+    claim = store.claim_for_processing(
+        "WP/22/2026",
+        "fetch_in_progress",
+        from_statuses={"fetch_queued"},
+        stale_after_minutes=10,
+    )
+
+    assert claim["applied"] is False
+    assert claim["reason"] == "not_claimable"
 
 
 def test_get_case_timeline_respects_limit():

@@ -4,7 +4,6 @@ import logging
 import os
 import posixpath
 import sys
-from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -245,13 +244,15 @@ def get_user_matter_matcher():
     return user_matter_matcher
 
 
-# In-memory queue for async order processing
-order_processing_queue: Queue[Any] = Queue()
-order_processing_queue: Queue[Any] = Queue()
-processing_active = False
-analysis_processing_queue: Queue[Any] = Queue()
-analysis_processing_queue: Queue[Any] = Queue()
-analysis_processing_active = False
+# Order fetch/analysis work is tracked entirely in Firestore (case-details.
+# lifecycle_status) rather than an in-memory queue: Cloud Run runs multiple
+# instances and scales to zero, so an asyncio.Queue is invisible across
+# instances and is silently lost whenever an idle instance scales down.
+# Every instance instead runs fetch_poll_loop/analysis_poll_loop (started at
+# app startup, see the "startup" event handler below), each polling for
+# lifecycle_status == *_queued (plus stale *_in_progress reclaim) and
+# atomically claiming candidates via CaseDataStore.claim_for_processing.
+
 # Thread pool executor for blocking operations (configurable via env var)
 try:
     MAX_WORKERS = max(1, int(os.environ.get("ORDER_PROCESSING_WORKERS", "5")))
@@ -259,6 +260,44 @@ except (ValueError, TypeError):
     logger.warning("Invalid ORDER_PROCESSING_WORKERS value, using default of 5")
     MAX_WORKERS = 5
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+try:
+    STALE_IN_PROGRESS_MINUTES = max(
+        1, int(os.environ.get("STALE_IN_PROGRESS_MINUTES", "10"))
+    )
+except (ValueError, TypeError):
+    logger.warning("Invalid STALE_IN_PROGRESS_MINUTES value, using default of 10")
+    STALE_IN_PROGRESS_MINUTES = 10
+
+try:
+    QUEUE_POLL_INTERVAL_SECONDS = max(
+        1, int(os.environ.get("QUEUE_POLL_INTERVAL_SECONDS", "5"))
+    )
+except (ValueError, TypeError):
+    logger.warning("Invalid QUEUE_POLL_INTERVAL_SECONDS value, using default of 5")
+    QUEUE_POLL_INTERVAL_SECONDS = 5
+
+QUEUE_POLL_BATCH_SIZE = MAX_WORKERS * 2
+
+_fetch_semaphore = asyncio.Semaphore(MAX_WORKERS)
+_analysis_semaphore = asyncio.Semaphore(MAX_WORKERS)
+# Set by /queue/restart to make a poll loop check immediately instead of
+# waiting out its interval; cleared at the top of every tick.
+_wake_fetch_poll = asyncio.Event()
+_wake_analysis_poll = asyncio.Event()
+# Updated at the top of every tick so /queue/status can report whether a
+# loop is actually alive, instead of a boolean nothing ever clears on death.
+_last_fetch_poll_tick: Optional[datetime] = None
+_last_analysis_poll_tick: Optional[datetime] = None
+# Keeps strong references to spawned tasks: asyncio.create_task() only holds
+# a weak reference, so an unreferenced task can be silently garbage
+# collected mid-run -- a second, independent way work could vanish.
+_background_tasks: set = set()
+
+
+def _track_task(task: "asyncio.Task") -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def get_current_user(request: Request):
@@ -317,166 +356,352 @@ def require_admin_active(current_user: dict = Depends(require_active_user)):
 
 # Async Order Processing Functions
 async def trigger_async_order_processing(df: pd.DataFrame):
-    """Add uploaded cases to async order processing queue"""
+    """Mark uploaded cases fetch_queued so a fetch_poll_loop picks them up."""
     try:
-        # Extract case information from uploaded board data
         records = df.to_dict(orient="records")
-        case_list = []
+        case_store = get_auto_order_manager().case_store
 
         for record in records:
-            # Create document ID using same scheme as Board.saveData
-            formatted_date = record["board_date"]
-            if isinstance(formatted_date, str):
-                formatted_date = datetime.strptime(formatted_date, "%Y-%m-%d").strftime(
-                    "%Y-%m-%d"
-                )
-            else:
-                formatted_date = formatted_date.strftime("%Y-%m-%d")
+            case_ref = (
+                f"{record['case_type']}/{record['case_no']}/{record['case_year']}"
+            )
+            case_store.transition_lifecycle(
+                case_ref,
+                "fetch_queued",
+                metadata={
+                    "source": "board_upload",
+                    "board_date": record.get("board_date"),
+                },
+                event_type="fetch_queued_from_upload",
+                extra_fields={
+                    "latest_board_date": case_store._to_iso_date(
+                        record.get("board_date")
+                    )
+                },
+            )
+            logger.info(f"Marked case {case_ref} fetch_queued after board upload")
 
-            document_id = f"{formatted_date}-{record['case_type']}-{record['case_no']}-{record['case_year']}"
-
-            # Create case info for queue processing - include 'id' field for AutoOrderManager
-            case_info = {
-                "id": document_id,  # Firestore document ID that AutoOrderManager expects
-                "case_id": document_id,  # For backward compatibility
-                "case_ref": f"{record['case_type']}/{record['case_no']}/{record['case_year']}",
-                "case_type": record["case_type"],
-                "case_no": record["case_no"],
-                "case_year": record["case_year"],
-                "board_date": record["board_date"],
-                "petitioner_lawyer": record.get("petitioner_lawyer"),
-                "respondent_lawyer": record.get("respondent_lawyer"),
-            }
-            case_list.append(case_info)
-
-        # Add cases to processing queue
-        for case_info in case_list:
-            await order_processing_queue.put(case_info)
-            logger.info(f"Added case {case_info['case_ref']} to order processing queue")
-
-        # Start background processing if not already active
-        await ensure_background_processing_active()
+        _wake_fetch_poll.set()
 
     except Exception as e:
-        logger.error(f"Error adding cases to processing queue: {e}")
+        logger.error(f"Error queueing uploaded cases for fetch: {e}")
 
 
-async def process_order_queue_worker(worker_id: int):
-    """Background worker to process order queue - one task per worker"""
-    logger.info(f"🚀 Order processing worker {worker_id} started")
+def _run_fetch_case(case_info: Dict) -> Dict:
+    """Blocking fetch+inline-analysis job used by fetch_poll_loop's executor."""
+    return get_auto_order_manager()._process_single_case(case_info)
+
+
+async def _process_claimed_fetch_case(case_info: Dict) -> None:
+    case_ref = case_info["case_ref"]
+    try:
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(executor, _run_fetch_case, case_info),
+            timeout=300.0,
+        )
+
+        if result.get("analysis_success"):
+            logger.info(f"✅ Fetch+analysis succeeded for {case_ref}")
+            try:
+                await auto_map_case_to_users(case_info.get("id"), case_info)
+            except Exception as mapping_error:
+                logger.error(
+                    f"Error mapping users after fetch for {case_ref}: {mapping_error}"
+                )
+        elif result.get("download_success"):
+            # Order downloaded but inline analysis didn't complete (rare --
+            # _process_single_case normally analyses inline). Queue it for
+            # the analysis poll loop rather than leaving it stranded.
+            get_auto_order_manager().case_store.transition_lifecycle(
+                case_ref,
+                "analysis_queued",
+                reason="Order downloaded but not analysed inline",
+                metadata={"source": "fetch_poll_loop"},
+                event_type="analysis_queued_after_fetch",
+            )
+            _wake_analysis_poll.set()
+        else:
+            logger.warning(
+                f"⚠️ Fetch failed for {case_ref}: {result.get('error', 'Unknown error')}"
+            )
+    except asyncio.TimeoutError:
+        logger.error(f"❌ Timeout after 5 minutes fetching {case_ref}")
+        try:
+            get_auto_order_manager().case_store.transition_lifecycle(
+                case_ref,
+                "fetch_failed_terminal",
+                reason="Worker timeout after 5 minutes",
+                force=True,
+                metadata={"source": "fetch_poll_loop_timeout"},
+                event_type="fetch_timeout",
+            )
+        except Exception as lc_err:
+            logger.error(f"Failed to mark lifecycle failed after timeout: {lc_err}")
+    except Exception as e:
+        logger.error(f"❌ Error fetching {case_ref}: {e}")
+        try:
+            get_auto_order_manager().case_store.transition_lifecycle(
+                case_ref,
+                "fetch_failed_terminal",
+                reason=f"Worker error: {str(e)[:200]}",
+                force=True,
+                metadata={"source": "fetch_poll_loop_exception"},
+                event_type="fetch_error",
+            )
+        except Exception as lc_err:
+            logger.error(f"Failed to mark lifecycle failed after exception: {lc_err}")
+    finally:
+        _fetch_semaphore.release()
+
+
+def _query_claim_candidates(
+    case_store, queued_status: str, in_progress_status: str, batch_size: int
+) -> List[Dict]:
+    """Single-field equality queries only (already auto-indexed, no new
+    composite index needed): cases waiting to start, plus cases stuck at
+    the in-progress status past the staleness window (a worker that died
+    mid-run without reaching a terminal status)."""
+    db = firestore.client()
+    candidates: List[Dict] = []
+    seen_ids = set()
+
+    queued_query = (
+        db.collection("case-details")
+        .where("lifecycle_status", "==", queued_status)
+        .limit(batch_size)
+    )
+    for doc in queued_query.stream():
+        if doc.id in seen_ids:
+            continue
+        seen_ids.add(doc.id)
+        data = doc.to_dict() or {}
+        data["_doc_id"] = doc.id
+        candidates.append(data)
+
+    if len(candidates) < batch_size:
+        stale_query = (
+            db.collection("case-details")
+            .where("lifecycle_status", "==", in_progress_status)
+            .limit(batch_size * 4)
+        )
+        for doc in stale_query.stream():
+            if len(candidates) >= batch_size or doc.id in seen_ids:
+                continue
+            data = doc.to_dict() or {}
+            if not case_store._is_stale(
+                data.get("lifecycle_status_updated_at"), STALE_IN_PROGRESS_MINUTES
+            ):
+                continue
+            seen_ids.add(doc.id)
+            data["_doc_id"] = doc.id
+            candidates.append(data)
+
+    return candidates
+
+
+async def fetch_poll_loop():
+    """Runs for the lifetime of the process, one per Cloud Run instance
+    (started at app startup). Polls for fetch_queued cases plus stale
+    fetch_in_progress cases, atomically claims each, and runs it in the
+    thread pool bounded by _fetch_semaphore."""
+    global _last_fetch_poll_tick
+    logger.info("🚀 Fetch poll loop started")
 
     while True:
+        _last_fetch_poll_tick = datetime.now()
         try:
-            # Get case from queue (wait indefinitely for new items)
-            case_info = await order_processing_queue.get()
-
-            logger.info(
-                f"[Worker {worker_id}] 📋 Processing order for case: {case_info['case_ref']} (ID: {case_info.get('id', 'unknown')})"
+            # Constructed fresh every tick (not once before the loop): Firebase
+            # is initialized lazily on first authenticated request, so on a
+            # cold start this can fail on the very first tick. Keeping it
+            # inside the try lets the loop retry next tick instead of dying
+            # for the rest of the process's life.
+            ensure_firebase()
+            case_store = get_auto_order_manager().case_store
+            candidates = _query_claim_candidates(
+                case_store, "fetch_queued", "fetch_in_progress", QUEUE_POLL_BATCH_SIZE
             )
-
-            # Use AutoOrderManager to process single case
-            # Run blocking operation in thread pool to avoid blocking event loop
-            # Set timeout to 5 minutes (300 seconds) to prevent hanging
-            try:
-                loop = asyncio.get_event_loop()
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        executor,
-                        get_auto_order_manager()._process_single_case,
-                        case_info,
-                    ),
-                    timeout=300.0,  # 5 minutes timeout per case
+            for case_data in candidates:
+                case_ref = case_data.get("case_ref")
+                if not case_ref:
+                    continue
+                claim = case_store.claim_for_processing(
+                    case_ref,
+                    "fetch_in_progress",
+                    from_statuses={"fetch_queued"},
+                    stale_after_minutes=STALE_IN_PROGRESS_MINUTES,
+                    reason="Claimed by fetch poll loop",
+                    event_type="fetch_claimed",
                 )
-
-                if result.get("analysis_success"):
-                    logger.info(
-                        f"[Worker {worker_id}] ✅ Successfully processed order for {case_info['case_ref']} - Status should be 'analysed' in database"
-                    )
-
-                    # Automatically map case to users after successful analysis
-                    try:
-                        await auto_map_case_to_users(case_info.get("id"), case_info)
-                        logger.info(
-                            f"✅ Successfully mapped case {case_info['case_ref']} to users"
-                        )
-                    except Exception as mapping_error:
-                        logger.error(
-                            f"❌ Error mapping case {case_info['case_ref']} to users: {mapping_error}"
-                        )
-
-                elif result.get("download_success"):
-                    # Order was downloaded (or already linked) but analysis failed.
-                    # Auto-queue for the analysis worker so it will be retried without
-                    # admin intervention — this prevents cases from getting stuck at
-                    # "linked" status indefinitely.
-                    logger.warning(
-                        f"⚠️ Order downloaded but analysis failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')} — auto-queuing for analysis retry"
-                    )
-                    try:
-                        await analysis_processing_queue.put(
-                            {
-                                "id": case_info.get("id"),
-                                "case_ref": case_info["case_ref"],
-                                "board_date": case_info.get("board_date"),
-                            }
-                        )
-                        await ensure_background_analysis_processing_active()
-                        logger.info(
-                            f"📋 Auto-queued {case_info['case_ref']} for analysis retry"
-                        )
-                    except Exception as queue_error:
-                        logger.error(
-                            f"❌ Failed to auto-queue {case_info['case_ref']} for analysis: {queue_error}"
-                        )
-                else:
-                    logger.warning(
-                        f"⚠️ Order processing failed for {case_info['case_ref']}: {result.get('error', 'Unknown error')}"
-                    )
-
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"❌ [Worker {worker_id}] TIMEOUT after 5 minutes processing {case_info['case_ref']} - moving to next case"
-                )
-                try:
-                    get_auto_order_manager().case_store.transition_lifecycle(
-                        case_info["case_ref"],
-                        "fetch_failed_terminal",
-                        reason="Worker timeout after 5 minutes",
-                        force=True,
-                        metadata={"source": "worker_timeout"},
-                        event_type="fetch_timeout",
-                    )
-                except Exception as lc_err:
-                    logger.error(
-                        f"Failed to mark lifecycle failed after timeout: {lc_err}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"❌ Error processing order for {case_info['case_ref']}: {e}"
-                )
-                import traceback
-
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                try:
-                    get_auto_order_manager().case_store.transition_lifecycle(
-                        case_info["case_ref"],
-                        "fetch_failed_terminal",
-                        reason=f"Worker error: {str(e)[:200]}",
-                        force=True,
-                        metadata={"source": "worker_exception"},
-                        event_type="fetch_error",
-                    )
-                except Exception as lc_err:
-                    logger.error(
-                        f"Failed to mark lifecycle failed after exception: {lc_err}"
-                    )
-
-            # Mark task as done
-            order_processing_queue.task_done()
-
+                if not claim["applied"]:
+                    continue
+                case_info = {
+                    "id": case_data.get("_doc_id"),
+                    "case_ref": case_ref,
+                    "board_date": case_data.get("board_date")
+                    or case_data.get("latest_board_date"),
+                }
+                await _fetch_semaphore.acquire()
+                _track_task(asyncio.create_task(_process_claimed_fetch_case(case_info)))
         except Exception as e:
-            logger.error(f"Background order processing error: {e}")
-            await asyncio.sleep(5)  # Wait before retrying
+            logger.error(f"Fetch poll loop error: {e}")
+
+        try:
+            await asyncio.wait_for(
+                _wake_fetch_poll.wait(), timeout=QUEUE_POLL_INTERVAL_SECONDS
+            )
+        except asyncio.TimeoutError:
+            pass
+        _wake_fetch_poll.clear()
+
+
+def _run_case_analysis_job(case_info: Dict) -> Dict:
+    """Blocking analysis job used by async worker executor."""
+    manager = get_auto_order_manager()
+    case_ref = case_info.get("case_ref")
+    case_id = case_info.get("id")
+    board_date = case_info.get("board_date")
+
+    order_context = manager._get_case_order_context(case_ref)
+    order_link = order_context.get("order_link")
+
+    if not order_link:
+        manager.case_store.transition_lifecycle(
+            case_ref,
+            "analysis_failed_retryable",
+            reason="No order link available for analysis",
+            metadata={"source": "analysis_queue", "case_id": case_id},
+            event_type="analysis_queue_no_link",
+        )
+        return {
+            "case_ref": case_ref,
+            "analysis_success": False,
+            "error": "No order link available for analysis",
+        }
+
+    case_data = {
+        "id": case_id,
+        "case_ref": case_ref,
+        "order_link": order_link,
+        "board_date": board_date,
+        "order_status": "linked",
+    }
+    result_template = {
+        "case_id": case_id,
+        "case_ref": case_ref,
+        "download_success": True,
+        "analysis_success": False,
+        "order_link": order_link,
+        "analysis_data": None,
+        "error": None,
+        "retry_attempts": [],
+        "has_existing_order": True,
+    }
+    return manager._analyze_existing_order(case_data, result_template)
+
+
+async def _process_claimed_analysis_case(case_info: Dict) -> None:
+    case_ref = case_info["case_ref"]
+    case_id = case_info.get("id")
+    try:
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(executor, _run_case_analysis_job, case_info),
+            timeout=300.0,
+        )
+
+        if result.get("analysis_success"):
+            logger.info(f"✅ Analysis completed for {case_ref}")
+            try:
+                await auto_map_case_to_users(case_id, case_info)
+            except Exception as mapping_error:
+                logger.error(
+                    f"Error mapping users after analysis for {case_ref}: {mapping_error}"
+                )
+        else:
+            error_msg = result.get("error") or "Analysis failed"
+            get_auto_order_manager().case_store.transition_lifecycle(
+                case_ref,
+                "analysis_failed_retryable",
+                reason=error_msg,
+                metadata={"source": "analysis_poll_loop", "case_id": case_id},
+                event_type="analysis_queue_failed",
+            )
+            logger.warning(f"⚠️ Analysis failed for {case_ref}: {error_msg}")
+
+    except asyncio.TimeoutError:
+        get_auto_order_manager().case_store.transition_lifecycle(
+            case_ref,
+            "analysis_failed_retryable",
+            reason="Analysis worker timeout after 5 minutes",
+            metadata={"source": "analysis_poll_loop", "case_id": case_id},
+            event_type="analysis_queue_timeout",
+        )
+        logger.error(f"❌ Timeout while analyzing {case_ref}")
+    except Exception as e:
+        get_auto_order_manager().case_store.transition_lifecycle(
+            case_ref,
+            "analysis_failed_retryable",
+            reason=str(e),
+            metadata={"source": "analysis_poll_loop", "case_id": case_id},
+            event_type="analysis_queue_exception",
+        )
+        logger.error(f"❌ Error analyzing {case_ref}: {e}")
+    finally:
+        _analysis_semaphore.release()
+
+
+async def analysis_poll_loop():
+    """Analysis counterpart of fetch_poll_loop: polls analysis_queued plus
+    stale analysis_in_progress cases."""
+    global _last_analysis_poll_tick
+    logger.info("🚀 Analysis poll loop started")
+
+    while True:
+        _last_analysis_poll_tick = datetime.now()
+        try:
+            ensure_firebase()
+            case_store = get_auto_order_manager().case_store
+            candidates = _query_claim_candidates(
+                case_store,
+                "analysis_queued",
+                "analysis_in_progress",
+                QUEUE_POLL_BATCH_SIZE,
+            )
+            for case_data in candidates:
+                case_ref = case_data.get("case_ref")
+                if not case_ref:
+                    continue
+                claim = case_store.claim_for_processing(
+                    case_ref,
+                    "analysis_in_progress",
+                    from_statuses={"analysis_queued"},
+                    stale_after_minutes=STALE_IN_PROGRESS_MINUTES,
+                    reason="Claimed by analysis poll loop",
+                    event_type="analysis_claimed",
+                )
+                if not claim["applied"]:
+                    continue
+                case_info = {
+                    "id": case_data.get("_doc_id"),
+                    "case_ref": case_ref,
+                    "board_date": case_data.get("board_date")
+                    or case_data.get("latest_board_date"),
+                }
+                await _analysis_semaphore.acquire()
+                _track_task(
+                    asyncio.create_task(_process_claimed_analysis_case(case_info))
+                )
+        except Exception as e:
+            logger.error(f"Analysis poll loop error: {e}")
+
+        try:
+            await asyncio.wait_for(
+                _wake_analysis_poll.wait(), timeout=QUEUE_POLL_INTERVAL_SECONDS
+            )
+        except asyncio.TimeoutError:
+            pass
+        _wake_analysis_poll.clear()
 
 
 async def auto_map_case_to_users(case_id: str, case_info: Dict):
@@ -559,161 +784,14 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
         raise
 
 
-async def ensure_background_processing_active():
-    """Ensure background order processing is running with multiple workers"""
-    global processing_active
-
-    if not processing_active:
-        processing_active = True
-        # Start multiple worker tasks (one per thread pool worker)
-        for worker_id in range(MAX_WORKERS):
-            asyncio.create_task(process_order_queue_worker(worker_id))
-        logger.info(f"🚀 Started {MAX_WORKERS} background order processing worker(s)")
-    else:
-        logger.info(
-            f"✅ Background processing already active with {MAX_WORKERS} workers"
-        )
-
-
-def _run_case_analysis_job(case_info: Dict) -> Dict:
-    """Blocking analysis job used by async worker executor."""
-    manager = get_auto_order_manager()
-    case_ref = case_info.get("case_ref")
-    case_id = case_info.get("id")
-    board_date = case_info.get("board_date")
-
-    order_context = manager._get_case_order_context(case_ref)
-    order_link = order_context.get("order_link")
-
-    if not order_link:
-        manager.case_store.transition_lifecycle(
-            case_ref,
-            "analysis_failed_retryable",
-            reason="No order link available for analysis",
-            metadata={"source": "analysis_queue", "case_id": case_id},
-            event_type="analysis_queue_no_link",
-        )
-        return {
-            "case_ref": case_ref,
-            "analysis_success": False,
-            "error": "No order link available for analysis",
-        }
-
-    case_data = {
-        "id": case_id,
-        "case_ref": case_ref,
-        "order_link": order_link,
-        "board_date": board_date,
-        "order_status": "linked",
-    }
-    result_template = {
-        "case_id": case_id,
-        "case_ref": case_ref,
-        "download_success": True,
-        "analysis_success": False,
-        "order_link": order_link,
-        "analysis_data": None,
-        "error": None,
-        "retry_attempts": [],
-        "has_existing_order": True,
-    }
-    return manager._analyze_existing_order(case_data, result_template)
-
-
-async def process_analysis_queue_worker(worker_id: int):
-    """Background worker to process analysis queue."""
-    logger.info(f"🚀 Analysis queue worker {worker_id} started")
-
-    while True:
-        try:
-            case_info = await analysis_processing_queue.get()
-            case_ref = case_info.get("case_ref")
-            case_id = case_info.get("id")
-
-            logger.info(
-                f"[Analysis Worker {worker_id}] 🔎 Processing analysis for {case_ref}"
-            )
-
-            try:
-                get_auto_order_manager().case_store.transition_lifecycle(
-                    case_ref,
-                    "analysis_in_progress",
-                    metadata={"source": "analysis_queue", "case_id": case_id},
-                    event_type="analysis_queue_started",
-                )
-
-                loop = asyncio.get_event_loop()
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(executor, _run_case_analysis_job, case_info),
-                    timeout=300.0,
-                )
-
-                if result.get("analysis_success"):
-                    logger.info(
-                        f"[Analysis Worker {worker_id}] ✅ Analysis completed for {case_ref}"
-                    )
-                    try:
-                        await auto_map_case_to_users(case_id, case_info)
-                    except Exception as mapping_error:
-                        logger.error(
-                            f"Error mapping users after analysis for {case_ref}: {mapping_error}"
-                        )
-                else:
-                    error_msg = result.get("error") or "Analysis failed"
-                    get_auto_order_manager().case_store.transition_lifecycle(
-                        case_ref,
-                        "analysis_failed_retryable",
-                        reason=error_msg,
-                        metadata={"source": "analysis_queue", "case_id": case_id},
-                        event_type="analysis_queue_failed",
-                    )
-                    logger.warning(
-                        f"[Analysis Worker {worker_id}] ⚠️ Analysis failed for {case_ref}: {error_msg}"
-                    )
-
-            except asyncio.TimeoutError:
-                get_auto_order_manager().case_store.transition_lifecycle(
-                    case_ref,
-                    "analysis_failed_retryable",
-                    reason="Analysis worker timeout after 5 minutes",
-                    metadata={"source": "analysis_queue", "case_id": case_id},
-                    event_type="analysis_queue_timeout",
-                )
-                logger.error(
-                    f"[Analysis Worker {worker_id}] ❌ Timeout while analyzing {case_ref}"
-                )
-            except Exception as e:
-                get_auto_order_manager().case_store.transition_lifecycle(
-                    case_ref,
-                    "analysis_failed_retryable",
-                    reason=str(e),
-                    metadata={"source": "analysis_queue", "case_id": case_id},
-                    event_type="analysis_queue_exception",
-                )
-                logger.error(
-                    f"[Analysis Worker {worker_id}] ❌ Error analyzing {case_ref}: {e}"
-                )
-
-            analysis_processing_queue.task_done()
-
-        except Exception as e:
-            logger.error(f"Analysis queue worker error: {e}")
-            await asyncio.sleep(5)
-
-
-async def ensure_background_analysis_processing_active():
-    """Ensure background analysis processing is running."""
-    global analysis_processing_active
-
-    if not analysis_processing_active:
-        analysis_processing_active = True
-        for worker_id in range(MAX_WORKERS):
-            asyncio.create_task(process_analysis_queue_worker(worker_id))
-        logger.info(f"🚀 Started {MAX_WORKERS} background analysis worker(s)")
-    else:
-        logger.info(
-            f"✅ Background analysis processing already active with {MAX_WORKERS} workers"
-        )
+@app.on_event("startup")
+async def _start_poll_loops():
+    """Every Cloud Run instance actively polls from the moment it comes up,
+    rather than lazily starting workers on first enqueue (the old design's
+    workers never actually started on an instance that only ever received
+    enqueue requests routed to a different instance)."""
+    _track_task(asyncio.create_task(fetch_poll_loop()))
+    _track_task(asyncio.create_task(analysis_poll_loop()))
 
 
 # Login/logout endpoints removed - using Firebase client-side authentication
@@ -2520,25 +2598,17 @@ async def queue_fetch_orders_jobs(
                 metadata={"source": "jobs.fetch-orders", "case_id": case_id},
                 event_type="fetch_job_queued",
             )
-
-            await order_processing_queue.put(
-                {
-                    "id": case_id,
-                    "case_ref": case_ref,
-                    "board_date": case_data.get("board_date"),
-                }
-            )
             queued += 1
             queued_case_refs.append(case_ref)
 
-        await ensure_background_processing_active()
+        if queued:
+            _wake_fetch_poll.set()
 
         return JSONResponse(
             content={
                 "success": True,
                 "queued": queued,
                 "skipped_not_due": skipped_not_due,
-                "queue_size": order_processing_queue.qsize(),
                 "queued_case_refs": queued_case_refs,
                 "selected_board_dates": sorted(selected_board_dates),
                 "selected_case_refs": sorted(selected_case_refs),
@@ -2655,27 +2725,20 @@ async def queue_analysis_jobs(
                 metadata={"source": "jobs.analyze-orders", "case_id": row.id},
                 event_type="analysis_job_queued",
             )
-            await analysis_processing_queue.put(
-                {
-                    "id": row.id,
-                    "case_ref": case_ref,
-                    "board_date": row_data.get("board_date"),
-                }
-            )
             queued += 1
             queued_case_refs.append(case_ref)
 
             if queued >= limit:
                 break
 
-        await ensure_background_analysis_processing_active()
+        if queued:
+            _wake_analysis_poll.set()
 
         return JSONResponse(
             content={
                 "success": True,
                 "queued": queued,
                 "skipped": skipped,
-                "analysis_queue_size": analysis_processing_queue.qsize(),
                 "queued_case_refs": queued_case_refs,
                 "selected_board_dates": sorted(selected_board_dates),
             }
@@ -2752,13 +2815,6 @@ async def retry_failed_cases(
                     metadata={"source": "jobs.retry-failed", "case_id": case_id},
                     event_type="retry_fetch_queued",
                 )
-                await order_processing_queue.put(
-                    {
-                        "id": case_id,
-                        "case_ref": case_ref,
-                        "board_date": case_data.get("board_date"),
-                    }
-                )
                 fetch_queued += 1
                 fetch_queued_refs.append(case_ref)
             else:
@@ -2776,13 +2832,6 @@ async def retry_failed_cases(
                         },
                         event_type="retry_fetch_queued",
                     )
-                    await order_processing_queue.put(
-                        {
-                            "id": case_id,
-                            "case_ref": case_ref,
-                            "board_date": case_data.get("board_date"),
-                        }
-                    )
                     fetch_queued += 1
                     fetch_queued_refs.append(case_ref)
                 else:
@@ -2795,18 +2844,13 @@ async def retry_failed_cases(
                         },
                         event_type="retry_analysis_queued",
                     )
-                    await analysis_processing_queue.put(
-                        {
-                            "id": case_id,
-                            "case_ref": case_ref,
-                            "board_date": case_data.get("board_date"),
-                        }
-                    )
                     analysis_queued += 1
                     analysis_queued_refs.append(case_ref)
 
-        await ensure_background_processing_active()
-        await ensure_background_analysis_processing_active()
+        if fetch_queued:
+            _wake_fetch_poll.set()
+        if analysis_queued:
+            _wake_analysis_poll.set()
 
         return JSONResponse(
             content={
@@ -2814,8 +2858,6 @@ async def retry_failed_cases(
                 "fetch_queued": fetch_queued,
                 "analysis_queued": analysis_queued,
                 "skipped": skipped,
-                "fetch_queue_size": order_processing_queue.qsize(),
-                "analysis_queue_size": analysis_processing_queue.qsize(),
                 "fetch_queued_refs": fetch_queued_refs,
                 "analysis_queued_refs": analysis_queued_refs,
                 "selected_board_dates": sorted(selected_board_dates),
@@ -3027,15 +3069,13 @@ async def process_single_case(request: Request, current_user=Depends(get_current
             force=True,
             metadata={"source": "process_case_endpoint", "case_id": case_id},
             event_type="fetch_job_queued",
+            extra_fields={
+                "latest_board_date": auto_mgr.case_store._to_iso_date(
+                    board_date or case_data.get("board_date")
+                )
+            },
         )
-        await order_processing_queue.put(
-            {
-                "id": case_id,
-                "case_ref": case_ref,
-                "board_date": board_date or case_data.get("board_date"),
-            }
-        )
-        await ensure_background_processing_active()
+        _wake_fetch_poll.set()
 
         return JSONResponse(
             content={
@@ -3444,16 +3484,22 @@ async def scheduled_retry_orders(
                 }
             )
 
-        # Add cases to processing queue for async processing
+        case_store = get_auto_order_manager().case_store
         for case_info in case_list:
-            await order_processing_queue.put(case_info)
+            case_store.transition_lifecycle(
+                case_info["case_ref"],
+                "fetch_queued",
+                metadata={"source": "scheduled_retry", "case_id": case_info["id"]},
+                event_type="fetch_job_queued",
+                extra_fields={
+                    "latest_board_date": case_store._to_iso_date(
+                        case_info.get("board_date")
+                    )
+                },
+            )
+        _wake_fetch_poll.set()
 
-        # Ensure background processing is active
-        await ensure_background_processing_active()
-
-        logger.info(
-            f"Scheduled retry: Added {len(case_list)} cases to processing queue"
-        )
+        logger.info(f"Scheduled retry: Marked {len(case_list)} cases fetch_queued")
 
         return JSONResponse(
             content={
@@ -3727,25 +3773,34 @@ async def admin_bulk_order_processing(
                 }
             )
 
-        # Ensure background processing is active BEFORE adding to queue
-        await ensure_background_processing_active()
-
-        # Add cases to processing queue for async processing
+        case_store = get_auto_order_manager().case_store
         for case_info in case_list:
-            await order_processing_queue.put(case_info)
+            case_store.transition_lifecycle(
+                case_info["case_ref"],
+                "fetch_queued",
+                metadata={
+                    "source": "admin_bulk_processing",
+                    "case_id": case_info["id"],
+                },
+                event_type="fetch_job_queued",
+                extra_fields={
+                    "latest_board_date": case_store._to_iso_date(
+                        case_info.get("board_date")
+                    )
+                },
+            )
+        _wake_fetch_poll.set()
 
-        queue_size_after = order_processing_queue.qsize()
         logger.info(
-            f"Admin bulk processing: Added {len(case_list)} cases to queue, current queue size: {queue_size_after}"
+            f"Admin bulk processing: Marked {len(case_list)} cases fetch_queued"
         )
 
         return JSONResponse(
             content={
                 "success": True,
-                "message": f"Added {len(case_list)} cases to background processing queue",
+                "message": f"Marked {len(case_list)} cases fetch_queued for background processing",
                 "cases_queued": len(case_list),
                 "statuses_processed": order_statuses,
-                "queue_size": queue_size_after,
             }
         )
 
@@ -3758,54 +3813,57 @@ async def admin_bulk_order_processing(
 
 
 # Queue Management Endpoints
-def _get_distributed_queue_metrics(scan_limit: int = 10000) -> Dict:
-    """Approximate queue backlog from persisted lifecycle status across all instances."""
+def _count_lifecycle_status(status: str) -> int:
+    """Cheap Firestore .count() aggregation on a single-field equality query
+    -- already auto-indexed, no composite index needed."""
     try:
         db = firestore.client()
-        docs = list(db.collection("case-details").limit(scan_limit).stream())
+        return (
+            db.collection("case-details")
+            .where("lifecycle_status", "==", status)
+            .count()
+            .get()[0][0]
+            .value
+        )
+    except Exception as e:
+        logger.error(f"Error counting lifecycle_status={status}: {e}")
+        return 0
 
-        fetch_pending_statuses = {
-            "fetch_queued",
-            "fetch_in_progress",
-            "fetch_failed_retryable",
-        }
-        analysis_pending_statuses = {
+
+def _get_distributed_queue_metrics() -> Dict:
+    """The actual, durable queue backlog -- lifecycle_status counts across
+    all Cloud Run instances, since there is no in-memory queue to inspect."""
+    fetch_pending = sum(
+        _count_lifecycle_status(s)
+        for s in ("fetch_queued", "fetch_in_progress", "fetch_failed_retryable")
+    )
+    analysis_pending = sum(
+        _count_lifecycle_status(s)
+        for s in (
             "analysis_queued",
             "analysis_in_progress",
             "analysis_failed_retryable",
-        }
+        )
+    )
+    return {
+        "fetch_pending_cases": fetch_pending,
+        "analysis_pending_cases": analysis_pending,
+    }
 
-        fetch_pending = 0
-        analysis_pending = 0
 
-        for doc in docs:
-            data = doc.to_dict() or {}
-            lifecycle_status = str(data.get("lifecycle_status") or "").strip()
-            if lifecycle_status in fetch_pending_statuses:
-                fetch_pending += 1
-            if lifecycle_status in analysis_pending_statuses:
-                analysis_pending += 1
-
-        return {
-            "fetch_pending_cases": fetch_pending,
-            "analysis_pending_cases": analysis_pending,
-            "scan_limit": scan_limit,
-            "sampled_case_count": len(docs),
-        }
-    except Exception as e:
-        logger.error(f"Error building distributed queue metrics: {e}")
-        return {
-            "fetch_pending_cases": 0,
-            "analysis_pending_cases": 0,
-            "scan_limit": scan_limit,
-            "sampled_case_count": 0,
-            "error": str(e),
-        }
+def _poll_loop_is_alive(last_tick: Optional[datetime]) -> bool:
+    if last_tick is None:
+        return False
+    return (
+        datetime.now() - last_tick
+    ).total_seconds() < QUEUE_POLL_INTERVAL_SECONDS * 4
 
 
 @app.get("/queue/status", tags=["Queue Management"])
 async def get_queue_status(current_user=Depends(get_current_user)):
-    """Get status of async fetch and analysis processing queues."""
+    """Get status of fetch and analysis processing, driven entirely by
+    persisted lifecycle_status counts (the durable, shared source of truth
+    across every Cloud Run instance)."""
     try:
         import time as _time
 
@@ -3815,49 +3873,30 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         ):
             return JSONResponse(content=_queue_status_cache["data"])
 
-        queue_size = order_processing_queue.qsize()
-        analysis_queue_size = analysis_processing_queue.qsize()
         distributed_metrics = _get_distributed_queue_metrics()
-
-        # Count manual review cases inline so the frontend can derive the
-        # badge count from this single endpoint instead of polling /admin/review-queue.
-        try:
-            db = firestore.client()
-            review_count = (
-                db.collection("case-details")
-                .where("lifecycle_status", "==", "manual_review_required")
-                .count()
-                .get()[0][0]
-                .value
-            )
-        except Exception:
-            review_count = 0
+        fetch_queue_size = _count_lifecycle_status("fetch_queued")
+        analysis_queue_size = _count_lifecycle_status("analysis_queued")
+        review_count = _count_lifecycle_status("manual_review_required")
 
         # Cases the pipeline could not finish on its own.  The fetch/analyse
         # pipeline runs automatically after upload, so the only thing a user
         # ever needs to act on is this number — it drives the single "needs
         # attention" action on the Dashboard.
-        stuck_count = 0
-        try:
-            db = firestore.client()
-            for state in (
+        stuck_count = sum(
+            _count_lifecycle_status(s)
+            for s in (
                 "fetch_failed_retryable",
                 "fetch_failed_terminal",
                 "analysis_failed_retryable",
                 "analysis_failed_terminal",
-            ):
-                stuck_count += (
-                    db.collection("case-details")
-                    .where("lifecycle_status", "==", state)
-                    .count()
-                    .get()[0][0]
-                    .value
-                )
-        except Exception:
-            stuck_count = 0
+            )
+        )
+
+        fetch_active = _poll_loop_is_alive(_last_fetch_poll_tick)
+        analysis_active = _poll_loop_is_alive(_last_analysis_poll_tick)
 
         result = {
-            "fetch_queue_size": queue_size,
+            "fetch_queue_size": fetch_queue_size,
             "analysis_queue_size": analysis_queue_size,
             "fetch_pending_cases": distributed_metrics.get("fetch_pending_cases", 0),
             "analysis_pending_cases": distributed_metrics.get(
@@ -3866,22 +3905,13 @@ async def get_queue_status(current_user=Depends(get_current_user)):
             "review_queue_count": review_count,
             "needs_attention_count": stuck_count,
             "distributed_metrics": distributed_metrics,
-            "fetch_processing_active": processing_active,
-            "analysis_processing_active": analysis_processing_active,
-            "status": (
-                "active"
-                if processing_active or analysis_processing_active
-                else "inactive"
-            ),
+            "fetch_processing_active": fetch_active,
+            "analysis_processing_active": analysis_active,
+            "status": "active" if fetch_active or analysis_active else "inactive",
             "message": (
-                f"Fetch queue: {queue_size}, Analysis queue: {analysis_queue_size}"
-                if queue_size > 0 or analysis_queue_size > 0
-                else (
-                    "Local queues are empty; check distributed pending counts for multi-instance deployments"
-                    if distributed_metrics.get("fetch_pending_cases", 0) > 0
-                    or distributed_metrics.get("analysis_pending_cases", 0) > 0
-                    else "Both queues are empty"
-                )
+                f"Fetch queue: {fetch_queue_size}, Analysis queue: {analysis_queue_size}"
+                if fetch_queue_size > 0 or analysis_queue_size > 0
+                else "Both queues are empty"
             ),
         }
         _queue_status_cache["ts"] = _time.time()
@@ -3897,21 +3927,21 @@ async def get_queue_status(current_user=Depends(get_current_user)):
 
 @app.post("/queue/restart", tags=["Queue Management"])
 async def restart_queue_processing(current_user=Depends(require_admin)):
-    """Restart background fetch and analysis processing (admin only)."""
+    """Wake both poll loops immediately instead of waiting out their
+    interval (admin only). The loops themselves run continuously for the
+    life of the process — there is nothing to actually "restart"."""
     try:
-        global processing_active, analysis_processing_active
-        processing_active = False
-        analysis_processing_active = False
-        await asyncio.sleep(1)  # Allow current processing to finish
-        await ensure_background_processing_active()
-        await ensure_background_analysis_processing_active()
+        _wake_fetch_poll.set()
+        _wake_analysis_poll.set()
 
         return JSONResponse(
             content={
                 "success": True,
-                "message": "Background fetch and analysis processing restarted",
-                "fetch_processing_active": processing_active,
-                "analysis_processing_active": analysis_processing_active,
+                "message": "Fetch and analysis poll loops woken",
+                "fetch_processing_active": _poll_loop_is_alive(_last_fetch_poll_tick),
+                "analysis_processing_active": _poll_loop_is_alive(
+                    _last_analysis_poll_tick
+                ),
             }
         )
 
@@ -4193,40 +4223,6 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
             status_code=500,
             content={"error": f"Failed to get overview stats: {str(e)}"},
         )
-
-
-@app.get("/orders/queue-status", tags=["Order Management"])
-async def get_orders_queue_status(current_user=Depends(get_current_user)):
-    """Get current processing queue status"""
-    try:
-        # Get approximate queue size (this is in-memory, so basic check)
-        pending_items = order_processing_queue.qsize() if order_processing_queue else 0
-        analysis_pending_items = (
-            analysis_processing_queue.qsize() if analysis_processing_queue else 0
-        )
-        distributed_metrics = _get_distributed_queue_metrics()
-
-        return JSONResponse(
-            content={
-                "active": processing_active or analysis_processing_active,
-                "fetch_active": processing_active,
-                "analysis_active": analysis_processing_active,
-                "pending": pending_items,
-                "analysis_pending": analysis_pending_items,
-                "fetch_pending_cases": distributed_metrics.get(
-                    "fetch_pending_cases", 0
-                ),
-                "analysis_pending_cases": distributed_metrics.get(
-                    "analysis_pending_cases", 0
-                ),
-                "distributed_metrics": distributed_metrics,
-                "last_checked": datetime.now().isoformat(),
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting queue status: {e}")
-        return JSONResponse(content={"active": False, "pending": 0, "error": str(e)})
 
 
 _LIFECYCLE_ACTION_LABELS = {
