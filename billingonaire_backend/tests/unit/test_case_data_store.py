@@ -235,6 +235,56 @@ def test_transition_lifecycle_rejects_invalid_transition_without_force():
     assert unchanged_case["lifecycle_events"] == []
 
 
+def test_fetch_in_progress_can_reach_manual_review_required():
+    """Regression guard for the bug where the fetch pipeline's inline
+    analysis (_analyze_order_with_api_metadata) tries
+    fetch_in_progress -> analysis_in_progress -> manual_review_required
+    while the case is still at fetch_in_progress (it never passes through
+    fetch_succeeded). Before this was added, the transition was silently
+    rejected -- no exception, just a logged warning -- and the case stayed
+    stuck at fetch_in_progress forever, invisible to every status view since
+    that state buckets to "working", not "attention"."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-13-2026").set(
+        {
+            "case_ref": "WP/13/2026",
+            "lifecycle_status": "fetch_in_progress",
+            "lifecycle_events": [],
+        }
+    )
+
+    started = store.transition_lifecycle("WP/13/2026", "analysis_in_progress")
+    assert started["applied"] is True
+
+    routed = store.transition_lifecycle(
+        "WP/13/2026", "manual_review_required", reason="Low confidence"
+    )
+    assert routed["applied"] is True
+
+    updated_case = db.get_collection("case-details")["WP-13-2026"]
+    assert updated_case["lifecycle_status"] == "manual_review_required"
+
+
+def test_fetch_in_progress_can_reach_analysed_directly():
+    """The high-confidence leg of the same inline-analysis call: this edge
+    already existed and must keep working."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-14-2026").set(
+        {
+            "case_ref": "WP/14/2026",
+            "lifecycle_status": "fetch_in_progress",
+            "lifecycle_events": [],
+        }
+    )
+
+    transition = store.transition_lifecycle("WP/14/2026", "analysed")
+    assert transition["applied"] is True
+
+
 def test_get_case_timeline_respects_limit():
     db = FakeFirestore()
     store = CaseDataStore(db)

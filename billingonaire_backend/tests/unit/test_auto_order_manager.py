@@ -966,3 +966,35 @@ class TestAnalyzeExistingOrder:
             )
         assert result["analysis_success"] is False
         assert "Could not download" in result["error"]
+
+
+class TestGetFilteredMattersDoesNotSwallowErrors:
+    """_get_filtered_matters used to wrap its entire Firestore query in
+    except Exception: return []. Any real failure (a missing composite
+    index, anything) was silently turned into "0 candidates", and every
+    caller (/jobs/fetch-orders, /jobs/retry-failed, get_orders_for_cases)
+    reported that as a confident, false "already up to date" / "no cases
+    found" success. The fix is to let the exception propagate -- every
+    caller already has its own outer exception handler that turns it into a
+    real error response.
+    """
+
+    def test_a_firestore_query_error_propagates_instead_of_returning_empty(
+        self, auto_order_manager, mock_firestore
+    ):
+        mock_firestore.client.return_value.collection.side_effect = RuntimeError(
+            "boom: composite index required"
+        )
+        with pytest.raises(RuntimeError, match="composite index required"):
+            auto_order_manager._get_filtered_matters(filters={}, limit=10)
+
+    def test_a_stream_error_propagates_instead_of_returning_empty(
+        self, auto_order_manager, mock_firestore
+    ):
+        mock_query = MagicMock()
+        mock_query.limit.return_value.stream.side_effect = RuntimeError(
+            "boom: transient Firestore error"
+        )
+        mock_firestore.client.return_value.collection.return_value = mock_query
+        with pytest.raises(RuntimeError, match="transient Firestore error"):
+            auto_order_manager._get_filtered_matters(filters={}, limit=10)

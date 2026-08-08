@@ -54,6 +54,18 @@ class CaseDataStore:
             "fetch_failed_retryable",
             "fetch_failed_terminal",
             "analysed",
+            # The fetch pipeline analyses the order inline as part of the same
+            # call (_analyze_order_with_api_metadata), while the case is still
+            # at fetch_in_progress -- it never passes through fetch_succeeded.
+            # Without these, the low-confidence -> manual_review_required leg
+            # of that inline analysis was silently rejected (transition_lifecycle
+            # just logs a warning, no exception) and the case stayed stuck at
+            # fetch_in_progress forever, invisible to every status view. The
+            # high-confidence -> analysed leg happened to work by coincidence
+            # since that edge already existed above, which is why this went
+            # unnoticed.
+            "analysis_in_progress",
+            "manual_review_required",
         },
         "fetch_succeeded": {
             "fetch_succeeded",

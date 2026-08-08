@@ -302,7 +302,7 @@ const Dashboard = () => {
   const fetchQueueStatus = useCallback(async () => {
     setQueueLoading(true); setQueueError('');
     try { setQueueStatus(await authenticatedFetchJSON('/queue/status') || {}); }
-    catch (_) { setQueueError('Unable to fetch queue status'); }
+    catch (e) { setQueueError(e.message || 'Unable to fetch queue status'); }
     finally { setQueueLoading(false); }
   }, []);
 
@@ -330,7 +330,12 @@ const Dashboard = () => {
         setJobMessage('Nothing to fetch — every case on the selected date(s) already has its order downloaded.');
       }
       await fetchQueueStatus();
-    } catch (_) { setJobError('Failed to queue fetch jobs — admin access required.'); }
+    } catch (e) {
+      // Surface what actually failed instead of a hardcoded, misleading
+      // "admin access required" -- that message used to show even when the
+      // real cause was a Firestore error or anything else entirely.
+      setJobError(e.message || 'Failed to queue fetch jobs.');
+    }
     finally { setJobLoading(''); }
   }, [boardDateRange, boardFilterType, boardLimit, boardYear, fetchQueueStatus, selectedCaseRefs, selectedDates]);
 
@@ -350,7 +355,7 @@ const Dashboard = () => {
         setJobMessage('Nothing to analyse — every case on the selected date(s) is already analysed.');
       }
       await fetchQueueStatus();
-    } catch (_) { setJobError('Failed to queue analysis jobs — admin access required.'); }
+    } catch (e) { setJobError(e.message || 'Failed to queue analysis jobs.'); }
     finally { setJobLoading(''); }
   }, [boardLimit, fetchQueueStatus, selectedCaseRefs, selectedDates]);
 
@@ -369,7 +374,7 @@ const Dashboard = () => {
         ? `Retrying ${n} case${n > 1 ? 's' : ''}. This runs in the background — check back shortly.`
         : 'Nothing could be retried automatically. These cases may need an order PDF uploaded manually.');
       await fetchQueueStatus();
-    } catch (_) { setJobError('Failed to retry — admin access required.'); }
+    } catch (e) { setJobError(e.message || 'Failed to retry.'); }
     finally { setJobLoading(''); }
   }, [fetchQueueStatus]);
 
@@ -379,7 +384,7 @@ const Dashboard = () => {
       const r = await authenticatedFetchJSON('/queue/restart', { method: 'POST', body: JSON.stringify({}) });
       setJobMessage(r.message || 'Background workers restarted');
       await fetchQueueStatus();
-    } catch (_) { setJobError('Failed to restart workers — admin access required.'); }
+    } catch (e) { setJobError(e.message || 'Failed to restart workers.'); }
     finally { setJobLoading(''); }
   }, [fetchQueueStatus]);
 

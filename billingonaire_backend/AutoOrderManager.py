@@ -282,87 +282,88 @@ class AutoOrderManager:
             limit,
             board_dates,
         )
-        try:
-            base = self.db.collection(self.boards_collection)
+        # Deliberately no try/except around the query below: a Firestore
+        # error (e.g. a missing composite index) used to be swallowed here
+        # and turned into an empty list, which every caller then reported as
+        # a confident "no cases found" / "already up to date" -- an honest-
+        # looking lie. Every caller already has its own outer exception
+        # handler that turns a propagated exception into a real error
+        # response, so letting it propagate is strictly better: the user
+        # sees what actually went wrong instead of a false all-clear.
+        base = self.db.collection(self.boards_collection)
 
-            def _apply_filters(query):
-                if not filters:
-                    return query
-                if filters.get("case_type"):
-                    query = query.where("case_type", "==", filters["case_type"])
-                if filters.get("case_year"):
-                    query = query.where("case_year", "==", filters["case_year"])
-                # board_date is stored as a datetime — coerce string inputs so
-                # the range comparison actually matches documents.
-                date_from = self._to_board_date_query_value(filters.get("date_from"))
-                if date_from:
-                    query = query.where("board_date", ">=", date_from)
-                date_to = self._to_board_date_query_value(filters.get("date_to"))
-                if date_to:
-                    query = query.where("board_date", "<=", date_to)
+        def _apply_filters(query):
+            if not filters:
                 return query
+            if filters.get("case_type"):
+                query = query.where("case_type", "==", filters["case_type"])
+            if filters.get("case_year"):
+                query = query.where("case_year", "==", filters["case_year"])
+            # board_date is stored as a datetime — coerce string inputs so
+            # the range comparison actually matches documents.
+            date_from = self._to_board_date_query_value(filters.get("date_from"))
+            if date_from:
+                query = query.where("board_date", ">=", date_from)
+            date_to = self._to_board_date_query_value(filters.get("date_to"))
+            if date_to:
+                query = query.where("board_date", "<=", date_to)
+            return query
 
-            # Build the query set.  One equality query per selected board date so
-            # the date filter is applied by Firestore rather than after the limit.
-            queries = []
-            normalized_dates = [
-                self._to_board_date_query_value(value)
-                for value in (board_dates or [])
-                if str(value or "").strip()
-            ]
-            normalized_dates = [d for d in normalized_dates if d is not None]
+        # Build the query set.  One equality query per selected board date so
+        # the date filter is applied by Firestore rather than after the limit.
+        queries = []
+        normalized_dates = [
+            self._to_board_date_query_value(value)
+            for value in (board_dates or [])
+            if str(value or "").strip()
+        ]
+        normalized_dates = [d for d in normalized_dates if d is not None]
 
-            if normalized_dates:
-                for board_dt in normalized_dates:
-                    queries.append(
-                        _apply_filters(base.where("board_date", "==", board_dt)).limit(
-                            limit * 2
-                        )
+        if normalized_dates:
+            for board_dt in normalized_dates:
+                queries.append(
+                    _apply_filters(base.where("board_date", "==", board_dt)).limit(
+                        limit * 2
                     )
-            else:
-                queries.append(_apply_filters(base).limit(limit * 2))
+                )
+        else:
+            queries.append(_apply_filters(base).limit(limit * 2))
 
-            cases: List[Dict[str, Any]] = []
-            seen_ids = set()
+        cases: List[Dict[str, Any]] = []
+        seen_ids = set()
 
-            for query in queries:
-                if len(cases) >= limit:
-                    break
-                for doc in query.stream():
-                    if doc.id in seen_ids:
-                        continue
-                    seen_ids.add(doc.id)
+        for query in queries:
+            if len(cases) >= limit:
+                break
+            for doc in query.stream():
+                if doc.id in seen_ids:
+                    continue
+                seen_ids.add(doc.id)
 
-                    case_data = doc.to_dict()
-                    case_data["id"] = doc.id
-                    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-                    case_data["case_ref"] = case_ref
+                case_data = doc.to_dict()
+                case_data["id"] = doc.id
+                case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
+                case_data["case_ref"] = case_ref
 
-                    order_context = self._get_case_order_context(case_ref)
-                    order_status = order_context["order_status"]
-                    case_data["order_status"] = order_status
-                    case_data["order_link"] = order_context.get("order_link")
+                order_context = self._get_case_order_context(case_ref)
+                order_status = order_context["order_status"]
+                case_data["order_status"] = order_status
+                case_data["order_link"] = order_context.get("order_link")
 
-                    # Include cases that need linking or analysis/retry.
-                    if order_status in [
-                        "not_linked",
-                        "linked",
-                        "order_failed",
-                        "order_analysis_failed",
-                    ]:
-                        cases.append(case_data)
+                # Include cases that need linking or analysis/retry.
+                if order_status in [
+                    "not_linked",
+                    "linked",
+                    "order_failed",
+                    "order_analysis_failed",
+                ]:
+                    cases.append(case_data)
 
-                        if len(cases) >= limit:
-                            break
+                    if len(cases) >= limit:
+                        break
 
-            logger.info(
-                "_get_filtered_matters returned %d actionable cases", len(cases)
-            )
-            return cases
-
-        except Exception as e:
-            logger.error("Error getting filtered matters: %s", e)
-            return []
+        logger.info("_get_filtered_matters returned %d actionable cases", len(cases))
+        return cases
 
     def _get_case_order_context(self, case_ref: str) -> Dict[str, Any]:
         case_detail = self.case_store.get_case_details(case_ref) or {}
