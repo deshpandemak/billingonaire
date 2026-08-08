@@ -392,5 +392,95 @@ async def test_queue_detail_returns_per_case_list_oldest_first(monkeypatch):
     assert refs[1] == "WP/1/2026"
 
     stale_flags = {c["case_ref"]: c["stale"] for c in data["cases"]}
-    assert stale_flags["WP/2/2026"] is True  # fetch_in_progress past the staleness window
+    assert (
+        stale_flags["WP/2/2026"] is True
+    )  # fetch_in_progress past the staleness window
     assert stale_flags["WP/1/2026"] is False  # fetch_queued is never "stale"
+
+
+# ---------------------------------------------------------------------------
+# 4.  /jobs/analyze-orders scope toggle -- "missing_only" (default) skips
+#     cases already analysed or awaiting manual review; "all" re-queues
+#     everything with a link regardless of current status.
+# ---------------------------------------------------------------------------
+
+
+def _make_board_row(doc_id, case_no):
+    return SimpleNamespace(
+        id=doc_id,
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": case_no,
+            "case_year": "2026",
+            "board_date": "2026-01-05",
+        },
+    )
+
+
+def _wire_analyze_orders(monkeypatch, order_statuses_by_ref):
+    rows = [
+        _make_board_row(f"row-{i}", str(i))
+        for i in range(1, len(order_statuses_by_ref) + 1)
+    ]
+    mock_db = MagicMock()
+    mock_db.collection.return_value.limit.return_value.stream.return_value = rows
+
+    mgr = MagicMock()
+    mgr.case_store = MagicMock()
+    mgr.case_store.build_case_ref = Mock(
+        side_effect=lambda ct, cn, cy: f"{ct}/{cn}/{cy}"
+    )
+    mgr._parse_board_date = Mock(return_value=None)
+    mgr._get_case_order_context = Mock(
+        side_effect=lambda case_ref: {
+            "order_status": order_statuses_by_ref[case_ref],
+            "order_link": "https://example.com/order.pdf",
+        }
+    )
+
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_analyze_orders_missing_only_skips_analysed_and_review_cases(
+    monkeypatch,
+):
+    order_statuses_by_ref = {
+        "WP/1/2026": "linked",
+        "WP/2/2026": "analysed",
+        "WP/3/2026": "manual_review_required",
+    }
+    _wire_analyze_orders(monkeypatch, order_statuses_by_ref)
+
+    response = await main.queue_analysis_jobs(
+        _make_request({"limit": 10}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["scope"] == "missing_only"
+    assert data["queued_case_refs"] == ["WP/1/2026"]
+    assert data["skipped"] == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_orders_scope_all_includes_analysed_cases(monkeypatch):
+    order_statuses_by_ref = {
+        "WP/1/2026": "linked",
+        "WP/2/2026": "analysed",
+    }
+    _wire_analyze_orders(monkeypatch, order_statuses_by_ref)
+
+    response = await main.queue_analysis_jobs(
+        _make_request({"limit": 10, "scope": "all"}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["scope"] == "all"
+    assert set(data["queued_case_refs"]) == {"WP/1/2026", "WP/2/2026"}

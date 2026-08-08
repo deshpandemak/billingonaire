@@ -262,11 +262,21 @@ class AutoOrderManager:
             return None
         return datetime(parsed.year, parsed.month, parsed.day)
 
+    #: order_status values selected by each ``scope`` in _get_filtered_matters.
+    #: ``None`` means "no order_status filtering at all" (every case matched
+    #: by the board-level filters, including already-analysed ones).
+    SCOPE_ORDER_STATUSES = {
+        "missing_only": {"not_linked"},
+        "actionable": {"not_linked", "linked", "order_failed", "order_analysis_failed"},
+        "all": None,
+    }
+
     def _get_filtered_matters(
         self,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 50,
         board_dates: Optional[List[str]] = None,
+        scope: str = "actionable",
     ) -> List[Dict[str, Any]]:
         """Get cases that need order processing based on filters.
 
@@ -275,12 +285,22 @@ class AutoOrderManager:
         used to fetch ``limit`` arbitrary documents and *then* drop everything
         outside the selected dates, which returned zero rows whenever the
         selected dates were not in that arbitrary first page.
+
+        ``scope`` narrows by order_status: "missing_only" (no order downloaded
+        yet), "actionable" (the historical default -- not_linked, linked,
+        or previously failed; excludes analysed cases), or "all" (every case
+        matched by the board-level filters, for a deliberate full re-fetch
+        regardless of current status).
         """
         logger.info(
-            "_get_filtered_matters called with filters=%s limit=%d board_dates=%s",
+            "_get_filtered_matters called with filters=%s limit=%d board_dates=%s scope=%s",
             filters,
             limit,
             board_dates,
+            scope,
+        )
+        allowed_statuses = self.SCOPE_ORDER_STATUSES.get(
+            scope, self.SCOPE_ORDER_STATUSES["actionable"]
         )
         # Deliberately no try/except around the query below: a Firestore
         # error (e.g. a missing composite index) used to be swallowed here
@@ -350,13 +370,7 @@ class AutoOrderManager:
                 case_data["order_status"] = order_status
                 case_data["order_link"] = order_context.get("order_link")
 
-                # Include cases that need linking or analysis/retry.
-                if order_status in [
-                    "not_linked",
-                    "linked",
-                    "order_failed",
-                    "order_analysis_failed",
-                ]:
+                if allowed_statuses is None or order_status in allowed_statuses:
                     cases.append(case_data)
 
                     if len(cases) >= limit:

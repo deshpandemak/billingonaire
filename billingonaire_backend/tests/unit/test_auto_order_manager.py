@@ -998,3 +998,87 @@ class TestGetFilteredMattersDoesNotSwallowErrors:
         mock_firestore.client.return_value.collection.return_value = mock_query
         with pytest.raises(RuntimeError, match="transient Firestore error"):
             auto_order_manager._get_filtered_matters(filters={}, limit=10)
+
+
+class TestGetFilteredMattersScope:
+    """scope narrows candidate selection by order_status: "missing_only" is
+    only not_linked cases; "actionable" (the default, unchanged historical
+    behavior) is not_linked/linked/order_failed/order_analysis_failed;
+    "all" is every case matched by the board-level filters, including
+    already-analysed ones, for a deliberate full re-fetch/re-analyse."""
+
+    def _make_docs(self):
+        statuses_by_ref = {
+            "WP/1/2026": "not_linked",
+            "WP/2/2026": "linked",
+            "WP/3/2026": "order_failed",
+            "WP/4/2026": "analysed",
+        }
+
+        docs = []
+        for i, case_ref in enumerate(statuses_by_ref, start=1):
+            doc = MagicMock()
+            doc.id = f"2026-01-01-WP-{i}-2026"
+            doc.to_dict.return_value = {
+                "case_type": "WP",
+                "case_no": str(i),
+                "case_year": "2026",
+            }
+            docs.append(doc)
+        return docs, statuses_by_ref
+
+    def _wire(self, auto_order_manager, mock_firestore):
+        docs, statuses_by_ref = self._make_docs()
+        mock_query = MagicMock()
+        mock_query.limit.return_value.stream.return_value = docs
+        mock_firestore.client.return_value.collection.return_value = mock_query
+        auto_order_manager._get_case_order_context = Mock(
+            side_effect=lambda case_ref: {
+                "order_status": statuses_by_ref[case_ref],
+                "order_link": None,
+            }
+        )
+        return statuses_by_ref
+
+    def test_missing_only_returns_only_not_linked(
+        self, auto_order_manager, mock_firestore
+    ):
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(
+            filters={}, limit=10, scope="missing_only"
+        )
+        assert {c["case_ref"] for c in cases} == {"WP/1/2026"}
+
+    def test_actionable_excludes_analysed(self, auto_order_manager, mock_firestore):
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(
+            filters={}, limit=10, scope="actionable"
+        )
+        assert {c["case_ref"] for c in cases} == {
+            "WP/1/2026",
+            "WP/2/2026",
+            "WP/3/2026",
+        }
+
+    def test_all_includes_analysed(self, auto_order_manager, mock_firestore):
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(
+            filters={}, limit=10, scope="all"
+        )
+        assert {c["case_ref"] for c in cases} == {
+            "WP/1/2026",
+            "WP/2/2026",
+            "WP/3/2026",
+            "WP/4/2026",
+        }
+
+    def test_default_scope_is_actionable(self, auto_order_manager, mock_firestore):
+        """Existing callers (e.g. /jobs/retry-failed) don't pass scope and
+        must keep getting the pre-scope-toggle behavior unchanged."""
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(filters={}, limit=10)
+        assert {c["case_ref"] for c in cases} == {
+            "WP/1/2026",
+            "WP/2/2026",
+            "WP/3/2026",
+        }

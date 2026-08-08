@@ -192,6 +192,9 @@ const Dashboard = () => {
   const [jobLoading, setJobLoading]         = useState('');
   const [jobMessage, setJobMessage]         = useState('');
   const [jobError, setJobError]             = useState('');
+  // 'missing_only' re-fetches/re-reads only cases that don't have a result
+  // yet; 'all' forces every selected case regardless of current status.
+  const [queueScope, setQueueScope]         = useState('missing_only');
   const [showAdmin, setShowAdmin]           = useState(false);
 
   // ─── Fetch helpers ──────────────────────────────────────────────────────────
@@ -319,15 +322,17 @@ const Dashboard = () => {
       }
       const r = await authenticatedFetchJSON('/jobs/fetch-orders', {
         method: 'POST',
-        body: JSON.stringify({ filters, board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300) }),
+        body: JSON.stringify({ filters, board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300), scope: queueScope }),
       });
       const queued = r.queued || 0, notDue = r.skipped_not_due || 0;
       if (queued > 0) {
         setJobMessage(`Queued ${queued} order fetch${queued > 1 ? 'es' : ''}.${notDue ? ` ${notDue} skipped — board date is still in the future.` : ''}`);
       } else if (notDue > 0) {
         setJobMessage(`Nothing queued — all ${notDue} case(s) have a future board date, so their orders are not published yet.`);
-      } else {
+      } else if (queueScope === 'missing_only') {
         setJobMessage('Nothing to fetch — every case on the selected date(s) already has its order downloaded.');
+      } else {
+        setJobMessage('Nothing to fetch — no cases matched the selected date(s).');
       }
       await fetchQueueStatus();
     } catch (e) {
@@ -337,27 +342,27 @@ const Dashboard = () => {
       setJobError(e.message || 'Failed to queue fetch jobs.');
     }
     finally { setJobLoading(''); }
-  }, [boardDateRange, boardFilterType, boardLimit, boardYear, fetchQueueStatus, selectedCaseRefs, selectedDates]);
+  }, [boardDateRange, boardFilterType, boardLimit, boardYear, fetchQueueStatus, queueScope, selectedCaseRefs, selectedDates]);
 
   const queueAnalysis = useCallback(async () => {
     setJobLoading('analysis'); setJobError(''); setJobMessage('');
     try {
       const r = await authenticatedFetchJSON('/jobs/analyze-orders', {
         method: 'POST',
-        body: JSON.stringify({ board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300) }),
+        body: JSON.stringify({ board_dates: selectedDates, case_refs: selectedCaseRefs, limit: Math.min(Number(boardLimit) || 100, 300), scope: queueScope }),
       });
       const queued = r.queued || 0, skipped = r.skipped || 0;
       if (queued > 0) {
-        setJobMessage(`Queued ${queued} order analys${queued > 1 ? 'es' : 'is'}.${skipped ? ` ${skipped} skipped — no order PDF on file yet.` : ''}`);
+        setJobMessage(`Queued ${queued} order analys${queued > 1 ? 'es' : 'is'}.${skipped ? ` ${skipped} skipped — no order PDF on file yet, or already handled.` : ''}`);
       } else if (skipped > 0) {
-        setJobMessage(`Nothing to analyse — ${skipped} case(s) have no order PDF yet. Run “Fetch Orders” first, then analyse once the fetch queue drains.`);
+        setJobMessage(`Nothing to analyse — ${skipped} case(s) have no order PDF yet, or are already analysed. Run “Fetch Orders” first, then analyse once the fetch queue drains.`);
       } else {
-        setJobMessage('Nothing to analyse — every case on the selected date(s) is already analysed.');
+        setJobMessage('Nothing to analyse — no cases matched the selected date(s).');
       }
       await fetchQueueStatus();
     } catch (e) { setJobError(e.message || 'Failed to queue analysis jobs.'); }
     finally { setJobLoading(''); }
-  }, [boardLimit, fetchQueueStatus, selectedCaseRefs, selectedDates]);
+  }, [boardLimit, fetchQueueStatus, queueScope, selectedCaseRefs, selectedDates]);
 
   // Re-queue everything the pipeline could not finish. Targets the stuck cases
   // themselves, so the user does not have to first work out which dates they
@@ -577,6 +582,15 @@ const Dashboard = () => {
                       <button className="btn-professional btn-secondary" onClick={queueAnalysis} disabled={jobLoading === 'analysis'} title="Normally automatic. Use this to re-read orders already downloaded for the selected dates.">
                         {jobLoading === 'analysis' ? 'Queueing…' : 'Re-read orders'}
                       </button>
+                      <select
+                        value={queueScope}
+                        onChange={e => setQueueScope(e.target.value)}
+                        title="Which cases the buttons above act on"
+                        style={{ fontSize: '0.82rem', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gray-300)' }}
+                      >
+                        <option value="missing_only">Only cases missing a result</option>
+                        <option value="all">All selected cases</option>
+                      </select>
                       <span style={{ fontSize: '0.82rem', color: 'var(--gray-600)' }}>{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</span>
                     </>
                   )}

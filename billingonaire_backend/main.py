@@ -2533,11 +2533,17 @@ async def queue_fetch_orders_jobs(
         board_dates = body.get("board_dates") or []
         case_refs = body.get("case_refs") or []
         limit = int(body.get("limit", 100))
+        scope = body.get("scope", "missing_only")
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
                 status_code=400,
                 content={"error": "limit must be between 1 and 1000"},
+            )
+        if scope not in ("missing_only", "all"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "scope must be 'missing_only' or 'all'"},
             )
 
         manager = get_auto_order_manager()
@@ -2559,6 +2565,7 @@ async def queue_fetch_orders_jobs(
             filters,
             limit,
             board_dates=sorted(selected_board_dates) or None,
+            scope=scope,
         )
 
         if selected_case_refs:
@@ -2607,6 +2614,7 @@ async def queue_fetch_orders_jobs(
         return JSONResponse(
             content={
                 "success": True,
+                "scope": scope,
                 "queued": queued,
                 "skipped_not_due": skipped_not_due,
                 "queued_case_refs": queued_case_refs,
@@ -2635,11 +2643,17 @@ async def queue_analysis_jobs(
         days_back = body.get("days_back")
         case_refs = body.get("case_refs") or []
         board_dates = body.get("board_dates") or []
+        scope = body.get("scope", "missing_only")
 
         if limit < 1 or limit > 1000:
             return JSONResponse(
                 status_code=400,
                 content={"error": "limit must be between 1 and 1000"},
+            )
+        if scope not in ("missing_only", "all"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "scope must be 'missing_only' or 'all'"},
             )
 
         manager = get_auto_order_manager()
@@ -2718,6 +2732,14 @@ async def queue_analysis_jobs(
             if not order_link:
                 skipped += 1
                 continue
+            if scope == "missing_only" and order_context.get("order_status") in (
+                "analysed",
+                "manual_review_required",
+            ):
+                # Already analysed (or awaiting human review, which an
+                # automatic re-analysis must not silently override).
+                skipped += 1
+                continue
 
             manager.case_store.transition_lifecycle(
                 case_ref,
@@ -2737,6 +2759,7 @@ async def queue_analysis_jobs(
         return JSONResponse(
             content={
                 "success": True,
+                "scope": scope,
                 "queued": queued,
                 "skipped": skipped,
                 "queued_case_refs": queued_case_refs,
