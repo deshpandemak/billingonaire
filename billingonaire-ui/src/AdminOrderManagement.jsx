@@ -16,6 +16,7 @@ const AdminOrderManagement = () => {
     }, []);
     const [overview, setOverview] = useState(null);
     const [queueStatus, setQueueStatus] = useState(null);
+    const [queueDetail, setQueueDetail] = useState(null);
     const [loading, setLoading] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [message, setMessage] = useState(null);
@@ -98,18 +99,46 @@ const AdminOrderManagement = () => {
         }
     }, [currentUser]);
 
+    const loadQueueDetail = useCallback(async () => {
+        if (!currentUser) return;
+        try {
+            const idToken = await currentUser.getIdToken();
+
+            const response = await fetch(`${API_URL}/queue/detail?limit=10`, {
+                headers: {
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+
+            const data = await response.json();
+            setQueueDetail(data);
+        } catch {
+            // non-critical — queue detail will retry on next interval
+        }
+    }, [currentUser]);
+
+    const formatAge = (ageSeconds) => {
+        if (ageSeconds === null || ageSeconds === undefined) return '—';
+        const minutes = Math.round(ageSeconds / 60);
+        if (minutes < 1) return '<1m';
+        if (minutes < 60) return `${minutes}m`;
+        return `${Math.round(minutes / 60)}h`;
+    };
+
     useEffect(() => {
         if (!currentUser) return;
 
         loadOverview();
         loadQueueStatus();
+        loadQueueDetail();
 
         const interval = setInterval(() => {
             loadQueueStatus();
+            loadQueueDetail();
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [currentUser, loadOverview, loadQueueStatus]);
+    }, [currentUser, loadOverview, loadQueueStatus, loadQueueDetail]);
 
     const startBulkProcessing = async () => {
         try {
@@ -389,9 +418,38 @@ const AdminOrderManagement = () => {
                                         </Badge>
                                     </div>
                                     {(queueStatus.fetch_pending_cases > 0 || queueStatus.analysis_pending_cases > 0) && (
-                                        <p className="text-muted small mb-0">
+                                        <p className="text-muted small mb-2">
                                             Persisted: {queueStatus.fetch_pending_cases ?? 0} fetch pending, {queueStatus.analysis_pending_cases ?? 0} analysis pending
                                         </p>
+                                    )}
+                                    {queueDetail?.cases?.length > 0 ? (
+                                        <div className="table-responsive">
+                                            <Table size="sm" className="mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Case</th>
+                                                        <th>Status</th>
+                                                        <th>Age</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {queueDetail.cases.map(c => (
+                                                        <tr key={c.doc_id} className={c.stale ? 'table-warning' : undefined}>
+                                                            <td className="text-truncate" style={{ maxWidth: '110px' }} title={c.case_ref}>{c.case_ref}</td>
+                                                            <td>
+                                                                <small>{c.status.replace(/_/g, ' ')}</small>
+                                                                {c.stale && <Badge bg="warning" text="dark" className="ms-1">stale</Badge>}
+                                                            </td>
+                                                            <td>{formatAge(c.age_seconds)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </Table>
+                                        </div>
+                                    ) : (
+                                        (queueStatus.fetch_queue_size > 0 || queueStatus.analysis_queue_size > 0) && (
+                                            <p className="text-muted small mb-0">Loading case list...</p>
+                                        )
                                     )}
                                 </>
                             ) : (

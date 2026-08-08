@@ -3953,6 +3953,83 @@ async def restart_queue_processing(current_user=Depends(require_admin)):
         )
 
 
+@app.get("/queue/detail", tags=["Queue Management"])
+async def get_queue_detail(
+    limit: int = Query(50, description="Maximum cases to return, oldest first"),
+    current_user=Depends(require_admin),
+):
+    """The actual list of cases currently queued or in-progress, not just an
+    aggregate count -- so an admin can see *which* specific cases are
+    affected and how long each has been sitting there, instead of only a
+    number."""
+    try:
+        limit = max(1, min(limit, 200))
+        db = firestore.client()
+        active_statuses = (
+            "fetch_queued",
+            "fetch_in_progress",
+            "analysis_queued",
+            "analysis_in_progress",
+        )
+        in_progress_statuses = {"fetch_in_progress", "analysis_in_progress"}
+
+        cases = []
+        for status in active_statuses:
+            docs = (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", status)
+                .limit(limit)
+                .stream()
+            )
+            for doc in docs:
+                data = doc.to_dict() or {}
+                updated_at = data.get("lifecycle_status_updated_at")
+                age_seconds = None
+                is_stale = False
+                if updated_at:
+                    try:
+                        age_seconds = (
+                            datetime.now() - datetime.fromisoformat(updated_at)
+                        ).total_seconds()
+                        is_stale = (
+                            status in in_progress_statuses
+                            and age_seconds >= STALE_IN_PROGRESS_MINUTES * 60
+                        )
+                    except ValueError:
+                        pass
+                cases.append(
+                    {
+                        "doc_id": doc.id,
+                        "case_ref": data.get("case_ref"),
+                        "board_date": data.get("latest_board_date"),
+                        "status": status,
+                        "updated_at": updated_at,
+                        "age_seconds": age_seconds,
+                        "stale": is_stale,
+                    }
+                )
+
+        # Oldest first (None sorts last) so the cases that have waited
+        # longest -- the ones most likely to need attention -- lead the list.
+        cases.sort(
+            key=lambda c: c["age_seconds"] if c["age_seconds"] is not None else -1,
+            reverse=True,
+        )
+
+        return JSONResponse(
+            content={
+                "cases": cases[:limit],
+                "total_returned": min(len(cases), limit),
+                "stale_after_minutes": STALE_IN_PROGRESS_MINUTES,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting queue detail: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to get queue detail: {str(e)}"}
+        )
+
+
 # User Matter Mapping Endpoints
 @app.get("/user-matters/my-matters", tags=["User Matter Mapping"])
 async def get_my_matters(

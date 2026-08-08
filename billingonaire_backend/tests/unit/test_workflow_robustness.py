@@ -335,3 +335,62 @@ async def test_scheduled_retry_orders_marks_cases_fetch_queued(monkeypatch):
     assert call.args[0] == "WP/88/2026"
     assert call.args[1] == "fetch_queued"
     wake_fetch.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 3.  GET /queue/detail -- the actual per-case list, not just aggregate
+#     counts. This is the concrete fix for "very little transparency".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_queue_detail_returns_per_case_list_oldest_first(monkeypatch):
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    old_ts = (now - timedelta(minutes=30)).isoformat()
+    new_ts = (now - timedelta(minutes=1)).isoformat()
+
+    def make_doc(doc_id, case_ref, updated_at):
+        return SimpleNamespace(
+            id=doc_id,
+            to_dict=lambda: {
+                "case_ref": case_ref,
+                "latest_board_date": "2026-01-05",
+                "lifecycle_status_updated_at": updated_at,
+            },
+        )
+
+    docs_by_status = {
+        "fetch_queued": [make_doc("d1", "WP/1/2026", new_ts)],
+        "fetch_in_progress": [make_doc("d2", "WP/2/2026", old_ts)],
+        "analysis_queued": [],
+        "analysis_in_progress": [],
+    }
+
+    def where_side_effect(field, op, value):
+        mock_query = MagicMock()
+        mock_query.limit.return_value.stream.return_value = docs_by_status.get(
+            value, []
+        )
+        return mock_query
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_queue_detail(limit=50, current_user=None)
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["total_returned"] == 2
+    refs = [c["case_ref"] for c in data["cases"]]
+    # Oldest (stuck longest) first
+    assert refs[0] == "WP/2/2026"
+    assert refs[1] == "WP/1/2026"
+
+    stale_flags = {c["case_ref"]: c["stale"] for c in data["cases"]}
+    assert stale_flags["WP/2/2026"] is True  # fetch_in_progress past the staleness window
+    assert stale_flags["WP/1/2026"] is False  # fetch_queued is never "stale"
