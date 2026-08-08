@@ -5396,6 +5396,336 @@ def extract_parties_info(case_data: Dict) -> str:
         return "Parties information not available"
 
 
+# Excel column width units -> approximate wrapped-line count.
+#
+# Row heights below are computed, not copied from the reference bill: the
+# reference's own per-row heights were baked in for one specific bill's exact
+# text lengths (long AGP name, specific party names) and would misalign for
+# any other bill. Instead each row's height is derived from its own text,
+# calibrated against the reference file's Parties Name column, which is the
+# one column with real length variation (case refs, results, and the header
+# rows are short and effectively fixed). Three known (char-count, line-count)
+# pairs from that column ("...YADAV Versus...ORS." = 74 chars/3 lines,
+# "...SADIQUE Versus...ANR" = 91 chars/4 lines, "...PATIL...Versus...DEPT." =
+# 134 chars/6 lines) imply roughly 22-25 characters per line at that column's
+# 58.57-unit width; CHARS_PER_UNIT below uses the low end of that range so the
+# estimate rounds lines UP rather than risking clipped text — a bit of extra
+# whitespace is a fine trade for never cutting off a party's name.
+_BILL_LINE_HEIGHT_PT = 23.25  # the reference bill's own single-line row height
+_BILL_CHARS_PER_UNIT = 0.38
+_BILL_CELL_PADDING_UNITS = 1.0
+
+
+def _bill_lines_needed(text: str, width_units: float) -> int:
+    usable = max(width_units - _BILL_CELL_PADDING_UNITS, 1.0)
+    chars_per_line = max(1, int(usable * _BILL_CHARS_PER_UNIT))
+    total = 0
+    for segment in str(text or "").split("\n"):
+        total += max(1, -(-len(segment) // chars_per_line))  # ceil division
+    return max(total, 1)
+
+
+def _bill_row_height(cells_and_widths) -> float:
+    """cells_and_widths: iterable of (text, width_units) sharing a row.
+
+    Height is driven by whichever cell needs the most lines, since all cells
+    in an Excel row share one height.
+    """
+    lines = [_bill_lines_needed(text, width) for text, width in cells_and_widths]
+    return max(lines or [1]) * _BILL_LINE_HEIGHT_PT
+
+
+def build_bill_workbook(entries, agp_name: str, bill_number: str, period_str: str):
+    """Build the AGP fee bill workbook.
+
+    Layout matches the office's reference bill format: 6 columns (SR. NO. /
+    DATE / CASE DETAILS / RESULTS / PARTIES NAME / FEES (RS.)), Times New
+    Roman 18pt throughout with bold reserved for the column-header row, a
+    thin border around every cell including the merged header block, and a
+    footer with a live GROSS AMOUNT total plus a signature block.
+
+    Deliberately does NOT compute "Fees Earn Due To Ceiling", "TOTAL TDS 10%"
+    or "NET AMOUNT" — those depend on the AGP's annual fee ceiling and
+    cumulative prior claims, which this system does not track, so they are
+    left blank for manual completion, exactly as the reference bill does.
+
+    Pure function: no Firestore, no auth, no I/O. Returns an openpyxl
+    Workbook: callers save/stream it however they need.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bill"
+
+    body_font = Font(name="Times New Roman", size=18)
+    bold_font = Font(name="Times New Roman", size=18, bold=True)
+    thin_side = Side(style="thin")
+    border_thin = Border(
+        left=thin_side, right=thin_side, top=thin_side, bottom=thin_side
+    )
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right_align = Alignment(horizontal="right", vertical="center", wrap_text=True)
+
+    column_widths = {"A": 10, "B": 20.43, "C": 28.86, "D": 29.0, "E": 58.57, "F": 15.0}
+    for col, width in column_widths.items():
+        ws.column_dimensions[col].width = width
+    full_width = sum(column_widths.values())
+
+    def box_border(cell_range: str):
+        """Thin border on every cell in a merged range: top/bottom on all of
+        them, left/right only on the range's outer edge — otherwise a merged
+        cell only carries a border on its anchor cell and the box looks
+        broken. Matches how the reference bill borders its header rows."""
+        rows = ws[cell_range]
+        if not isinstance(rows[0], tuple):
+            rows = (rows,)
+        n_cols = len(rows[0])
+        for row in rows:
+            for c_idx, cell in enumerate(row):
+                cell.border = Border(
+                    left=thin_side if c_idx == 0 else None,
+                    right=thin_side if c_idx == n_cols - 1 else None,
+                    top=thin_side,
+                    bottom=thin_side,
+                )
+
+    def merged_row(row_num, text, col_range, align, bold=False):
+        ws.merge_cells(f"A{row_num}:F{row_num}" if col_range is None else col_range)
+        first_cell_ref = (col_range or f"A{row_num}:F{row_num}").split(":")[0]
+        cell = ws[first_cell_ref]
+        cell.value = text
+        cell.font = bold_font if bold else body_font
+        cell.alignment = align
+        box_border(col_range or f"A{row_num}:F{row_num}")
+        return cell
+
+    current_row = 1
+
+    # --- Header block --------------------------------------------------
+    title_text = f"STATEMENT OF PROFESSIONAL FEES BILL OF AGP {agp_name.upper()}"
+    merged_row(current_row, title_text, f"A{current_row}:F{current_row}", center_align)
+    ws.row_dimensions[current_row].height = _bill_row_height([(title_text, full_width)])
+    current_row += 1
+
+    subtitle_text = (
+        "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
+    )
+    merged_row(
+        current_row, subtitle_text, f"A{current_row}:F{current_row}", center_align
+    )
+    ws.row_dimensions[current_row].height = _bill_row_height(
+        [(subtitle_text, full_width)]
+    )
+    current_row += 1
+
+    gr_text = (
+        "SANCTIONED VIDE:/ GOVERNMENT OF MAHARASHTRA\n"
+        "LAW AND JUDICIARY DEPARTMENT,\n"
+        "GOVERNMENT RESOLUTION NO. MEETING/GPH/2023/C.R.29/D/14,\n"
+        "DATED/30TH OCTOBER, 2023"
+    )
+    merged_row(current_row, gr_text, f"A{current_row}:F{current_row}", center_align)
+    ws.row_dimensions[current_row].height = _bill_row_height([(gr_text, full_width)])
+    current_row += 1
+
+    # Period (left) + bill number (right) on one row. The reference embeds
+    # both in a single string, right-shifted with manually counted padding
+    # spaces calibrated to that one bill's exact text lengths — it would
+    # misalign for any other period or bill number. Two properly aligned
+    # cells give the same look and stay correct at any length.
+    months_text = f"MONTHS : {period_str}"
+    ws.merge_cells(f"A{current_row}:D{current_row}")
+    a_cell = ws[f"A{current_row}"]
+    a_cell.value = months_text
+    a_cell.font = body_font
+    a_cell.alignment = left_align
+    ws.merge_cells(f"E{current_row}:F{current_row}")
+    e_cell = ws[f"E{current_row}"]
+    e_cell.value = bill_number
+    e_cell.font = body_font
+    e_cell.alignment = right_align
+    box_border(f"A{current_row}:D{current_row}")
+    box_border(f"E{current_row}:F{current_row}")
+    width_ad = sum(column_widths[c] for c in "ABCD")
+    width_ef = sum(column_widths[c] for c in "EF")
+    ws.row_dimensions[current_row].height = max(
+        _bill_row_height([(months_text, width_ad)]),
+        _bill_row_height([(str(bill_number), width_ef)]),
+    )
+    current_row += 1
+
+    declaration_text = (
+        "DECLARATION : I hereby certify that the below mentioned matters were "
+        "allotted to me by the Government Pleader, I personally appeared in "
+        "the below mentioned matters. The below mentioned entries/information "
+        "given in above columns are true and correct to the best of my "
+        "knowledge and belief. I further certify that nothing is suppressed "
+        "by me. Also, the fees which is claimed in bill no. "
+        f"{bill_number} has not been claimed by me earlier."
+    )
+    merged_row(
+        current_row, declaration_text, f"A{current_row}:F{current_row}", left_align
+    )
+    ws.row_dimensions[current_row].height = _bill_row_height(
+        [(declaration_text, full_width)]
+    )
+    current_row += 1
+
+    # Column headers — 6 columns. CASE TYPE/NO/YEAR collapse into one CASE
+    # DETAILS column (e.g. "WP/10000/2017"), matching the reference; that
+    # value is already available verbatim as entry["case_detail"].
+    headers = [
+        "SR. NO.",
+        "DATE",
+        "CASE DETAILS",
+        "RESULTS",
+        "PARTIES NAME",
+        "FEES (RS.)",
+    ]
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=current_row, column=col_num, value=header)
+        cell.font = bold_font
+        cell.alignment = center_align
+        cell.border = border_thin
+    # Deterministic content (always these 6 short words) — a fixed height
+    # matching the reference is safe here, no text-length variance to guard.
+    ws.row_dimensions[current_row].height = 60.0
+    current_row += 1
+
+    # --- Data rows -------------------------------------------------------
+    first_data_row = current_row
+    for idx, entry in enumerate(entries, 1):
+        case_detail = str(entry.get("case_detail") or "").strip()
+        if not case_detail:
+            # Fallback for older saved bills predating the case_detail field.
+            case_detail = "/".join(
+                p
+                for p in (
+                    str(entry.get("case_type") or "").strip(),
+                    str(entry.get("case_no") or "").strip(),
+                    str(entry.get("case_year") or "").strip(),
+                )
+                if p
+            )
+
+        date_str = entry.get("date", "")
+        try:
+            date_value = datetime.strptime(date_str, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            date_value = str(date_str) if date_str else ""
+
+        results = str(entry.get("results", "") or "")
+        parties_name = str(entry.get("parties_name", "") or "")
+
+        fees_rs = entry.get("fees_rs", 0)
+        try:
+            fees_rs = float(fees_rs) if fees_rs is not None else 0.0
+        except (ValueError, TypeError):
+            fees_rs = 0.0
+
+        row_values = [idx, date_value, case_detail, results, parties_name, fees_rs]
+        for col_num, value in enumerate(row_values, 1):
+            cell = ws.cell(row=current_row, column=col_num, value=value)
+            cell.font = body_font
+            cell.border = border_thin
+            cell.alignment = center_align
+        if isinstance(date_value, datetime):
+            ws.cell(row=current_row, column=2).number_format = "dd/mmm/yyyy"
+
+        # Only CASE DETAILS and PARTIES NAME have meaningful length variance
+        # (SR. NO./DATE/RESULTS/FEES are always short, fixed-vocabulary
+        # values that never wrap in their columns) — estimating wrap on those
+        # too would systematically over-count lines for the common case
+        # ("HEARD & ADJN." alone looks like it needs 2 lines at column D's
+        # width by character count, when in practice it always fits on 1).
+        ws.row_dimensions[current_row].height = _bill_row_height(
+            [
+                (case_detail, column_widths["C"]),
+                (parties_name, column_widths["E"]),
+            ]
+        )
+        current_row += 1
+
+    last_data_row = current_row - 1
+
+    # --- Footer: totals + signature ---------------------------------------
+    # Fees Earn Due To Ceiling / TOTAL TDS 10% / NET AMOUNT are left blank —
+    # see the docstring: this system doesn't track the inputs needed to
+    # compute them, so guessing would be worse than leaving them for the AGP
+    # or their accountant to fill in by hand, which is what the reference
+    # bill does too.
+    def footer_label(row, text):
+        cell = ws[f"D{row}"]
+        cell.value = text
+        cell.font = body_font
+        cell.alignment = center_align
+        cell.border = border_thin
+        ws.merge_cells(f"E{row}:F{row}")
+        box_border(f"E{row}:F{row}")
+        ws.row_dimensions[row].height = _BILL_LINE_HEIGHT_PT
+
+    ws[f"D{current_row}"] = "GROSS AMOUNT"
+    ws[f"D{current_row}"].font = body_font
+    ws[f"D{current_row}"].alignment = center_align
+    ws[f"D{current_row}"].border = border_thin
+    ws.merge_cells(f"E{current_row}:F{current_row}")
+    gross_cell = ws[f"E{current_row}"]
+    gross_cell.value = f"=SUM(F{first_data_row}:F{last_data_row})"
+    gross_cell.font = bold_font
+    gross_cell.alignment = center_align
+    box_border(f"E{current_row}:F{current_row}")
+    ws.row_dimensions[current_row].height = _BILL_LINE_HEIGHT_PT
+    current_row += 1
+
+    footer_label(current_row, "Fees Earn Due To Ceiling")
+    current_row += 1
+
+    tds_note = (
+        "As per G. R. F. D. No. आयकर १००७/प्र. क्र. १०५/कोषा प्र. ५ "
+        "मंत्रालय मुंबई Dated \n22-02-2008"
+    )
+    ws.merge_cells(f"A{current_row}:C{current_row + 1}")
+    note_cell = ws[f"A{current_row}"]
+    note_cell.value = tds_note
+    note_cell.font = body_font
+    note_cell.alignment = center_align
+    box_border(f"A{current_row}:C{current_row + 1}")
+    footer_label(current_row, "TOTAL TDS 10%")
+    current_row += 1
+
+    footer_label(current_row, "NET AMOUNT")
+    current_row += 2  # spacer
+
+    ws[f"A{current_row}"] = "VERIFIED & CORRECT"
+    ws[f"A{current_row}"].font = body_font
+    current_row += 2  # spacer
+
+    ws[f"A{current_row}"] = "PLACE:"
+    ws[f"A{current_row}"].font = body_font
+    ws[f"B{current_row}"] = "Mumbai"
+    ws[f"B{current_row}"].font = body_font
+    ws[f"E{current_row}"] = f"({agp_name.strip().upper()})"
+    ws[f"E{current_row}"].font = body_font
+    current_row += 1
+
+    ws[f"A{current_row}"] = "DATE:"
+    ws[f"A{current_row}"].font = body_font
+    date_cell = ws[f"B{current_row}"]
+    date_cell.value = datetime.now()
+    date_cell.number_format = "dd/mmm/yyyy"
+    date_cell.font = body_font
+    date_cell.alignment = left_align
+    # Correcting the reference bill's "Assisstant Governtment Pleader" typo —
+    # this session already standardized AGP terminology across the app.
+    ws[f"E{current_row}"] = "Assistant Government Pleader"
+    ws[f"E{current_row}"].font = body_font
+
+    return wb
+
+
 @app.get("/bills/export/excel", tags=["Bill Generation"])
 async def export_bill_excel(
     bill_id: str = Query(None, description="Bill ID to export"),
@@ -5410,9 +5740,6 @@ async def export_bill_excel(
     try:
         import io
         from datetime import datetime
-
-        from openpyxl import Workbook
-        from openpyxl.styles import Alignment, Border, Font, Side
 
         db = firestore.client()
         user_id = current_user.get("uid")
@@ -5477,23 +5804,6 @@ async def export_bill_excel(
                 status_code=404, content={"error": "No bill entries found"}
             )
 
-        # Create Excel workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Bill"
-
-        # Define styles
-        title_font = Font(bold=True, size=12)
-        header_font = Font(bold=True, size=11)
-        border_thin = Border(
-            left=Side(style="thin"),
-            right=Side(style="thin"),
-            top=Side(style="thin"),
-            bottom=Side(style="thin"),
-        )
-        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
         # Parse dates for header
         date_range = metadata.get("date_range", {})
         start_dt = datetime.strptime(date_range.get("start", start_date), "%Y-%m-%d")
@@ -5502,172 +5812,7 @@ async def export_bill_excel(
             f"{start_dt.strftime('%B %Y').upper()} - {end_dt.strftime('%B %Y').upper()}"
         )
 
-        # Row counter
-        current_row = 1
-
-        # Header Section
-        # Title
-        ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = f"STATEMENT OF PROFESSIONAL FEES BILL OF {agp_name.upper()}"
-        ws[f"A{current_row}"].font = title_font
-        ws[f"A{current_row}"].alignment = center_align
-        current_row += 1
-
-        # Subtitle
-        ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "A.S.(WRIT CELL),HIGH COURT, MUMBAI FOR CONDUCTING WRIT MATTERS ETC."
-        ws[f"A{current_row}"].alignment = center_align
-        current_row += 1
-
-        # Government Resolution
-        ws.merge_cells(f"A{current_row}:H{current_row}")
-        ws[
-            f"A{current_row}"
-        ] = "SANCTIONED VIDE:- GOVERNMENT OF MAHARASHTRA\nLAW AND JUDICIARY DEPARTMENT,\nGOVERNMENT RESOLUTION NO. MEETING-GPH-2023/C.R.29/D-14,\nDATED-30TH OCTOBER, 2023"
-        ws[f"A{current_row}"].alignment = center_align
-        current_row += 1
-
-        # Period and Bill Number
-        ws.merge_cells(f"A{current_row}:D{current_row}")
-        ws[f"A{current_row}"] = f"MONTHS :- {period_str}"
-        ws.merge_cells(f"E{current_row}:H{current_row}")
-        ws[f"E{current_row}"] = f"BILL NO:- {bill_number}"
-        ws[f"E{current_row}"].alignment = Alignment(
-            horizontal="right", vertical="center"
-        )
-        current_row += 1
-
-        # Declaration
-        ws.merge_cells(f"A{current_row}:H{current_row}")
-        declaration_text = (
-            f"DECLARATION : I hereby certify that the below mentioned matters were allotted to me by the Government Pleader, "
-            f"I personally appeared in the below mentioned matters. The below mentioned entries/information given in above columns "
-            f"are true and correct to the best of my knowledge and belief. I further certify that nothing is suppressed by me. "
-            f"Also, the fees which is claimed in bill no. {bill_number} has not been claimed by me earlier."
-        )
-        ws[f"A{current_row}"] = declaration_text
-        ws[f"A{current_row}"].alignment = left_align
-        ws.row_dimensions[current_row].height = 60
-        current_row += 1
-
-        # Column Headers
-        headers = [
-            "SR. NO.",
-            "DATE",
-            "CASE TYPE",
-            "CASE NO",
-            "CASE YEAR",
-            "RESULTS",
-            "PARTIES NAME",
-            "FEES (RS.)",
-        ]
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=current_row, column=col_num, value=header)
-            cell.font = header_font
-            cell.alignment = center_align
-            cell.border = border_thin
-        current_row += 1
-
-        # Data rows
-        total_fees = 0
-        for idx, entry in enumerate(entries, 1):
-            # Get case details from separate fields (or parse case_detail if not available)
-            case_type = entry.get("case_type", "")
-            case_no = entry.get("case_no", "")
-            case_year = entry.get("case_year", "")
-
-            # Fallback: parse case_detail if separate fields not present
-            if not case_type and not case_no and not case_year:
-                case_detail = entry.get("case_detail", "")
-                if case_detail:
-                    case_parts = case_detail.split("/")
-                    case_type = case_parts[0].strip() if len(case_parts) > 0 else ""
-                    case_no = case_parts[1].strip() if len(case_parts) > 1 else ""
-                    case_year = case_parts[2].strip() if len(case_parts) > 2 else ""
-
-            # Ensure all values are strings (not None) to avoid Excel corruption
-            case_type = str(case_type) if case_type else ""
-            case_no = str(case_no) if case_no else ""
-            case_year = str(case_year) if case_year else ""
-
-            # Format date
-            date_str = entry.get("date", "")
-            try:
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                formatted_date = date_obj.strftime("%d-%m-%Y")
-            except ValueError:
-                formatted_date = str(date_str) if date_str else ""
-
-            # Get other fields and ensure they're not None
-            results = (
-                str(entry.get("results", ""))
-                if entry.get("results") is not None
-                else ""
-            )
-            parties_name = (
-                str(entry.get("parties_name", ""))
-                if entry.get("parties_name") is not None
-                else ""
-            )
-            fees_rs = entry.get("fees_rs", 0)
-
-            # Ensure fees is a number
-            try:
-                fees_rs = float(fees_rs) if fees_rs is not None else 0.0
-            except (ValueError, TypeError):
-                fees_rs = 0.0
-
-            row_data = [
-                idx,  # SR. NO.
-                formatted_date,  # DATE
-                case_type,  # CASE TYPE
-                case_no,  # CASE NO
-                case_year,  # CASE YEAR
-                results,  # RESULTS
-                parties_name,  # PARTIES NAME
-                fees_rs,  # FEES (RS.)
-            ]
-
-            for col_num, value in enumerate(row_data, 1):
-                cell = ws.cell(row=current_row, column=col_num, value=value)
-                cell.border = border_thin
-                if col_num == 1 or col_num == 8:  # SR. NO. and FEES
-                    cell.alignment = center_align
-                elif col_num == 7:  # PARTIES NAME
-                    cell.alignment = left_align
-                else:
-                    cell.alignment = center_align
-
-            total_fees += entry.get("fees_rs", 0)
-            current_row += 1
-
-        # Total row
-        ws.merge_cells(f"A{current_row}:G{current_row}")
-        ws[f"A{current_row}"] = "TOTAL:"
-        ws[f"A{current_row}"].font = header_font
-        ws[f"A{current_row}"].alignment = Alignment(
-            horizontal="right", vertical="center"
-        )
-        ws[f"A{current_row}"].border = border_thin
-
-        cell = ws.cell(row=current_row, column=8, value=total_fees)
-        cell.font = header_font
-        cell.alignment = center_align
-        cell.border = border_thin
-
-        # Adjust column widths
-        ws.column_dimensions["A"].width = 10  # SR. NO.
-        ws.column_dimensions["B"].width = 15  # DATE
-        ws.column_dimensions["C"].width = 12  # CASE TYPE
-        ws.column_dimensions["D"].width = 12  # CASE NO
-        ws.column_dimensions["E"].width = 12  # CASE YEAR
-        ws.column_dimensions["F"].width = 18  # RESULTS
-        ws.column_dimensions["G"].width = 50  # PARTIES NAME
-        ws.column_dimensions["H"].width = 15  # FEES (RS.)
+        wb = build_bill_workbook(entries, agp_name, bill_number, period_str)
 
         # Save to BytesIO and extract raw bytes for response
         output = io.BytesIO()
