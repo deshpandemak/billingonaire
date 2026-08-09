@@ -660,6 +660,78 @@ class AutoOrderManager:
             )
             return 0
 
+    def _maybe_llm_assist(self, analysis_result) -> Dict[str, Any]:
+        """Roadmap #2: route only the ambiguous cases to an LLM, not every
+        order. The regex classifier's hard gates (NO_TIME_PATTERNS,
+        STRONG_DISPOSAL_PATTERNS) are already reliable and stay untouched --
+        this only fires when the regex scorer landed below the same
+        threshold that routes a case to manual review in the first place,
+        i.e. cases a human would otherwise have to look at anyway.
+
+        Auto-resolves (raises confidence enough to clear the review gate)
+        ONLY when the LLM independently agrees with the regex category --
+        two independent signals agreeing is a materially stronger bar than
+        either alone. On disagreement, the regex result is left completely
+        unchanged (still goes to manual review, same as before this
+        existed) but the LLM's read is attached to the analysis metadata so
+        the review queue can show it without a second, duplicate API call.
+
+        No-op without GEMINI_API_KEY -- e.g. local dev, or the feature is
+        turned off by removing the key -- and any call failure (timeout,
+        quota, bad response) falls back to the unmodified regex result
+        rather than ever breaking analysis.
+        """
+        category = analysis_result.order_category
+        confidence = float(analysis_result.category_confidence or 0.0)
+        result: Dict[str, Any] = {
+            "category": category,
+            "confidence": confidence,
+            "llm_suggestion": None,
+        }
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        order_text = (analysis_result.order_text or "").strip()
+        if (
+            not api_key
+            or not order_text
+            or confidence >= self.REVIEW_CONFIDENCE_THRESHOLD
+        ):
+            return result
+
+        try:
+            from review_copilot import call_gemini
+
+            suggestion = call_gemini(order_text, api_key)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - never let an LLM hiccup break analysis
+            logger.warning(
+                "LLM-assist call failed for a low-confidence case, falling back "
+                "to the regex result unchanged: %s",
+                exc,
+            )
+            return result
+
+        agreed = suggestion.get("category") == category
+        result["llm_suggestion"] = {
+            "category": suggestion.get("category"),
+            "confidence": suggestion.get("confidence"),
+            "rationale": suggestion.get("rationale"),
+            "agreed_with_regex": agreed,
+        }
+        if agreed:
+            new_confidence = max(confidence, float(suggestion.get("confidence") or 0.0))
+            logger.info(
+                "LLM-assist: regex and LLM agree on %s (regex=%.2f, llm=%.2f) -- "
+                "confidence raised to %.2f",
+                category,
+                confidence,
+                suggestion.get("confidence") or 0.0,
+                new_confidence,
+            )
+            result["confidence"] = new_confidence
+        return result
+
     def _analyze_order_with_api_metadata(
         self,
         case_id: str,
@@ -687,6 +759,13 @@ class AutoOrderManager:
             )
             analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
 
+            llm_assist = self._maybe_llm_assist(analysis_result)
+            if llm_assist["llm_suggestion"] is not None:
+                analysis_metadata = {
+                    **analysis_metadata,
+                    "llm_suggestion": llm_assist["llm_suggestion"],
+                }
+
             # Extract government pleaders from the analysis result.
             # Try to find the CaseInfo that matches case_ref; fall back to
             # the first case (or combine all when there is only one case).
@@ -704,8 +783,8 @@ class AutoOrderManager:
                 gp_list = list(target_case.government_pleader or [])
 
             order_analysis: Dict[str, Any] = {
-                "order_category": analysis_result.order_category,
-                "order_category_confidence": analysis_result.category_confidence,
+                "order_category": llm_assist["category"],
+                "order_category_confidence": llm_assist["confidence"],
                 "order_date": api_order_date,
                 "order_petitioner": api_petitioner,
                 "order_respondent": api_respondent,

@@ -195,6 +195,60 @@ def test_analyze_order_with_api_metadata_success(auto_order_manager):
     assert call_kwargs["order_date"] == "2025-03-01"
 
 
+def test_analyze_order_with_api_metadata_llm_agreement_avoids_manual_review(
+    auto_order_manager, monkeypatch
+):
+    """Integration of roadmap #2 into the real analysis path: a low-confidence
+    regex result that the LLM independently agrees with must clear the
+    review gate (transition to "analysed", not "manual_review_required"),
+    and the LLM's read must be attached to the stored metadata."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="ADJOURNED",
+            category_confidence=0.4,
+            order_text="Due to paucity of time, stand over to 15/03/2025.",
+            analysis_metadata={},
+            cases=[],
+        )
+    )
+
+    with patch(
+        "review_copilot.call_gemini",
+        return_value={
+            "category": "ADJOURNED",
+            "confidence": 0.9,
+            "rationale": 'Explicitly "paucity of time" with no hearing.',
+        },
+    ):
+        result = auto_order_manager._analyze_order_with_api_metadata(
+            case_id="board-abc",
+            case_ref="WP/123/2025",
+            pdf_content=b"%PDF-1.4",
+            api_order_date="2025-03-01",
+            api_petitioner="Petitioner Co",
+            api_respondent="State of Maharashtra",
+            order_link="https://example.com/order.pdf",
+        )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["order_category"] == "ADJOURNED"
+    assert data["order_category_confidence"] == 0.9
+    assert (
+        data["order_analysis_metadata"]["llm_suggestion"]["agreed_with_regex"] is True
+    )
+
+    # The lifecycle transition actually taken must reflect the boosted
+    # confidence -- this is what keeps the case out of manual review.
+    transition_call = auto_order_manager.case_store.transition_lifecycle.call_args
+    assert transition_call.args[1] == "analysed"
+
+
 def test_process_all_orders_from_api_success(auto_order_manager):
     """All portal orders are downloaded, analysed, and linked to their board entries."""
     auto_order_manager.court_scraper._fetch_with_provider = Mock(
@@ -1082,3 +1136,116 @@ class TestGetFilteredMattersScope:
             "WP/2/2026",
             "WP/3/2026",
         }
+
+
+class TestMaybeLlmAssist:
+    """Roadmap #2: route only ambiguous (low-confidence) cases to an LLM,
+    and only ever auto-resolve on agreement between the regex and the LLM
+    -- disagreement always still goes to manual review, unchanged."""
+
+    def _analysis_result(self, category="ADJOURNED", confidence=0.4, text="Order text"):
+        return types.SimpleNamespace(
+            order_category=category, category_confidence=confidence, order_text=text
+        )
+
+    def test_no_op_without_gemini_api_key(self, auto_order_manager, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        result = auto_order_manager._maybe_llm_assist(self._analysis_result())
+        assert result == {
+            "category": "ADJOURNED",
+            "confidence": 0.4,
+            "llm_suggestion": None,
+        }
+
+    def test_no_op_when_confidence_already_above_review_threshold(
+        self, auto_order_manager, monkeypatch
+    ):
+        """Not ambiguous -- the whole point is to route only the cases a
+        human would otherwise have to look at, not every order."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        called = Mock()
+        with patch("review_copilot.call_gemini", called):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(confidence=0.9)
+            )
+        called.assert_not_called()
+        assert result["confidence"] == 0.9
+        assert result["llm_suggestion"] is None
+
+    def test_no_op_when_order_text_is_empty(self, auto_order_manager, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        called = Mock()
+        with patch("review_copilot.call_gemini", called):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(text="   ")
+            )
+        called.assert_not_called()
+        assert result["llm_suggestion"] is None
+
+    def test_raises_confidence_when_llm_agrees_with_regex(
+        self, auto_order_manager, monkeypatch
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Stand over to next date, no hearing.",
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+
+        assert result["category"] == "ADJOURNED"
+        assert result["confidence"] == 0.9  # raised, agreement is the trustworthy case
+        assert result["llm_suggestion"]["agreed_with_regex"] is True
+
+    def test_never_lowers_confidence_even_if_llm_is_less_confident(
+        self, auto_order_manager, monkeypatch
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={"category": "ADJOURNED", "confidence": 0.3, "rationale": "x"},
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+        assert result["confidence"] == 0.4
+
+    def test_disagreement_leaves_regex_result_completely_unchanged(
+        self, auto_order_manager, monkeypatch
+    ):
+        """The case must still go to manual review exactly as it would have
+        without this feature -- disagreement never auto-resolves."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Notice was issued.",
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+
+        assert result["category"] == "ADJOURNED"
+        assert result["confidence"] == 0.4
+        assert result["llm_suggestion"]["category"] == "HEARD_AND_ADJOURNED"
+        assert result["llm_suggestion"]["agreed_with_regex"] is False
+
+    def test_llm_call_failure_falls_back_to_regex_result_unchanged(
+        self, auto_order_manager, monkeypatch
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch("review_copilot.call_gemini", side_effect=RuntimeError("timeout")):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+        assert result["category"] == "ADJOURNED"
+        assert result["confidence"] == 0.4
+        assert result["llm_suggestion"] is None
