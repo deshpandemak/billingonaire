@@ -721,19 +721,57 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
                 user_id = user_doc.id
                 user_data = user_doc.to_dict()
 
-                # Create UserRole object from stored data
+                # Create UserRole object from stored data. Default matches
+                # UserMatterMatcher.get_user_role_config's canonical default
+                # (0.50, "lowered from 0.75 to match bill generation logic")
+                # -- this call site had drifted from that and was silently
+                # requiring a much higher bar for every user without an
+                # explicit confidence_threshold stored.
                 user_role = UserRole(
                     role_type=user_data.get("role_type"),
                     full_name=user_data.get("full_name"),
                     name_variations=user_data.get("name_variations", []),
                     pattern_keywords=user_data.get("pattern_keywords", []),
-                    confidence_threshold=user_data.get("confidence_threshold", 0.75),
+                    confidence_threshold=user_data.get("confidence_threshold", 0.50),
                 )
 
                 # Check if this case matches the user
-                user_matches = get_user_matter_matcher().find_user_matters_for_case(
+                matcher = get_user_matter_matcher()
+                user_matches = matcher.find_user_matters_for_case(
                     user_id, user_role, case_id
                 )
+
+                # Roadmap #9: matches that fell just short of the threshold
+                # used to be discarded with no trace -- ask the user instead
+                # of silently missing the matter assignment. One pending
+                # confirmation per (user, case, source, field), same dedup
+                # key shape as the accepted mapping below.
+                near_misses = matcher.find_near_miss_matters_for_case(
+                    user_id, user_role, case_id
+                )
+                for near_miss in near_misses:
+                    pending_key = (
+                        f"{user_id}_{case_id}_{near_miss.match_source}_"
+                        f"{near_miss.match_field}"
+                    )
+                    db.collection("user-matter-pending-confirmations").document(
+                        pending_key
+                    ).set(
+                        {
+                            "user_id": user_id,
+                            "case_id": case_id,
+                            "case_ref": case_info.get("case_ref"),
+                            "match_source": near_miss.match_source,
+                            "match_field": near_miss.match_field,
+                            "matched_text": near_miss.matched_text,
+                            "confidence_score": near_miss.confidence_score,
+                            "role_type": near_miss.role_type,
+                            "board_date": near_miss.board_date,
+                            "created_at": firestore.SERVER_TIMESTAMP,
+                            "status": "pending",
+                        },
+                        merge=True,
+                    )
 
                 if user_matches:
                     # Store the mapping in user-case-mappings collection
@@ -4187,6 +4225,133 @@ async def get_my_matters(
         logger.error(f"Error getting user matters: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get user matters: {str(e)}"}
+        )
+
+
+@app.get("/user-matters/pending-confirmations", tags=["User Matter Mapping"])
+async def get_pending_matter_confirmations(current_user=Depends(get_current_user)):
+    """Matches that fell just short of the auto-accept threshold -- 'is this
+    you?' candidates the current user can confirm or dismiss, instead of a
+    real matter assignment being silently missed (roadmap #9)."""
+    try:
+        user_id = current_user.get("uid")
+        db = firestore.client()
+        docs = (
+            db.collection("user-matter-pending-confirmations")
+            .where("user_id", "==", user_id)
+            .where("status", "==", "pending")
+            .stream()
+        )
+        pending = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data["id"] = doc.id
+            pending.append(data)
+
+        return JSONResponse(content={"pending": pending, "total": len(pending)})
+    except Exception as e:
+        logger.error(f"Error getting pending matter confirmations: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get pending confirmations: {str(e)}"},
+        )
+
+
+def _load_owned_pending_confirmation(db, confirmation_id: str, uid: str):
+    """Fetch a pending-confirmation doc and verify it belongs to ``uid``.
+    Returns (doc_ref, data) or (None, error_response)."""
+    doc_ref = db.collection("user-matter-pending-confirmations").document(
+        confirmation_id
+    )
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
+        return None, JSONResponse(
+            status_code=404, content={"error": "Confirmation not found"}
+        )
+    data = snapshot.to_dict() or {}
+    if data.get("user_id") != uid:
+        # Deliberately the same 404 as "not found" rather than 403 -- a user
+        # should not be able to tell someone else's pending confirmation
+        # exists at all.
+        return None, JSONResponse(
+            status_code=404, content={"error": "Confirmation not found"}
+        )
+    return doc_ref, data
+
+
+@app.post(
+    "/user-matters/pending-confirmations/{confirmation_id}/confirm",
+    tags=["User Matter Mapping"],
+)
+async def confirm_pending_matter(
+    confirmation_id: str, current_user=Depends(get_current_user)
+):
+    """User confirms a near-miss match really is them -- creates the real
+    matter mapping, same shape as an auto-accepted one."""
+    try:
+        db = firestore.client()
+        uid = current_user.get("uid")
+        doc_ref, data = _load_owned_pending_confirmation(db, confirmation_id, uid)
+        if doc_ref is None:
+            return data  # the error JSONResponse
+
+        mapping_key = (
+            f"{data['user_id']}_{data['case_id']}_{data['match_source']}_"
+            f"{data['match_field']}"
+        )
+        db.collection("user-case-mappings").document(mapping_key).set(
+            {
+                "user_id": data["user_id"],
+                "case_id": data["case_id"],
+                "case_ref": data.get("case_ref"),
+                "match_source": data["match_source"],
+                "match_field": data["match_field"],
+                "matched_text": data.get("matched_text"),
+                "confidence_score": data.get("confidence_score"),
+                "role_type": data.get("role_type"),
+                "board_date": data.get("board_date"),
+                "mapped_at": firestore.SERVER_TIMESTAMP,
+                "auto_mapped": False,
+                "confirmed_by_user": True,
+            },
+            merge=True,
+        )
+        doc_ref.set(
+            {"status": "confirmed", "resolved_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return JSONResponse(content={"success": True, "case_ref": data.get("case_ref")})
+    except Exception as e:
+        logger.error(f"Error confirming pending matter {confirmation_id}: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to confirm match: {str(e)}"}
+        )
+
+
+@app.post(
+    "/user-matters/pending-confirmations/{confirmation_id}/reject",
+    tags=["User Matter Mapping"],
+)
+async def reject_pending_matter(
+    confirmation_id: str, current_user=Depends(get_current_user)
+):
+    """User says a near-miss match isn't them -- no mapping is created."""
+    try:
+        db = firestore.client()
+        uid = current_user.get("uid")
+        doc_ref, data = _load_owned_pending_confirmation(db, confirmation_id, uid)
+        if doc_ref is None:
+            return data  # the error JSONResponse
+
+        doc_ref.set(
+            {"status": "rejected", "resolved_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        logger.error(f"Error rejecting pending matter {confirmation_id}: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to reject match: {str(e)}"}
         )
 
 

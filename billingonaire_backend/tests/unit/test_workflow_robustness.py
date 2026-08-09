@@ -639,3 +639,234 @@ async def test_queue_health_flags_a_systemic_pattern_across_failed_cases(monkeyp
     assert data["failed_count_by_status"]["fetch_failed_retryable"] == 3
     assert data["signature_groups"][0]["systemic"] is True
     assert any("systemic" in line for line in data["summary_lines"])
+
+
+# ---------------------------------------------------------------------------
+# 7.  /user-matters/pending-confirmations -- roadmap #9, "ask, don't
+#     silently threshold" on ambiguous AGP name matches.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmations_only_returns_current_users_own(monkeypatch):
+    mine = SimpleNamespace(
+        id="conf-1",
+        to_dict=lambda: {
+            "user_id": "user-1",
+            "case_ref": "WP/1/2026",
+            "status": "pending",
+        },
+    )
+
+    def where_side_effect(field, op, value):
+        mock_query = MagicMock()
+        if field == "user_id":
+            mock_query.where.return_value.stream.return_value = (
+                [mine] if value == "user-1" else []
+            )
+        return mock_query
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_pending_matter_confirmations(
+        current_user={"uid": "user-1"}
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["total"] == 1
+    assert data["pending"][0]["case_ref"] == "WP/1/2026"
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_matter_creates_mapping_and_marks_confirmed(
+    monkeypatch,
+):
+    pending_doc = SimpleNamespace(
+        exists=True,
+        to_dict=lambda: {
+            "user_id": "user-1",
+            "case_id": "board-doc-1",
+            "case_ref": "WP/1/2026",
+            "match_source": "board_data",
+            "match_field": "respondent_lawyer",
+            "matched_text": "P. Deshpande",
+            "confidence_score": 0.42,
+            "role_type": "AGP",
+            "board_date": "2026-01-15",
+        },
+    )
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.get.return_value = pending_doc
+    mock_mapping_ref = MagicMock()
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "user-matter-pending-confirmations":
+            col.document.return_value = mock_doc_ref
+        elif name == "user-case-mappings":
+            col.document.return_value = mock_mapping_ref
+        return col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+
+    response = await main.confirm_pending_matter(
+        "conf-1", current_user={"uid": "user-1"}
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["success"] is True
+
+    mapping_call = mock_mapping_ref.set.call_args
+    assert mapping_call.args[0]["confirmed_by_user"] is True
+    assert mapping_call.args[0]["case_ref"] == "WP/1/2026"
+
+    status_call = mock_doc_ref.set.call_args
+    assert status_call.args[0]["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_matter_marks_rejected_without_creating_a_mapping(
+    monkeypatch,
+):
+    pending_doc = SimpleNamespace(
+        exists=True,
+        to_dict=lambda: {"user_id": "user-1", "case_id": "board-doc-1"},
+    )
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.get.return_value = pending_doc
+    mock_mapping_ref = MagicMock()
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "user-matter-pending-confirmations":
+            col.document.return_value = mock_doc_ref
+        elif name == "user-case-mappings":
+            col.document.return_value = mock_mapping_ref
+        return col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+
+    response = await main.reject_pending_matter(
+        "conf-1", current_user={"uid": "user-1"}
+    )
+    import json
+
+    assert json.loads(response.body)["success"] is True
+    mock_doc_ref.set.assert_called_once()
+    assert mock_doc_ref.set.call_args.args[0]["status"] == "rejected"
+    mock_mapping_ref.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_matter_404s_when_confirmation_does_not_exist(
+    monkeypatch,
+):
+    missing_doc = SimpleNamespace(exists=False, to_dict=lambda: {})
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.get.return_value = missing_doc
+    mock_db = MagicMock()
+    mock_db.collection.return_value.document.return_value = mock_doc_ref
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.confirm_pending_matter(
+        "does-not-exist", current_user={"uid": "user-1"}
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_matter_404s_not_403s_for_someone_elses_confirmation(
+    monkeypatch,
+):
+    """A user must not be able to confirm/reject another user's pending
+    match, and the failure must look identical to "not found" -- a 403
+    would leak that the confirmation_id exists at all."""
+    someone_elses_doc = SimpleNamespace(
+        exists=True, to_dict=lambda: {"user_id": "someone-else", "case_id": "x"}
+    )
+    mock_doc_ref = MagicMock()
+    mock_doc_ref.get.return_value = someone_elses_doc
+    mock_db = MagicMock()
+    mock_db.collection.return_value.document.return_value = mock_doc_ref
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.confirm_pending_matter(
+        "conf-1", current_user={"uid": "user-1"}
+    )
+    assert response.status_code == 404
+    mock_doc_ref.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_map_case_to_users_writes_near_misses_as_pending(monkeypatch):
+    """Integration of roadmap #9 into the real auto-mapping path: a near-miss
+    match must be written to user-matter-pending-confirmations, and the
+    UserRole built for matching must default to 0.50 (not the stale 0.75
+    this call site had drifted to) when a user has no explicit threshold
+    stored."""
+    user_doc = SimpleNamespace(
+        id="user-1",
+        to_dict=lambda: {"role_type": "AGP", "full_name": "Pooja Deshpande"},
+    )
+    mock_users_collection = MagicMock()
+    mock_users_collection.stream.return_value = [user_doc]
+
+    near_miss = SimpleNamespace(
+        match_source="board_data",
+        match_field="respondent_lawyer",
+        matched_text="P. Deshpande",
+        confidence_score=0.42,
+        role_type="AGP",
+        board_date="2026-01-15",
+    )
+    mock_matcher = MagicMock()
+    mock_matcher.find_user_matters_for_case.return_value = []
+    mock_matcher.find_near_miss_matters_for_case.return_value = [near_miss]
+    monkeypatch.setattr(main, "get_user_matter_matcher", lambda: mock_matcher)
+
+    mock_pending_doc_ref = MagicMock()
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "user-roles":
+            col.stream.return_value = [user_doc]
+        elif name == "user-matter-pending-confirmations":
+            col.document.return_value = mock_pending_doc_ref
+        return col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+
+    await main.auto_map_case_to_users("board-doc-1", {"case_ref": "WP/1/2026"})
+
+    # UserRole built with no explicit confidence_threshold in user_data must
+    # default to 0.50, matching UserMatterMatcher's own canonical default.
+    call_args = mock_matcher.find_user_matters_for_case.call_args
+    user_role_arg = call_args.args[1]
+    assert user_role_arg.confidence_threshold == 0.50
+
+    pending_write = mock_pending_doc_ref.set.call_args.args[0]
+    assert pending_write["status"] == "pending"
+    assert pending_write["matched_text"] == "P. Deshpande"
+    assert pending_write["case_ref"] == "WP/1/2026"

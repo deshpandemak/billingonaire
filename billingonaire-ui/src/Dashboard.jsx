@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
 import { AGP_FULL, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
+import PendingMatterConfirmations from './components/PendingMatterConfirmations';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -452,6 +453,8 @@ const Dashboard = () => {
         <h1 className="dashboard-title">Legal Practice Dashboard</h1>
         <p className="dashboard-subtitle">Court matters, order analysis and AGP ({AGP_FULL}) performance at a glance</p>
       </div>
+
+      <PendingMatterConfirmations />
 
       {/* ── 1. Summary stat cards ── */}
       <div className="dashboard-section">

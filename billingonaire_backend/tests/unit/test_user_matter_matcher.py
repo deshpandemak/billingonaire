@@ -1,7 +1,7 @@
 """Unit tests for UserMatterMatcher.py module - Pattern matching for user-matter assignment"""
 
 from difflib import SequenceMatcher
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -269,3 +269,124 @@ class TestBoardMatterMatching:
             result = {"match": True}
 
         assert "error" in result
+
+
+class TestNearMissMatching:
+    """Roadmap #9: a match that falls just short of the acceptance
+    threshold is surfaced for a human to confirm instead of being
+    discarded with no trace at all -- "ask, don't silently threshold"."""
+
+    @pytest.fixture
+    def matcher_module(self, mock_firestore_client):
+        with patch(
+            "UserMatterMatcher.firestore.client", return_value=mock_firestore_client
+        ):
+            import UserMatterMatcher
+
+            return UserMatterMatcher
+
+    @pytest.fixture
+    def matcher(self, matcher_module, mock_firestore_client):
+        return matcher_module.UserMatterMatcher()
+
+    def _role(self, matcher_module, threshold=0.50):
+        return matcher_module.UserRole(
+            role_type="AGP",
+            full_name="Pooja Deshpande",
+            name_variations=["Pooja Deshpande"],
+            pattern_keywords=[],
+            confidence_threshold=threshold,
+        )
+
+    def test_score_within_band_below_threshold_is_a_near_miss_not_accepted(
+        self, matcher, matcher_module
+    ):
+        role = self._role(matcher_module, threshold=0.50)
+        with patch.object(matcher, "fuzzy_match_score", return_value=0.40):
+            accepted, near_miss = matcher._score_text_against_role("XYZQ text", role)
+
+        assert accepted == []
+        assert len(near_miss) == 1
+        assert near_miss[0][0] == "XYZQ text"
+
+    def test_score_too_far_below_threshold_is_neither_accepted_nor_near_miss(
+        self, matcher, matcher_module
+    ):
+        """Below (threshold - NEAR_MISS_BAND) is noise, not a plausible
+        candidate -- must not flood users with meaningless confirmations."""
+        role = self._role(matcher_module, threshold=0.50)
+        with patch.object(matcher, "fuzzy_match_score", return_value=0.10):
+            accepted, near_miss = matcher._score_text_against_role("XYZQ text", role)
+
+        assert accepted == []
+        assert near_miss == []
+
+    def test_accepted_match_is_never_also_reported_as_a_near_miss(
+        self, matcher, matcher_module
+    ):
+        role = self._role(matcher_module, threshold=0.50)
+        with patch.object(matcher, "fuzzy_match_score", return_value=0.90):
+            accepted, near_miss = matcher._score_text_against_role("XYZQ text", role)
+
+        assert len(accepted) == 1
+        assert near_miss == []
+
+    def test_find_user_matches_in_text_and_near_miss_variant_stay_in_sync(
+        self, matcher, matcher_module
+    ):
+        """The public find_* wrappers must return exactly what the shared
+        scoring pass produced -- no drift between the two."""
+        role = self._role(matcher_module, threshold=0.50)
+        with patch.object(matcher, "fuzzy_match_score", return_value=0.40):
+            accepted = matcher.find_user_matches_in_text("XYZQ text", role)
+            near_miss = matcher.find_near_miss_matches_in_text("XYZQ text", role)
+
+        assert accepted == []
+        assert len(near_miss) == 1
+
+    def test_near_miss_band_boundary_is_inclusive(self, matcher, matcher_module):
+        role = self._role(matcher_module, threshold=0.50)
+        boundary_score = 0.50 - matcher_module.UserMatterMatcher.NEAR_MISS_BAND
+        with patch.object(matcher, "fuzzy_match_score", return_value=boundary_score):
+            accepted, near_miss = matcher._score_text_against_role("XYZQ text", role)
+
+        assert accepted == []
+        assert len(near_miss) == 1
+
+    def test_find_near_miss_matters_for_case_surfaces_a_below_threshold_candidate(
+        self, matcher, matcher_module, mock_firestore_client
+    ):
+        """End-to-end: a case whose lawyer text almost, but doesn't quite,
+        match the user must show up via the near-miss finder even though
+        find_user_matters_for_case (the accepted-only path) finds nothing."""
+        # matcher_module's `with patch(...): return UserMatterMatcher` exits its
+        # patch before the `matcher` fixture actually constructs the instance,
+        # so matcher.db is not reliably mock_firestore_client -- pin it directly
+        # rather than depend on that fixture's patch timing.
+        matcher.db = mock_firestore_client
+        board_doc = MagicMock()
+        board_doc.exists = True
+        board_doc.to_dict.return_value = {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2026",
+            "board_date": "2026-01-15",
+            "petitioner_lawyer": "XYZQ text",
+            "respondent_lawyer": "",
+        }
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            board_doc
+        )
+        matcher.case_store.get_case_details = MagicMock(return_value={})
+
+        role = self._role(matcher_module, threshold=0.50)
+        with patch.object(matcher, "fuzzy_match_score", return_value=0.40):
+            accepted = matcher.find_user_matters_for_case("user-1", role, "board-doc-1")
+            near_misses = matcher.find_near_miss_matters_for_case(
+                "user-1", role, "board-doc-1"
+            )
+
+        assert accepted == []
+        assert len(near_misses) == 1
+        assert near_misses[0].case_ref == "WP/1/2026"
+        assert near_misses[0].matched_text == "XYZQ text"

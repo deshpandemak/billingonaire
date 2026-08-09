@@ -356,14 +356,40 @@ class UserMatterMatcher:
 
         return None
 
+    # How far below the acceptance threshold a match can fall and still be
+    # worth asking a human about, rather than discarded with no trace at
+    # all. Below (threshold - NEAR_MISS_BAND), a match is noise, not a
+    # plausible-but-uncertain candidate.
+    NEAR_MISS_BAND = 0.15
+
     def find_user_matches_in_text(
         self, text: str, user_role: UserRole, field_context: str = ""
     ) -> List[Tuple[str, float]]:
-        """Find user name matches in given text with role-aware scoring"""
-        if not text:
-            return []
+        """Find user name matches in given text with role-aware scoring."""
+        accepted, _ = self._score_text_against_role(text, user_role, field_context)
+        return accepted
 
-        matches = []
+    def find_near_miss_matches_in_text(
+        self, text: str, user_role: UserRole, field_context: str = ""
+    ) -> List[Tuple[str, float]]:
+        """Matches that fell just short of the acceptance threshold --
+        plausible enough to ask a human to confirm rather than silently
+        drop. See ``NEAR_MISS_BAND`` for how far "just short" reaches."""
+        _, near_misses = self._score_text_against_role(text, user_role, field_context)
+        return near_misses
+
+    def _score_text_against_role(
+        self, text: str, user_role: UserRole, field_context: str = ""
+    ) -> Tuple[List[Tuple[str, float]], List[Tuple[str, float]]]:
+        """Single scoring pass shared by find_user_matches_in_text and
+        find_near_miss_matches_in_text so the two never drift out of sync.
+        Returns (accepted, near_miss) -- each a list of (matched_text, score).
+        """
+        if not text:
+            return [], []
+
+        accepted: List[Tuple[str, float]] = []
+        near_miss: List[Tuple[str, float]] = []
 
         # Detect role context in text for scoring boost
         role_context_bonus = 0.0
@@ -393,7 +419,7 @@ class UserMatterMatcher:
             if name_var.lower() in text.lower():
                 base_score = 0.95
                 final_score = min(1.0, base_score + role_context_bonus + field_bonus)
-                matches.append((name_var, final_score))
+                accepted.append((name_var, final_score))
                 continue
 
             # Fuzzy matching against text segments
@@ -425,9 +451,14 @@ class UserMatterMatcher:
                     final_score = min(
                         1.0, base_score + role_context_bonus + field_bonus
                     )
-                    matches.append((segment.strip(), final_score))
+                    accepted.append((segment.strip(), final_score))
+                elif base_score >= effective_threshold - self.NEAR_MISS_BAND:
+                    final_score = min(
+                        1.0, base_score + role_context_bonus + field_bonus
+                    )
+                    near_miss.append((segment.strip(), final_score))
 
-        return matches
+        return accepted, near_miss
 
     def _is_compatible_role(self, detected_role: str, user_role: str) -> bool:
         """Check if detected role is compatible with user's role"""
@@ -645,8 +676,28 @@ class UserMatterMatcher:
         self, user_id: str, user_role: UserRole, case_id: str
     ) -> List[MatterMatch]:
         """Find user matches for a specific case ID"""
+        matches, _ = self._find_matters_and_near_misses_for_case(
+            user_id, user_role, case_id
+        )
+        return matches
+
+    def find_near_miss_matters_for_case(
+        self, user_id: str, user_role: UserRole, case_id: str
+    ) -> List[MatterMatch]:
+        """Matches for this case that fell just short of the acceptance
+        threshold -- plausible enough to ask the user to confirm rather
+        than silently miss the matter assignment entirely."""
+        _, near_misses = self._find_matters_and_near_misses_for_case(
+            user_id, user_role, case_id
+        )
+        return near_misses
+
+    def _find_matters_and_near_misses_for_case(
+        self, user_id: str, user_role: UserRole, case_id: str
+    ) -> Tuple[List[MatterMatch], List[MatterMatch]]:
         try:
-            matches = []
+            matches: List[MatterMatch] = []
+            near_misses: List[MatterMatch] = []
 
             # Get the specific case from daily-boards
             doc_ref = self.db.collection("daily-boards").document(case_id)
@@ -654,57 +705,57 @@ class UserMatterMatcher:
 
             if not doc.exists:
                 logging.warning(f"Case {case_id} not found in daily-boards")
-                return matches
+                return matches, near_misses
 
             doc_data = doc.to_dict()
             case_ref = f"{doc_data.get('case_type')}/{doc_data.get('case_no')}/{doc_data.get('case_year')}"
+            board_date = str(doc_data.get("board_date", ""))
+
+            def _collect(text_to_search, match_source, field_name, boost=0.0):
+                accepted, near_miss = self._score_text_against_role(
+                    text_to_search, user_role, field_name
+                )
+                for matched_text, confidence in accepted:
+                    matches.append(
+                        MatterMatch(
+                            case_id=case_id,
+                            case_ref=case_ref,
+                            match_source=match_source,
+                            match_field=field_name,
+                            matched_text=matched_text,
+                            confidence_score=min(1.0, confidence + boost),
+                            role_type=user_role.role_type,
+                            board_date=board_date,
+                        )
+                    )
+                for matched_text, confidence in near_miss:
+                    near_misses.append(
+                        MatterMatch(
+                            case_id=case_id,
+                            case_ref=case_ref,
+                            match_source=match_source,
+                            match_field=field_name,
+                            matched_text=matched_text,
+                            confidence_score=min(1.0, confidence + boost),
+                            role_type=user_role.role_type,
+                            board_date=board_date,
+                        )
+                    )
 
             # Search board data fields
             board_fields = {
                 "petitioner_lawyer": doc_data.get("petitioner_lawyer", ""),
                 "respondent_lawyer": doc_data.get("respondent_lawyer", ""),
             }
-
             for field_name, field_value in board_fields.items():
                 if field_value:
-                    text_matches = self.find_user_matches_in_text(
-                        field_value, user_role, field_name
-                    )
-                    for matched_text, confidence in text_matches:
-                        matches.append(
-                            MatterMatch(
-                                case_id=case_id,
-                                case_ref=case_ref,
-                                match_source="board_data",
-                                match_field=field_name,
-                                matched_text=matched_text,
-                                confidence_score=confidence,
-                                role_type=user_role.role_type,
-                                board_date=str(doc_data.get("board_date", "")),
-                            )
-                        )
+                    _collect(field_value, "board_data", field_name)
 
             # Search additional_respondent_lawyers (array field)
             additional_lawyers = doc_data.get("additional_respondent_lawyers", [])
             if additional_lawyers and isinstance(additional_lawyers, list):
-                # Join array into searchable text
                 text_to_search = " ".join(str(lawyer) for lawyer in additional_lawyers)
-                text_matches = self.find_user_matches_in_text(
-                    text_to_search, user_role, "additional_respondent_lawyers"
-                )
-                for matched_text, confidence in text_matches:
-                    matches.append(
-                        MatterMatch(
-                            case_id=case_id,
-                            case_ref=case_ref,
-                            match_source="board_data",
-                            match_field="additional_respondent_lawyers",
-                            matched_text=matched_text,
-                            confidence_score=confidence,
-                            role_type=user_role.role_type,
-                            board_date=str(doc_data.get("board_date", "")),
-                        )
-                    )
+                _collect(text_to_search, "board_data", "additional_respondent_lawyers")
 
             # Search normalized case-details fields.
             case_details = self.case_store.get_case_details(case_ref) or {}
@@ -713,41 +764,24 @@ class UserMatterMatcher:
                 "petitioner": case_details.get("petitioner", ""),
                 "respondent": case_details.get("respondent", ""),
             }
-
             for field_name, field_value in case_fields.items():
                 if field_value:
-                    if isinstance(field_value, list):
-                        text_to_search = " ".join(str(item) for item in field_value)
-                    else:
-                        text_to_search = str(field_value)
-
+                    text_to_search = (
+                        " ".join(str(item) for item in field_value)
+                        if isinstance(field_value, list)
+                        else str(field_value)
+                    )
                     if text_to_search:
-                        text_matches = self.find_user_matches_in_text(
-                            text_to_search, user_role, field_name
-                        )
-                        for matched_text, confidence in text_matches:
-                            boosted_confidence = min(1.0, confidence + 0.05)
-                            matches.append(
-                                MatterMatch(
-                                    case_id=case_id,
-                                    case_ref=case_ref,
-                                    match_source="case_details",
-                                    match_field=field_name,
-                                    matched_text=matched_text,
-                                    confidence_score=boosted_confidence,
-                                    role_type=user_role.role_type,
-                                    board_date=str(doc_data.get("board_date", "")),
-                                )
-                            )
+                        _collect(text_to_search, "case_details", field_name, boost=0.05)
 
-            # Sort by confidence and remove duplicates
             matches.sort(key=lambda x: x.confidence_score, reverse=True)
+            near_misses.sort(key=lambda x: x.confidence_score, reverse=True)
 
-            return matches
+            return matches, near_misses
 
         except Exception as e:
             logging.error(f"Error finding user matters for case {case_id}: {e}")
-            return []
+            return [], []
 
 
 # ---------------------------------------------------------------------------
