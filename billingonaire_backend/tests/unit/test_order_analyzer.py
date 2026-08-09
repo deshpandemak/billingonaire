@@ -324,6 +324,52 @@ class TestCategoryClassification:
         category, _ = analyzer._classify_order(text)
         assert category == expected
 
+    # ------------------------------------------------------------------
+    # Regression: a real order (WP-10601-2014) scored HEARD_AND_ADJOURNED
+    # at 1.0 confidence -- high enough to skip manual review entirely --
+    # when nothing was actually argued. Found via tools/review_copilot_
+    # prototype.py comparing the regex classifier against an LLM on real
+    # downloaded orders.
+    # ------------------------------------------------------------------
+
+    def test_office_directed_future_listing_is_adjourned_not_heard(self, analyzer):
+        """'Office to list...for hearing' describes a FUTURE hearing that has
+        not happened yet -- it must not be read as evidence a hearing occurred,
+        even though the sentence contains the word 'hearing'."""
+        text = (
+            "IN THE HIGH COURT OF JUDICATURE AT BOMBAY CIVIL APPELLATE "
+            "JURISDICTION WRIT PETITION NO.10601 OF 2014 Shri. Baban "
+            "Ramchandra Dhobale .. Petitioner versus Shri. Chhatrapati "
+            "Shikshan Sanstha and Ors. .. Respondents Mr. Rakesh Saroj for "
+            "the Petitioner. Ms. Pooja Joshi Deshpande for Respondent "
+            "Nos.3 to 5-State. CORAM: RAVINDRA V. GHUGE AND SHYAM C. "
+            "CHANDAK, JJ. DATE: 3rd FEBRUARY, 2025. P.C.: Considering that "
+            "these proceedings are pending for a long time, office to list "
+            "the same on 6th March, 2025 for a final hearing/final hearing "
+            "at admission stage. These matters would be called out after "
+            "the 'fresh admissions' board is over."
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+        assert confidence >= 0.9
+
+    def test_app_pattern_does_not_match_appellate_jurisdiction_boilerplate(
+        self, analyzer
+    ):
+        """'APP' must not match as a bare prefix of 'APPELLATE' -- combined
+        with a State respondent (present in nearly every AGP case), the
+        unanchored pattern used to read ordinary case-caption boilerplate as
+        evidence that an AGP had appeared and made submissions."""
+        text = (
+            "IN THE HIGH COURT OF JUDICATURE AT BOMBAY APPELLATE "
+            "JURISDICTION WRIT PETITION NO.999 OF 2024 X ....PETITIONER "
+            "V/S The State Of Maharashtra ....RESPONDENT. "
+            "The matter is adjourned to 10th March 2025."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
 
 class TestEntityExtraction:
     """Test entity extraction from orders"""

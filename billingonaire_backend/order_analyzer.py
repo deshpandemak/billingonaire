@@ -177,7 +177,14 @@ class OrderDocumentAnalyzer:
                 r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
                 r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
                 r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
-                r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
+                # \b after the alternation is required: without it, "APP" matches
+                # as a bare prefix of "APPELLATE" (present in the standard case
+                # caption "APPELLATE JURISDICTION" on nearly every order), and the
+                # lazy .*? then spans forward to the first "state"/"states" word --
+                # which fires on "...Respondent Nos. 3 to 5-State" (the government
+                # named as a respondent, i.e. most AGP cases) regardless of whether
+                # anyone actually appeared or submitted anything.
+                r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
                 r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 r"\bcourt.*?observes?\s+that\b",
@@ -288,7 +295,9 @@ class OrderDocumentAnalyzer:
             r"\b(?:learned\s+)?counsel.*?(?:appear(?:s|ed|ing)?)\b",
             r"\b(?:learned\s+)?counsel\s+for.*?(?:submits?|states?|argues?)\b",
             r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
-            r"\b(?:AGP|APP).*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
+            # Must match _create_order_patterns exactly -- weight lookup is keyed
+            # by the literal pattern string.
+            r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
             r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
             r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
             r"\baffidavit\s+(?:to\s+be|be)\s+(?:filed|sworn|duly\s+sworn|placed)\b",
@@ -455,6 +464,15 @@ class OrderDocumentAnalyzer:
         r"\bcannot\s+be\s+taken\s+up\b",
         r"\bnot\s+taken\s+up\s+today\b",
         r"\bremained?\s+part[-\s]?heard\s+for\s+want\s+of\s+time\b",
+        # Registry/office directives scheduling a FUTURE hearing. The word
+        # "hearing" in these sentences describes what has NOT happened yet, but
+        # the weighted HEARD_AND_ADJOURNED scorer used to count it as evidence
+        # that a hearing occurred (real example: "office to list the same on
+        # 6th March, 2025 for a final hearing... matters would be called out
+        # after the 'fresh admissions' board is over" scored 1.0 confidence
+        # HEARD_AND_ADJOURNED for a case where nothing was argued).
+        r"\boffice\s+to\s+list\s+(?:the\s+same\s+)?(?:on|for)\b",
+        r"\bcalled\s+out\s+after\b.*?\bboard\s+is\s+over\b",
     ]
 
     # Only these patterns trigger the absolute DISPOSED_OFF priority; weaker

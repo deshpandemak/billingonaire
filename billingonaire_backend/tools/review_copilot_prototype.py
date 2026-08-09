@@ -32,6 +32,12 @@ Usage
     python tools/review_copilot_prototype.py --status manual_review_required \\
         --limit 20 --model gemini-flash-latest --out review_copilot
 
+    # No Firestore access needed -- point it at a folder of order PDFs
+    # instead (same folder-of-PDFs convention as tools/evaluate_orders.py).
+    # Files that look like daily board/cause-list documents rather than a
+    # single case's order (multi-page "DAILY MAIN" listings) are skipped.
+    python tools/review_copilot_prototype.py --dir attached_assets --limit 20
+
 Outputs ``<out>_results.csv`` (every case, both verdicts) and, when any
 disagreements exist, ``<out>_disagreements.md`` — only the cases where the
 regex classifier and the LLM landed on different categories, each with both
@@ -123,6 +129,55 @@ def fetch_flagged_cases(status: str, limit: int) -> List[Dict[str, Any]]:
     return cases
 
 
+# A board/cause-list document lists many cases for one day; an order PDF is
+# about one case. The former has no business going through the classifier --
+# skip anything whose first page reads like a listing rather than an order.
+_BOARD_MARKERS = ("DAILY MAIN", "SUPPLEMENTARY", "C.R. No", "Bench Id", "Bench ID")
+
+
+def _looks_like_board_listing(first_page_text: str) -> bool:
+    upper = first_page_text.upper()
+    return any(marker.upper() in upper for marker in _BOARD_MARKERS)
+
+
+def load_local_pdfs(directory: str, limit: Optional[int]) -> List[Dict[str, Any]]:
+    import pdfplumber
+
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
+        raise SystemExit(f"Not a directory: {root}")
+
+    pdfs = sorted(p for p in root.rglob("*.pdf") if p.is_file())
+    pdfs += sorted(p for p in root.rglob("*.PDF") if p.is_file() and p not in pdfs)
+
+    cases: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    for pdf_path in pdfs:
+        pdf_bytes = pdf_path.read_bytes()
+        try:
+            with pdfplumber.open(pdf_path) as doc:
+                first_page_text = doc.pages[0].extract_text() or ""
+        except Exception:
+            first_page_text = ""
+        if _looks_like_board_listing(first_page_text):
+            skipped.append(pdf_path.name)
+            continue
+        cases.append(
+            {
+                "case_ref": pdf_path.stem,
+                "latest_board_date": None,
+                "order_link": f"local:{pdf_path}",
+                "_bytes": pdf_bytes,
+            }
+        )
+        if limit and len(cases) >= limit:
+            break
+
+    if skipped:
+        print(f"Skipped {len(skipped)} board/cause-list PDF(s): {', '.join(skipped)}")
+    return cases
+
+
 def order_link_for(case: Dict[str, Any]) -> Optional[str]:
     if case.get("latest_order_link"):
         return case["latest_order_link"]
@@ -174,12 +229,14 @@ def evaluate_case(
         "agree": None,
         "error": "",
     }
-    link = row["order_link"]
-    if not link:
-        row["error"] = "no order_link on file"
-        return row
     try:
-        pdf_bytes = requests.get(link, timeout=30).content
+        if case.get("_bytes") is not None:
+            pdf_bytes = case["_bytes"]
+        elif row["order_link"]:
+            pdf_bytes = requests.get(row["order_link"], timeout=30).content
+        else:
+            row["error"] = "no order_link on file"
+            return row
         result = analyzer.analyze_order_document(f"{row['case_ref']}.pdf", pdf_bytes)
     except Exception as exc:  # noqa: BLE001 - report, never abort the sweep
         row["error"] = f"regex path failed: {type(exc).__name__}: {exc}"
@@ -210,7 +267,14 @@ def main() -> int:
     ap.add_argument(
         "--status",
         default="manual_review_required",
-        help="lifecycle_status to pull cases from (default: manual_review_required)",
+        help="lifecycle_status to pull cases from (default: manual_review_required); "
+        "ignored when --dir is given",
+    )
+    ap.add_argument(
+        "--dir",
+        dest="directory",
+        help="evaluate a local folder of order PDFs instead of Firestore "
+        "(no GCP credentials needed)",
     )
     ap.add_argument("--limit", type=int, default=20, help="max cases to evaluate")
     ap.add_argument("--model", default="gemini-flash-latest", help="Gemini model name")
@@ -221,10 +285,18 @@ def main() -> int:
     if not api_key:
         raise SystemExit("Set GEMINI_API_KEY in the environment before running this.")
 
-    print(f"Fetching up to {args.limit} cases at lifecycle_status={args.status} ...")
-    cases = fetch_flagged_cases(args.status, args.limit)
-    if not cases:
-        raise SystemExit(f"No cases found at lifecycle_status={args.status}.")
+    if args.directory:
+        print(f"Loading up to {args.limit} order PDF(s) from {args.directory} ...")
+        cases = load_local_pdfs(args.directory, args.limit)
+        if not cases:
+            raise SystemExit(f"No usable order PDFs found under {args.directory}.")
+    else:
+        print(
+            f"Fetching up to {args.limit} cases at lifecycle_status={args.status} ..."
+        )
+        cases = fetch_flagged_cases(args.status, args.limit)
+        if not cases:
+            raise SystemExit(f"No cases found at lifecycle_status={args.status}.")
     print(f"Found {len(cases)} case(s). Evaluating ...\n")
 
     analyzer = build_analyzer()
