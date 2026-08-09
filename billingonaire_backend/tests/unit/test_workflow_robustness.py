@@ -870,3 +870,75 @@ async def test_auto_map_case_to_users_writes_near_misses_as_pending(monkeypatch)
     assert pending_write["status"] == "pending"
     assert pending_write["matched_text"] == "P. Deshpande"
     assert pending_write["case_ref"] == "WP/1/2026"
+
+
+# ---------------------------------------------------------------------------
+# 8.  POST /admin/portal-health-check -- roadmap #3, diagnosing court-portal
+#     drift from the dual-provider attempt matrix instead of a bare error.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_portal_health_check_flags_drift_when_both_providers_find_nothing(
+    monkeypatch,
+):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    mock_scraper = MagicMock()
+    mock_scraper._probe_provider_matrix.return_value = [
+        {
+            "provider": "http",
+            "orders_found": 0,
+            "provider_attempts": [{"step": "http", "status": "no_orders_in_html"}],
+        },
+        {
+            "provider": "playwright",
+            "orders_found": 0,
+            "provider_attempts": [{"step": "playwright", "status": "no_orders_found"}],
+        },
+    ]
+    monkeypatch.setattr(main, "get_court_scraper", lambda: mock_scraper)
+
+    response = await main.portal_health_check(
+        _make_request(
+            {"case_ref": "WP/1/2026", "date": "2026-01-15", "expected_min_orders": 1}
+        ),
+        current_user=None,
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["likely_drift"] is True
+    assert data["case_ref"] == "WP/1/2026"
+    assert "llm_diagnosis" not in data  # no GEMINI_API_KEY configured
+
+
+@pytest.mark.asyncio
+async def test_portal_health_check_400s_without_a_case_ref(monkeypatch):
+    response = await main.portal_health_check(_make_request({}), current_user=None)
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_portal_health_check_adds_llm_diagnosis_only_when_drift_detected(
+    monkeypatch,
+):
+    """Cost control: the LLM must not be called for the common, unremarkable
+    case where at least one provider found orders."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mock_scraper = MagicMock()
+    mock_scraper._probe_provider_matrix.return_value = [
+        {"provider": "http", "orders_found": 0, "provider_attempts": []},
+        {"provider": "playwright", "orders_found": 2, "provider_attempts": []},
+    ]
+    monkeypatch.setattr(main, "get_court_scraper", lambda: mock_scraper)
+
+    with patch("portal_health.call_llm_for_diagnosis") as mock_llm:
+        response = await main.portal_health_check(
+            _make_request({"case_ref": "WP/1/2026"}), current_user=None
+        )
+    import json
+
+    data = json.loads(response.body)
+    assert data["likely_drift"] is False
+    mock_llm.assert_not_called()

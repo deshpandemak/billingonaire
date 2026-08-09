@@ -6367,5 +6367,75 @@ async def scraper_test_case(
     )
 
 
+@app.post("/admin/portal-health-check", tags=["Case Orders"])
+async def portal_health_check(
+    request: Request,
+    current_user: dict = Depends(require_admin_active),
+):
+    """Roadmap #3: run a canary case through BOTH scraper providers
+    (HTTP and Playwright -- independent extraction paths) and diagnose
+    whether zero-orders-found looks like a genuine "no orders yet" or a
+    portal change nobody would otherwise notice until orders silently
+    stop flowing. Safe to run on a schedule (e.g. Cloud Scheduler hitting
+    this endpoint) -- read-only against the court portal, same scraper
+    calls /scraper/test-case already makes for one provider at a time.
+
+    POST body: {"case_ref": "WP/3434/2026", "date": "2026-05-30",
+                "expected_min_orders": 1}
+    """
+    _ = current_user
+    import time as _time
+
+    from portal_health import call_llm_for_diagnosis, diagnose_probe
+
+    body = await request.json()
+    case_ref = str(body.get("case_ref") or "").strip().upper()
+    date = body.get("date")
+    bench = body.get("bench", "mumbai")
+    expected_min_orders = int(body.get("expected_min_orders", 1))
+
+    if not case_ref:
+        return JSONResponse(status_code=400, content={"error": "case_ref is required"})
+
+    scraper = get_court_scraper()
+    started = _time.time()
+
+    loop = asyncio.get_event_loop()
+    try:
+        provider_matrix = await asyncio.wait_for(
+            loop.run_in_executor(
+                executor,
+                lambda: scraper._probe_provider_matrix(case_ref, date, bench),
+            ),
+            timeout=180.0,
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "error": "Portal health check timed out after 180 seconds",
+                "case_ref": case_ref,
+            },
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc), "case_ref": case_ref},
+        )
+
+    report = diagnose_probe(
+        provider_matrix, case_ref=case_ref, expected_min_orders=expected_min_orders
+    )
+    report["elapsed_ms"] = int((_time.time() - started) * 1000)
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if report["likely_drift"] and api_key:
+        llm_diagnosis = call_llm_for_diagnosis(report, api_key)
+        if llm_diagnosis:
+            report["llm_diagnosis"] = llm_diagnosis
+
+    return JSONResponse(content=report)
+
+
 # Cloud Run entry point - uvicorn will run the app directly
 # For Cloud Functions deployment, use a separate functions_entry.py file
