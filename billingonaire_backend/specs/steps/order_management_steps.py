@@ -197,11 +197,11 @@ def create_order_link(ctx, api_client, auth_headers):
 
 
 @when(parsers.parse('I PUT to /orders/update-status with status "{status}"'))
-def update_order_status(ctx, api_client, auth_headers, status):
+def update_order_status(ctx, admin_api_client, status):
+    # Admin-only: this mutation changes what appears on other users' bills.
     case_id = ctx.get("case_id", "WP/3373/2024")
-    ctx["response"] = api_client.put(
-        f"/orders/update-status?case_id={case_id}&status={status}",
-        headers=auth_headers,
+    ctx["response"] = admin_api_client.put(
+        f"/orders/update-status?case_id={case_id}&status={status}"
     )
 
 
@@ -228,11 +228,10 @@ def lifecycle_transitions_to_fetch_succeeded(ctx):
 
 
 @when('an attempt is made to move it to "board_ingested"')
-def attempt_invalid_transition(ctx, api_client, auth_headers):
+def attempt_invalid_transition(ctx, admin_api_client):
     case_ref = ctx.get("case_ref", "WP/3373/2024")
-    ctx["response"] = api_client.put(
-        f"/orders/update-status?case_id={case_ref}&status=board_ingested",
-        headers=auth_headers,
+    ctx["response"] = admin_api_client.put(
+        f"/orders/update-status?case_id={case_ref}&status=board_ingested"
     )
 
 

@@ -26,6 +26,9 @@ const BillGeneration = () => {
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveBillLoading, setSaveBillLoading] = useState(false);
     const [qaReport, setQaReport] = useState(null);
+    // Set when the server refuses the save (400 + qa_report); swaps the Save
+    // button for an explicit "Save anyway" so overriding is a deliberate act.
+    const [saveRejected, setSaveRejected] = useState(false);
     const [qaLoading, setQaLoading] = useState(false);
     const [bulkEditMode, setBulkEditMode] = useState(false);
     const [selectedRows, setSelectedRows] = useState(new Set());
@@ -367,6 +370,7 @@ const BillGeneration = () => {
     const openSaveModal = () => {
         setShowSaveModal(true);
         setQaReport(null);
+        setSaveRejected(false);
         setQaLoading(true);
         authenticatedFetchJSON('/bills/qa-check', {
             method: 'POST',
@@ -380,7 +384,11 @@ const BillGeneration = () => {
             .finally(() => setQaLoading(false));
     };
 
-    const saveBill = async () => {
+    // `overrideQa` is only ever set by the explicit "Save anyway" button that
+    // appears after the server refuses a bill — the server records the
+    // override on the saved bill, so this must stay a deliberate second click
+    // rather than something the happy path sends by default.
+    const saveBill = async ({ overrideQa = false } = {}) => {
         setSaveBillLoading(true);
         try {
             const payload = {
@@ -390,7 +398,8 @@ const BillGeneration = () => {
                     generated_at: new Date().toISOString(),
                     total_entries: billData.total_entries,
                     total_fees: billData.total_fees
-                }
+                },
+                ...(overrideQa ? { override_qa: true } : {})
             };
 
             const response = await authenticatedFetchJSON('/bills/save', {
@@ -406,7 +415,15 @@ const BillGeneration = () => {
             // Keep the list in step if it happens to already be open.
             if (showMyBills) loadMyBills();
         } catch (err) {
-            setSaveMessage({ type: 'error', text: `Failed to save bill: ${err.message}` });
+            // The server now refuses a bill that fails validation (400 with a
+            // qa_report). Surface it in the modal with a "Save anyway" escape
+            // hatch rather than as a dead-end error.
+            const rejected = String(err.message || '').includes('400');
+            if (rejected && !overrideQa) {
+                setSaveRejected(true);
+            } else {
+                setSaveMessage({ type: 'error', text: `Failed to save bill: ${err.message}` });
+            }
         } finally {
             setSaveBillLoading(false);
         }
@@ -1013,21 +1030,46 @@ const BillGeneration = () => {
                             {qaReport.summary_lines.map((line, i) => <div key={i}>{line}</div>)}
                         </Alert>
                     ) : null}
+
+                    {saveRejected && (
+                        <Alert variant="danger" className="mt-3 mb-0 py-2 px-3" style={{ fontSize: '0.85rem' }}>
+                            <strong>Not saved.</strong> The issues above look like
+                            real problems, so this bill was refused. Fix them, or
+                            save anyway — an override is recorded on the bill.
+                        </Alert>
+                    )}
                 </Modal.Body>
                 <Modal.Footer>
                     <Button variant="secondary" onClick={() => setShowSaveModal(false)}>
                         Cancel
                     </Button>
-                    <Button variant="primary" onClick={saveBill} disabled={saveBillLoading}>
-                        {saveBillLoading ? (
-                            <>
-                                <Spinner size="sm" className="me-2" />
-                                Saving...
-                            </>
-                        ) : (
-                            'Save Bill'
-                        )}
-                    </Button>
+                    {saveRejected ? (
+                        <Button
+                            variant="warning"
+                            onClick={() => saveBill({ overrideQa: true })}
+                            disabled={saveBillLoading}
+                        >
+                            {saveBillLoading ? (
+                                <>
+                                    <Spinner size="sm" className="me-2" />
+                                    Saving...
+                                </>
+                            ) : (
+                                'Save anyway'
+                            )}
+                        </Button>
+                    ) : (
+                        <Button variant="primary" onClick={() => saveBill()} disabled={saveBillLoading}>
+                            {saveBillLoading ? (
+                                <>
+                                    <Spinner size="sm" className="me-2" />
+                                    Saving...
+                                </>
+                            ) : (
+                                'Save Bill'
+                            )}
+                        </Button>
+                    )}
                 </Modal.Footer>
             </Modal>
 

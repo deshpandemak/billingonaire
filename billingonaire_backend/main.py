@@ -6,7 +6,7 @@ import posixpath
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import firebase_admin
@@ -1389,8 +1389,18 @@ async def update_user_role(
 
 @app.post("/admin/setup-initial-admin", tags=["Admin"])
 async def setup_initial_admin():
-    """Set up deshpande.mak@gmail.com as initial administrator"""
-    return get_user_manager().setup_initial_admin()
+    """Set up the hardcoded INITIAL_ADMIN_EMAIL account as administrator.
+
+    Not an escalation vector (it can only ever promote that one address, and
+    only if the account already exists), but it used to return the admin's
+    full user document to any anonymous caller. Bootstrap only needs to say
+    whether it worked.
+    """
+    result = get_user_manager().setup_initial_admin() or {}
+    return {
+        "success": True,
+        "message": result.get("message", "Initial admin is configured."),
+    }
 
 
 @app.get("/admin/active-users", tags=["Admin"])
@@ -2203,9 +2213,16 @@ async def update_order_status(
         description="Order status: linked, analysed, order_failed, order_analysis_failed, manually_uploaded, not_linked",
     ),
     notes: str = Query("", description="Optional notes"),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
-    """Update the status of an order"""
+    """Update the status of an order (admin only).
+
+    Was gated on get_current_user, so any signed-in AGP could flip any case
+    in the system to analysed/not_linked -- which changes what appears on
+    other people's bills. Every sibling mutation (/cases/{ref}/reset,
+    /admin/orders/{id}/override, /cases/{ref}/manual-override) already
+    requires admin; this one was simply missed.
+    """
     try:
         result = get_order_manager().update_order_status(case_id, status, notes)
         return JSONResponse(content=result)
@@ -2363,7 +2380,7 @@ async def analyze_order_document_from_link(
 
 
 @app.get("/analysis-history", tags=["Order Analysis"])
-async def get_analysis_history(
+def get_analysis_history(
     limit: int = Query(50, description="Maximum number of analyses to return"),
     current_user=Depends(get_current_user),
 ):
@@ -2502,8 +2519,16 @@ async def get_analysis_details(
 
 
 @app.get("/analysis-stats", tags=["Order Analysis"])
-async def get_analysis_statistics(current_user=Depends(get_current_user)):
-    """Get statistics about order document analyses from case-details."""
+def get_analysis_statistics(current_user=Depends(get_current_user)):
+    """Get statistics about order document analyses from case-details.
+
+    Streams every analysed case-details doc, unbounded.
+
+    Deliberately a sync `def`, not `async def`: it does blocking Firestore
+    I/O, and FastAPI runs sync handlers in a threadpool, so a slow query
+    here cannot stall the event loop (and with it every other request
+    plus the fetch/analysis poll loops).
+    """
     try:
         db = firestore.client()
 
@@ -4118,7 +4143,7 @@ async def restart_queue_processing(current_user=Depends(require_admin)):
 
 
 @app.get("/queue/detail", tags=["Queue Management"])
-async def get_queue_detail(
+def get_queue_detail(
     limit: int = Query(50, description="Maximum cases to return, oldest first"),
     current_user=Depends(require_admin),
 ):
@@ -4266,6 +4291,95 @@ async def get_my_matters(
         logger.error(f"Error getting user matters: {e}")
         return JSONResponse(
             status_code=500, content={"error": f"Failed to get user matters: {str(e)}"}
+        )
+
+
+@app.post("/admin/remap-user-matters", tags=["Admin"])
+async def admin_remap_user_matters(
+    start_date: str = Query(..., description="Board date range start, YYYY-MM-DD"),
+    end_date: str = Query(..., description="Board date range end, YYYY-MM-DD"),
+    limit: int = Query(500, description="Maximum board rows to remap (1-2000)"),
+    current_user=Depends(require_admin_active),
+):
+    """Re-run AGP name matching over already-analysed board rows.
+
+    auto_map_case_to_users is otherwise only ever called from the two
+    poll-loop success paths, so a case that finished analysis without being
+    mapped is never revisited -- it is already `analysed`, so nothing will
+    reprocess it, and its matters stay missing from that AGP's bill forever
+    with no error anywhere. That is exactly what happened to every case
+    processed while the poll loops were passing a case-details doc id into a
+    lookup that needed a daily-boards one.
+
+    Writes are idempotent: mapping keys are
+    {user}_{case}_{source}_{field} written with merge=True, so re-running
+    over a range that is already correct is a no-op rather than a duplicate.
+    """
+    try:
+        from AutoOrderManager import AutoOrderManager
+
+        limit = max(1, min(limit, 2000))
+        db = firestore.client()
+
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "start_date and end_date must be YYYY-MM-DD"},
+            )
+        if start_dt > end_dt:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "start_date must not be after end_date"},
+            )
+
+        rows = (
+            db.collection("daily-boards")
+            .where("board_date", ">=", start_dt)
+            .where("board_date", "<=", end_dt)
+            .limit(limit)
+            .stream()
+        )
+
+        remapped = 0
+        failed = 0
+        for row in rows:
+            data = row.to_dict() or {}
+            case_ref = AutoOrderManager.build_case_ref_from_data(data)
+            if not case_ref:
+                continue
+            try:
+                # row.id IS the daily-boards doc id the matcher needs -- this
+                # endpoint reads the board collection directly, so there is no
+                # id-shape translation to get wrong.
+                await auto_map_case_to_users(
+                    row.id, {"case_ref": case_ref, "board_date": data.get("board_date")}
+                )
+                remapped += 1
+            except Exception as remap_error:
+                failed += 1
+                logger.error(f"Remap failed for {case_ref}: {remap_error}")
+
+        logger.info(
+            f"Remap user matters {start_date}..{end_date}: "
+            f"{remapped} remapped, {failed} failed"
+        )
+        return JSONResponse(
+            content={
+                "success": True,
+                "date_range": {"start": start_date, "end": end_date},
+                "rows_remapped": remapped,
+                "rows_failed": failed,
+                "limit_applied": limit,
+                "truncated": remapped + failed >= limit,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error remapping user matters: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to remap: {str(e)}"}
         )
 
 
@@ -4642,7 +4756,7 @@ _LIFECYCLE_ACTION_LABELS = {
 
 
 @app.get("/orders/recent-activity", tags=["Order Management"])
-async def get_recent_activity(
+def get_recent_activity(
     limit: int = Query(20, description="Number of recent activities to return"),
     current_user=Depends(get_current_user),
 ):
@@ -4696,6 +4810,15 @@ async def get_recent_activity(
 @app.get("/orders/pdf/{doc_id}", tags=["Order Management"])
 async def get_order_pdf(doc_id: str):
     """Serve a court order PDF with automatic GCS upgrade.
+
+    Deliberately unauthenticated. Every caller is a plain <a href> opened in
+    a new tab (Table.jsx, BillGeneration.jsx, CaseDetailModal.jsx) and a
+    browser navigation carries no Authorization header, so requiring auth
+    here 401s every "View PDF" link in the app. Doc ids are predictable
+    (YYYY-MM-DD-TYPE-NO-YEAR), so the stored corpus is enumerable by anyone
+    who guesses them -- accepted because these are public court records.
+    To close that off, the fix is client-side: fetch with
+    authenticatedFetch and open a blob URL, at all three call sites.
 
     - GCS URLs: fetched via service-account credentials and streamed back
       (no public bucket access required; Cloud Run ADC authenticates).
@@ -5494,6 +5617,67 @@ def generate_month_description(start_date: str, end_date: str) -> str:
         return f"{start_date} to {end_date}"
 
 
+def _previously_billed_keys(db, user_id: str) -> set:
+    """(case_ref, date) pairs already present in this user's saved bills --
+    the one QA check that needs I/O, kept outside qa_check_bill so that
+    function stays pure and fully unit-testable."""
+    keys = set()
+    for bill_doc in (
+        db.collection("user-bills").where("user_id", "==", user_id).stream()
+    ):
+        for entry in (bill_doc.to_dict() or {}).get("entries") or []:
+            case_ref = entry.get("case_detail") or entry.get("case_ref")
+            date = entry.get("date")
+            if case_ref and date:
+                keys.add((case_ref, date))
+    return keys
+
+
+def _run_bill_qa(db, user_id: str, bill_entries: List[Dict]) -> Dict:
+    """Shared by POST /bills/qa-check (advisory preview) and POST /bills/save
+    (enforced gate) so the two can never disagree about what counts as a
+    problem."""
+    from AutoOrderManager import AutoOrderManager
+    from bill_qa import qa_check_bill
+
+    return qa_check_bill(
+        bill_entries,
+        previously_billed_keys=_previously_billed_keys(db, user_id),
+        review_confidence_threshold=AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD,
+    )
+
+
+def _recompute_entry_fees(bill_entries: List[Dict]) -> Tuple[List[Dict], int]:
+    """Recompute every entry's fee from the canonical fee schedule instead of
+    trusting the value the browser posted.
+
+    /bills/save used to persist client-supplied ``fees_rs`` verbatim and sum
+    them for ``total_fees`` -- so a stale tab, an edited request, or a UI bug
+    could put a number on a government-bound bill that no server-side rule
+    ever agreed to. Entries whose ``results`` isn't in the schedule (custom or
+    unrecognised outcomes) keep their submitted fee: there is no canonical
+    value to substitute, and qa_check_bill deliberately doesn't flag them
+    either.
+
+    Returns (entries, total_fees) with entries copied, never mutated in place.
+    """
+    from bill_qa import FEE_SCHEDULE
+
+    recomputed: List[Dict] = []
+    total = 0
+    for entry in bill_entries:
+        entry = dict(entry)
+        expected = FEE_SCHEDULE.get(entry.get("results"))
+        if expected is not None:
+            entry["fees_rs"] = expected
+        try:
+            total += int(entry.get("fees_rs") or 0)
+        except (TypeError, ValueError):
+            pass
+        recomputed.append(entry)
+    return recomputed, total
+
+
 @app.post("/bills/qa-check", tags=["Bill Generation"])
 async def bill_qa_check(request: Request, current_user=Depends(get_current_user)):
     """Roadmap #5: a second pair of eyes on a bill before it's saved --
@@ -5506,31 +5690,12 @@ async def bill_qa_check(request: Request, current_user=Depends(get_current_user)
     POST body: {"bill_entries": [...]} (the same shape /bills/save takes)
     """
     try:
-        from AutoOrderManager import AutoOrderManager
-        from bill_qa import qa_check_bill
-
         db = firestore.client()
         user_id = current_user.get("uid")
         body = await request.json()
         bill_entries = body.get("bill_entries", [])
 
-        # Cases this user has already billed in a previously SAVED bill --
-        # the one check that needs I/O, kept outside qa_check_bill itself.
-        previously_billed_keys = set()
-        for bill_doc in (
-            db.collection("user-bills").where("user_id", "==", user_id).stream()
-        ):
-            for entry in (bill_doc.to_dict() or {}).get("entries") or []:
-                case_ref = entry.get("case_detail") or entry.get("case_ref")
-                date = entry.get("date")
-                if case_ref and date:
-                    previously_billed_keys.add((case_ref, date))
-
-        report = qa_check_bill(
-            bill_entries,
-            previously_billed_keys=previously_billed_keys,
-            review_confidence_threshold=AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD,
-        )
+        report = _run_bill_qa(db, user_id, bill_entries)
         return JSONResponse(content=report)
     except Exception as e:
         logger.error(f"Error running bill QA check: {e}")
@@ -5549,6 +5714,34 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
 
         bill_entries = body.get("bill_entries", [])
         bill_metadata = body.get("metadata", {})
+
+        # This endpoint used to persist whatever the browser posted, summing
+        # client-supplied fees_rs into total_fees with no server-side check at
+        # all -- on the one artifact that leaves the building for a government
+        # body. The QA logic to catch fee/category mismatches and duplicate
+        # billing already existed (bill_qa.py) but was only ever run
+        # advisorily, by a separate endpoint the UI could simply not call.
+        # Now it gates the write: blocking issues are refused unless the
+        # caller explicitly overrides, and the override is recorded on the
+        # bill so the decision is auditable rather than invisible.
+        qa_report = _run_bill_qa(db, user_id, bill_entries)
+        override_qa = bool(body.get("override_qa"))
+        if not qa_report["ok"] and not override_qa:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Bill did not pass validation",
+                    "qa_report": qa_report,
+                    "hint": (
+                        "Fix the flagged entries, or resubmit with "
+                        "override_qa=true to save anyway (the override is "
+                        "recorded on the bill)."
+                    ),
+                },
+            )
+
+        # Fees come from the canonical schedule, not the request body.
+        bill_entries, recomputed_total = _recompute_entry_fees(bill_entries)
 
         # Get date range from metadata (frontend sends startDate/endDate)
         date_range = bill_metadata.get("date_range", {})
@@ -5588,8 +5781,15 @@ async def save_bill_entries(request: Request, current_user=Depends(get_current_u
             "metadata": bill_metadata,
             "entries": bill_entries,
             "total_entries": len(bill_entries),
-            "total_fees": sum(entry.get("fees_rs", 0) for entry in bill_entries),
+            "total_fees": recomputed_total,
+            "qa_summary": qa_report["summary_lines"],
         }
+        if override_qa and not qa_report["ok"]:
+            bill_data["qa_override"] = {
+                "overridden_by": user_id,
+                "at": datetime.now().isoformat(),
+                "report": qa_report,
+            }
 
         # Save to user-bills collection
         bill_ref = db.collection("user-bills").document()

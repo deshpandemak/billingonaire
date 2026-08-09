@@ -405,7 +405,8 @@ async def test_queue_detail_returns_per_case_list_oldest_first(monkeypatch):
 
     monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
 
-    response = await main.get_queue_detail(limit=50, current_user=None)
+    # Sync handler (runs in FastAPI's threadpool) -- not awaited.
+    response = main.get_queue_detail(limit=50, current_user=None)
     import json
 
     data = json.loads(response.body)
@@ -1280,3 +1281,174 @@ async def test_bill_qa_check_ok_for_a_clean_bill(monkeypatch):
     data = json.loads(response.body)
     assert data["ok"] is True
     assert data["summary_lines"] == ["No issues found."]
+
+
+# ---------------------------------------------------------------------------
+# 9.  POST /bills/save -- server-side validation. This endpoint used to persist
+#     whatever the browser posted, summing client-supplied fees_rs into
+#     total_fees with no check at all, on the one artifact that leaves the
+#     building for a government body.
+# ---------------------------------------------------------------------------
+
+
+def _save_request(entries, **extra):
+    return _make_request(
+        {
+            "bill_entries": entries,
+            "metadata": {
+                "date_range": {"startDate": "2026-01-01", "endDate": "2026-01-31"}
+            },
+            **extra,
+        }
+    )
+
+
+def _wire_bills_db(monkeypatch, saved_bills=None):
+    """Firestore double: user-bills stream returns saved_bills, and the new
+    bill document write is captured for assertions."""
+    written = {}
+
+    bill_doc_ref = MagicMock()
+    bill_doc_ref.id = "new-bill-1"
+    bill_doc_ref.set = Mock(side_effect=lambda data: written.update(data))
+
+    bills_collection = MagicMock()
+    bills_collection.where.return_value.stream.return_value = saved_bills or []
+    bills_collection.document.return_value = bill_doc_ref
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value = bills_collection
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+    monkeypatch.setattr(
+        main, "generate_bill_number_safe", lambda db, uid, yr: ("B/1/2026", 1)
+    )
+    return written
+
+
+@pytest.mark.asyncio
+async def test_bills_save_rejects_a_fee_that_does_not_match_the_schedule(monkeypatch):
+    written = _wire_bills_db(monkeypatch)
+    bad = {
+        "case_detail": "WP/1/2026",
+        "date": "2026-01-15",
+        "results": "ADJOURNED",
+        "fees_rs": 99999,
+    }
+
+    response = await main.save_bill_entries(
+        _save_request([bad]), current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 400
+    import json
+
+    data = json.loads(response.body)
+    assert data["qa_report"]["ok"] is False
+    assert data["qa_report"]["fee_mismatches"]
+    # Nothing may be persisted on a rejected save.
+    assert written == {}
+
+
+@pytest.mark.asyncio
+async def test_bills_save_recomputes_fees_from_the_schedule_not_the_request(
+    monkeypatch,
+):
+    """Even on an accepted bill, the persisted fee must come from the server's
+    schedule -- a correct-looking request must not be able to smuggle a total
+    through by matching the category but inflating an unrelated field."""
+    written = _wire_bills_db(monkeypatch)
+    entries = [
+        {
+            "case_detail": "WP/1/2026",
+            "date": "2026-01-15",
+            "results": "ADJOURNED",
+            "fees_rs": 1250,
+        },
+        {
+            "case_detail": "WP/2/2026",
+            "date": "2026-01-16",
+            "results": "WP DISPOSED OF",
+            "fees_rs": 2500,
+        },
+    ]
+
+    response = await main.save_bill_entries(
+        _save_request(entries), current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+    assert written["total_fees"] == 3750
+    assert [e["fees_rs"] for e in written["entries"]] == [1250, 2500]
+
+
+@pytest.mark.asyncio
+async def test_bills_save_blocks_double_billing_against_an_earlier_saved_bill(
+    monkeypatch,
+):
+    earlier = SimpleNamespace(
+        to_dict=lambda: {
+            "entries": [{"case_detail": "WP/1/2026", "date": "2026-01-15"}]
+        }
+    )
+    written = _wire_bills_db(monkeypatch, saved_bills=[earlier])
+    entry = {
+        "case_detail": "WP/1/2026",
+        "date": "2026-01-15",
+        "results": "ADJOURNED",
+        "fees_rs": 1250,
+    }
+
+    response = await main.save_bill_entries(
+        _save_request([entry]), current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 400
+    import json
+
+    assert json.loads(response.body)["qa_report"]["duplicates_across_bills"]
+    assert written == {}
+
+
+@pytest.mark.asyncio
+async def test_bills_save_override_persists_and_records_the_override(monkeypatch):
+    written = _wire_bills_db(monkeypatch)
+    bad = {
+        "case_detail": "WP/1/2026",
+        "date": "2026-01-15",
+        "results": "ADJOURNED",
+        "fees_rs": 99999,
+    }
+
+    response = await main.save_bill_entries(
+        _save_request([bad], override_qa=True), current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+    assert written["qa_override"]["overridden_by"] == "u1"
+    assert written["qa_override"]["report"]["fee_mismatches"]
+    # The override lets it save, but the fee is STILL corrected to the schedule --
+    # overriding the warning is not permission to bill an arbitrary number.
+    assert written["total_fees"] == 1250
+
+
+@pytest.mark.asyncio
+async def test_bills_save_accepts_a_clean_bill_without_an_override(monkeypatch):
+    written = _wire_bills_db(monkeypatch)
+    entry = {
+        "case_detail": "WP/1/2026",
+        "date": "2026-01-15",
+        "results": "ADJOURNED",
+        "fees_rs": 1250,
+    }
+
+    response = await main.save_bill_entries(
+        _save_request([entry]), current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+    assert "qa_override" not in written
+    assert written["total_fees"] == 1250
