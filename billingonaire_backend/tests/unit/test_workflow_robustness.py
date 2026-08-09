@@ -257,24 +257,15 @@ async def test_retry_failed_analysis_failed_without_link_goes_to_fetch_queue(
 
 @pytest.mark.asyncio
 async def test_admin_bulk_order_processing_marks_cases_fetch_queued(monkeypatch):
-    fake_doc = SimpleNamespace(
-        id="2026-01-05-WP-77-2026",
-        to_dict=lambda: {
-            "case_type": "WP",
-            "case_no": "77",
-            "case_year": "2026",
-            "board_date": "2026-01-05",
-        },
-    )
-    mock_db = MagicMock()
-    mock_db.collection.return_value.limit.return_value.stream.return_value = [fake_doc]
+    """Was previously its own daily-boards scan with a blocking per-candidate
+    case-details read (N+1) and no upper bound on limit -- against a large
+    historical backlog this could take a very long time per request and
+    block the whole event loop while it ran, the same class of bug fixed in
+    /admin/order-status-overview. Now delegates to _get_filtered_matters,
+    the same limit-bounded selector /jobs/fetch-orders already uses."""
+    case = _make_mock_case("WP/77/2026", "not_linked", board_date="2026-01-05")
+    mgr = _make_manager([case])
 
-    mgr = MagicMock()
-    mgr._get_case_order_context = Mock(return_value={"order_status": "not_linked"})
-    mgr.case_store = MagicMock()
-    mgr.case_store._to_iso_date = Mock(side_effect=lambda v: v)
-
-    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
     wake_fetch = Mock()
     monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
@@ -289,11 +280,45 @@ async def test_admin_bulk_order_processing_marks_cases_fetch_queued(monkeypatch)
 
     assert data["success"] is True
     assert data["cases_queued"] == 1
+    mgr._get_filtered_matters.assert_called_once_with(
+        {}, 10, order_statuses={"not_linked"}
+    )
     mgr.case_store.transition_lifecycle.assert_called_once()
     call = mgr.case_store.transition_lifecycle.call_args
     assert call.args[0] == "WP/77/2026"
     assert call.args[1] == "fetch_queued"
     wake_fetch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_bulk_order_processing_maps_days_back_to_date_from(monkeypatch):
+    mgr = _make_manager([])
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+
+    await main.admin_bulk_order_processing(
+        _make_request({"order_statuses": ["not_linked"], "limit": 50, "days_back": 7}),
+        current_user=None,
+    )
+
+    call = mgr._get_filtered_matters.call_args
+    assert "date_from" in call.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_bulk_order_processing_rejects_limit_outside_1_to_1000(
+    monkeypatch,
+):
+    mgr = _make_manager([])
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+
+    for bad_limit in (0, 1001, -5):
+        response = await main.admin_bulk_order_processing(
+            _make_request({"order_statuses": ["not_linked"], "limit": bad_limit}),
+            current_user=None,
+        )
+        assert response.status_code == 400
+        mgr._get_filtered_matters.assert_not_called()
 
 
 @pytest.mark.asyncio

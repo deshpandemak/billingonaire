@@ -1137,6 +1137,30 @@ class TestGetFilteredMattersScope:
             "WP/3/2026",
         }
 
+    def test_explicit_order_statuses_overrides_scope(
+        self, auto_order_manager, mock_firestore
+    ):
+        """admin bulk processing's status checkboxes are a free multi-select,
+        not one of the named scopes -- an explicit order_statuses set must
+        win over whatever scope (even the default) would otherwise pick."""
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(
+            filters={},
+            limit=10,
+            scope="missing_only",
+            order_statuses={"linked", "analysed"},
+        )
+        assert {c["case_ref"] for c in cases} == {"WP/2/2026", "WP/4/2026"}
+
+    def test_order_statuses_none_defers_to_scope(
+        self, auto_order_manager, mock_firestore
+    ):
+        self._wire(auto_order_manager, mock_firestore)
+        cases = auto_order_manager._get_filtered_matters(
+            filters={}, limit=10, scope="missing_only", order_statuses=None
+        )
+        assert {c["case_ref"] for c in cases} == {"WP/1/2026"}
+
 
 class TestMaybeLlmAssist:
     """Roadmap #2: route only ambiguous (low-confidence) cases to an LLM,

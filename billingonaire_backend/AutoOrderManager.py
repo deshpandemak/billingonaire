@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 import requests
@@ -277,6 +277,7 @@ class AutoOrderManager:
         limit: int = 50,
         board_dates: Optional[List[str]] = None,
         scope: str = "actionable",
+        order_statuses: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Get cases that need order processing based on filters.
 
@@ -291,6 +292,12 @@ class AutoOrderManager:
         or previously failed; excludes analysed cases), or "all" (every case
         matched by the board-level filters, for a deliberate full re-fetch
         regardless of current status).
+
+        ``order_statuses``, when given, is an explicit allowlist of
+        order_status values and takes priority over ``scope`` -- lets a
+        caller offer a free multi-select (e.g. admin bulk processing's
+        status checkboxes) without inventing a new named scope for every
+        combination. ``None`` means "no override, defer to scope".
         """
         logger.info(
             "_get_filtered_matters called with filters=%s limit=%d board_dates=%s scope=%s",
@@ -299,9 +306,12 @@ class AutoOrderManager:
             board_dates,
             scope,
         )
-        allowed_statuses = self.SCOPE_ORDER_STATUSES.get(
-            scope, self.SCOPE_ORDER_STATUSES["actionable"]
-        )
+        if order_statuses is not None:
+            allowed_statuses = set(order_statuses)
+        else:
+            allowed_statuses = self.SCOPE_ORDER_STATUSES.get(
+                scope, self.SCOPE_ORDER_STATUSES["actionable"]
+            )
         # Deliberately no try/except around the query below: a Firestore
         # error (e.g. a missing composite index) used to be swallowed here
         # and turned into an empty list, which every caller then reported as

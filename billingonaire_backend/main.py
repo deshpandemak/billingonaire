@@ -3885,67 +3885,50 @@ async def admin_bulk_order_processing(
 ):
     """
     Admin endpoint to trigger bulk order processing for cases with specific order status.
-    Adds cases to async processing queue and returns immediately.
+    Marks matching cases fetch_queued for the fetch_poll_loop to pick up.
 
     Request body:
     {
         "order_statuses": ["not_linked", "order_failed"],  // Which statuses to process
-        "limit": 100,  // Maximum cases to process
+        "limit": 100,  // Maximum cases to process (1-1000)
         "days_back": 30  // Only process cases from last N days (optional)
     }
 
     Note: Cases with "unknown" or missing status are automatically normalized to "not_linked"
+
+    Was previously its own daily-boards scan with a per-candidate blocking
+    case-details read (N+1) and no upper bound on `limit` -- on a large
+    historical backlog this could take a very long time per request and,
+    same as the old /admin/order-status-overview, block the whole event
+    loop while it ran. Now delegates to _get_filtered_matters (the same,
+    limit-bounded candidate selector /jobs/fetch-orders already uses).
     """
     try:
-        db = firestore.client()
-
         body = await request.json()
         order_statuses = body.get(
             "order_statuses", ["not_linked", "linked", "order_failed"]
         )
-        limit = body.get("limit", 100)
+        limit = int(body.get("limit", 100))
         days_back = body.get("days_back")
-        query = db.collection("daily-boards")
 
-        # Filter by date if specified (board_date is stored as datetime object)
+        if limit < 1 or limit > 1000:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "limit must be between 1 and 1000"},
+            )
+
+        filters = {}
         if days_back:
-            start_date = datetime.now() - timedelta(days=days_back)
-            # Convert to datetime object to match database storage format
-            start_datetime = datetime(
-                start_date.year, start_date.month, start_date.day, 0, 0, 0
-            )
-            query = query.where("board_date", ">=", start_datetime)
+            filters["date_from"] = (
+                datetime.now() - timedelta(days=days_back)
+            ).strftime("%Y-%m-%d")
 
-        # Get all cases and filter by status from case-details.
-        all_cases = query.limit(limit * 3).stream()
+        manager = get_auto_order_manager()
+        candidate_cases = manager._get_filtered_matters(
+            filters, limit, order_statuses=set(order_statuses)
+        )
 
-        case_list = []
-        for case_doc in all_cases:
-            case_data = case_doc.to_dict()
-            case_ref = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
-            case_status = (
-                get_auto_order_manager()
-                ._get_case_order_context(case_ref)
-                .get("order_status", "not_linked")
-            )
-
-            # Normalize: treat "unknown" or missing status as "not_linked"
-            if case_status == "unknown" or case_status is None or case_status == "":
-                case_status = "not_linked"
-
-            if case_status in order_statuses:
-                case_info = {
-                    "id": case_doc.id,
-                    "case_ref": case_ref,
-                    "board_date": case_data.get("board_date"),
-                    "current_status": case_status,
-                }
-                case_list.append(case_info)
-
-                if len(case_list) >= limit:
-                    break
-
-        if not case_list:
+        if not candidate_cases:
             return JSONResponse(
                 content={
                     "success": True,
@@ -3954,33 +3937,33 @@ async def admin_bulk_order_processing(
                 }
             )
 
-        case_store = get_auto_order_manager().case_store
-        for case_info in case_list:
+        case_store = manager.case_store
+        for case_data in candidate_cases:
             case_store.transition_lifecycle(
-                case_info["case_ref"],
+                case_data["case_ref"],
                 "fetch_queued",
                 metadata={
                     "source": "admin_bulk_processing",
-                    "case_id": case_info["id"],
+                    "case_id": case_data.get("id"),
                 },
                 event_type="fetch_job_queued",
                 extra_fields={
                     "latest_board_date": case_store._to_iso_date(
-                        case_info.get("board_date")
+                        case_data.get("board_date")
                     )
                 },
             )
         _wake_fetch_poll.set()
 
         logger.info(
-            f"Admin bulk processing: Marked {len(case_list)} cases fetch_queued"
+            f"Admin bulk processing: Marked {len(candidate_cases)} cases fetch_queued"
         )
 
         return JSONResponse(
             content={
                 "success": True,
-                "message": f"Marked {len(case_list)} cases fetch_queued for background processing",
-                "cases_queued": len(case_list),
+                "message": f"Marked {len(candidate_cases)} cases fetch_queued for background processing",
+                "cases_queued": len(candidate_cases),
                 "statuses_processed": order_statuses,
             }
         )
