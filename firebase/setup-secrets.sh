@@ -39,6 +39,28 @@ gcloud secrets add-iam-policy-binding GCLOUD_SERVICE_ACCOUNT_KEY \
   --member="serviceAccount:$SERVICE_ACCOUNT" \
   --role="roles/secretmanager.secretAccessor"
 
+# Create or update GEMINI_API_KEY secret from env var. Optional: the
+# review-copilot AI suggestion feature (POST /admin/orders/{id}/ai-suggestion)
+# degrades gracefully without it -- the endpoint returns 501 and the manual
+# review queue works exactly as before.
+if [ -n "$GEMINI_API_KEY" ]; then
+  if gcloud secrets describe GEMINI_API_KEY >/dev/null 2>&1; then
+    echo "🔄 Adding new version to GEMINI_API_KEY"
+    echo "$GEMINI_API_KEY" | gcloud secrets versions add GEMINI_API_KEY --data-file=-
+  else
+    echo "🔑 Creating GEMINI_API_KEY secret..."
+    echo "$GEMINI_API_KEY" | gcloud secrets create GEMINI_API_KEY --data-file=-
+  fi
+
+  echo "🔒 Granting secret access to service account..."
+  gcloud secrets add-iam-policy-binding GEMINI_API_KEY \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/secretmanager.secretAccessor"
+else
+  echo "ℹ️  GEMINI_API_KEY not set -- skipping (optional; the review-copilot"
+  echo "    AI suggestion feature just won't be available until this is added)."
+fi
+
 echo "✅ Secret Manager setup complete!"
 echo ""
 echo "🚀 You can now deploy to Cloud Run with:"

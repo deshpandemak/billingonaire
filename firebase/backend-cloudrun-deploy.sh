@@ -42,6 +42,20 @@ gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
 echo "🚀 Deploying to Cloud Run..."
 echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 
+# The review-copilot AI suggestion feature is optional -- only mount the
+# secret if it's actually been created (via ./firebase/setup-secrets.sh
+# with GEMINI_API_KEY set). Without it, POST /admin/orders/{id}/ai-suggestion
+# just returns 501 and the manual review queue works exactly as before.
+SECRETS_FLAG=""
+if gcloud secrets describe GEMINI_API_KEY >/dev/null 2>&1; then
+  echo "🔑 GEMINI_API_KEY secret found -- mounting into the service."
+  SECRETS_FLAG="--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest"
+else
+  echo "ℹ️  GEMINI_API_KEY secret not found -- deploying without the AI"
+  echo "    suggestion feature. Run ./firebase/setup-secrets.sh with"
+  echo "    GEMINI_API_KEY set, then redeploy, to enable it."
+fi
+
 # --cpu-boost ensures full CPU during cold start so heavy Python/ML
 # imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
 gcloud run deploy billingonaire-backend \
@@ -56,7 +70,8 @@ gcloud run deploy billingonaire-backend \
   --min-instances=0 \
   --cpu-boost \
   --service-account=firebase-adminsdk-t0k85@billingonaire.iam.gserviceaccount.com \
-  --set-env-vars="ORDER_PROCESSING_WORKERS=3,GOOGLE_CLOUD_PROJECT=billingonaire,ORDER_PDF_BUCKET=billingonaire-court-orders"
+  --set-env-vars="ORDER_PROCESSING_WORKERS=3,GOOGLE_CLOUD_PROJECT=billingonaire,ORDER_PDF_BUCKET=billingonaire-court-orders" \
+  ${SECRETS_FLAG}
 
 BACKEND_URL=$(gcloud run services describe billingonaire-backend --region=asia-south1 --format='value(status.url)')
 echo "🔎 Backend health check: ${BACKEND_URL}/"
