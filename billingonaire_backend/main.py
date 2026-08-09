@@ -3659,6 +3659,68 @@ async def get_admin_review_queue(current_user=Depends(require_admin)):
         )
 
 
+@app.post("/admin/orders/{doc_id}/ai-suggestion", tags=["Admin Order Management"])
+async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_admin)):
+    """LLM read of a manual-review case's order text, with a rationale --
+    offered as a drafted suggestion alongside the regex classifier's own
+    result, never applied automatically. The reviewer still picks one of
+    the three category buttons themselves; this only saves them from
+    opening the PDF blind to figure out why the case was flagged.
+
+    Requires GEMINI_API_KEY. The review queue works fully without it --
+    this endpoint just isn't available, and the UI treats a 501 here as
+    "no suggestion available" rather than an error."""
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return JSONResponse(
+                status_code=501,
+                content={
+                    "error": "AI suggestions are not configured (GEMINI_API_KEY not set)."
+                },
+            )
+
+        case_ref = doc_id.replace("-", "/")
+        manager = get_auto_order_manager()
+        order_link = manager._get_case_order_context(case_ref).get("order_link")
+        if not order_link:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "No order PDF on file for this case."},
+            )
+
+        pdf_response = requests.get(order_link, timeout=30)
+        pdf_response.raise_for_status()
+        analysis = manager.order_analyzer.analyze_order_document(
+            f"{doc_id}.pdf", pdf_response.content
+        )
+
+        from review_copilot import ReviewCopilotError, call_gemini
+
+        try:
+            suggestion = call_gemini(analysis.order_text, api_key)
+        except ReviewCopilotError as e:
+            return JSONResponse(
+                status_code=502, content={"error": f"AI suggestion failed: {e}"}
+            )
+
+        return JSONResponse(
+            content={
+                "doc_id": doc_id,
+                "case_ref": case_ref,
+                "category": suggestion.get("category"),
+                "confidence": suggestion.get("confidence"),
+                "rationale": suggestion.get("rationale"),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting AI suggestion for {doc_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get AI suggestion: {str(e)}"},
+        )
+
+
 @app.post("/admin/orders/{doc_id}/override", tags=["Admin Order Management"])
 async def admin_override_order_category(
     doc_id: str, request: Request, current_user=Depends(require_admin)

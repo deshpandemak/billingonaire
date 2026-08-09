@@ -484,3 +484,107 @@ async def test_analyze_orders_scope_all_includes_analysed_cases(monkeypatch):
 
     assert data["scope"] == "all"
     assert set(data["queued_case_refs"]) == {"WP/1/2026", "WP/2/2026"}
+
+
+# ---------------------------------------------------------------------------
+# 5.  POST /admin/orders/{doc_id}/ai-suggestion -- the review-copilot
+#     endpoint. Offered alongside the regex result, never applied
+#     automatically; the queue works fully without GEMINI_API_KEY set.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ai_suggestion_returns_501_without_swallowing_when_unconfigured(
+    monkeypatch,
+):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
+    assert response.status_code == 501
+    import json
+
+    assert "GEMINI_API_KEY" in json.loads(response.body)["error"]
+
+
+@pytest.mark.asyncio
+async def test_ai_suggestion_404s_when_case_has_no_order_link(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mgr = MagicMock()
+    mgr._get_case_order_context = Mock(return_value={"order_link": None})
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+
+    response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_ai_suggestion_returns_category_confidence_and_rationale(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mgr = MagicMock()
+    mgr._get_case_order_context = Mock(
+        return_value={"order_link": "https://example.com/order.pdf"}
+    )
+    mgr.order_analyzer.analyze_order_document = Mock(
+        return_value=SimpleNamespace(order_text="Heard and adjourned text")
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(
+        main.requests,
+        "get",
+        Mock(
+            return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
+        ),
+    )
+
+    import review_copilot
+
+    monkeypatch.setattr(
+        review_copilot,
+        "call_gemini",
+        Mock(
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Notice was issued to the respondent.",
+            }
+        ),
+    )
+
+    response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
+    import json
+
+    data = json.loads(response.body)
+    assert data["case_ref"] == "WP/1/2026"
+    assert data["category"] == "HEARD_AND_ADJOURNED"
+    assert data["confidence"] == 0.9
+    assert "Notice was issued" in data["rationale"]
+
+
+@pytest.mark.asyncio
+async def test_ai_suggestion_returns_502_when_gemini_call_fails(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mgr = MagicMock()
+    mgr._get_case_order_context = Mock(
+        return_value={"order_link": "https://example.com/order.pdf"}
+    )
+    mgr.order_analyzer.analyze_order_document = Mock(
+        return_value=SimpleNamespace(order_text="Some order text")
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(
+        main.requests,
+        "get",
+        Mock(
+            return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
+        ),
+    )
+
+    import review_copilot
+
+    monkeypatch.setattr(
+        review_copilot,
+        "call_gemini",
+        Mock(side_effect=review_copilot.ReviewCopilotError("boom")),
+    )
+
+    response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
+    assert response.status_code == 502

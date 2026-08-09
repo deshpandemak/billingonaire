@@ -186,4 +186,74 @@ describe('ManualReviewQueue', () => {
       expect(api.authenticatedFetchJSON).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('AI read', () => {
+    it('renders a "Get AI read" button for every pending item', async () => {
+      render(<ManualReviewQueue />);
+      await waitFor(() => screen.getByText('WP/1/2024'));
+      expect(screen.getAllByText('Get AI read')).toHaveLength(mockItems.length);
+    });
+
+    it('shows the suggested category and rationale after a successful read', async () => {
+      api.authenticatedFetchJSON
+        .mockResolvedValueOnce(mockItems)
+        .mockResolvedValueOnce({
+          category: 'HEARD_AND_ADJOURNED',
+          confidence: 0.92,
+          rationale: 'Notice was issued to the respondent.',
+        });
+
+      render(<ManualReviewQueue />);
+      await waitFor(() => screen.getByText('WP/1/2024'));
+
+      fireEvent.click(screen.getAllByText('Get AI read')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Notice was issued to the respondent/)).toBeTruthy();
+      });
+      expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+        '/admin/orders/case_mr_01/ai-suggestion',
+        expect.objectContaining({ method: 'POST' })
+      );
+      // The matching category button is marked as agreeing with the AI read.
+      expect(screen.getByText('Heard & Adj. ✓')).toBeTruthy();
+    });
+
+    it('shows an inline error when the AI read fails, without a global alert', async () => {
+      api.authenticatedFetchJSON
+        .mockResolvedValueOnce(mockItems)
+        .mockRejectedValueOnce(new Error('AI suggestions are not configured'));
+
+      render(<ManualReviewQueue />);
+      await waitFor(() => screen.getByText('WP/1/2024'));
+
+      fireEvent.click(screen.getAllByText('Get AI read')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/AI read unavailable/)).toBeTruthy();
+      });
+      expect(screen.getByText(/AI suggestions are not configured/)).toBeTruthy();
+    });
+
+    it('replaces the button with a loading state while the read is in flight', async () => {
+      let resolveRead;
+      api.authenticatedFetchJSON
+        .mockResolvedValueOnce(mockItems)
+        .mockReturnValueOnce(new Promise(resolve => { resolveRead = resolve; }));
+
+      render(<ManualReviewQueue />);
+      await waitFor(() => screen.getByText('WP/1/2024'));
+
+      fireEvent.click(screen.getAllByText('Get AI read')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Reading the order/)).toBeTruthy();
+      });
+
+      resolveRead({ category: 'ADJOURNED', confidence: 0.8, rationale: 'Stand over to next date.' });
+      await waitFor(() => {
+        expect(screen.getByText(/Stand over to next date/)).toBeTruthy();
+      });
+    });
+  });
 });

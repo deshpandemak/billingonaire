@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 import sys
 import types
@@ -79,27 +78,7 @@ if "spacy" not in sys.modules:
         sys.modules["spacy"] = spacy_stub
         sys.modules["spacy.matcher"] = matcher_stub
 
-CATEGORIES = ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF")
-
-PROMPT_TEMPLATE = """You are classifying a single entry from a Bombay High Court daily
-cause-list order sheet. Classify it into exactly one of these three categories:
-
-- DISPOSED_OFF: the matter was finally decided/disposed of on this date.
-- HEARD_AND_ADJOURNED: the matter was heard/argued (notice issued, interim
-  relief granted or considered, submissions made) and then adjourned to a
-  future date -- some substantive progress happened.
-- ADJOURNED: the matter was adjourned with no substantive hearing -- it was
-  not reached, or postponed for want of time, with no argument or interim
-  order.
-
-Order text:
-\"\"\"{text}\"\"\"
-
-Respond with ONLY a JSON object, no other text, matching this shape:
-{{"category": "DISPOSED_OFF" | "HEARD_AND_ADJOURNED" | "ADJOURNED",
-  "confidence": <float 0 to 1>,
-  "rationale": "<one sentence, must quote the specific phrase(s) from the text that justify the category>"}}
-"""
+from review_copilot import call_gemini  # noqa: E402 - after the spaCy shim above
 
 
 def build_analyzer():
@@ -185,33 +164,6 @@ def order_link_for(case: Dict[str, Any]) -> Optional[str]:
         if isinstance(order, dict) and order.get("order_link"):
             return order["order_link"]
     return None
-
-
-def call_gemini(text: str, api_key: str, model: str) -> Dict[str, Any]:
-    payload = {
-        "contents": [{"parts": [{"text": PROMPT_TEMPLATE.format(text=text)}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "category": {"type": "STRING", "enum": list(CATEGORIES)},
-                    "confidence": {"type": "NUMBER"},
-                    "rationale": {"type": "STRING"},
-                },
-                "required": ["category", "confidence", "rationale"],
-            },
-        },
-    }
-    resp = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        json=payload,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(raw)
 
 
 def evaluate_case(

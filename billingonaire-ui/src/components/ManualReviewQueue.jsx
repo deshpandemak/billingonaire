@@ -14,6 +14,9 @@ const ManualReviewQueue = () => {
   const [error, setError] = useState('');
   const [overriding, setOverriding] = useState(null);
   const [message, setMessage] = useState(null);
+  // Per-row AI suggestion state, keyed by doc_id/case_ref: undefined (not
+  // fetched), 'loading', { category, confidence, rationale }, or { error }.
+  const [aiSuggestions, setAiSuggestions] = useState({});
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -31,6 +34,19 @@ const ManualReviewQueue = () => {
   useEffect(() => {
     fetchQueue();
   }, [fetchQueue]);
+
+  const handleGetAiRead = async (item) => {
+    const key = item.doc_id || item.case_ref;
+    setAiSuggestions(prev => ({ ...prev, [key]: 'loading' }));
+    try {
+      const data = await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/ai-suggestion`, {
+        method: 'POST',
+      });
+      setAiSuggestions(prev => ({ ...prev, [key]: data }));
+    } catch (e) {
+      setAiSuggestions(prev => ({ ...prev, [key]: { error: e.message || 'AI read failed.' } }));
+    }
+  };
 
   const handleOverride = async (item, category) => {
     const key = item.doc_id || item.case_ref;
@@ -130,7 +146,8 @@ const ManualReviewQueue = () => {
                       : null;
 
                     return (
-                      <tr key={key}>
+                      <React.Fragment key={key}>
+                      <tr>
                         <td style={{ whiteSpace: 'nowrap' }}>
                           <strong>{item.case_ref || item.case_no || '—'}</strong>
                         </td>
@@ -169,16 +186,23 @@ const ManualReviewQueue = () => {
                             <Spinner animation="border" size="sm" />
                           ) : (
                             <div className="d-flex gap-1 flex-wrap">
-                              {ORDER_CATEGORIES.map(cat => (
-                                <Button
-                                  key={cat.value}
-                                  size="sm"
-                                  variant={`outline-${cat.variant}`}
-                                  onClick={() => handleOverride(item, cat.value)}
-                                >
-                                  {cat.label}
-                                </Button>
-                              ))}
+                              {ORDER_CATEGORIES.map(cat => {
+                                const aiAgrees = aiSuggestions[key]
+                                  && aiSuggestions[key] !== 'loading'
+                                  && !aiSuggestions[key].error
+                                  && aiSuggestions[key].category === cat.value;
+                                return (
+                                  <Button
+                                    key={cat.value}
+                                    size="sm"
+                                    variant={aiAgrees ? cat.variant : `outline-${cat.variant}`}
+                                    onClick={() => handleOverride(item, cat.value)}
+                                    title={aiAgrees ? 'The AI read agrees with this category' : undefined}
+                                  >
+                                    {cat.label}{aiAgrees ? ' ✓' : ''}
+                                  </Button>
+                                );
+                              })}
                               {item.order_link && (
                                 <Button
                                   size="sm"
@@ -191,10 +215,48 @@ const ManualReviewQueue = () => {
                                   View PDF
                                 </Button>
                               )}
+                              {!aiSuggestions[key] && (
+                                <Button
+                                  size="sm"
+                                  variant="outline-dark"
+                                  onClick={() => handleGetAiRead(item)}
+                                >
+                                  Get AI read
+                                </Button>
+                              )}
                             </div>
                           )}
                         </td>
                       </tr>
+                      {aiSuggestions[key] && (
+                        <tr key={`${key}-ai`}>
+                          <td colSpan={7} className="py-2" style={{ background: 'var(--bs-light, #f8f9fa)' }}>
+                            {aiSuggestions[key] === 'loading' ? (
+                              <span className="text-muted small">
+                                <Spinner animation="border" size="sm" className="me-2" />
+                                Reading the order…
+                              </span>
+                            ) : aiSuggestions[key].error ? (
+                              <span className="text-danger small">
+                                AI read unavailable: {aiSuggestions[key].error}
+                              </span>
+                            ) : (
+                              <span className="small">
+                                <strong>AI read:</strong>{' '}
+                                <Badge bg={ORDER_CATEGORIES.find(c => c.value === aiSuggestions[key].category)?.variant ?? 'secondary'}>
+                                  {ORDER_CATEGORIES.find(c => c.value === aiSuggestions[key].category)?.label ?? aiSuggestions[key].category}
+                                </Badge>
+                                {aiSuggestions[key].confidence != null && (
+                                  <span className="text-muted"> ({Math.round(aiSuggestions[key].confidence * 100)}%)</span>
+                                )}
+                                {' — '}
+                                {aiSuggestions[key].rationale}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                     );
                   })}
                 </tbody>
