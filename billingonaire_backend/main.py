@@ -5453,6 +5453,51 @@ def generate_month_description(start_date: str, end_date: str) -> str:
         return f"{start_date} to {end_date}"
 
 
+@app.post("/bills/qa-check", tags=["Bill Generation"])
+async def bill_qa_check(request: Request, current_user=Depends(get_current_user)):
+    """Roadmap #5: a second pair of eyes on a bill before it's saved --
+    the bill export is the one artifact that leaves the building and goes
+    to a government body, and everything upstream (a classification
+    error, a fuzzy-match miss, a manual fee edit) can ride silently into
+    it. Advisory only, never blocks: returns which entries triggered
+    which check and why, the caller decides what to do about it.
+
+    POST body: {"bill_entries": [...]} (the same shape /bills/save takes)
+    """
+    try:
+        from AutoOrderManager import AutoOrderManager
+        from bill_qa import qa_check_bill
+
+        db = firestore.client()
+        user_id = current_user.get("uid")
+        body = await request.json()
+        bill_entries = body.get("bill_entries", [])
+
+        # Cases this user has already billed in a previously SAVED bill --
+        # the one check that needs I/O, kept outside qa_check_bill itself.
+        previously_billed_keys = set()
+        for bill_doc in (
+            db.collection("user-bills").where("user_id", "==", user_id).stream()
+        ):
+            for entry in (bill_doc.to_dict() or {}).get("entries") or []:
+                case_ref = entry.get("case_detail") or entry.get("case_ref")
+                date = entry.get("date")
+                if case_ref and date:
+                    previously_billed_keys.add((case_ref, date))
+
+        report = qa_check_bill(
+            bill_entries,
+            previously_billed_keys=previously_billed_keys,
+            review_confidence_threshold=AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD,
+        )
+        return JSONResponse(content=report)
+    except Exception as e:
+        logger.error(f"Error running bill QA check: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to check bill: {str(e)}"}
+        )
+
+
 @app.post("/bills/save", tags=["Bill Generation"])
 async def save_bill_entries(request: Request, current_user=Depends(get_current_user)):
     """Save bill entries with unique bill number and year for logged-in user"""

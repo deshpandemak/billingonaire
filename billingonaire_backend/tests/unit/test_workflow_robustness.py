@@ -942,3 +942,102 @@ async def test_portal_health_check_adds_llm_diagnosis_only_when_drift_detected(
     data = json.loads(response.body)
     assert data["likely_drift"] is False
     mock_llm.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 9.  POST /bills/qa-check -- roadmap #5, a second pair of eyes before a
+#     bill (the one artifact that leaves the building) is saved.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bill_qa_check_flags_fee_mismatch(monkeypatch):
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.stream.return_value = []
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.bill_qa_check(
+        _make_request(
+            {
+                "bill_entries": [
+                    {
+                        "case_detail": "WP/1/2026",
+                        "date": "2026-01-15",
+                        "results": "ADJOURNED",
+                        "fees_rs": 1875,
+                    }
+                ]
+            }
+        ),
+        current_user={"uid": "user-1"},
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["ok"] is False
+    assert len(data["fee_mismatches"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_bill_qa_check_flags_case_billed_in_a_prior_saved_bill(monkeypatch):
+    prior_bill_doc = SimpleNamespace(
+        to_dict=lambda: {
+            "user_id": "user-1",
+            "entries": [{"case_detail": "WP/1/2026", "date": "2026-01-15"}],
+        }
+    )
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.stream.return_value = [
+        prior_bill_doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.bill_qa_check(
+        _make_request(
+            {
+                "bill_entries": [
+                    {
+                        "case_detail": "WP/1/2026",
+                        "date": "2026-01-15",
+                        "results": "ADJOURNED",
+                        "fees_rs": 1250,
+                    }
+                ]
+            }
+        ),
+        current_user={"uid": "user-1"},
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["ok"] is False
+    assert len(data["duplicates_across_bills"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_bill_qa_check_ok_for_a_clean_bill(monkeypatch):
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.stream.return_value = []
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.bill_qa_check(
+        _make_request(
+            {
+                "bill_entries": [
+                    {
+                        "case_detail": "WP/1/2026",
+                        "date": "2026-01-15",
+                        "results": "WP DISPOSED OF",
+                        "fees_rs": 2500,
+                        "order_category_confidence": 0.95,
+                    }
+                ]
+            }
+        ),
+        current_user={"uid": "user-1"},
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["ok"] is True
+    assert data["summary_lines"] == ["No issues found."]

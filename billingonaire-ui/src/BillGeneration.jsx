@@ -25,6 +25,8 @@ const BillGeneration = () => {
     const [tempEditData, setTempEditData] = useState({});
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveBillLoading, setSaveBillLoading] = useState(false);
+    const [qaReport, setQaReport] = useState(null);
+    const [qaLoading, setQaLoading] = useState(false);
     const [bulkEditMode, setBulkEditMode] = useState(false);
     const [selectedRows, setSelectedRows] = useState(new Set());
     const [bulkFeeValue, setBulkFeeValue] = useState('');
@@ -362,6 +364,22 @@ const BillGeneration = () => {
         }
     };
 
+    const openSaveModal = () => {
+        setShowSaveModal(true);
+        setQaReport(null);
+        setQaLoading(true);
+        authenticatedFetchJSON('/bills/qa-check', {
+            method: 'POST',
+            body: JSON.stringify({ bill_entries: billData.bill_entries }),
+        })
+            .then(setQaReport)
+            .catch(() => {
+                // Advisory only — if the check itself fails, say nothing rather
+                // than block or alarm over a check that couldn't run.
+            })
+            .finally(() => setQaLoading(false));
+    };
+
     const saveBill = async () => {
         setSaveBillLoading(true);
         try {
@@ -668,7 +686,7 @@ const BillGeneration = () => {
                                         <Button variant="success" size="sm" onClick={exportMultipleFormats} className="me-2">
                                                 Export Excel (XLSX)
                                             </Button>
-                                            <Button variant="primary" size="sm" onClick={() => setShowSaveModal(true)}>
+                                            <Button variant="primary" size="sm" onClick={openSaveModal}>
                                                 💾 Save Bill
                                             </Button>
                                         </div>
@@ -977,6 +995,24 @@ const BillGeneration = () => {
                             </tr>
                         </tbody>
                     </table>
+
+                    {qaLoading ? (
+                        <div className="mt-3 text-muted small">
+                            <Spinner animation="border" size="sm" className="me-2" />
+                            Checking bill for issues…
+                        </div>
+                    ) : qaReport && !qaReport.ok ? (
+                        <Alert variant="warning" className="mt-3 mb-0 py-2 px-3" style={{ fontSize: '0.85rem' }}>
+                            <strong>Worth a look before saving:</strong>
+                            <ul className="mb-0 mt-1 ps-3">
+                                {qaReport.summary_lines.map((line, i) => <li key={i}>{line}</li>)}
+                            </ul>
+                        </Alert>
+                    ) : qaReport && qaReport.flagged_entries?.length > 0 ? (
+                        <Alert variant="info" className="mt-3 mb-0 py-2 px-3" style={{ fontSize: '0.85rem' }}>
+                            {qaReport.summary_lines.map((line, i) => <div key={i}>{line}</div>)}
+                        </Alert>
+                    ) : null}
                 </Modal.Body>
                 <Modal.Footer>
                     <Button variant="secondary" onClick={() => setShowSaveModal(false)}>
