@@ -354,6 +354,35 @@ class TestCategoryClassification:
         assert category == "ADJOURNED"
         assert confidence >= 0.9
 
+    # ------------------------------------------------------------------
+    # Regression: a second, larger real-order batch (26 orders, run through
+    # the same tools/review_copilot_prototype.py comparison) turned up a
+    # deeper version of the same AGP/APP pattern problem: even after
+    # anchoring the \b boundary above, "AGP, for the Respondent-State" --
+    # boilerplate present in essentially every AGP case's appearance
+    # line -- satisfies the pattern's trailing "states?" alternative via
+    # the word "State" (the government as a party), not any verb. Three
+    # real orders scored HEARD_AND_ADJOURNED at confidences up to 1.0 for
+    # this reason alone before the fix.
+    # ------------------------------------------------------------------
+
+    def test_agp_for_the_respondent_state_is_not_read_as_agp_states_something(
+        self, analyzer
+    ):
+        """The noun 'State' in the routine appearance line 'AGP, for the
+        Respondent-State' must not satisfy the pattern's 'states?' verb
+        alternative -- an AGP being listed as counsel for the government is
+        not evidence anyone said anything."""
+        text = (
+            "IN THE HIGH COURT OF JUDICATURE AT BOMBAY WRIT PETITION "
+            "NO.999 OF 2024 X ....PETITIONER versus Y ....RESPONDENT. "
+            "Ms. A. Deshpande, AGP, for the Respondent-State. "
+            "Wrongly on board. To be placed before the appropriate Bench "
+            "having the said assignment as per the roster."
+        )
+        category, _ = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+
     def test_app_pattern_does_not_match_appellate_jurisdiction_boilerplate(
         self, analyzer
     ):

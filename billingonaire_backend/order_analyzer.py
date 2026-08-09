@@ -184,7 +184,17 @@ class OrderDocumentAnalyzer:
                 # which fires on "...Respondent Nos. 3 to 5-State" (the government
                 # named as a respondent, i.e. most AGP cases) regardless of whether
                 # anyone actually appeared or submitted anything.
-                r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
+                #
+                # "states?" is dropped from the trailing verb alternation entirely:
+                # every AGP-appearance line ends "...AGP, for the Respondent-State"
+                # or "...AGP for Respondent Nos. X-State" -- boilerplate present in
+                # essentially every AGP case regardless of what happened -- and
+                # "State" (the noun, i.e. the government as a party) satisfies
+                # "states?" every time. The tight-adjacency sibling pattern above
+                # (AGP/APP immediately followed by whitespace + a verb, no gap)
+                # already catches genuine "AGP states that..." usage without this
+                # collision risk.
+                r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|confirms?)\b",
                 r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
                 r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
                 r"\bcourt.*?observes?\s+that\b",
@@ -297,7 +307,7 @@ class OrderDocumentAnalyzer:
             r"\b(?:learned\s+)?(?:AGP|APP)\s+(?:submits?|states?|appear(?:s|ed|ing)?|confirms?)\b",
             # Must match _create_order_patterns exactly -- weight lookup is keyed
             # by the literal pattern string.
-            r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|states?|confirms?)\b",
+            r"\b(?:AGP|APP)\b.*?(?:appear(?:s|ed|ing)?|submits?|confirms?)\b",
             r"\bappear(?:s|ed|ing)?\s+(?:as\s+)?(?:AGP|APP)\b",
             r"\b(?:submissions?|arguments?)\s+(?:made|advanced|put\s+forth)\b",
             r"\baffidavit\s+(?:to\s+be|be)\s+(?:filed|sworn|duly\s+sworn|placed)\b",
