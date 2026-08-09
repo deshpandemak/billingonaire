@@ -4115,6 +4115,39 @@ async def get_queue_detail(
         )
 
 
+@app.get("/admin/queue-health", tags=["Queue Management"])
+async def get_queue_health(current_user=Depends(require_admin)):
+    """An actual diagnosis of the failed/stuck cases, not just a count --
+    groups failures by normalized reason to tell "one flaky case" apart
+    from "a systemic problem" (e.g. the court portal changed), and flags
+    cases stuck in a claim/retry loop without ever reaching a terminal
+    status. Safe to hit on a schedule (e.g. Cloud Scheduler) -- read-only,
+    just Firestore equality queries on already-indexed fields."""
+    try:
+        from queue_health import FAILED_STATUSES, diagnose
+
+        db = firestore.client()
+        cases = []
+        for status in FAILED_STATUSES:
+            for doc in (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", status)
+                .limit(200)
+                .stream()
+            ):
+                data = doc.to_dict() or {}
+                data.setdefault("lifecycle_status", status)
+                cases.append(data)
+
+        report = diagnose(cases)
+        return JSONResponse(content=report)
+    except Exception as e:
+        logger.error(f"Error getting queue health: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to get queue health: {str(e)}"}
+        )
+
+
 # User Matter Mapping Endpoints
 @app.get("/user-matters/my-matters", tags=["User Matter Mapping"])
 async def get_my_matters(

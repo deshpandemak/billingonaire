@@ -588,3 +588,54 @@ async def test_ai_suggestion_returns_502_when_gemini_call_fails(monkeypatch):
 
     response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
     assert response.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# 6.  GET /admin/queue-health -- diagnosis (systemic failure patterns,
+#     flapping cases), not just the stuck-count badge /queue/status shows.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_queue_health_flags_a_systemic_pattern_across_failed_cases(monkeypatch):
+    def make_doc(case_ref, reason):
+        return SimpleNamespace(
+            id=case_ref.replace("/", "-"),
+            to_dict=lambda: {
+                "case_ref": case_ref,
+                "lifecycle_status_reason": reason,
+                "lifecycle_events": [{"event_type": "x"}],
+            },
+        )
+
+    docs_by_status = {
+        "fetch_failed_retryable": [
+            make_doc("WP/1/2026", "Read timed out after 30s"),
+            make_doc("WP/2/2026", "Read timed out after 30s"),
+            make_doc("WP/3/2026", "Read timed out after 30s"),
+        ],
+        "fetch_failed_terminal": [],
+        "analysis_failed_retryable": [],
+        "analysis_failed_terminal": [],
+    }
+
+    def where_side_effect(field, op, value):
+        mock_query = MagicMock()
+        mock_query.limit.return_value.stream.return_value = docs_by_status.get(
+            value, []
+        )
+        return mock_query
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_queue_health(current_user=None)
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["total_failed"] == 3
+    assert data["failed_count_by_status"]["fetch_failed_retryable"] == 3
+    assert data["signature_groups"][0]["systemic"] is True
+    assert any("systemic" in line for line in data["summary_lines"])
