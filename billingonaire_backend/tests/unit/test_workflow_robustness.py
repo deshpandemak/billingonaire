@@ -993,6 +993,100 @@ async def test_process_claimed_analysis_case_maps_users_with_the_resolved_board_
 
 
 # ---------------------------------------------------------------------------
+# 7c. GET /admin/order-status-overview -- the Pipeline tab's top card spun
+#     forever because this endpoint streamed every daily-boards row and did
+#     one extra synchronous case-details read per row (N+1), all blocking
+#     I/O with no await -- on a production-sized collection this could tie
+#     up the single event loop thread for minutes, stalling every other
+#     request (including the poll loops) on top of the request that asked
+#     for it. Replaced with cheap .count() aggregations.
+# ---------------------------------------------------------------------------
+
+
+def _count_result(n):
+    """Shape of a Firestore .count().get() aggregation response: a
+    list-of-lists of results, each with a .value attribute."""
+    return [[SimpleNamespace(value=n)]]
+
+
+@pytest.mark.asyncio
+async def test_order_status_overview_uses_count_aggregations_not_a_full_scan(
+    monkeypatch,
+):
+    counts_by_status = {
+        "linked": 2,
+        "analysed": 5,
+        "order_failed": 1,
+        "order_analysis_failed": 1,
+    }
+
+    mock_collection = MagicMock()
+    mock_collection.count.return_value.get.return_value = _count_result(10)
+    mock_collection.stream.side_effect = AssertionError(
+        "must not stream the full collection -- that's the N+1 bug being fixed"
+    )
+
+    def where_side_effect(field, op, value):
+        assert field == "latest_order_status"
+        assert op == "=="
+        where_mock = MagicMock()
+        where_mock.count.return_value.get.return_value = _count_result(
+            counts_by_status.get(value, 0)
+        )
+        return where_mock
+
+    mock_collection.where.side_effect = where_side_effect
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value = mock_collection
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_order_status_overview(current_user={"uid": "admin-1"})
+
+    import json
+
+    data = json.loads(response.body)
+    assert data["success"] is True
+    assert data["total_cases"] == 10
+    assert data["status_counts"] == {
+        "not_linked": 1,  # 10 - 2 - 5 - 1 - 1
+        "linked": 2,
+        "analysed": 5,
+        "order_failed": 1,
+        "order_analysis_failed": 1,
+    }
+    assert data["pending_processing"] == 2  # not_linked(1) + order_failed(1)
+
+
+@pytest.mark.asyncio
+async def test_order_status_overview_never_goes_negative_on_uncounted_statuses(
+    monkeypatch,
+):
+    """If the explicit buckets somehow summed to more than total_cases (e.g.
+    a status value outside the known set), not_linked must clamp at 0
+    rather than go negative and produce a nonsensical percentage."""
+    mock_collection = MagicMock()
+    mock_collection.count.return_value.get.return_value = _count_result(2)
+
+    def where_side_effect(field, op, value):
+        where_mock = MagicMock()
+        where_mock.count.return_value.get.return_value = _count_result(5)
+        return where_mock
+
+    mock_collection.where.side_effect = where_side_effect
+    mock_db = MagicMock()
+    mock_db.collection.return_value = mock_collection
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_order_status_overview(current_user={"uid": "admin-1"})
+
+    import json
+
+    data = json.loads(response.body)
+    assert data["status_counts"]["not_linked"] == 0
+
+
+# ---------------------------------------------------------------------------
 # 8.  POST /admin/portal-health-check -- roadmap #3, diagnosing court-portal
 #     drift from the dual-provider attempt matrix instead of a bare error.
 # ---------------------------------------------------------------------------

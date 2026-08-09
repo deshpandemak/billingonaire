@@ -3650,46 +3650,68 @@ async def test_gcs_access(current_user=Depends(require_admin)):
         }
 
 
+def _count_case_details_by_order_status(order_status: str) -> int:
+    """Cheap Firestore .count() aggregation on the legacy latest_order_status
+    field -- single-field equality, already auto-indexed, no composite index
+    needed. See get_order_status_overview for why this replaced a per-case
+    read loop."""
+    try:
+        db = firestore.client()
+        return (
+            db.collection("case-details")
+            .where("latest_order_status", "==", order_status)
+            .count()
+            .get()[0][0]
+            .value
+        )
+    except Exception as e:
+        logger.error(f"Error counting latest_order_status={order_status}: {e}")
+        return 0
+
+
 @app.get("/admin/order-status-overview", tags=["Admin Order Management"])
 async def get_order_status_overview(current_user=Depends(require_admin)):
-    """
-    Get overview of order statuses for admin dashboard
-    Shows counts for each order status
+    """Get overview of order statuses for admin dashboard.
+
+    Was previously a full `daily-boards` collection scan with one extra
+    synchronous case-details read PER row (N+1) to derive each row's
+    status -- fine on a handful of test boards, but every one of those
+    reads is blocking I/O with no `await`, so on a production-sized
+    collection this ties up the single event loop thread for the entire
+    scan. That doesn't just make this one request slow: it stalls every
+    other request on the same Cloud Run instance, including the poll
+    loops -- which is what made the Pipeline tab spin forever with
+    nothing ever rendering above it.
+
+    Now driven entirely by cheap .count() aggregations on case-details'
+    latest_order_status field (already the source this data came from --
+    see AutoOrderManager._get_case_order_context), the same pattern
+    _count_lifecycle_status already uses for /queue/status.
     """
     try:
         db = firestore.client()
+        total_cases = db.collection("case-details").count().get()[0][0].value
 
-        cases = db.collection("daily-boards").stream()
+        linked = _count_case_details_by_order_status("linked")
+        analysed = _count_case_details_by_order_status("analysed")
+        order_failed = _count_case_details_by_order_status("order_failed")
+        order_analysis_failed = _count_case_details_by_order_status(
+            "order_analysis_failed"
+        )
+        # latest_order_status is absent on cases nothing has fetched yet --
+        # a Firestore equality query can't match a missing field, so
+        # "not_linked" is whatever's left rather than its own query.
+        not_linked = max(
+            0, total_cases - linked - analysed - order_failed - order_analysis_failed
+        )
 
         status_counts = {
-            "not_linked": 0,
-            "linked": 0,
-            "analysed": 0,
-            "order_failed": 0,
-            "order_analysis_failed": 0,
+            "not_linked": not_linked,
+            "linked": linked,
+            "analysed": analysed,
+            "order_failed": order_failed,
+            "order_analysis_failed": order_analysis_failed,
         }
-
-        for case_doc in cases:
-            case_data = case_doc.to_dict()
-            case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-            status = (
-                get_auto_order_manager()
-                ._get_case_order_context(case_ref)
-                .get("order_status", "not_linked")
-            )
-
-            # Normalize: treat "unknown", empty, or missing status as "not_linked"
-            if (
-                status == "unknown"
-                or status is None
-                or status == ""
-                or status not in status_counts
-            ):
-                status = "not_linked"
-
-            status_counts[status] += 1
-
-        total_cases = sum(status_counts.values())
 
         return JSONResponse(
             content={
