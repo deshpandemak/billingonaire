@@ -138,6 +138,28 @@ describe('ManualReviewQueue', () => {
     });
   });
 
+  it('overrides using item.id (not the slash-containing case_ref) when doc_id is absent', async () => {
+    const itemsWithoutDocId = [
+      { id: 'WP-1-2024', case_ref: 'WP/1/2024', confidence_score: 0.45 },
+    ];
+    api.authenticatedFetchJSON
+      .mockResolvedValueOnce(itemsWithoutDocId)
+      .mockResolvedValueOnce({ success: true });
+
+    render(<ManualReviewQueue />);
+    await waitFor(() => screen.getByText('WP/1/2024'));
+
+    fireEvent.click(screen.getAllByText('Adjourned')[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByText('WP/1/2024')).toBeNull();
+    });
+    expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+      '/admin/orders/WP-1-2024/override',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
   it('shows error message when override fails', async () => {
     api.authenticatedFetchJSON
       .mockResolvedValueOnce(mockItems)
@@ -233,6 +255,41 @@ describe('ManualReviewQueue', () => {
         expect(screen.getByText(/AI read unavailable/)).toBeTruthy();
       });
       expect(screen.getByText(/AI suggestions are not configured/)).toBeTruthy();
+    });
+
+    it('uses item.id (not the slash-containing case_ref) as the URL path segment when doc_id is absent', async () => {
+      // /admin/review-queue's real response has no `doc_id` field -- only
+      // `id` (the case-details Firestore doc id, e.g. "WP-1-2024"). Falling
+      // back to case_ref (which contains "/") produces a URL the backend's
+      // {doc_id} path param can't match, a 404 before the handler even runs.
+      const itemsWithoutDocId = [
+        {
+          id: 'WP-1-2024',
+          case_ref: 'WP/1/2024',
+          board_date: '2024-10-01',
+          confidence_score: 0.45,
+        },
+      ];
+      api.authenticatedFetchJSON
+        .mockResolvedValueOnce(itemsWithoutDocId)
+        .mockResolvedValueOnce({
+          category: 'ADJOURNED',
+          confidence: 0.8,
+          rationale: 'Stand over to next date.',
+        });
+
+      render(<ManualReviewQueue />);
+      await waitFor(() => screen.getByText('WP/1/2024'));
+
+      fireEvent.click(screen.getByText('Get AI read'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Stand over to next date/)).toBeTruthy();
+      });
+      expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+        '/admin/orders/WP-1-2024/ai-suggestion',
+        expect.objectContaining({ method: 'POST' })
+      );
     });
 
     it('replaces the button with a loading state while the read is in flight', async () => {

@@ -14,8 +14,11 @@ const ManualReviewQueue = () => {
   const [error, setError] = useState('');
   const [overriding, setOverriding] = useState(null);
   const [message, setMessage] = useState(null);
-  // Per-row AI suggestion state, keyed by doc_id/case_ref: undefined (not
-  // fetched), 'loading', { category, confidence, rationale }, or { error }.
+  // Per-row AI suggestion state, keyed by the case-details doc id (falls
+  // back to case_ref, though that contains "/" and breaks the path param
+  // below -- prefer item.id, which is what /admin/review-queue actually
+  // returns): undefined (not fetched), 'loading',
+  // { category, confidence, rationale }, or { error }.
   const [aiSuggestions, setAiSuggestions] = useState({});
 
   const fetchQueue = useCallback(async () => {
@@ -36,7 +39,7 @@ const ManualReviewQueue = () => {
   }, [fetchQueue]);
 
   const handleGetAiRead = async (item) => {
-    const key = item.doc_id || item.case_ref;
+    const key = item.id || item.doc_id || item.case_ref;
     setAiSuggestions(prev => ({ ...prev, [key]: 'loading' }));
     try {
       const data = await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/ai-suggestion`, {
@@ -49,7 +52,7 @@ const ManualReviewQueue = () => {
   };
 
   const handleOverride = async (item, category) => {
-    const key = item.doc_id || item.case_ref;
+    const key = item.id || item.doc_id || item.case_ref;
     setOverriding(key);
     try {
       await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/override`, {
@@ -58,7 +61,7 @@ const ManualReviewQueue = () => {
       });
       const catLabel = ORDER_CATEGORIES.find(c => c.value === category)?.label ?? category;
       setMessage({ type: 'success', text: `${item.case_ref || key} — set to ${catLabel}` });
-      setItems(prev => prev.filter(i => (i.doc_id || i.case_ref) !== key));
+      setItems(prev => prev.filter(i => (i.id || i.doc_id || i.case_ref) !== key));
     } catch (e) {
       setMessage({ type: 'danger', text: `Override failed for ${item.case_ref || key}: ${e.message}` });
     } finally {
@@ -139,7 +142,7 @@ const ManualReviewQueue = () => {
                 </thead>
                 <tbody>
                   {items.map(item => {
-                    const key = item.doc_id || item.case_ref;
+                    const key = item.id || item.doc_id || item.case_ref;
                     const isProcessing = overriding === key;
                     const conf = item.confidence_score != null
                       ? Math.round(item.confidence_score * 100)
