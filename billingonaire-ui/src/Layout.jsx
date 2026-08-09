@@ -11,6 +11,7 @@ import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import AdminOrderManagement from './AdminOrderManagement';
 import ManualReviewQueue from './components/ManualReviewQueue';
+import AssistantChat from './components/AssistantChat';
 import Login from './Login';
 import LandingPage from './components/LandingPage';
 import './styles/professional.css';
@@ -204,6 +205,7 @@ const Layout = ({ children }) => {
       <main style={{ minHeight: 'calc(100vh - 120px)', backgroundColor: 'var(--gray-50)' }}>
         {user ? children : null}
       </main>
+      {user && <AssistantChat />}
 
       <footer style={{
         backgroundColor: 'var(--white)',

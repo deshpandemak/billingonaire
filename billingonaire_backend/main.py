@@ -6482,5 +6482,126 @@ async def portal_health_check(
     return JSONResponse(content=report)
 
 
+async def _run_assistant_tool(
+    tool_name: str, tool_args: Dict[str, Any], current_user: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Executes one of assistant.TOOL_DECLARATIONS by calling the SAME
+    endpoint function the corresponding REST route uses -- no separate
+    query logic to keep in sync, and current_user (hence the asking
+    user's uid) is threaded through every call. Every one of these reads
+    only; none can save a bill, override a category, or queue a job."""
+    if tool_name == "get_queue_status":
+        response = await get_queue_status(current_user=current_user)
+        return json.loads(response.body)
+
+    if tool_name == "get_bill_preview":
+        response = await generate_bill_data(
+            start_date=tool_args.get("start_date"),
+            end_date=tool_args.get("end_date"),
+            user_name=None,
+            current_user=current_user,
+        )
+        data = json.loads(response.body)
+        entries = data.get("bill_entries") or []
+        outcome_counts: Dict[str, int] = {}
+        for entry in entries:
+            result = entry.get("results") or "unknown"
+            outcome_counts[result] = outcome_counts.get(result, 0) + 1
+        # Trimmed for the model: aggregate stats only, not the full entry
+        # list -- keeps the tool response small and avoids the model
+        # verbatim-dumping a long table back into the chat.
+        return {
+            "date_range": data.get("date_range"),
+            "total_entries": data.get("total_entries"),
+            "total_fees": data.get("total_fees"),
+            "outcome_counts": outcome_counts,
+        }
+
+    if tool_name == "get_my_saved_bills":
+        limit = int(tool_args.get("limit") or 5)
+        response = await get_my_bills(
+            limit=limit, user_id_filter=None, current_user=current_user
+        )
+        data = json.loads(response.body)
+        bills = data.get("bills") or []
+        return {
+            "total_saved_bills": len(bills),
+            "bills": [
+                {
+                    "bill_number": b.get("bill_number"),
+                    "month_description": b.get("month_description"),
+                    "total_entries": b.get("total_entries"),
+                    "total_fees": b.get("total_fees"),
+                }
+                for b in bills[:limit]
+            ],
+        }
+
+    if tool_name == "get_pending_matter_confirmations":
+        response = await get_pending_matter_confirmations(current_user=current_user)
+        return json.loads(response.body)
+
+    raise ValueError(f"Unknown tool: {tool_name}")
+
+
+@app.post("/assistant/ask", tags=["Assistant"])
+async def assistant_ask(request: Request, current_user=Depends(get_current_user)):
+    """Roadmap #8: a natural-language front door to data that already
+    exists behind an API call -- "how many of my cases need attention",
+    "what would my October bill look like" -- instead of navigating
+    Table, filters, then Bills to find the same answer.
+
+    Deliberately last in the roadmap and narrowly scoped, per the
+    roadmap's own sequencing note ("a multiplier on a pipeline that's
+    already trustworthy, not a fix for one that isn't"): every tool is
+    READ-ONLY (see assistant.py) and scoped to the asking user's own
+    uid -- this can look things up, never save a bill, override a
+    category, or queue a job.
+
+    POST body: {"question": "...", "history": [{"role": "user"|"assistant",
+    "text": "..."}]}
+    """
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return JSONResponse(
+                status_code=501,
+                content={
+                    "error": "Assistant is not configured (GEMINI_API_KEY not set)."
+                },
+            )
+
+        body = await request.json()
+        question = str(body.get("question") or "").strip()
+        if not question:
+            return JSONResponse(
+                status_code=400, content={"error": "question is required"}
+            )
+        # Keep only recent turns -- this is a lightweight front door, not a
+        # long-running conversation; also bounds the prompt/cost per call.
+        history = (body.get("history") or [])[-6:]
+
+        from assistant import AssistantError, ask
+
+        async def tool_executor(
+            tool_name: str, tool_args: Dict[str, Any]
+        ) -> Dict[str, Any]:
+            return await _run_assistant_tool(tool_name, tool_args, current_user)
+
+        try:
+            result = await ask(question, history, tool_executor, api_key)
+        except AssistantError as e:
+            return JSONResponse(
+                status_code=502, content={"error": f"Assistant failed: {e}"}
+            )
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in assistant_ask: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Assistant failed: {str(e)}"}
+        )
+
+
 # Cloud Run entry point - uvicorn will run the app directly
 # For Cloud Functions deployment, use a separate functions_entry.py file

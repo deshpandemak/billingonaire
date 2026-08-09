@@ -61,6 +61,8 @@ Without ADC the backend still works — PDFs are served from live court URLs, bu
 
 `GEMINI_API_KEY` (a Google AI Studio key, https://aistudio.google.com/apikey) enables `POST /admin/orders/{doc_id}/ai-suggestion` — an LLM read of a manual-review case's order text with a rationale, shown in the "Get AI read" button in `ManualReviewQueue.jsx`. Entirely optional: without it the endpoint returns 501 and the review queue works exactly as before. Set it in `billingonaire_backend/.env` for local dev. For Cloud Run, store it as a Secret Manager secret via `./firebase/setup-secrets.sh` (with `GEMINI_API_KEY` exported) rather than a plain `--set-env-vars` value — `./firebase/backend-cloudrun-deploy.sh` mounts it automatically if the secret exists.
 
+The same key also enables `POST /assistant/ask` (`assistant.py`) — a read-only conversational front door over existing endpoints (queue status, bill preview, saved bills, pending matter confirmations), surfaced as the floating chat widget (`AssistantChat.jsx`) on every authenticated screen. It can only look things up, never save a bill or change a category; without the key it returns 501 and the widget hides itself.
+
 ### Frontend (`billingonaire-ui/`)
 
 ```bash
