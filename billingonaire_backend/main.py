@@ -392,6 +392,28 @@ def _run_fetch_case(case_info: Dict) -> Dict:
     return get_auto_order_manager()._process_single_case(case_info)
 
 
+def _resolve_board_doc_id(case_info: Dict) -> Optional[str]:
+    """auto_map_case_to_users (and everything downstream of it --
+    user-case-mappings, user-matter-pending-confirmations, and the
+    bill-generation read path at GET /bills/generate) all expect a
+    daily-boards doc id ("YYYY-MM-DD-TYPE-NO-YEAR"). The poll loops key
+    candidates off case-details instead ("TYPE-NO-YEAR", no date), so
+    case_info["id"] is the wrong shape to pass straight through --
+    resolve the real daily-boards id from board_assignment_ids
+    (case_data_store.py's link back to the board rows a case appeared
+    on), preferring the entry for the board_date being processed right
+    now since a case can appear on the board more than once."""
+    board_ids = case_info.get("board_assignment_ids") or []
+    if not board_ids:
+        return None
+    board_date = case_info.get("board_date")
+    if board_date:
+        for board_id in board_ids:
+            if board_id.startswith(f"{board_date}-"):
+                return board_id
+    return board_ids[-1]
+
+
 async def _process_claimed_fetch_case(case_info: Dict) -> None:
     case_ref = case_info["case_ref"]
     try:
@@ -403,11 +425,17 @@ async def _process_claimed_fetch_case(case_info: Dict) -> None:
 
         if result.get("analysis_success"):
             logger.info(f"✅ Fetch+analysis succeeded for {case_ref}")
-            try:
-                await auto_map_case_to_users(case_info.get("id"), case_info)
-            except Exception as mapping_error:
-                logger.error(
-                    f"Error mapping users after fetch for {case_ref}: {mapping_error}"
+            board_doc_id = _resolve_board_doc_id(case_info)
+            if board_doc_id:
+                try:
+                    await auto_map_case_to_users(board_doc_id, case_info)
+                except Exception as mapping_error:
+                    logger.error(
+                        f"Error mapping users after fetch for {case_ref}: {mapping_error}"
+                    )
+            else:
+                logger.warning(
+                    f"No board_assignment_ids for {case_ref} -- skipping user mapping"
                 )
         elif result.get("download_success"):
             # Order downloaded but inline analysis didn't complete (rare --
@@ -540,6 +568,7 @@ async def fetch_poll_loop():
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date")
                     or case_data.get("latest_board_date"),
+                    "board_assignment_ids": case_data.get("board_assignment_ids") or [],
                 }
                 await _fetch_semaphore.acquire()
                 _track_task(asyncio.create_task(_process_claimed_fetch_case(case_info)))
@@ -612,11 +641,17 @@ async def _process_claimed_analysis_case(case_info: Dict) -> None:
 
         if result.get("analysis_success"):
             logger.info(f"✅ Analysis completed for {case_ref}")
-            try:
-                await auto_map_case_to_users(case_id, case_info)
-            except Exception as mapping_error:
-                logger.error(
-                    f"Error mapping users after analysis for {case_ref}: {mapping_error}"
+            board_doc_id = _resolve_board_doc_id(case_info)
+            if board_doc_id:
+                try:
+                    await auto_map_case_to_users(board_doc_id, case_info)
+                except Exception as mapping_error:
+                    logger.error(
+                        f"Error mapping users after analysis for {case_ref}: {mapping_error}"
+                    )
+            else:
+                logger.warning(
+                    f"No board_assignment_ids for {case_ref} -- skipping user mapping"
                 )
         else:
             error_msg = result.get("error") or "Analysis failed"
@@ -687,6 +722,7 @@ async def analysis_poll_loop():
                     "case_ref": case_ref,
                     "board_date": case_data.get("board_date")
                     or case_data.get("latest_board_date"),
+                    "board_assignment_ids": case_data.get("board_assignment_ids") or [],
                 }
                 await _analysis_semaphore.acquire()
                 _track_task(

@@ -873,6 +873,126 @@ async def test_auto_map_case_to_users_writes_near_misses_as_pending(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# 7b. _resolve_board_doc_id / poll-loop auto-mapping -- the poll loops key
+#     candidates off case-details ("TYPE-NO-YEAR"), but auto_map_case_to_users
+#     (and everything it writes -- user-case-mappings, pending-confirmations,
+#     and the bill-generation read path) expects a daily-boards doc id
+#     ("YYYY-MM-DD-TYPE-NO-YEAR"). Passing the case-details id straight
+#     through made UserMatterMatcher's daily-boards lookup miss every time,
+#     silently: no mapping was ever written for any case processed by the
+#     poll loops.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveBoardDocId:
+    def test_picks_the_entry_matching_the_current_board_date(self):
+        case_info = {
+            "board_date": "2026-01-15",
+            "board_assignment_ids": [
+                "2026-01-01-WP-123-2026",
+                "2026-01-15-WP-123-2026",
+            ],
+        }
+        assert main._resolve_board_doc_id(case_info) == "2026-01-15-WP-123-2026"
+
+    def test_falls_back_to_the_most_recent_id_when_no_date_matches(self):
+        case_info = {
+            "board_date": "2026-02-01",
+            "board_assignment_ids": [
+                "2026-01-01-WP-123-2026",
+                "2026-01-15-WP-123-2026",
+            ],
+        }
+        assert main._resolve_board_doc_id(case_info) == "2026-01-15-WP-123-2026"
+
+    def test_falls_back_to_the_most_recent_id_when_board_date_missing(self):
+        case_info = {"board_assignment_ids": ["a", "b", "c"]}
+        assert main._resolve_board_doc_id(case_info) == "c"
+
+    def test_returns_none_when_there_are_no_board_assignment_ids(self):
+        assert main._resolve_board_doc_id({"board_date": "2026-01-15"}) is None
+        assert (
+            main._resolve_board_doc_id(
+                {"board_date": "2026-01-15", "board_assignment_ids": []}
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_claimed_fetch_case_maps_users_with_the_resolved_board_doc_id(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main, "_run_fetch_case", lambda case_info: {"analysis_success": True}
+    )
+    captured = {}
+
+    async def fake_auto_map(case_id, case_info):
+        captured["case_id"] = case_id
+
+    monkeypatch.setattr(main, "auto_map_case_to_users", fake_auto_map)
+
+    case_info = {
+        "id": "WP-123-2026",
+        "case_ref": "WP/123/2026",
+        "board_date": "2026-01-15",
+        "board_assignment_ids": ["2026-01-01-WP-123-2026", "2026-01-15-WP-123-2026"],
+    }
+    await main._process_claimed_fetch_case(case_info)
+
+    # Must be the real daily-boards id, never the case-details id
+    # (case_info["id"]) that UserMatterMatcher can't look up.
+    assert captured["case_id"] == "2026-01-15-WP-123-2026"
+
+
+@pytest.mark.asyncio
+async def test_process_claimed_fetch_case_skips_mapping_without_board_assignment_ids(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main, "_run_fetch_case", lambda case_info: {"analysis_success": True}
+    )
+    mock_auto_map = AsyncMock()
+    monkeypatch.setattr(main, "auto_map_case_to_users", mock_auto_map)
+
+    case_info = {
+        "id": "WP-123-2026",
+        "case_ref": "WP/123/2026",
+        "board_date": "2026-01-15",
+        "board_assignment_ids": [],
+    }
+    await main._process_claimed_fetch_case(case_info)
+
+    mock_auto_map.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_claimed_analysis_case_maps_users_with_the_resolved_board_doc_id(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main, "_run_case_analysis_job", lambda case_info: {"analysis_success": True}
+    )
+    captured = {}
+
+    async def fake_auto_map(case_id, case_info):
+        captured["case_id"] = case_id
+
+    monkeypatch.setattr(main, "auto_map_case_to_users", fake_auto_map)
+
+    case_info = {
+        "id": "WP-123-2026",
+        "case_ref": "WP/123/2026",
+        "board_date": "2026-01-15",
+        "board_assignment_ids": ["2026-01-01-WP-123-2026", "2026-01-15-WP-123-2026"],
+    }
+    await main._process_claimed_analysis_case(case_info)
+
+    assert captured["case_id"] == "2026-01-15-WP-123-2026"
+
+
+# ---------------------------------------------------------------------------
 # 8.  POST /admin/portal-health-check -- roadmap #3, diagnosing court-portal
 #     drift from the dual-provider attempt matrix instead of a bare error.
 # ---------------------------------------------------------------------------
