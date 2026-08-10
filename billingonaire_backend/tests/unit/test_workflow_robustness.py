@@ -58,7 +58,276 @@ def manager():
 
 # ---------------------------------------------------------------------------
 # 1.  /jobs/retry-failed — tests via the actual retry_failed_cases handler
+#
+#     Was previously drawn from AutoOrderManager._get_filtered_matters, an
+#     unfiltered daily-boards scan (no orderBy -> Firestore defaults to
+#     document-ID order -> date-prefixed ids -> deterministically the OLDEST
+#     slice of the entire collection, every call, regardless of where the
+#     actually-stuck cases currently were). Now queries case-details by
+#     lifecycle_status directly -- the same STUCK_LIFECYCLE_STATUSES
+#     /queue/status's needs_attention_count counts, so the "N cases could
+#     not be completed automatically" banner and the button meant to clear
+#     it target the same population.
 # ---------------------------------------------------------------------------
+
+
+def _stuck_case_doc(case_ref, board_date="2024-01-15", order_link=None):
+    doc = MagicMock()
+    doc.id = f"{board_date}-{case_ref.replace('/', '-')}"
+    doc.to_dict.return_value = {
+        "case_ref": case_ref,
+        "latest_board_date": board_date,
+        "latest_order_link": order_link,
+    }
+    return doc
+
+
+def _wire_stuck_query(monkeypatch, docs_by_status):
+    """docs_by_status: {lifecycle_status: [doc, ...]}. Mocks
+    db.collection("case-details").where("lifecycle_status", "==", status)
+    per status, matching _query_stuck_candidates' one-query-per-status loop."""
+    mock_db = MagicMock()
+
+    def where_side_effect(field, op, value):
+        assert field == "lifecycle_status"
+        assert op == "=="
+        where_mock = MagicMock()
+        where_mock.limit.return_value.stream.return_value = docs_by_status.get(
+            value, []
+        )
+        return where_mock
+
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    return mock_db
+
+
+def _mock_manager_for_retry():
+    mgr = MagicMock()
+    mgr.case_store._to_iso_date = Mock(side_effect=lambda v: v)
+    mgr.case_store.transition_lifecycle = Mock()
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_fetch_failed_retryable_goes_to_fetch_queue(monkeypatch):
+    _wire_stuck_query(
+        monkeypatch, {"fetch_failed_retryable": [_stuck_case_doc("WP/10/2025")]}
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    wake_fetch = Mock()
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 1
+    assert data["analysis_queued"] == 0
+    assert "WP/10/2025" in data["fetch_queued_refs"]
+    wake_fetch.assert_called_once()
+    mgr.case_store.transition_lifecycle.assert_called_once_with(
+        "WP/10/2025",
+        "fetch_queued",
+        metadata={
+            "source": "jobs.retry-failed",
+            "case_id": "2024-01-15-WP-10-2025",
+        },
+        event_type="retry_fetch_queued",
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_fetch_failed_terminal_also_goes_to_fetch_queue(
+    monkeypatch,
+):
+    """Terminal, not just retryable, failures must still be retriable by
+    this button -- it's the only thing that ever moves either state."""
+    _wire_stuck_query(
+        monkeypatch, {"fetch_failed_terminal": [_stuck_case_doc("WP/11/2025")]}
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["fetch_queued"] == 1
+    assert "WP/11/2025" in data["fetch_queued_refs"]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_analysis_failed_with_link_goes_to_analysis_queue(
+    monkeypatch,
+):
+    """analysis_failed_retryable with a stored order link is re-analysed,
+    not re-downloaded."""
+    _wire_stuck_query(
+        monkeypatch,
+        {
+            "analysis_failed_retryable": [
+                _stuck_case_doc(
+                    "WP/50/2025", order_link="https://example.com/order.pdf"
+                )
+            ]
+        },
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    wake_analysis = Mock()
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=wake_analysis))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["analysis_queued"] == 1
+    assert data["fetch_queued"] == 0
+    assert "WP/50/2025" in data["analysis_queued_refs"]
+    wake_analysis.assert_called_once()
+    mgr.case_store.transition_lifecycle.assert_called_once_with(
+        "WP/50/2025",
+        "analysis_queued",
+        metadata={
+            "source": "jobs.retry-failed",
+            "case_id": "2024-01-15-WP-50-2025",
+        },
+        event_type="retry_analysis_queued",
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_analysis_failed_without_link_falls_back_to_fetch_queue(
+    monkeypatch,
+):
+    _wire_stuck_query(
+        monkeypatch,
+        {"analysis_failed_terminal": [_stuck_case_doc("WP/30/2025", order_link=None)]},
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 1
+    assert data["analysis_queued"] == 0
+    assert "WP/30/2025" in data["fetch_queued_refs"]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_covers_every_stuck_status_in_one_call(monkeypatch):
+    """All four STUCK_LIFECYCLE_STATUSES must be candidates in a single
+    call -- not just the first one queried."""
+    _wire_stuck_query(
+        monkeypatch,
+        {
+            "fetch_failed_retryable": [_stuck_case_doc("WP/1/2025")],
+            "fetch_failed_terminal": [_stuck_case_doc("WP/2/2025")],
+            "analysis_failed_retryable": [
+                _stuck_case_doc("WP/3/2025", order_link="https://x/o.pdf")
+            ],
+            "analysis_failed_terminal": [
+                _stuck_case_doc("WP/4/2025", order_link="https://x/o.pdf")
+            ],
+        },
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 2
+    assert data["analysis_queued"] == 2
+    assert set(data["fetch_queued_refs"]) == {"WP/1/2025", "WP/2/2025"}
+    assert set(data["analysis_queued_refs"]) == {"WP/3/2025", "WP/4/2025"}
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_respects_the_overall_limit_across_statuses(monkeypatch):
+    """_query_stuck_candidates must stop once `limit` total candidates are
+    collected, not apply `limit` separately to each of the four statuses."""
+    _wire_stuck_query(
+        monkeypatch,
+        {
+            "fetch_failed_retryable": [
+                _stuck_case_doc("WP/1/2025"),
+                _stuck_case_doc("WP/2/2025"),
+            ],
+            "fetch_failed_terminal": [_stuck_case_doc("WP/3/2025")],
+        },
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 2}), current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+    # Only the 2 from fetch_failed_retryable -- the query for
+    # fetch_failed_terminal must never even run once the limit is hit.
+    assert data["fetch_queued"] == 2
+    assert "WP/3/2025" not in data["fetch_queued_refs"]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_board_dates_filter_uses_latest_board_date(monkeypatch):
+    _wire_stuck_query(
+        monkeypatch,
+        {
+            "fetch_failed_retryable": [
+                _stuck_case_doc("WP/1/2025", board_date="2025-01-01"),
+                _stuck_case_doc("WP/2/2025", board_date="2025-06-01"),
+            ]
+        },
+    )
+    mgr = _mock_manager_for_retry()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
+
+    response = await main.retry_failed_cases(
+        _make_request({"limit": 200, "board_dates": ["2025-06-01"]}),
+        current_user=None,
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queued"] == 1
+    assert data["fetch_queued_refs"] == ["WP/2/2025"]
+    assert data["skipped"] == 1
 
 
 def _make_mock_case(
@@ -98,152 +367,6 @@ def _make_manager(cases: list):
     # _parse_board_date just needs to return a date (or None) so filtering works
     mgr._parse_board_date = Mock(side_effect=lambda v: date(2024, 1, 15) if v else None)
     return mgr
-
-
-@pytest.mark.asyncio
-async def test_retry_failed_order_failed_goes_to_fetch_queue(monkeypatch):
-    """order_failed case is marked fetch_queued for the fetch poll loop."""
-    case = _make_mock_case("WP/10/2025", "order_failed")
-    mgr = _make_manager([case])
-
-    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    wake_fetch = Mock()
-    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
-
-    response = await main.retry_failed_cases(
-        _make_request({"limit": 200}), current_user=None
-    )
-    body = response.body
-    import json
-
-    data = json.loads(body)
-
-    assert data["fetch_queued"] == 1
-    assert data["analysis_queued"] == 0
-    assert "WP/10/2025" in data["fetch_queued_refs"]
-    wake_fetch.assert_called_once()
-
-    mgr.case_store.transition_lifecycle.assert_called_once_with(
-        "WP/10/2025",
-        "fetch_queued",
-        metadata={"source": "jobs.retry-failed", "case_id": case["id"]},
-        event_type="retry_fetch_queued",
-    )
-
-
-@pytest.mark.asyncio
-async def test_retry_failed_linked_with_link_goes_to_analysis_queue(monkeypatch):
-    """linked case with stored order_link is marked analysis_queued."""
-    case = _make_mock_case(
-        "WP/50/2025", "linked", order_link="https://example.com/order.pdf"
-    )
-    mgr = _make_manager([case])
-
-    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    wake_analysis = Mock()
-    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
-    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=wake_analysis))
-
-    response = await main.retry_failed_cases(
-        _make_request({"limit": 200}), current_user=None
-    )
-    import json
-
-    data = json.loads(response.body)
-
-    assert data["analysis_queued"] == 1
-    assert data["fetch_queued"] == 0
-    assert "WP/50/2025" in data["analysis_queued_refs"]
-    wake_analysis.assert_called_once()
-
-    mgr.case_store.transition_lifecycle.assert_called_once_with(
-        "WP/50/2025",
-        "analysis_queued",
-        metadata={"source": "jobs.retry-failed", "case_id": case["id"]},
-        event_type="retry_analysis_queued",
-    )
-
-
-@pytest.mark.asyncio
-async def test_retry_failed_linked_without_link_falls_back_to_fetch_queue(monkeypatch):
-    """linked case without a stored order_link falls back to fetch_queued."""
-    case = _make_mock_case("WP/60/2025", "linked", order_link=None)
-    mgr = _make_manager([case])
-
-    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
-    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
-
-    response = await main.retry_failed_cases(
-        _make_request({"limit": 200}), current_user=None
-    )
-    import json
-
-    data = json.loads(response.body)
-
-    assert data["fetch_queued"] == 1
-    assert data["analysis_queued"] == 0
-    assert "WP/60/2025" in data["fetch_queued_refs"]
-
-
-@pytest.mark.asyncio
-async def test_retry_failed_skips_non_retryable_statuses(monkeypatch):
-    """analysed and not_linked cases are skipped; linked and order_failed are retried."""
-    cases = [
-        _make_mock_case("WP/1/2025", "analysed"),
-        _make_mock_case("WP/2/2025", "not_linked"),
-        _make_mock_case(
-            "WP/3/2025", "linked", order_link="https://example.com/order.pdf"
-        ),
-        _make_mock_case("WP/4/2025", "order_failed"),
-    ]
-    mgr = _make_manager(cases)
-
-    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
-    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
-
-    response = await main.retry_failed_cases(
-        _make_request({"limit": 200}), current_user=None
-    )
-    import json
-
-    data = json.loads(response.body)
-
-    # WP/3 (linked+link) → analysis; WP/4 (order_failed) → fetch
-    assert data["analysis_queued"] == 1
-    assert data["fetch_queued"] == 1
-    assert "WP/3/2025" in data["analysis_queued_refs"]
-    assert "WP/4/2025" in data["fetch_queued_refs"]
-    # Skipped statuses not in either queue
-    assert "WP/1/2025" not in data["fetch_queued_refs"]
-    assert "WP/1/2025" not in data["analysis_queued_refs"]
-    assert "WP/2/2025" not in data["fetch_queued_refs"]
-    assert "WP/2/2025" not in data["analysis_queued_refs"]
-
-
-@pytest.mark.asyncio
-async def test_retry_failed_analysis_failed_without_link_goes_to_fetch_queue(
-    monkeypatch,
-):
-    """order_analysis_failed without a stored link falls back to fetch_queued."""
-    case = _make_mock_case("WP/30/2025", "order_analysis_failed", order_link=None)
-    mgr = _make_manager([case])
-
-    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=Mock()))
-    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=Mock()))
-
-    response = await main.retry_failed_cases(
-        _make_request({"limit": 200}), current_user=None
-    )
-    import json
-
-    data = json.loads(response.body)
-
-    assert data["fetch_queued"] == 1
-    assert data["analysis_queued"] == 0
-    assert "WP/30/2025" in data["fetch_queued_refs"]
 
 
 # ---------------------------------------------------------------------------
@@ -1615,3 +1738,148 @@ async def test_repair_order_board_dates_resumes_from_the_given_start_after(monke
 
     query.start_after.assert_called_once_with(start_snapshot)
     assert data["docs_scanned"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 11. GET /orders/overview-stats -- the Dashboard workflow strip's "Fetch
+#     orders" and "Analyse" steps were showing the same underlying number in
+#     two different units.
+#
+#     "Fetch orders" (cases_with_orders) used to be total_case_details minus
+#     not_linked -- which counted order_failed cases (download itself
+#     failed) as "downloaded".
+#
+#     "Analyse" (analysis_completion_rate) used to be cases_with_orders /
+#     total_cases -- the exact same numerator as "Fetch orders" (so the two
+#     steps tracked each other almost exactly instead of measuring different
+#     things), divided by a daily-boards board-ROW count while the numerator
+#     was a case-details unique-CASE count -- mismatched units whenever any
+#     case is listed more than once.
+# ---------------------------------------------------------------------------
+
+
+def _wire_overview_stats_db(monkeypatch, *, total_cases, counts_by_status):
+    """counts_by_status: {latest_order_status: count}. total_cases is the
+    daily-boards count(); the case-details count() (no where clause) is
+    derived as the sum of counts_by_status, matching total_case_details in
+    the real implementation."""
+    total_case_details = sum(counts_by_status.values())
+
+    case_details_collection = MagicMock()
+    case_details_collection.count.return_value.get.return_value = _count_result(
+        total_case_details
+    )
+
+    def where_side_effect(field, op, value):
+        assert field == "latest_order_status"
+        where_mock = MagicMock()
+        where_mock.count.return_value.get.return_value = _count_result(
+            counts_by_status.get(value, 0)
+        )
+        return where_mock
+
+    case_details_collection.where.side_effect = where_side_effect
+
+    daily_boards_collection = MagicMock()
+    daily_boards_collection.count.return_value.get.return_value = _count_result(
+        total_cases
+    )
+
+    def collection_side_effect(name):
+        return (
+            case_details_collection
+            if name == "case-details"
+            else daily_boards_collection
+        )
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    # Fresh cache each test -- this is a module-level global shared across
+    # the whole test session and would otherwise serve a stale response.
+    monkeypatch.setattr(main, "_overview_stats_cache", {"ts": 0.0, "data": None})
+    monkeypatch.setattr(main, "ensure_firebase", lambda: None)
+    return mock_db
+
+
+@pytest.mark.asyncio
+async def test_overview_stats_fetched_excludes_download_failures(monkeypatch):
+    """order_failed means the download itself failed -- it must not count
+    toward "order PDFs downloaded"."""
+    _wire_overview_stats_db(
+        monkeypatch,
+        total_cases=100,
+        counts_by_status={
+            "analysed": 30,
+            "linked": 10,
+            "order_analysis_failed": 5,  # downloaded, only the READ failed
+            "order_failed": 8,  # download itself failed
+            "not_linked": 47,
+        },
+    )
+
+    response = await main.get_order_overview_stats(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    # downloaded = analysed + linked + order_analysis_failed = 45, NOT
+    # total_case_details(53) - not_linked(47) = 53 (which would wrongly
+    # include the 8 order_failed cases as "downloaded").
+    assert data["cases_with_orders"] == 45
+    assert data["cases_without_orders"] == 55  # not_linked(47) + order_failed(8)
+
+
+@pytest.mark.asyncio
+async def test_overview_stats_analysis_rate_is_a_case_level_percentage(monkeypatch):
+    """analysis_completion_rate must be analysed / total_case_details, not
+    cases_with_orders / total_cases (which conflated "downloaded" with
+    "analysed" and divided a case-details numerator by a daily-boards
+    board-row denominator)."""
+    _wire_overview_stats_db(
+        monkeypatch,
+        total_cases=1000,  # deliberately far from total_case_details, so a
+        # units mix-up would produce an obviously wrong percentage
+        counts_by_status={
+            "analysed": 25,
+            "linked": 50,
+            "order_failed": 5,
+            "not_linked": 20,
+        },
+    )
+
+    response = await main.get_order_overview_stats(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    # total_case_details = 25+50+5+20 = 100; analysed/total_case_details = 25%
+    assert data["analysis_completion_rate"] == 25.0
+    # NOT the old formula: cases_with_orders(70) / total_cases(1000) = 7.0
+    assert data["analysis_completion_rate"] != 7.0
+
+
+@pytest.mark.asyncio
+async def test_overview_stats_fetch_and_analyse_are_independent_numbers(monkeypatch):
+    """Regression guard for the reported symptom: "Fetch orders" and
+    "Analyse" must not track each other -- a case that downloaded but
+    hasn't been analysed yet must move the fetched count without moving
+    the analysis rate."""
+    _wire_overview_stats_db(
+        monkeypatch,
+        total_cases=100,
+        counts_by_status={
+            "analysed": 10,
+            "linked": 40,  # downloaded, NOT yet analysed
+            "not_linked": 50,
+        },
+    )
+
+    response = await main.get_order_overview_stats(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["cases_with_orders"] == 50  # analysed(10) + linked(40)
+    # total_case_details = 10+40+50 = 100 -> analysed(10)/100 = 10%
+    assert data["analysis_completion_rate"] == 10.0

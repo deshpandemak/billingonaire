@@ -2873,21 +2873,58 @@ async def queue_analysis_jobs(
         )
 
 
+def _query_stuck_candidates(db, limit: int) -> List[Dict]:
+    """Cases actually in one of STUCK_LIFECYCLE_STATUSES -- the same
+    population /queue/status's needs_attention_count counts. One equality
+    query per status (auto-indexed, no composite index needed), stopping
+    once ``limit`` candidates have been collected across all four."""
+    candidates: List[Dict] = []
+    for status in STUCK_LIFECYCLE_STATUSES:
+        if len(candidates) >= limit:
+            break
+        remaining = limit - len(candidates)
+        docs = (
+            db.collection("case-details")
+            .where("lifecycle_status", "==", status)
+            .limit(remaining)
+            .stream()
+        )
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data["id"] = doc.id
+            data["lifecycle_status"] = status
+            candidates.append(data)
+    return candidates
+
+
 @app.post("/jobs/retry-failed", tags=["Auto Order Management"])
 async def retry_failed_cases(
     request: Request, current_user=Depends(require_admin_active)
 ):
-    """Re-queue cases stuck in order_failed, order_analysis_failed, or linked status.
+    """Re-queue cases the pipeline could not finish on its own -- the same
+    population the Dashboard's "N cases could not be completed
+    automatically" banner counts (STUCK_LIFECYCLE_STATUSES). Nothing else
+    ever moves a case out of these states: the poll loops only reclaim
+    STALE *_in_progress cases, never a *_failed_* one.
 
-    For order_failed cases: adds to the fetch queue (tries to re-download the order).
-    For order_analysis_failed cases: adds to the analysis queue (re-analyzes the
-    already-downloaded order without a fresh fetch).
-    For linked cases: if an ``order_link`` is stored, adds to the analysis queue
-    (order was downloaded but analysis was never completed or got stuck); otherwise,
-    falls back to the fetch queue to re-download the order before analysis.
+    fetch_failed_* -> fetch queue (re-download from scratch).
+    analysis_failed_* -> analysis queue if an order link is already on
+    file; otherwise falls back to the fetch queue.
+
+    Was previously drawn from AutoOrderManager._get_filtered_matters, an
+    unfiltered daily-boards scan (scope="actionable" filters afterwards, but
+    the underlying query has no where clause at all). With no orderBy,
+    Firestore defaults to document-ID order, and daily-boards doc ids are
+    date-prefixed -- so this deterministically returned the OLDEST slice of
+    the entire collection's history, every single call, regardless of
+    where the actually-stuck cases currently were. Clicking "Retry them"
+    could look like it did nothing because it almost always was: scanning
+    the same long-since-resolved old boards instead of the current
+    failures, using a legacy order_status field the rest of the pipeline
+    no longer treats as authoritative.
 
     Accepts optional ``board_dates`` (list of YYYY-MM-DD strings) and ``limit``
-    (default 200) in the request body.
+    (default 200, 1-1000) in the request body.
     """
     try:
         body = await request.json()
@@ -2900,14 +2937,13 @@ async def retry_failed_cases(
                 content={"error": "limit must be between 1 and 1000"},
             )
 
-        manager = get_auto_order_manager()
+        db = firestore.client()
         selected_board_dates = {
             str(v or "").strip() for v in board_dates if str(v or "").strip()
         }
 
-        # Gather candidates with retryable statuses
-        filters: Dict = {}
-        candidate_cases = manager._get_filtered_matters(filters, limit)
+        candidate_cases = _query_stuck_candidates(db, limit)
+        case_store = get_auto_order_manager().case_store
 
         fetch_queued = 0
         analysis_queued = 0
@@ -2916,22 +2952,20 @@ async def retry_failed_cases(
         analysis_queued_refs: list = []
 
         for case_data in candidate_cases:
-            status = case_data.get("order_status", "")
-            if status not in ("order_failed", "order_analysis_failed", "linked"):
+            case_ref = case_data.get("case_ref")
+            if not case_ref:
                 continue
 
-            board_date_obj = manager._parse_board_date(case_data.get("board_date"))
-            board_date_iso = board_date_obj.isoformat() if board_date_obj else None
+            board_date_iso = case_store._to_iso_date(case_data.get("latest_board_date"))
             if selected_board_dates and board_date_iso not in selected_board_dates:
                 skipped += 1
                 continue
 
-            case_ref = case_data.get("case_ref")
             case_id = case_data.get("id")
+            lifecycle_status = case_data.get("lifecycle_status", "")
 
-            if status == "order_failed":
-                # Re-fetch the order from scratch
-                manager.case_store.transition_lifecycle(
+            if lifecycle_status.startswith("fetch_failed"):
+                case_store.transition_lifecycle(
                     case_ref,
                     "fetch_queued",
                     metadata={"source": "jobs.retry-failed", "case_id": case_id},
@@ -2940,11 +2974,9 @@ async def retry_failed_cases(
                 fetch_queued += 1
                 fetch_queued_refs.append(case_ref)
             else:
-                # order_analysis_failed or linked: order link exists (or should), just re-run analysis
-                order_link = case_data.get("order_link")
+                order_link = case_data.get("latest_order_link")
                 if not order_link:
-                    # No link stored – fall back to fetch queue
-                    manager.case_store.transition_lifecycle(
+                    case_store.transition_lifecycle(
                         case_ref,
                         "fetch_queued",
                         metadata={
@@ -2957,7 +2989,7 @@ async def retry_failed_cases(
                     fetch_queued += 1
                     fetch_queued_refs.append(case_ref)
                 else:
-                    manager.case_store.transition_lifecycle(
+                    case_store.transition_lifecycle(
                         case_ref,
                         "analysis_queued",
                         metadata={
@@ -4002,6 +4034,23 @@ async def admin_bulk_order_processing(
 
 
 # Queue Management Endpoints
+
+# The lifecycle_status values that mean the pipeline could not finish a case
+# on its own and it needs a human-triggered retry -- nothing else ever moves
+# a case out of these (the poll loops only reclaim STALE *_in_progress
+# cases, never a *_failed_* one). Named once and reused by both
+# /queue/status's needs_attention_count and /jobs/retry-failed's candidate
+# selection so the "N cases could not be completed automatically" banner and
+# the button that's supposed to clear it can never target different
+# populations.
+STUCK_LIFECYCLE_STATUSES = (
+    "fetch_failed_retryable",
+    "fetch_failed_terminal",
+    "analysis_failed_retryable",
+    "analysis_failed_terminal",
+)
+
+
 def _count_lifecycle_status(status: str) -> int:
     """Cheap Firestore .count() aggregation on a single-field equality query
     -- already auto-indexed, no composite index needed."""
@@ -4071,15 +4120,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         # pipeline runs automatically after upload, so the only thing a user
         # ever needs to act on is this number — it drives the single "needs
         # attention" action on the Dashboard.
-        stuck_count = sum(
-            _count_lifecycle_status(s)
-            for s in (
-                "fetch_failed_retryable",
-                "fetch_failed_terminal",
-                "analysis_failed_retryable",
-                "analysis_failed_terminal",
-            )
-        )
+        stuck_count = sum(_count_lifecycle_status(s) for s in STUCK_LIFECYCLE_STATUSES)
 
         fetch_active = _poll_loop_is_alive(_last_fetch_poll_tick)
         analysis_active = _poll_loop_is_alive(_last_analysis_poll_tick)
@@ -4776,36 +4817,35 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
 
         # Use Firestore count() aggregation — reads 0 documents, billed as 1 read each
         total_cases = db.collection("daily-boards").count().get()[0][0].value
-        recent_successful = (
-            db.collection("case-details")
-            .where("latest_order_status", "==", "analysed")
-            .count()
-            .get()[0][0]
-            .value
+        analysed = _count_case_details_by_order_status("analysed")
+        order_failed = _count_case_details_by_order_status("order_failed")
+        order_analysis_failed = _count_case_details_by_order_status(
+            "order_analysis_failed"
         )
-        recent_failed = (
-            db.collection("case-details")
-            .where(
-                "latest_order_status",
-                "in",
-                ["order_failed", "order_analysis_failed"],
-            )
-            .count()
-            .get()[0][0]
-            .value
-        )
-        not_linked = (
-            db.collection("case-details")
-            .where("latest_order_status", "==", "not_linked")
-            .count()
-            .get()[0][0]
-            .value
-        )
+        not_linked = _count_case_details_by_order_status("not_linked")
         total_case_details = db.collection("case-details").count().get()[0][0].value
-        cases_with_orders = total_case_details - not_linked
-        cases_without_orders = total_cases - cases_with_orders
+
+        # "Fetched" (Step 2, the workflow strip's "order PDFs downloaded") is
+        # cases whose PDF actually downloaded -- order_analysis_failed still
+        # means the download itself succeeded (only the read failed after),
+        # order_failed means it didn't. Was previously
+        # total_case_details - not_linked, which counted order_failed cases
+        # as "downloaded" too.
+        cases_with_orders = total_case_details - not_linked - order_failed
+        cases_without_orders = not_linked + order_failed
+
+        # "Analysed" (Step 3, "read and categorised") is a case-level
+        # percentage of unique cases, not a percentage of board-row
+        # appearances -- fetch/analysis happens once per case_ref regardless
+        # of how many board dates it's listed on. Was previously
+        # cases_with_orders / total_cases, which (a) mixed a case-details
+        # numerator with a daily-boards denominator, different units for a
+        # case listed more than once, and (b) counted every downloaded-but-
+        # not-yet-analysed and every failed case as "analysed", which is why
+        # this number tracked "Fetch orders" almost exactly instead of
+        # measuring analysis progress at all.
         analysis_completion_rate = round(
-            (cases_with_orders / total_cases * 100) if total_cases > 0 else 0, 1
+            (analysed / total_case_details * 100) if total_case_details > 0 else 0, 1
         )
 
         result = {
@@ -4813,8 +4853,8 @@ async def get_order_overview_stats(current_user=Depends(get_current_user)):
             "cases_with_orders": cases_with_orders,
             "cases_without_orders": cases_without_orders,
             "analysis_completion_rate": analysis_completion_rate,
-            "recent_successful_analyses": recent_successful,
-            "recent_failed_analyses": recent_failed,
+            "recent_successful_analyses": analysed,
+            "recent_failed_analyses": order_failed + order_analysis_failed,
             "last_updated": datetime.now().isoformat(),
         }
         _overview_stats_cache["ts"] = _time.time()
