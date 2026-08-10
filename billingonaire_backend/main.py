@@ -4383,6 +4383,95 @@ async def admin_remap_user_matters(
         )
 
 
+@app.post("/admin/repair-order-board-dates", tags=["Admin"])
+async def admin_repair_order_board_dates(
+    limit: int = Query(200, description="Max case-details docs to scan (1-1000)"),
+    start_after: Optional[str] = Query(
+        None, description="Doc id to resume pagination from (from a prior response)"
+    ),
+    current_user=Depends(require_admin_active),
+):
+    """Re-tag stored order entries whose board_date disagrees with their own
+    order_date -- the write-side fix for the two order-linking bugs (analysis
+    path used the case's latest board date instead of the order's own date;
+    manual linking wrote no date at all).
+
+    Search Orders resolves which order to show against a board row by
+    matching orders[].board_date to that row's own date
+    (Board._hydrate_with_case_details), so a wrong board_date here is why an
+    order can show against the wrong hearing, or not show at all. Only that
+    fix changes future writes -- entries already stored wrong stay wrong
+    until repaired, since their case is already `analysed` and nothing
+    reprocesses it.
+
+    Pure data fix: rewrites board_date to match order_date on existing
+    orders[] entries. No re-download, no portal call, no daily-boards write
+    needed -- _update_board_entries_for_case_date already keyed off the
+    order's own date, so daily-boards was never wrong, only case-details'
+    orders[] array was.
+
+    Paginated and idempotent: call repeatedly, passing next_start_after from
+    the previous response, until it comes back null.
+    """
+    try:
+        limit = max(1, min(limit, 1000))
+        db = firestore.client()
+
+        query = db.collection("case-details").order_by("__name__").limit(limit)
+        if start_after:
+            start_doc = db.collection("case-details").document(start_after).get()
+            if start_doc.exists:
+                query = query.start_after(start_doc)
+
+        docs = list(query.stream())
+        docs_updated = 0
+        entries_fixed = 0
+        last_id = None
+
+        for doc in docs:
+            last_id = doc.id
+            data = doc.to_dict() or {}
+            orders = data.get("orders")
+            if not isinstance(orders, list) or not orders:
+                continue
+
+            changed = False
+            fixed_orders = []
+            for order in orders:
+                if not isinstance(order, dict):
+                    fixed_orders.append(order)
+                    continue
+                order_date = order.get("order_date")
+                if order_date and order.get("board_date") != order_date:
+                    order = {**order, "board_date": order_date}
+                    changed = True
+                    entries_fixed += 1
+                fixed_orders.append(order)
+
+            if changed:
+                doc.reference.update({"orders": fixed_orders})
+                docs_updated += 1
+
+        logger.info(
+            f"Repair order board_dates: scanned={len(docs)} "
+            f"docs_updated={docs_updated} entries_fixed={entries_fixed}"
+        )
+        return JSONResponse(
+            content={
+                "success": True,
+                "docs_scanned": len(docs),
+                "docs_updated": docs_updated,
+                "entries_fixed": entries_fixed,
+                "next_start_after": last_id if len(docs) == limit else None,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error repairing order board dates: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": f"Repair failed: {str(e)}"}
+        )
+
+
 @app.get("/user-matters/pending-confirmations", tags=["User Matter Mapping"])
 async def get_pending_matter_confirmations(current_user=Depends(get_current_user)):
     """Matches that fell just short of the auto-accept threshold -- 'is this

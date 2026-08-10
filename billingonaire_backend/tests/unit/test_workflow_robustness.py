@@ -1452,3 +1452,166 @@ async def test_bills_save_accepts_a_clean_bill_without_an_override(monkeypatch):
     assert response.status_code == 200
     assert "qa_override" not in written
     assert written["total_fees"] == 1250
+
+
+# ---------------------------------------------------------------------------
+# 10. POST /admin/repair-order-board-dates -- write-side fix for order
+#     entries whose stored board_date disagrees with their own order_date
+#     (Search Orders matches orders[].board_date to each board row's own
+#     date, so a wrong value here is why an order shows against the wrong
+#     hearing, or doesn't show at all).
+# ---------------------------------------------------------------------------
+
+
+def _order_entry(order_date, board_date):
+    return {"order_date": order_date, "board_date": board_date, "order_link": "x"}
+
+
+def _case_doc(doc_id, orders):
+    doc = MagicMock()
+    doc.id = doc_id
+    doc.to_dict.return_value = {"orders": orders}
+    doc.reference = MagicMock()
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_fixes_mismatched_entries(monkeypatch):
+    good = _order_entry("2026-01-15", "2026-01-15")
+    bad = _order_entry("2026-03-01", "2026-11-20")  # tagged with a later hearing
+    doc = _case_doc("WP-123-2026", [good, bad])
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=200, start_after=None, current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["success"] is True
+    assert data["docs_scanned"] == 1
+    assert data["docs_updated"] == 1
+    assert data["entries_fixed"] == 1
+
+    updated_orders = doc.reference.update.call_args.args[0]["orders"]
+    assert updated_orders[0]["board_date"] == "2026-01-15"  # already correct
+    assert updated_orders[1]["board_date"] == "2026-03-01"  # corrected
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_skips_docs_with_no_mismatch(monkeypatch):
+    good = _order_entry("2026-01-15", "2026-01-15")
+    doc = _case_doc("WP-1-2026", [good])
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=200, start_after=None, current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["docs_updated"] == 0
+    assert data["entries_fixed"] == 0
+    doc.reference.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_leaves_entries_with_no_order_date_alone(
+    monkeypatch,
+):
+    """No order_date means there's nothing reliable to correct board_date
+    to -- must not guess."""
+    unresolved = _order_entry(None, "2026-11-20")
+    doc = _case_doc("WP-1-2026", [unresolved])
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=200, start_after=None, current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["entries_fixed"] == 0
+    doc.reference.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_returns_next_cursor_on_a_full_page(
+    monkeypatch,
+):
+    docs = [_case_doc(f"WP-{i}-2026", []) for i in range(3)]
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = (
+        docs
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=3, start_after=None, current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["next_start_after"] == "WP-2-2026"
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_no_next_cursor_on_the_final_page(monkeypatch):
+    docs = [_case_doc("WP-1-2026", [])]
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.order_by.return_value.limit.return_value.stream.return_value = (
+        docs
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=200, start_after=None, current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+    assert data["next_start_after"] is None
+
+
+@pytest.mark.asyncio
+async def test_repair_order_board_dates_resumes_from_the_given_start_after(monkeypatch):
+    resumed_docs = [_case_doc("WP-9-2026", [])]
+
+    mock_db = MagicMock()
+    start_snapshot = MagicMock(exists=True)
+    mock_db.collection.return_value.document.return_value.get.return_value = (
+        start_snapshot
+    )
+    query = mock_db.collection.return_value.order_by.return_value.limit.return_value
+    query.start_after.return_value.stream.return_value = resumed_docs
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.admin_repair_order_board_dates(
+        limit=200, start_after="WP-8-2026", current_user=None
+    )
+    import json
+
+    data = json.loads(response.body)
+
+    query.start_after.assert_called_once_with(start_snapshot)
+    assert data["docs_scanned"] == 1
