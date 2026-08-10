@@ -6,16 +6,20 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { authenticatedFetchJSON, getApiUrl } from './lib/api';
 import './styles/professional.css';
 import CaseDetailModal from './components/CaseDetailModal';
-import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory, AGP_FULL, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
+import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory, AGP_FULL, GOVERNMENT_ROLES_NOTE, STUCK_STATUS_FILTER_VALUE } from './lib/lifecycleUtils';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Allow other screens to deep-link into a filtered view, e.g. the Dashboard's
 // "See which cases" link for cases that need attention: /table?status=attention
+// STUCK_STATUS_FILTER_VALUE is a comma-separated list of raw lifecycle_status
+// values -- a precise subset of "attention" (see lifecycleUtils.js) -- also
+// accepted so that link shows exactly the population the banner counted.
 const statusFromUrl = () => {
   const value = new URLSearchParams(window.location.search).get('status') || '';
-  return ['ready', 'working', 'waiting', 'attention'].includes(value) ? value : '';
+  if (['ready', 'working', 'waiting', 'attention'].includes(value)) return value;
+  return value === STUCK_STATUS_FILTER_VALUE ? value : '';
 };
 
 const Table = () => {
@@ -844,6 +848,15 @@ const Table = () => {
                     <option value="working">🔄 In progress — being fetched or read</option>
                     <option value="waiting">🕐 Waiting — order not published yet</option>
                     <option value="attention">⚠️ Needs you — could not finish automatically</option>
+                    {/* Only ever reached via deep link (Dashboard's "See which
+                        cases") -- not a manual choice, so it's hidden from view
+                        rather than added to the visible option list. Renders
+                        selected with a real label instead of appearing blank. */}
+                    {searchCriteria.orderStatus === STUCK_STATUS_FILTER_VALUE && (
+                      <option value={STUCK_STATUS_FILTER_VALUE} hidden>
+                        ⚠️ Could not be completed automatically — retry-eligible
+                      </option>
+                    )}
                   </select>
                 </div>
                 <div className="form-group">

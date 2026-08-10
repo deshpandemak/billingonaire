@@ -421,6 +421,63 @@ def test_getData_order_status_filter_matches_not_linked_correctly(mock_firestore
 
 
 @patch("Board.firestore.client")
+def test_getData_comma_separated_status_filter_is_a_precise_subset_of_attention(
+    mock_firestore,
+):
+    """Dashboard's "See which cases" link passes a comma-separated list of
+    raw lifecycle_status values (STUCK_LIFECYCLE_STATUSES in main.py /
+    lifecycleUtils.js) so it shows exactly the cases the "N cases could not
+    be completed automatically" banner counted -- narrower than the
+    "attention" SIMPLE_STATUS bucket, which also includes
+    manual_review_required (a separate, working queue)."""
+    from Board import Board
+
+    board = Board()
+
+    docs = []
+    for case_no, ref in (("1", "WP/1/2024"), ("2", "WP/2/2024"), ("3", "WP/3/2024")):
+        doc = MagicMock()
+        doc.id = f"2024-10-01-WP-{case_no}-2024"
+        doc.to_dict.return_value = {
+            "board_date": "2024-10-01",
+            "case_type": "WP",
+            "case_no": case_no,
+            "case_year": "2024",
+            "respondent_lawyer": "Test Lawyer",
+        }
+        docs.append(doc)
+
+    mock_firestore.return_value.collection.return_value.limit.return_value.stream.return_value = (
+        docs
+    )
+    mock_firestore.return_value.collection.return_value.stream.return_value = docs
+    mock_firestore.return_value.collection.return_value.where.return_value.stream.return_value = (
+        docs
+    )
+
+    board.case_store = MagicMock()
+    board.case_store.build_case_ref.side_effect = lambda ct, cn, cy: f"{ct}/{cn}/{cy}"
+    board.case_store.get_case_details_map.return_value = {
+        # In STUCK_LIFECYCLE_STATUSES -- must be included.
+        "WP/1/2024": {"lifecycle_status": "fetch_failed_terminal", "orders": []},
+        # In "attention" but NOT in STUCK_LIFECYCLE_STATUSES -- a separate
+        # queue, must be excluded from this precise filter.
+        "WP/2/2024": {"lifecycle_status": "manual_review_required", "orders": []},
+        # Not stuck at all -- must be excluded.
+        "WP/3/2024": {"lifecycle_status": "analysed", "orders": []},
+    }
+
+    result = board.getData(
+        {
+            "orderStatus": "fetch_failed_retryable,fetch_failed_terminal,"
+            "analysis_failed_retryable,analysis_failed_terminal"
+        }
+    )
+
+    assert {r["case_ref"] for r in result} == {"WP/1/2024"}
+
+
+@patch("Board.firestore.client")
 def test_record_matches_agp_checks_government_pleader(mock_firestore):
     """
     _record_matches_agp should return True when agp name is found in

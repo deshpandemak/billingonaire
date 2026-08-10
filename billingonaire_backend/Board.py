@@ -1156,6 +1156,22 @@ class Board:
                     wanted = _LEGACY_STATUS_FILTERS.get(wanted, wanted)
                     if wanted in SIMPLE_STATUS_KEYS:
                         return bucket == wanted
+                    if "," in wanted:
+                        # Comma-separated raw lifecycle_status values -- a
+                        # precise subset filter for callers that need exactly
+                        # a known set of states rather than a whole
+                        # SIMPLE_STATUS bucket. Namely the Dashboard's "N
+                        # cases could not be completed automatically" banner:
+                        # its count is STUCK_LIFECYCLE_STATUSES specifically,
+                        # narrower than the "attention" bucket (which also
+                        # includes manual_review_required, a separate,
+                        # working-as-intended queue) -- without this, "See
+                        # which cases" could show more rows than the banner's
+                        # own count.
+                        wanted_statuses = {
+                            s.strip() for s in wanted.split(",") if s.strip()
+                        }
+                        return status in wanted_statuses
                     return True
 
                 hydrated_data = [

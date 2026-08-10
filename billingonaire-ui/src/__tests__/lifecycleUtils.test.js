@@ -4,6 +4,8 @@ import {
   ORDER_STATUS_CONFIG,
   getLifecycleConfig,
   getOrderStatusConfig,
+  STUCK_LIFECYCLE_STATUSES,
+  STUCK_STATUS_FILTER_VALUE,
 } from '../lib/lifecycleUtils';
 
 describe('LIFECYCLE_CONFIG', () => {
@@ -205,5 +207,33 @@ describe('order category vocabulary', () => {
   it('passes unknown values through rather than blanking them', () => {
     expect(getOrderCategoryLabel('SOMETHING_ELSE')).toBe('SOMETHING_ELSE');
     expect(getOrderCategoryLabel(null)).toBe('—');
+  });
+});
+
+describe('STUCK_LIFECYCLE_STATUSES', () => {
+  // Mirrors main.py's STUCK_LIFECYCLE_STATUSES -- the Dashboard's "N cases
+  // could not be completed automatically" banner and its "See which cases"
+  // link must agree on exactly this set, not the broader "attention" bucket
+  // (which also includes manual_review_required, a separate queue).
+  it('is exactly the four failure states, excluding manual_review_required', () => {
+    expect(STUCK_LIFECYCLE_STATUSES).toEqual([
+      'fetch_failed_retryable',
+      'fetch_failed_terminal',
+      'analysis_failed_retryable',
+      'analysis_failed_terminal',
+    ]);
+    expect(STUCK_LIFECYCLE_STATUSES).not.toContain('manual_review_required');
+  });
+
+  it('every listed state is a real, known lifecycle state', () => {
+    STUCK_LIFECYCLE_STATUSES.forEach((status) => {
+      expect(LIFECYCLE_CONFIG[status]).toBeTruthy();
+    });
+  });
+
+  it('STUCK_STATUS_FILTER_VALUE is the comma-joined list Board.getData expects', () => {
+    expect(STUCK_STATUS_FILTER_VALUE).toBe(
+      'fetch_failed_retryable,fetch_failed_terminal,analysis_failed_retryable,analysis_failed_terminal'
+    );
   });
 });

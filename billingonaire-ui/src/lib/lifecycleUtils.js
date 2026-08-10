@@ -114,6 +114,23 @@ export const SIMPLE_STATUS = {
   attention:{ key: 'attention',label: 'Needs you',   icon: '⚠️', variant: 'warning',   tooltip: 'Could not be completed automatically — needs a person.' },
 };
 
+// Mirrors main.py's STUCK_LIFECYCLE_STATUSES -- lifecycle states nothing but
+// a human-triggered retry ever clears. Narrower than the 'attention' bucket
+// above, which also includes manual_review_required (a separate,
+// working-as-intended queue with its own screen). Used to make the
+// Dashboard's "N cases could not be completed automatically" banner and its
+// "See which cases" link show exactly the same population as the count --
+// Board.getData() (backend) recognises a comma-separated list of raw
+// lifecycle_status values as a precise filter, distinct from the four
+// SIMPLE_STATUS bucket keys.
+export const STUCK_LIFECYCLE_STATUSES = [
+  'fetch_failed_retryable',
+  'fetch_failed_terminal',
+  'analysis_failed_retryable',
+  'analysis_failed_terminal',
+];
+export const STUCK_STATUS_FILTER_VALUE = STUCK_LIFECYCLE_STATUSES.join(',');
+
 // group (from LIFECYCLE_CONFIG) → simple status key
 const GROUP_TO_SIMPLE = {
   pending: 'waiting',

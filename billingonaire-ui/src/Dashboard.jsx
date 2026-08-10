@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { authenticatedFetchJSON } from './lib/api';
-import { AGP_FULL, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
+import { AGP_FULL, GOVERNMENT_ROLES_NOTE, STUCK_STATUS_FILTER_VALUE } from './lib/lifecycleUtils';
 import PendingMatterConfirmations from './components/PendingMatterConfirmations';
 import {
   Chart as ChartJS,
@@ -614,7 +614,12 @@ const Dashboard = () => {
                         {jobLoading === 'retry' ? 'Retrying…' : 'Retry them'}
                       </button>
                     )}
-                    <a href="/table?status=attention" style={{ fontSize: '0.82rem' }}>See which cases</a>
+                    {/* Precise subset of "attention" -- STUCK_LIFECYCLE_STATUSES
+                        only, matching exactly what needsAttention counted.
+                        Plain "attention" also includes manual_review_required
+                        (a separate, working-as-intended queue), which used to
+                        make this link show more cases than the banner counted. */}
+                    <a href={`/table?status=${STUCK_STATUS_FILTER_VALUE}`} style={{ fontSize: '0.82rem' }}>See which cases</a>
                   </div>
                 )}
 
