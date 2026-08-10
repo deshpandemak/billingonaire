@@ -198,3 +198,50 @@ class TestOrderValidation:
         pattern = r"^[A-Z]+\s?\(?[A-Z]*\)?\/\d+\/\d{4}$"
         assert re.match(pattern, valid_ref)
         assert not re.match(pattern, invalid_ref)
+
+
+class TestCreateOrderLinkCarriesTheBoardDate:
+    """A manually linked order used to be appended with no date fields at
+    all -- no order_date, no board_date. Search Orders resolves what to show
+    against a board row by matching orders[].board_date to that row's own
+    date (Board._hydrate_with_case_details), so a manual link could never
+    surface against any hearing: the work appeared to succeed and then the
+    order was simply invisible on the screen the user linked it from."""
+
+    @pytest.fixture
+    def order_manager_module(self, mock_firestore_client):
+        with patch("OrderManager.firestore.client", return_value=mock_firestore_client):
+            import OrderManager
+
+            return OrderManager
+
+    def test_appended_entry_is_tagged_with_the_board_rows_date(
+        self, order_manager_module, mock_firestore_client
+    ):
+        from datetime import datetime
+
+        om = order_manager_module.OrderManager()
+
+        board_doc = MagicMock()
+        board_doc.exists = True
+        board_doc.to_dict.return_value = {
+            "case_type": "WP",
+            "case_no": "123",
+            "case_year": "2026",
+            "board_date": datetime(2026, 3, 1),
+        }
+        mock_firestore_client.collection.return_value.document.return_value.get.return_value = (
+            board_doc
+        )
+
+        om.case_store = MagicMock()
+        om.case_store._to_iso_date = MagicMock(return_value="2026-03-01")
+
+        om.create_order_link(
+            "2026-03-01-WP-123-2026",
+            {"order_link": "https://example.test/o.pdf", "status": "linked"},
+        )
+
+        payload = om.case_store.append_case_order.call_args[0][1]
+        assert payload["board_date"] == "2026-03-01"
+        assert payload["order_date"] == "2026-03-01"

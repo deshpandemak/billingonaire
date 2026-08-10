@@ -166,12 +166,22 @@ class OrderManager:
             board_data = board_doc.to_dict() or {}
             case_ref = self._case_ref_from_board(board_data)
             status = order_data.get("status", "linked")
+            # Tag the entry with the board row it was linked against. Without
+            # these, a manually linked order carried no date at all, so
+            # Search Orders -- which matches orders[].board_date against each
+            # board row's date -- could never surface it against any hearing.
+            # case_id IS the daily-boards doc id, so board_data's own date is
+            # exactly the hearing the user chose.
+            linked_date = self.case_store._to_iso_date(board_data.get("board_date"))
+
             self.case_store.append_case_order(
                 case_ref,
                 {
                     "order_status": status,
                     "order_link": order_data.get("order_link"),
                     "order_text": order_data.get("order_text"),
+                    "order_date": linked_date,
+                    "board_date": linked_date,
                     "order_fetch_date": datetime.now().isoformat(),
                     "order_court_bench": order_data.get("court_bench", "mumbai"),
                     "order_notes": order_data.get("notes", ""),

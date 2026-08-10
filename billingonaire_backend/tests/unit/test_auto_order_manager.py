@@ -957,6 +957,55 @@ class TestAnalyzeExistingOrder:
         # daily-boards must be updated for the case+date
         auto_order_manager._update_board_entries_for_case_date.assert_called_once()
 
+    def test_order_entry_is_tagged_with_the_orders_own_date_not_the_latest_board_date(
+        self, auto_order_manager
+    ):
+        """The stored order entry's board_date decides which board row Search
+        Orders shows this order against (Board._hydrate_with_case_details
+        matches orders[].board_date to each row's own date).
+
+        This used to be passed straight through from case_info["board_date"],
+        which the analysis poll loop reads off a case-details doc -- and
+        case-details has no board_date field, only latest_board_date. So for
+        any case listed on the board more than once, an older order was
+        tagged with the case's MOST RECENT hearing date and surfaced against
+        the wrong board row, with nothing shown against the right one.
+        """
+        auto_order_manager._get_case_order_context = Mock(
+            return_value={"latest_order": {"order_date": "2025-03-01"}}
+        )
+        auto_order_manager._is_order_already_analysed = Mock(return_value=False)
+        auto_order_manager._analyze_order_with_api_metadata = Mock(
+            return_value={"success": True, "data": {"order_category": "ADJOURNED"}}
+        )
+        auto_order_manager._update_board_entries_for_case_date = Mock(return_value=1)
+
+        resp = Mock(
+            status_code=200,
+            content=b"%PDF-1.4 x",
+            headers={"Content-Type": "application/pdf"},
+        )
+        with patch(
+            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+        ):
+            # The case is being processed off a case-details row whose
+            # latest_board_date is a LATER appearance than this order.
+            auto_order_manager._analyze_existing_order(
+                self._case(board_date="2025-11-20"), self._template()
+            )
+
+        kwargs = auto_order_manager._analyze_order_with_api_metadata.call_args.kwargs
+        assert kwargs["board_date"] == "2025-03-01", (
+            "order entry must be tagged with the hearing the order belongs to "
+            "(its own date), not the case's most recent board date"
+        )
+        # ...and must agree with the date used to link the daily-boards rows,
+        # otherwise case-details and daily-boards disagree about the same order.
+        assert (
+            auto_order_manager._update_board_entries_for_case_date.call_args.args[1]
+            == kwargs["board_date"]
+        )
+
     def test_already_analysed_is_idempotent_and_does_not_refetch(
         self, auto_order_manager
     ):

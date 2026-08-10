@@ -979,7 +979,21 @@ class AutoOrderManager:
             api_petitioner=latest_order.get("petitioner") or "",
             api_respondent=latest_order.get("respondent") or "",
             order_link=order_link,
-            board_date=board_date,
+            # The stored order entry must be tagged with the hearing this
+            # order belongs to -- which, by the rule the rest of the system
+            # uses (see _update_board_entries_for_case_date, and the fetch
+            # path at _process_all_orders_from_api), is the order's own date.
+            #
+            # This used to pass `board_date`, which the analysis poll loop
+            # sources from a case-details doc. case-details has no board_date
+            # field, only latest_board_date, so it was ALWAYS the case's most
+            # recent appearance regardless of which order was being analysed.
+            # For any case listed more than once that tagged the order to the
+            # wrong hearing, and Search Orders -- which matches
+            # orders[].board_date against each board row's own date -- then
+            # showed that order against the wrong board date, and nothing
+            # against the right one.
+            board_date=order_date_str,
         )
 
         if not analysis.get("success"):
