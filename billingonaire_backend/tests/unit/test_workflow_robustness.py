@@ -2146,3 +2146,130 @@ async def test_queue_status_does_not_wake_the_poll_loops_when_nothing_is_pending
 
     wake_fetch.assert_not_called()
     wake_analysis.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 8. _query_claim_candidates backlog tier -- self-feeding the poll loops from
+#    board_ingested/fetch_succeeded cases that were never explicitly queued
+#    (e.g. bulk-imported board rows), once the primary queue and the stale-
+#    reclaim tier both run dry. Without this, cases sitting in those states
+#    are invisible to the poll loops no matter how idle they are.
+# ---------------------------------------------------------------------------
+
+
+def _claim_candidates_db(monkeypatch, docs_by_status):
+    def where_side_effect(field, op, value):
+        mock_query = MagicMock()
+        mock_query.limit.return_value.stream.return_value = docs_by_status.get(
+            value, []
+        )
+        return mock_query
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    return mock_db
+
+
+def _claim_doc(doc_id, case_ref, updated_at=None):
+    return SimpleNamespace(
+        id=doc_id,
+        to_dict=lambda: {
+            "case_ref": case_ref,
+            "board_date": "2026-01-05",
+            "lifecycle_status_updated_at": updated_at,
+        },
+    )
+
+
+def test_query_claim_candidates_pulls_from_backlog_when_queue_is_empty(monkeypatch):
+    """fetch_queued and stale fetch_in_progress are both empty -- the backlog
+    tier (board_ingested) should fill the batch so the pipeline never goes
+    idle just because nothing was ever explicitly queued."""
+    _claim_candidates_db(
+        monkeypatch,
+        {
+            "fetch_queued": [],
+            "fetch_in_progress": [],
+            "board_ingested": [
+                _claim_doc("d1", "WP/1/2026"),
+                _claim_doc("d2", "WP/2/2026"),
+            ],
+            "not_linked": [],
+        },
+    )
+    case_store = CaseDataStore(MagicMock())
+
+    candidates = main._query_claim_candidates(
+        case_store,
+        "fetch_queued",
+        "fetch_in_progress",
+        10,
+        backlog_statuses=("board_ingested", "not_linked"),
+    )
+
+    assert [c["case_ref"] for c in candidates] == ["WP/1/2026", "WP/2/2026"]
+    assert all(c["_claim_from_status"] == "board_ingested" for c in candidates)
+
+
+def test_query_claim_candidates_skips_backlog_tier_when_batch_already_full(
+    monkeypatch,
+):
+    """The un-queued backlog can be tens of thousands of cases -- it must
+    only be consulted once there's genuinely room left in this tick's batch,
+    not scanned on every tick regardless of whether it's needed."""
+    mock_db = _claim_candidates_db(
+        monkeypatch,
+        {
+            "fetch_queued": [_claim_doc(f"q{i}", f"WP/{i}/2026") for i in range(3)],
+            "board_ingested": [_claim_doc("d1", "WP/99/2026")],
+        },
+    )
+    case_store = CaseDataStore(MagicMock())
+
+    candidates = main._query_claim_candidates(
+        case_store,
+        "fetch_queued",
+        "fetch_in_progress",
+        3,
+        backlog_statuses=("board_ingested",),
+    )
+
+    assert len(candidates) == 3
+    assert all(c["_claim_from_status"] == "fetch_queued" for c in candidates)
+    queried_statuses = {
+        call.args[2] for call in mock_db.collection.return_value.where.call_args_list
+    }
+    assert "board_ingested" not in queried_statuses
+
+
+def test_query_claim_candidates_backlog_tops_up_remaining_room_only(monkeypatch):
+    """fetch_queued supplies part of the batch; the backlog tier should only
+    top up the remainder, never overshoot batch_size."""
+    _claim_candidates_db(
+        monkeypatch,
+        {
+            "fetch_queued": [_claim_doc("q1", "WP/1/2026")],
+            "fetch_in_progress": [],
+            "board_ingested": [
+                _claim_doc(f"d{i}", f"WP/{i}/2026") for i in range(2, 6)
+            ],
+        },
+    )
+    case_store = CaseDataStore(MagicMock())
+
+    candidates = main._query_claim_candidates(
+        case_store,
+        "fetch_queued",
+        "fetch_in_progress",
+        3,
+        backlog_statuses=("board_ingested",),
+    )
+
+    assert len(candidates) == 3
+    assert candidates[0]["case_ref"] == "WP/1/2026"
+    assert candidates[0]["_claim_from_status"] == "fetch_queued"
+    assert [c["_claim_from_status"] for c in candidates[1:]] == [
+        "board_ingested",
+        "board_ingested",
+    ]

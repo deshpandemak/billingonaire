@@ -481,12 +481,24 @@ async def _process_claimed_fetch_case(case_info: Dict) -> None:
 
 
 def _query_claim_candidates(
-    case_store, queued_status: str, in_progress_status: str, batch_size: int
+    case_store,
+    queued_status: str,
+    in_progress_status: str,
+    batch_size: int,
+    backlog_statuses: Optional[tuple] = None,
 ) -> List[Dict]:
     """Single-field equality queries only (already auto-indexed, no new
-    composite index needed): cases waiting to start, plus cases stuck at
-    the in-progress status past the staleness window (a worker that died
-    mid-run without reaching a terminal status)."""
+    composite index needed): cases waiting to start, cases stuck at the
+    in-progress status past the staleness window (a worker that died
+    mid-run without reaching a terminal status), and -- only if there's
+    still room left in the batch -- cases sitting in an un-queued backlog
+    state (e.g. board_ingested) that nothing has ever explicitly queued.
+    This last tier is what keeps the pipeline self-feeding: without it,
+    cases that were never queued by an upload or a manual "Fetch Orders"
+    click sit forever, invisible to this poll loop, no matter how idle it
+    is. Every candidate is tagged with the lifecycle_status it was actually
+    found at (`_claim_from_status`) so the caller claims from the right
+    state instead of assuming it's always `queued_status`."""
     db = firestore.client()
     candidates: List[Dict] = []
     seen_ids = set()
@@ -502,6 +514,7 @@ def _query_claim_candidates(
         seen_ids.add(doc.id)
         data = doc.to_dict() or {}
         data["_doc_id"] = doc.id
+        data["_claim_from_status"] = queued_status
         candidates.append(data)
 
     if len(candidates) < batch_size:
@@ -520,7 +533,26 @@ def _query_claim_candidates(
                 continue
             seen_ids.add(doc.id)
             data["_doc_id"] = doc.id
+            data["_claim_from_status"] = in_progress_status
             candidates.append(data)
+
+    if backlog_statuses and len(candidates) < batch_size:
+        for backlog_status in backlog_statuses:
+            if len(candidates) >= batch_size:
+                break
+            backlog_query = (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", backlog_status)
+                .limit(batch_size - len(candidates))
+            )
+            for doc in backlog_query.stream():
+                if len(candidates) >= batch_size or doc.id in seen_ids:
+                    continue
+                data = doc.to_dict() or {}
+                seen_ids.add(doc.id)
+                data["_doc_id"] = doc.id
+                data["_claim_from_status"] = backlog_status
+                candidates.append(data)
 
     return candidates
 
@@ -543,7 +575,17 @@ async def fetch_poll_loop():
             ensure_firebase()
             case_store = get_auto_order_manager().case_store
             candidates = _query_claim_candidates(
-                case_store, "fetch_queued", "fetch_in_progress", QUEUE_POLL_BATCH_SIZE
+                case_store,
+                "fetch_queued",
+                "fetch_in_progress",
+                QUEUE_POLL_BATCH_SIZE,
+                # Cases nothing has ever explicitly queued -- a bulk-imported
+                # or historically-ingested board row whose case-details doc
+                # never went through the upload/"Fetch Orders" queueing path.
+                # Without this the pipeline goes idle the moment fetch_queued
+                # and stale fetch_in_progress both run dry, even with tens of
+                # thousands of un-fetched cases still sitting at board_ingested.
+                backlog_statuses=("board_ingested", "not_linked"),
             )
             for case_data in candidates:
                 case_ref = case_data.get("case_ref")
@@ -552,7 +594,7 @@ async def fetch_poll_loop():
                 claim = case_store.claim_for_processing(
                     case_ref,
                     "fetch_in_progress",
-                    from_statuses={"fetch_queued"},
+                    from_statuses={case_data.get("_claim_from_status", "fetch_queued")},
                     stale_after_minutes=STALE_IN_PROGRESS_MINUTES,
                     reason="Claimed by fetch poll loop",
                     event_type="fetch_claimed",
@@ -697,6 +739,11 @@ async def analysis_poll_loop():
                 "analysis_queued",
                 "analysis_in_progress",
                 QUEUE_POLL_BATCH_SIZE,
+                # Orders that were downloaded (manual upload, or a fetch path
+                # that doesn't inline-analyse) but never explicitly queued
+                # for analysis -- same self-feeding rationale as fetch_poll_loop's
+                # backlog_statuses above.
+                backlog_statuses=("fetch_succeeded",),
             )
             for case_data in candidates:
                 case_ref = case_data.get("case_ref")
@@ -705,7 +752,9 @@ async def analysis_poll_loop():
                 claim = case_store.claim_for_processing(
                     case_ref,
                     "analysis_in_progress",
-                    from_statuses={"analysis_queued"},
+                    from_statuses={
+                        case_data.get("_claim_from_status", "analysis_queued")
+                    },
                     stale_after_minutes=STALE_IN_PROGRESS_MINUTES,
                     reason="Claimed by analysis poll loop",
                     event_type="analysis_claimed",
