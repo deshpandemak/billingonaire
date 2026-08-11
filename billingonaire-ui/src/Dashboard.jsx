@@ -187,7 +187,7 @@ const Dashboard = () => {
   const [dateCasesError, setDateCasesError] = useState('');
 
   // Queue / pipeline (admin)
-  const [queueStatus, setQueueStatus]       = useState({ fetch_queue_size: 0, analysis_queue_size: 0, total_queued: 0, total_in_progress: 0, pipeline_active: false, status: 'inactive', message: '' });
+  const [queueStatus, setQueueStatus]       = useState({ fetch_queue_size: 0, analysis_queue_size: 0, total_queued: 0, total_in_progress: 0, stale_in_progress_count: 0, pipeline_active: false, status: 'inactive', message: '' });
   const [queueLoading, setQueueLoading]     = useState(true);
   const [queueError, setQueueError]         = useState('');
   const [jobLoading, setJobLoading]         = useState('');
@@ -447,11 +447,20 @@ const Dashboard = () => {
   const totalQueued = (queueStatus.total_queued ?? ((queueStatus.fetch_queue_size || 0) + (queueStatus.analysis_queue_size || 0)));
   const totalInProgress = (queueStatus.total_in_progress ?? ((queueStatus.fetch_in_progress_count || 0) + (queueStatus.analysis_in_progress_count || 0)));
   const totalPending = totalQueued + totalInProgress;
+  // staleInProgress: cases sitting in progress for over 10 minutes with no
+  // apparent worker touching them -- almost always a worker (an instance
+  // that got CPU-throttled or torn down mid-run) that claimed the case and
+  // never got to finish it. This is the genuinely diagnostic number: a case
+  // being "in progress" is completely normal and expected; a case being
+  // stale-in-progress means it's actually stuck.
+  const staleInProgress = queueStatus.stale_in_progress_count || 0;
   // pipeline_active is a durable, cross-instance signal (a shared Firestore
   // heartbeat every poll-loop tick writes to, read here regardless of which
-  // instance answers this request) -- true whenever a worker has ticked
-  // recently OR there's a case actively in progress right now.
-  const workersStalled = !queueLoading && totalPending > 0 && !queueStatus.pipeline_active;
+  // instance answers this request) -- true only when a worker has ticked
+  // recently. Deliberately NOT inferred from total_in_progress > 0: a case
+  // merely sitting at *_in_progress doesn't mean a worker is touching it
+  // right now -- that's exactly what a stuck case looks like too.
+  const workersStalled = !queueLoading && (staleInProgress > 0 || (totalPending > 0 && !queueStatus.pipeline_active));
   const pipelineOk = !workersStalled && totalPending === 0;
   // Cases the pipeline gave up on — the only thing a user must actually act on.
   const needsAttention = queueStatus.needs_attention_count || 0;
@@ -910,10 +919,14 @@ const Dashboard = () => {
               {(!pipelineOk || workersStalled) && (
                 <div style={{ marginBottom: '1rem', padding: '0.85rem 1rem', background: workersStalled ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.07)', border: `1px solid ${workersStalled ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)'}`, borderRadius: 'var(--radius-sm)' }}>
                   <div className="d-flex flex-wrap gap-3 align-items-center justify-content-between">
-                    <strong style={{ fontSize: '0.9rem' }}>{workersStalled ? 'Pipeline has stalled — cases stuck, not moving' : 'Pipeline activity'}</strong>
+                    <strong style={{ fontSize: '0.9rem' }}>
+                      {staleInProgress > 0
+                        ? `${staleInProgress} case${staleInProgress > 1 ? 's' : ''} stuck — claimed but not progressing`
+                        : workersStalled ? 'Pipeline has stalled' : 'Pipeline activity'}
+                    </strong>
                     <div className="d-flex flex-wrap gap-3" style={{ fontSize: '0.83rem' }}>
                       {totalQueued > 0 && <span><span className="badge bg-primary me-1">{totalQueued}</span>Queued</span>}
-                      {totalInProgress > 0 && <span><span className="badge bg-info me-1">{totalInProgress}</span>In progress</span>}
+                      {totalInProgress > 0 && <span><span className={`badge me-1 ${staleInProgress > 0 ? 'bg-danger' : 'bg-info'}`}>{totalInProgress}</span>In progress{staleInProgress > 0 ? ` (${staleInProgress} stuck)` : ''}</span>}
                     </div>
                     {workersStalled && (
                       <span style={{ fontSize: '0.83rem', color: 'var(--gray-600)' }}>
@@ -937,8 +950,11 @@ const Dashboard = () => {
                         { v: totalQueued, l: 'Queued', c: 'var(--primary-color)' },
                         { v: totalInProgress, l: 'In Progress', c: 'var(--secondary-color)' },
                         { v: queueStatus.pipeline_active ? 'Active' : 'Idle', l: 'Pipeline', c: queueStatus.pipeline_active ? 'var(--success-color)' : 'var(--gray-500)' },
+                        // Only shown when non-zero -- "in progress" alone is
+                        // normal; this is specifically the stuck subset.
+                        ...(staleInProgress > 0 ? [{ v: staleInProgress, l: 'Stuck', c: 'var(--error-color)' }] : []),
                       ].map(({ v, l, c }) => (
-                        <div key={l} className="col-6 col-md-4"><StatCard value={v} label={l} color={c} /></div>
+                        <div key={l} className={staleInProgress > 0 ? 'col-6 col-md-3' : 'col-6 col-md-4'}><StatCard value={v} label={l} color={c} /></div>
                       ))}
                     </div>
 

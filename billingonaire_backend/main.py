@@ -4107,6 +4107,37 @@ def _count_lifecycle_status(status: str) -> int:
         return 0
 
 
+def _count_stale_in_progress() -> int:
+    """Cases genuinely stuck: sitting at fetch_in_progress or
+    analysis_in_progress longer than STALE_IN_PROGRESS_MINUTES with nothing
+    apparently touching them -- almost always a worker (an instance CPU-
+    throttled or torn down mid-run) that claimed the case and then never
+    got to finish it. These counts stay small (bounded by how many cases a
+    poll tick claims at once, not the historical backlog), so streaming the
+    actual docs to check each one's staleness -- not just count() -- is
+    cheap here, unlike a full-collection scan."""
+    stale = 0
+    try:
+        db = firestore.client()
+        case_store = get_auto_order_manager().case_store
+        for status in ("fetch_in_progress", "analysis_in_progress"):
+            docs = (
+                db.collection("case-details")
+                .where("lifecycle_status", "==", status)
+                .stream()
+            )
+            for doc in docs:
+                data = doc.to_dict() or {}
+                if case_store._is_stale(
+                    data.get("lifecycle_status_updated_at"),
+                    STALE_IN_PROGRESS_MINUTES,
+                ):
+                    stale += 1
+    except Exception as e:
+        logger.error(f"Error counting stale in-progress cases: {e}")
+    return stale
+
+
 def _get_distributed_queue_metrics() -> Dict:
     """The actual, durable queue backlog -- lifecycle_status counts across
     all Cloud Run instances, since there is no in-memory queue to inspect."""
@@ -4157,6 +4188,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
 
         fetch_active = _poll_loop_is_active("fetch_last_tick")
         analysis_active = _poll_loop_is_active("analysis_last_tick")
+        stale_in_progress_count = _count_stale_in_progress()
 
         # One combined view of "is the pipeline doing something", matching
         # how it actually behaves: analysis runs inline right after a
@@ -4167,9 +4199,31 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         # total_in_progress/pipeline_active let the UI show one number and
         # one status instead of two queues that make a single pipeline look
         # like two disconnected ones.
+        #
+        # pipeline_active is heartbeat-only -- a case merely sitting at
+        # fetch_in_progress does NOT mean a worker is actively touching it
+        # right now (that's exactly what an orphaned case, one claimed by an
+        # instance that was then throttled or torn down before finishing,
+        # looks like: total_in_progress > 0 forever, nothing moving).
+        # stale_in_progress_count is the honest signal for that: cases
+        # claimed but not touched in over STALE_IN_PROGRESS_MINUTES. The
+        # poll loop already reclaims these automatically on its next tick --
+        # this number existing at all past a tick or two means the loop
+        # itself isn't getting a chance to run.
         total_queued = fetch_queue_size + analysis_queue_size
         total_in_progress = fetch_in_progress_count + analysis_in_progress_count
-        pipeline_active = fetch_active or analysis_active or total_in_progress > 0
+        pipeline_active = fetch_active or analysis_active
+
+        # Every request here is a chance to nudge the loops awake -- if the
+        # process is CPU-throttled between requests (Cloud Run's default),
+        # the loops' own timer can't reliably fire, but handling THIS
+        # request already means the process has CPU right now. Piggybacks
+        # pipeline progress on whatever traffic the app already gets
+        # (anyone with the Dashboard open polls this every ~15s) instead of
+        # relying solely on a timer that may never get scheduled.
+        if total_queued > 0 or stale_in_progress_count > 0:
+            _wake_fetch_poll.set()
+            _wake_analysis_poll.set()
 
         result = {
             "fetch_queue_size": fetch_queue_size,
@@ -4178,6 +4232,7 @@ async def get_queue_status(current_user=Depends(get_current_user)):
             "analysis_in_progress_count": analysis_in_progress_count,
             "total_queued": total_queued,
             "total_in_progress": total_in_progress,
+            "stale_in_progress_count": stale_in_progress_count,
             "fetch_pending_cases": distributed_metrics.get("fetch_pending_cases", 0),
             "analysis_pending_cases": distributed_metrics.get(
                 "analysis_pending_cases", 0

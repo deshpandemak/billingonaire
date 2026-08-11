@@ -29,6 +29,7 @@ if "spacy" not in sys.modules:
 
 import main
 from billingonaire_backend.AutoOrderManager import AutoOrderManager
+from billingonaire_backend.case_data_store import CaseDataStore
 from billingonaire_backend.CourtScraper import BombayHighCourtScraper
 
 # ---------------------------------------------------------------------------
@@ -1946,6 +1947,52 @@ async def test_poll_loop_is_active_survives_a_read_failure(monkeypatch):
     assert main._poll_loop_is_active("fetch_last_tick") is False
 
 
+def _wire_queue_status_db(
+    monkeypatch, *, heartbeat=None, counts=None, in_progress_docs=None
+):
+    """heartbeat: dict merged into the poll-heartbeat doc (e.g.
+    {"fetch_last_tick": iso}). counts: {lifecycle_status: count} for
+    .count() aggregations. in_progress_docs: {lifecycle_status: [doc_dict,
+    ...]} streamed for _count_stale_in_progress's fetch_in_progress /
+    analysis_in_progress scan."""
+    counts = counts or {}
+    in_progress_docs = in_progress_docs or {}
+
+    heartbeat_collection = MagicMock()
+    heartbeat_collection.document.return_value.get.return_value = SimpleNamespace(
+        to_dict=lambda: heartbeat or {}
+    )
+
+    def where_side_effect(field, op, value):
+        assert field == "lifecycle_status"
+        w = MagicMock()
+        w.count.return_value.get.return_value = [
+            [SimpleNamespace(value=counts.get(value, 0))]
+        ]
+        w.stream.return_value = [
+            SimpleNamespace(to_dict=lambda d=d: d)
+            for d in in_progress_docs.get(value, [])
+        ]
+        return w
+
+    case_details = MagicMock()
+    case_details.where.side_effect = where_side_effect
+
+    def collection_side_effect(name):
+        if name == main._POLL_HEARTBEAT_COLLECTION:
+            return heartbeat_collection
+        return case_details
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    mgr = MagicMock()
+    mgr.case_store._is_stale.side_effect = CaseDataStore._is_stale
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    return mock_db
+
+
 @pytest.mark.asyncio
 async def test_queue_status_pipeline_active_is_true_from_a_fresh_heartbeat_alone(
     monkeypatch,
@@ -1956,29 +2003,9 @@ async def test_queue_status_pipeline_active_is_true_from_a_fresh_heartbeat_alone
     fresh heartbeat written by "another instance" is indistinguishable here
     from one written by this process, which is the point)."""
     monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
-
-    heartbeat_db = MagicMock()
-    heartbeat_db.collection.return_value.document.return_value.get.return_value = (
-        SimpleNamespace(to_dict=lambda: {"fetch_last_tick": datetime.now().isoformat()})
+    _wire_queue_status_db(
+        monkeypatch, heartbeat={"fetch_last_tick": datetime.now().isoformat()}
     )
-
-    def where_side_effect(field, op, value):
-        assert field == "lifecycle_status"
-        w = MagicMock()
-        w.count.return_value.get.return_value = [[SimpleNamespace(value=0)]]
-        return w
-
-    case_details = MagicMock()
-    case_details.where.side_effect = where_side_effect
-
-    def collection_side_effect(name):
-        if name == main._POLL_HEARTBEAT_COLLECTION:
-            return heartbeat_db.collection.return_value
-        return case_details
-
-    mock_db = MagicMock()
-    mock_db.collection.side_effect = collection_side_effect
-    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
 
     response = await main.get_queue_status(current_user={"uid": "u1"})
     import json
@@ -1991,28 +2018,25 @@ async def test_queue_status_pipeline_active_is_true_from_a_fresh_heartbeat_alone
 
 
 @pytest.mark.asyncio
-async def test_queue_status_reports_in_progress_even_with_nothing_queued(monkeypatch):
-    """total_in_progress must count toward "something is happening" on its
-    own -- cases actively fetch_in_progress with an empty fetch_queued
-    queue used to render as "nothing pending" even while real work was in
-    flight."""
+async def test_queue_status_in_progress_alone_is_not_reported_as_active(monkeypatch):
+    """A case sitting at fetch_in_progress does NOT by itself mean a worker
+    is touching it right now -- that's exactly what an orphaned case (one
+    claimed by an instance the was then CPU-throttled or torn down before
+    finishing) looks like. Without a fresh heartbeat, pipeline_active must
+    be False even with real, fresh in-progress work -- the honest signal
+    for "something is happening" is the heartbeat, not merely a status
+    value that could just as easily mean "abandoned"."""
     monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
-
-    counts = {"fetch_in_progress": 5}
-
-    def where_side_effect(field, op, value):
-        w = MagicMock()
-        w.count.return_value.get.return_value = [
-            [SimpleNamespace(value=counts.get(value, 0))]
-        ]
-        return w
-
-    mock_db = MagicMock()
-    mock_db.collection.return_value.where.side_effect = where_side_effect
-    mock_db.collection.return_value.document.return_value.get.return_value = (
-        SimpleNamespace(to_dict=lambda: {})
+    _wire_queue_status_db(
+        monkeypatch,
+        counts={"fetch_in_progress": 5},
+        in_progress_docs={
+            "fetch_in_progress": [
+                {"lifecycle_status_updated_at": datetime.now().isoformat()}
+                for _ in range(5)
+            ]
+        },
     )
-    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
 
     response = await main.get_queue_status(current_user={"uid": "u1"})
     import json
@@ -2022,5 +2046,73 @@ async def test_queue_status_reports_in_progress_even_with_nothing_queued(monkeyp
     assert data["fetch_queue_size"] == 0
     assert data["fetch_in_progress_count"] == 5
     assert data["total_in_progress"] == 5
-    assert data["pipeline_active"] is True
-    assert data["status"] == "active"
+    assert data["pipeline_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_queue_status_flags_stale_in_progress_cases(monkeypatch):
+    """The honest signal for "stuck, not moving": cases sitting at
+    fetch_in_progress/analysis_in_progress past STALE_IN_PROGRESS_MINUTES
+    with no fresh timestamp -- almost always a worker that claimed a case
+    and never got to finish it."""
+    from datetime import timedelta
+
+    monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
+    old_iso = (datetime.now() - timedelta(hours=1)).isoformat()
+    fresh_iso = datetime.now().isoformat()
+    _wire_queue_status_db(
+        monkeypatch,
+        counts={"fetch_in_progress": 2, "analysis_in_progress": 1},
+        in_progress_docs={
+            "fetch_in_progress": [
+                {"lifecycle_status_updated_at": old_iso},
+                {"lifecycle_status_updated_at": fresh_iso},
+            ],
+            "analysis_in_progress": [{"lifecycle_status_updated_at": old_iso}],
+        },
+    )
+
+    response = await main.get_queue_status(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["stale_in_progress_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_queue_status_wakes_the_poll_loops_when_there_is_pending_work(
+    monkeypatch,
+):
+    """Every request here is a chance to nudge the loops awake -- if the
+    process is CPU-throttled between requests, the loops' own timer can't
+    reliably fire, but handling this request already means the process has
+    CPU right now."""
+    monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
+    _wire_queue_status_db(monkeypatch, counts={"fetch_queued": 3})
+    wake_fetch = Mock()
+    wake_analysis = Mock()
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=wake_analysis))
+
+    await main.get_queue_status(current_user={"uid": "u1"})
+
+    wake_fetch.assert_called_once()
+    wake_analysis.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_queue_status_does_not_wake_the_poll_loops_when_nothing_is_pending(
+    monkeypatch,
+):
+    monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
+    _wire_queue_status_db(monkeypatch)
+    wake_fetch = Mock()
+    wake_analysis = Mock()
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=wake_analysis))
+
+    await main.get_queue_status(current_user={"uid": "u1"})
+
+    wake_fetch.assert_not_called()
+    wake_analysis.assert_not_called()

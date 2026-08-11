@@ -6,7 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { authenticatedFetchJSON, getApiUrl } from './lib/api';
 import './styles/professional.css';
 import CaseDetailModal from './components/CaseDetailModal';
-import { getLifecycleConfig, getOrderStatusConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory, AGP_FULL, GOVERNMENT_ROLES_NOTE, STUCK_STATUS_FILTER_VALUE } from './lib/lifecycleUtils';
+import { getLifecycleConfig, getSimpleStatus, getOrderCategoryLabel, canonicalOrderCategory, AGP_FULL, GOVERNMENT_ROLES_NOTE, STUCK_STATUS_FILTER_VALUE } from './lib/lifecycleUtils';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -321,25 +321,18 @@ const Table = () => {
       cellStyle: params => orderCategoryCellStyle(params.value)
     },
     {
-      // Whether the order PDF itself is on file (and the inline Analyse action).
-      // Renamed from "Order Status" so it is not confused with the workflow
-      // Status column / filter below, which tracks the lifecycle state machine.
-      headerName: 'Order File',
-      field: 'order_status',
-      sortable: true,
-      filter: false,
-      width: 130,
-      flex: 0,
-      cellRenderer: 'orderStatusRenderer'
-    },
-    {
-      // The workflow state the "Status" search filter matches against.
+      // One status column, not two -- this used to sit alongside a separate
+      // "Order File" column showing an overlapping, coarser read of the
+      // same underlying progress. lifecycle_status is the pipeline's real
+      // source of truth; the old column's one unique feature (an inline
+      // Analyse retry) now lives in this cell -- see
+      // ANALYSE_ACTIONABLE_STATUSES / LifecycleStatusRenderer above.
       headerName: 'Status',
       field: 'lifecycle_status',
       sortable: true,
       filter: 'agTextColumnFilter',
       editable: false,
-      width: 160,
+      width: 200,
       cellRenderer: 'lifecycleStatusRenderer'
     },
     {
@@ -355,9 +348,30 @@ const Table = () => {
     }
   ];
 
-  // Status chip. Shows one of the four plain-English statuses; the precise
-  // lifecycle state and its "what happens next" text stay in the tooltip and
+  // One status per case, not two. This used to sit alongside a separate
+  // "Order File" column (order_status: not_linked/linked/analysed/
+  // order_failed/order_analysis_failed) that showed a coarser, overlapping
+  // read of the same underlying progress -- two badges telling a
+  // conflicting-looking story about one thing. lifecycle_status is the
+  // pipeline's actual source of truth (order_status is a legacy view
+  // derived from it), so it's now the only status shown; the precise
+  // 13-state detail and "what happens next" text stay in the tooltip and
   // in the case detail modal's timeline for anyone who needs them.
+  //
+  // The "Order File" column's one piece of unique value -- an inline
+  // Analyse retry for a downloaded-but-unread order -- lives in this same
+  // cell now rather than a second column. Shown for the lifecycle_status
+  // values equivalent to the old column's linked/order_analysis_failed
+  // trigger (case_data_store.py's LEGACY_STATUS_MAP: linked ->
+  // fetch_succeeded, order_analysis_failed -> analysis_failed_retryable),
+  // plus analysis_failed_terminal, which the old column had no equivalent
+  // action for at all.
+  const ANALYSE_ACTIONABLE_STATUSES = new Set([
+    'fetch_succeeded',
+    'analysis_failed_retryable',
+    'analysis_failed_terminal',
+  ]);
+
   const LifecycleStatusRenderer = (props) => {
     const status = props.data?.lifecycle_status;
     if (!status) return <span className="text-muted" style={{ fontSize: '0.75rem' }}>—</span>;
@@ -374,7 +388,8 @@ const Table = () => {
       detail.label ? `Stage: ${detail.label}` : '',
       detail.next ? `→ ${detail.next}` : '',
     ].filter(Boolean).join('\n');
-    return (
+
+    const badge = (
       <span
         className="badge"
         style={{ backgroundColor: bg, color, cursor: 'help', fontSize: '0.7rem' }}
@@ -382,6 +397,27 @@ const Table = () => {
       >
         {simple.icon} {simple.label}
       </span>
+    );
+
+    if (!ANALYSE_ACTIONABLE_STATUSES.has(status)) return badge;
+
+    const { data } = props;
+    const caseId = data?.id;
+    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
+    const isProcessing = processingOrders.has(caseId);
+    return (
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        {badge}
+        <button
+          className="btn btn-sm btn-warning"
+          onClick={() => handleAnalyzeOrder(caseId, caseRef)}
+          disabled={isProcessing}
+          style={{ fontSize: '0.7rem', padding: '1px 6px' }}
+          title="Run order analysis to extract case details"
+        >
+          {isProcessing ? '…' : 'Analyse'}
+        </button>
+      </div>
     );
   };
 
@@ -442,56 +478,6 @@ const Table = () => {
     }
 
     return <span>{value || '-'}</span>;
-  };
-
-  // Custom cell renderer for order status badge
-  const OrderStatusRenderer = (props) => {
-    const { data } = props;
-    const orderStatus = data?.order_status || 'not_linked';
-    const caseId = data?.id;
-    const caseRef = `${data?.case_type}/${data?.case_no}/${data?.case_year}`;
-    const isProcessing = processingOrders.has(caseId);
-
-    const cfg = getOrderStatusConfig(orderStatus);
-    const variantColors = {
-      secondary: '#6c757d', info: '#17a2b8', success: '#28a745',
-      danger: '#dc3545', warning: '#fd7e14', primary: '#0d6efd',
-    };
-    const bgColor = variantColors[cfg.variant] || '#6c757d';
-    const textColor = cfg.variant === 'warning' ? '#212529' : 'white';
-
-    if (orderStatus === 'linked' || orderStatus === 'order_analysis_failed') {
-      return (
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <span
-            className="badge"
-            style={{ backgroundColor: bgColor, color: textColor, cursor: 'help' }}
-            title={cfg.tooltip}
-          >
-            {cfg.label}
-          </span>
-          <button
-            className="btn btn-sm btn-warning"
-            onClick={() => handleAnalyzeOrder(caseId, caseRef)}
-            disabled={isProcessing}
-            style={{ fontSize: '0.7rem', padding: '1px 6px' }}
-            title="Run order analysis to extract case details"
-          >
-            {isProcessing ? '…' : 'Analyse'}
-          </button>
-        </div>
-      );
-    }
-
-    return (
-      <span
-        className="badge"
-        style={{ backgroundColor: bgColor, color: textColor, cursor: cfg.tooltip ? 'help' : 'default' }}
-        title={cfg.tooltip}
-      >
-        {cfg.label}
-      </span>
-    );
   };
 
   // Order management functions
@@ -724,7 +710,6 @@ const Table = () => {
   };
 
   const frameworkComponents = {
-    orderStatusRenderer: OrderStatusRenderer,
     courtOrderRenderer: CourtOrderRenderer,
     viewCaseRenderer: ViewCaseRenderer,
     lifecycleStatusRenderer: LifecycleStatusRenderer
