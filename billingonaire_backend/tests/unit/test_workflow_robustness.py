@@ -8,6 +8,7 @@ Covers:
 
 import sys
 import types
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -1883,3 +1884,143 @@ async def test_overview_stats_fetch_and_analyse_are_independent_numbers(monkeypa
     assert data["cases_with_orders"] == 50  # analysed(10) + linked(40)
     # total_case_details = 10+40+50 = 100 -> analysed(10)/100 = 10%
     assert data["analysis_completion_rate"] == 10.0
+
+
+# ---------------------------------------------------------------------------
+# 12. Poll-loop heartbeat -- /queue/status's "processing_active" used to read
+#     an in-process global (_last_fetch_poll_tick/_last_analysis_poll_tick)
+#     that only the ONE Cloud Run instance whose loop had just ticked could
+#     see. /queue/status can be answered by any of up to 10 instances, so it
+#     reported "inactive" almost unconditionally regardless of whether the
+#     pipeline was actually running. Replaced with a shared Firestore doc any
+#     instance can write and any instance can read.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_poll_heartbeat_write_and_read_round_trips(monkeypatch):
+    mock_db = MagicMock()
+    stored = {}
+    mock_db.collection.return_value.document.return_value.set.side_effect = (
+        lambda data, merge=False: stored.update(data)
+    )
+    mock_db.collection.return_value.document.return_value.get.return_value = (
+        SimpleNamespace(to_dict=lambda: stored)
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    assert main._poll_loop_is_active("fetch_last_tick") is False  # nothing written yet
+
+    main._write_poll_heartbeat("fetch_last_tick")
+
+    assert main._poll_loop_is_active("fetch_last_tick") is True
+    # A DIFFERENT field (as if only the analysis loop had ticked) must not
+    # be considered active by proxy.
+    assert main._poll_loop_is_active("analysis_last_tick") is False
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_is_active_false_for_a_stale_heartbeat(monkeypatch):
+    from datetime import timedelta
+
+    mock_db = MagicMock()
+    old_tick = (datetime.now() - timedelta(hours=1)).isoformat()
+    mock_db.collection.return_value.document.return_value.get.return_value = (
+        SimpleNamespace(to_dict=lambda: {"fetch_last_tick": old_tick})
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    assert main._poll_loop_is_active("fetch_last_tick") is False
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_is_active_survives_a_read_failure(monkeypatch):
+    """Must degrade to "not active" rather than raise -- a Firestore hiccup
+    here must never turn into a 500 on /queue/status."""
+    mock_db = MagicMock()
+    mock_db.collection.return_value.document.return_value.get.side_effect = Exception(
+        "boom"
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    assert main._poll_loop_is_active("fetch_last_tick") is False
+
+
+@pytest.mark.asyncio
+async def test_queue_status_pipeline_active_is_true_from_a_fresh_heartbeat_alone(
+    monkeypatch,
+):
+    """Proves the fix is cross-instance-safe: pipeline_active becomes True
+    purely from what's in Firestore, with zero reliance on any local/
+    in-process state -- exactly the condition that was broken before (a
+    fresh heartbeat written by "another instance" is indistinguishable here
+    from one written by this process, which is the point)."""
+    monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
+
+    heartbeat_db = MagicMock()
+    heartbeat_db.collection.return_value.document.return_value.get.return_value = (
+        SimpleNamespace(to_dict=lambda: {"fetch_last_tick": datetime.now().isoformat()})
+    )
+
+    def where_side_effect(field, op, value):
+        assert field == "lifecycle_status"
+        w = MagicMock()
+        w.count.return_value.get.return_value = [[SimpleNamespace(value=0)]]
+        return w
+
+    case_details = MagicMock()
+    case_details.where.side_effect = where_side_effect
+
+    def collection_side_effect(name):
+        if name == main._POLL_HEARTBEAT_COLLECTION:
+            return heartbeat_db.collection.return_value
+        return case_details
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_queue_status(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_processing_active"] is True
+    assert data["pipeline_active"] is True
+    assert data["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_queue_status_reports_in_progress_even_with_nothing_queued(monkeypatch):
+    """total_in_progress must count toward "something is happening" on its
+    own -- cases actively fetch_in_progress with an empty fetch_queued
+    queue used to render as "nothing pending" even while real work was in
+    flight."""
+    monkeypatch.setattr(main, "_queue_status_cache", {"ts": 0.0, "data": None})
+
+    counts = {"fetch_in_progress": 5}
+
+    def where_side_effect(field, op, value):
+        w = MagicMock()
+        w.count.return_value.get.return_value = [
+            [SimpleNamespace(value=counts.get(value, 0))]
+        ]
+        return w
+
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.side_effect = where_side_effect
+    mock_db.collection.return_value.document.return_value.get.return_value = (
+        SimpleNamespace(to_dict=lambda: {})
+    )
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_queue_status(current_user={"uid": "u1"})
+    import json
+
+    data = json.loads(response.body)
+
+    assert data["fetch_queue_size"] == 0
+    assert data["fetch_in_progress_count"] == 5
+    assert data["total_in_progress"] == 5
+    assert data["pipeline_active"] is True
+    assert data["status"] == "active"

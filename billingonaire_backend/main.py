@@ -285,10 +285,6 @@ _analysis_semaphore = asyncio.Semaphore(MAX_WORKERS)
 # waiting out its interval; cleared at the top of every tick.
 _wake_fetch_poll = asyncio.Event()
 _wake_analysis_poll = asyncio.Event()
-# Updated at the top of every tick so /queue/status can report whether a
-# loop is actually alive, instead of a boolean nothing ever clears on death.
-_last_fetch_poll_tick: Optional[datetime] = None
-_last_analysis_poll_tick: Optional[datetime] = None
 # Keeps strong references to spawned tasks: asyncio.create_task() only holds
 # a weak reference, so an unreferenced task can be silently garbage
 # collected mid-run -- a second, independent way work could vanish.
@@ -533,11 +529,10 @@ async def fetch_poll_loop():
     (started at app startup). Polls for fetch_queued cases plus stale
     fetch_in_progress cases, atomically claims each, and runs it in the
     thread pool bounded by _fetch_semaphore."""
-    global _last_fetch_poll_tick
     logger.info("🚀 Fetch poll loop started")
 
     while True:
-        _last_fetch_poll_tick = datetime.now()
+        _write_poll_heartbeat("fetch_last_tick")
         try:
             # Constructed fresh every tick (not once before the loop): Firebase
             # is initialized lazily on first authenticated request, so on a
@@ -689,11 +684,10 @@ async def _process_claimed_analysis_case(case_info: Dict) -> None:
 async def analysis_poll_loop():
     """Analysis counterpart of fetch_poll_loop: polls analysis_queued plus
     stale analysis_in_progress cases."""
-    global _last_analysis_poll_tick
     logger.info("🚀 Analysis poll loop started")
 
     while True:
-        _last_analysis_poll_tick = datetime.now()
+        _write_poll_heartbeat("analysis_last_tick")
         try:
             ensure_firebase()
             case_store = get_auto_order_manager().case_store
@@ -4051,6 +4045,51 @@ STUCK_LIFECYCLE_STATUSES = (
 )
 
 
+# Single shared Firestore doc every poll-loop tick writes its timestamp to.
+# Replaces the old in-process _last_fetch_poll_tick/_last_analysis_poll_tick
+# globals: those lived in ONE Cloud Run instance's memory, but /queue/status
+# can be answered by any of up to 10 instances, and there is no reason the
+# instance that happens to answer a given request is the same one whose poll
+# loop just ticked. In practice it almost never was, so
+# "fetch/analysis_processing_active" reported False almost unconditionally
+# regardless of whether the pipeline was actually running -- this is why the
+# Dashboard always showed the queue as inactive. A shared doc that any
+# instance can overwrite and any instance can read fixes that: "last writer
+# wins" is exactly the semantics "was ANY instance's loop ticking recently"
+# needs.
+_POLL_HEARTBEAT_COLLECTION = "system-health"
+_POLL_HEARTBEAT_DOC_ID = "poll-loops"
+
+
+def _write_poll_heartbeat(field: str) -> None:
+    try:
+        firestore.client().collection(_POLL_HEARTBEAT_COLLECTION).document(
+            _POLL_HEARTBEAT_DOC_ID
+        ).set({field: datetime.now().isoformat()}, merge=True)
+    except Exception as e:  # noqa: BLE001 -- must never crash a poll loop tick
+        logger.warning(f"Failed to write poll heartbeat {field}: {e}")
+
+
+def _poll_loop_is_active(field: str) -> bool:
+    try:
+        doc = (
+            firestore.client()
+            .collection(_POLL_HEARTBEAT_COLLECTION)
+            .document(_POLL_HEARTBEAT_DOC_ID)
+            .get()
+        )
+        last_tick_iso = (doc.to_dict() or {}).get(field)
+        if not last_tick_iso:
+            return False
+        last_tick = datetime.fromisoformat(last_tick_iso)
+        return (
+            datetime.now() - last_tick
+        ).total_seconds() < QUEUE_POLL_INTERVAL_SECONDS * 4
+    except Exception as e:
+        logger.warning(f"Failed to read poll heartbeat {field}: {e}")
+        return False
+
+
 def _count_lifecycle_status(status: str) -> int:
     """Cheap Firestore .count() aggregation on a single-field equality query
     -- already auto-indexed, no composite index needed."""
@@ -4089,14 +4128,6 @@ def _get_distributed_queue_metrics() -> Dict:
     }
 
 
-def _poll_loop_is_alive(last_tick: Optional[datetime]) -> bool:
-    if last_tick is None:
-        return False
-    return (
-        datetime.now() - last_tick
-    ).total_seconds() < QUEUE_POLL_INTERVAL_SECONDS * 4
-
-
 @app.get("/queue/status", tags=["Queue Management"])
 async def get_queue_status(current_user=Depends(get_current_user)):
     """Get status of fetch and analysis processing, driven entirely by
@@ -4114,6 +4145,8 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         distributed_metrics = _get_distributed_queue_metrics()
         fetch_queue_size = _count_lifecycle_status("fetch_queued")
         analysis_queue_size = _count_lifecycle_status("analysis_queued")
+        fetch_in_progress_count = _count_lifecycle_status("fetch_in_progress")
+        analysis_in_progress_count = _count_lifecycle_status("analysis_in_progress")
         review_count = _count_lifecycle_status("manual_review_required")
 
         # Cases the pipeline could not finish on its own.  The fetch/analyse
@@ -4122,12 +4155,29 @@ async def get_queue_status(current_user=Depends(get_current_user)):
         # attention" action on the Dashboard.
         stuck_count = sum(_count_lifecycle_status(s) for s in STUCK_LIFECYCLE_STATUSES)
 
-        fetch_active = _poll_loop_is_alive(_last_fetch_poll_tick)
-        analysis_active = _poll_loop_is_alive(_last_analysis_poll_tick)
+        fetch_active = _poll_loop_is_active("fetch_last_tick")
+        analysis_active = _poll_loop_is_active("analysis_last_tick")
+
+        # One combined view of "is the pipeline doing something", matching
+        # how it actually behaves: analysis runs inline right after a
+        # successful fetch for the normal case, so fetch and analysis are
+        # almost always one worker turn per case, not two independent
+        # queues. They're only ever tracked separately because they have
+        # different retry/timeout characteristics. total_queued/
+        # total_in_progress/pipeline_active let the UI show one number and
+        # one status instead of two queues that make a single pipeline look
+        # like two disconnected ones.
+        total_queued = fetch_queue_size + analysis_queue_size
+        total_in_progress = fetch_in_progress_count + analysis_in_progress_count
+        pipeline_active = fetch_active or analysis_active or total_in_progress > 0
 
         result = {
             "fetch_queue_size": fetch_queue_size,
             "analysis_queue_size": analysis_queue_size,
+            "fetch_in_progress_count": fetch_in_progress_count,
+            "analysis_in_progress_count": analysis_in_progress_count,
+            "total_queued": total_queued,
+            "total_in_progress": total_in_progress,
             "fetch_pending_cases": distributed_metrics.get("fetch_pending_cases", 0),
             "analysis_pending_cases": distributed_metrics.get(
                 "analysis_pending_cases", 0
@@ -4137,11 +4187,12 @@ async def get_queue_status(current_user=Depends(get_current_user)):
             "distributed_metrics": distributed_metrics,
             "fetch_processing_active": fetch_active,
             "analysis_processing_active": analysis_active,
-            "status": "active" if fetch_active or analysis_active else "inactive",
+            "pipeline_active": pipeline_active,
+            "status": "active" if pipeline_active else "inactive",
             "message": (
-                f"Fetch queue: {fetch_queue_size}, Analysis queue: {analysis_queue_size}"
-                if fetch_queue_size > 0 or analysis_queue_size > 0
-                else "Both queues are empty"
+                f"{total_queued} queued, {total_in_progress} in progress"
+                if total_queued > 0 or total_in_progress > 0
+                else "Nothing pending"
             ),
         }
         _queue_status_cache["ts"] = _time.time()
@@ -4168,9 +4219,9 @@ async def restart_queue_processing(current_user=Depends(require_admin)):
             content={
                 "success": True,
                 "message": "Fetch and analysis poll loops woken",
-                "fetch_processing_active": _poll_loop_is_alive(_last_fetch_poll_tick),
-                "analysis_processing_active": _poll_loop_is_alive(
-                    _last_analysis_poll_tick
+                "fetch_processing_active": _poll_loop_is_active("fetch_last_tick"),
+                "analysis_processing_active": _poll_loop_is_active(
+                    "analysis_last_tick"
                 ),
             }
         )

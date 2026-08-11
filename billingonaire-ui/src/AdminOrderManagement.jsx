@@ -168,17 +168,8 @@ const AdminOrderManagement = () => {
                     text: `${data.message}. Processing ${data.cases_queued} cases in background.`
                 });
 
-                // Update queue status immediately with response data
-                if (data.queue_size !== undefined) {
-                    setQueueStatus({
-                        queue_size: data.queue_size,
-                        processing_active: true,
-                        status: 'active',
-                        message: `Queue has ${data.queue_size} pending cases`
-                    });
-                }
-
-                // Reload data after 2 seconds
+                // Reload data after 2 seconds -- long enough for the fetch
+                // poll loop to have picked up at least the first case.
                 setTimeout(() => {
                     loadOverview();
                     loadQueueStatus();
@@ -399,22 +390,25 @@ const AdminOrderManagement = () => {
                         <Card.Body>
                             {queueStatus ? (
                                 <>
+                                    {/* Fetch and analysis shown as one pipeline, not two
+                                        separate queues -- they're almost always one
+                                        worker turn per case (analysis runs inline right
+                                        after a successful fetch); tracked as two phases
+                                        internally only because they have different
+                                        retry/timeout behaviour. */}
                                     <Row className="mb-2">
                                         <Col xs={6} className="text-center">
-                                            <h4 className="mb-0">{queueStatus.fetch_queue_size ?? queueStatus.queue_size ?? 0}</h4>
-                                            <small className="text-muted">Fetch Queue</small>
+                                            <h4 className="mb-0">{(queueStatus.total_queued ?? ((queueStatus.fetch_queue_size ?? queueStatus.queue_size ?? 0) + (queueStatus.analysis_queue_size ?? 0)))}</h4>
+                                            <small className="text-muted">Queued</small>
                                         </Col>
                                         <Col xs={6} className="text-center">
-                                            <h4 className="mb-0">{queueStatus.analysis_queue_size ?? 0}</h4>
-                                            <small className="text-muted">Analysis Queue</small>
+                                            <h4 className="mb-0">{(queueStatus.total_in_progress ?? ((queueStatus.fetch_in_progress_count ?? 0) + (queueStatus.analysis_in_progress_count ?? 0)))}</h4>
+                                            <small className="text-muted">In Progress</small>
                                         </Col>
                                     </Row>
                                     <div className="mb-2 d-flex gap-2 flex-wrap">
-                                        <Badge bg={queueStatus.fetch_processing_active ?? queueStatus.processing_active ? 'success' : 'danger'}>
-                                            Fetch: {queueStatus.fetch_processing_active ?? queueStatus.processing_active ? 'Active' : 'Inactive'}
-                                        </Badge>
-                                        <Badge bg={queueStatus.analysis_processing_active ? 'success' : 'secondary'}>
-                                            Analysis: {queueStatus.analysis_processing_active ? 'Active' : 'Idle'}
+                                        <Badge bg={queueStatus.pipeline_active ? 'success' : 'secondary'}>
+                                            Pipeline: {queueStatus.pipeline_active ? 'Active' : 'Idle'}
                                         </Badge>
                                     </div>
                                     {(queueStatus.fetch_pending_cases > 0 || queueStatus.analysis_pending_cases > 0) && (
@@ -447,7 +441,7 @@ const AdminOrderManagement = () => {
                                             </Table>
                                         </div>
                                     ) : (
-                                        (queueStatus.fetch_queue_size > 0 || queueStatus.analysis_queue_size > 0) && (
+                                        ((queueStatus.total_queued ?? 0) > 0 || (queueStatus.total_in_progress ?? 0) > 0) && (
                                             <p className="text-muted small mb-0">Loading case list...</p>
                                         )
                                     )}

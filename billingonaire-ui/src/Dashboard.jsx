@@ -187,7 +187,7 @@ const Dashboard = () => {
   const [dateCasesError, setDateCasesError] = useState('');
 
   // Queue / pipeline (admin)
-  const [queueStatus, setQueueStatus]       = useState({ fetch_queue_size: 0, analysis_queue_size: 0, fetch_processing_active: false, analysis_processing_active: false, status: 'inactive', message: '' });
+  const [queueStatus, setQueueStatus]       = useState({ fetch_queue_size: 0, analysis_queue_size: 0, total_queued: 0, total_in_progress: 0, pipeline_active: false, status: 'inactive', message: '' });
   const [queueLoading, setQueueLoading]     = useState(true);
   const [queueError, setQueueError]         = useState('');
   const [jobLoading, setJobLoading]         = useState('');
@@ -439,9 +439,20 @@ const Dashboard = () => {
   };
 
   // ─── Pipeline health indicators ───────────────────────────────────────────────
-  const workersStalled = !queueLoading && queueStatus.fetch_queue_size > 0 && !queueStatus.fetch_processing_active;
-  const totalQueued = (queueStatus.fetch_queue_size || 0) + (queueStatus.analysis_queue_size || 0);
-  const pipelineOk = !workersStalled && totalQueued === 0;
+  // Fetch and analysis are almost always one worker turn per case (analysis
+  // runs inline right after a successful fetch) -- tracked as two phases
+  // internally only because they have different retry/timeout behaviour.
+  // Shown here as one number and one status so it reads as the single
+  // pipeline it actually is, not two disconnected queues.
+  const totalQueued = (queueStatus.total_queued ?? ((queueStatus.fetch_queue_size || 0) + (queueStatus.analysis_queue_size || 0)));
+  const totalInProgress = (queueStatus.total_in_progress ?? ((queueStatus.fetch_in_progress_count || 0) + (queueStatus.analysis_in_progress_count || 0)));
+  const totalPending = totalQueued + totalInProgress;
+  // pipeline_active is a durable, cross-instance signal (a shared Firestore
+  // heartbeat every poll-loop tick writes to, read here regardless of which
+  // instance answers this request) -- true whenever a worker has ticked
+  // recently OR there's a case actively in progress right now.
+  const workersStalled = !queueLoading && totalPending > 0 && !queueStatus.pipeline_active;
+  const pipelineOk = !workersStalled && totalPending === 0;
   // Cases the pipeline gave up on — the only thing a user must actually act on.
   const needsAttention = queueStatus.needs_attention_count || 0;
 
@@ -483,7 +494,7 @@ const Dashboard = () => {
             },
             {
               label: 'Bill',
-              value: queueLoading ? null : pipelineOk ? 'Ready' : `${totalQueued} queued`,
+              value: queueLoading ? null : pipelineOk ? 'Ready' : `${totalPending} in progress`,
               hint: pipelineOk ? 'nothing pending' : 'still processing',
               color: pipelineOk ? 'var(--success-color)' : workersStalled ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)',
               loading: queueLoading,
@@ -887,8 +898,8 @@ const Dashboard = () => {
           >
             <span>
               System Administration &amp; Pipeline Controls
-              {workersStalled && <span style={{ marginLeft: '0.75rem', fontSize: '0.78rem', fontWeight: 400, color: 'var(--error-color)' }}>⚠ Workers stalled</span>}
-              {!pipelineOk && !workersStalled && totalQueued > 0 && <span style={{ marginLeft: '0.75rem', fontSize: '0.78rem', fontWeight: 400, color: 'var(--warning-color, #f59e0b)' }}>{totalQueued} in queue</span>}
+              {workersStalled && <span style={{ marginLeft: '0.75rem', fontSize: '0.78rem', fontWeight: 400, color: 'var(--error-color)' }}>⚠ Pipeline stalled</span>}
+              {!pipelineOk && !workersStalled && totalPending > 0 && <span style={{ marginLeft: '0.75rem', fontSize: '0.78rem', fontWeight: 400, color: 'var(--warning-color, #f59e0b)' }}>{totalPending} in progress</span>}
             </span>
             <span style={{ fontSize: '0.9rem' }}>{showAdmin ? '▲' : '▼'}</span>
           </button>
@@ -899,10 +910,10 @@ const Dashboard = () => {
               {(!pipelineOk || workersStalled) && (
                 <div style={{ marginBottom: '1rem', padding: '0.85rem 1rem', background: workersStalled ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.07)', border: `1px solid ${workersStalled ? 'var(--error-color)' : 'var(--warning-color, #f59e0b)'}`, borderRadius: 'var(--radius-sm)' }}>
                   <div className="d-flex flex-wrap gap-3 align-items-center justify-content-between">
-                    <strong style={{ fontSize: '0.9rem' }}>{workersStalled ? 'Fetch workers have stalled — orders stuck in queue' : 'Pipeline activity'}</strong>
+                    <strong style={{ fontSize: '0.9rem' }}>{workersStalled ? 'Pipeline has stalled — cases stuck, not moving' : 'Pipeline activity'}</strong>
                     <div className="d-flex flex-wrap gap-3" style={{ fontSize: '0.83rem' }}>
-                      {(queueStatus.fetch_queue_size || 0) > 0 && <span><span className="badge bg-primary me-1">{queueStatus.fetch_queue_size}</span>Fetch queued</span>}
-                      {(queueStatus.analysis_queue_size || 0) > 0 && <span><span className="badge bg-info me-1">{queueStatus.analysis_queue_size}</span>Analysis queued</span>}
+                      {totalQueued > 0 && <span><span className="badge bg-primary me-1">{totalQueued}</span>Queued</span>}
+                      {totalInProgress > 0 && <span><span className="badge bg-info me-1">{totalInProgress}</span>In progress</span>}
                     </div>
                     {workersStalled && (
                       <span style={{ fontSize: '0.83rem', color: 'var(--gray-600)' }}>
@@ -913,19 +924,21 @@ const Dashboard = () => {
                 </div>
               )}
 
-              {/* Queue stats */}
+              {/* Queue stats -- fetch and analysis shown as one pipeline
+                  (they're almost always one worker turn per case: analysis
+                  runs inline right after a successful fetch), not two
+                  separate queues with two separate active flags. */}
               {queueLoading ? <LoadingPlaceholder text="Loading queue status…" />
                 : queueError ? <ErrorPlaceholder msg={queueError} onRetry={fetchQueueStatus} />
                 : (
                   <>
                     <div className="row g-3 mb-4">
                       {[
-                        { v: queueStatus.fetch_queue_size || 0, l: 'Fetch Queue', c: 'var(--primary-color)' },
-                        { v: queueStatus.analysis_queue_size || 0, l: 'Analysis Queue', c: 'var(--secondary-color)' },
-                        { v: queueStatus.fetch_processing_active ? 'Active' : 'Off', l: 'Fetch Workers', c: queueStatus.fetch_processing_active ? 'var(--success-color)' : 'var(--gray-500)' },
-                        { v: queueStatus.analysis_processing_active ? 'Active' : 'Off', l: 'Analysis Workers', c: queueStatus.analysis_processing_active ? 'var(--success-color)' : 'var(--gray-500)' },
+                        { v: totalQueued, l: 'Queued', c: 'var(--primary-color)' },
+                        { v: totalInProgress, l: 'In Progress', c: 'var(--secondary-color)' },
+                        { v: queueStatus.pipeline_active ? 'Active' : 'Idle', l: 'Pipeline', c: queueStatus.pipeline_active ? 'var(--success-color)' : 'var(--gray-500)' },
                       ].map(({ v, l, c }) => (
-                        <div key={l} className="col-6 col-md-3"><StatCard value={v} label={l} color={c} /></div>
+                        <div key={l} className="col-6 col-md-4"><StatCard value={v} label={l} color={c} /></div>
                       ))}
                     </div>
 
