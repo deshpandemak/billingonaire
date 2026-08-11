@@ -51,6 +51,7 @@ if os.getenv("K_SERVICE"):
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from Board import Board  # noqa: E402
+from Board import SIMPLE_STATUS_KEYS, simple_status_for  # noqa: E402
 from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
@@ -3734,43 +3735,43 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
     loops -- which is what made the Pipeline tab spin forever with
     nothing ever rendering above it.
 
-    Now driven entirely by cheap .count() aggregations on case-details'
-    latest_order_status field (already the source this data came from --
-    see AutoOrderManager._get_case_order_context), the same pattern
-    _count_lifecycle_status already uses for /queue/status.
+    Was then rewritten to cheap .count() aggregations, but still broken
+    down by the legacy order_status vocabulary (not_linked/linked/
+    analysed/order_failed/order_analysis_failed) -- a different status
+    language than the rest of the app (Dashboard, Search Orders) had
+    already moved to (lifecycle_status's four plain-English buckets:
+    waiting/working/ready/attention). Now driven entirely by cheap
+    .count() aggregations per raw lifecycle_status value, bucketed with
+    Board.simple_status_for -- the exact same function Search Orders'
+    status column and the Dashboard's simple-status filter already use, so
+    this table can't drift from what those show.
     """
     try:
         db = firestore.client()
         total_cases = db.collection("case-details").count().get()[0][0].value
 
-        linked = _count_case_details_by_order_status("linked")
-        analysed = _count_case_details_by_order_status("analysed")
-        order_failed = _count_case_details_by_order_status("order_failed")
-        order_analysis_failed = _count_case_details_by_order_status(
-            "order_analysis_failed"
-        )
-        # latest_order_status is absent on cases nothing has fetched yet --
-        # a Firestore equality query can't match a missing field, so
-        # "not_linked" is whatever's left rather than its own query.
-        not_linked = max(
-            0, total_cases - linked - analysed - order_failed - order_analysis_failed
-        )
-
-        status_counts = {
-            "not_linked": not_linked,
-            "linked": linked,
-            "analysed": analysed,
-            "order_failed": order_failed,
-            "order_analysis_failed": order_analysis_failed,
-        }
+        bucket_counts = {k: 0 for k in SIMPLE_STATUS_KEYS}
+        counted = 0
+        for status in ALL_LIFECYCLE_STATUSES:
+            n = _count_lifecycle_status(status)
+            counted += n
+            bucket_counts[simple_status_for(status)] += n
+        # lifecycle_status is absent on cases predating this field (a
+        # Firestore equality query can't match a missing field), so
+        # whatever's left over defaults to "waiting" -- the same default
+        # simple_status_for itself falls back to for an empty status.
+        bucket_counts["waiting"] += max(0, total_cases - counted)
 
         return JSONResponse(
             content={
                 "success": True,
                 "total_cases": total_cases,
-                "status_counts": status_counts,
-                "pending_processing": status_counts["not_linked"]
-                + status_counts["order_failed"],
+                "status_counts": bucket_counts,
+                # Not yet done and not currently moving -- "working" cases
+                # are already in flight (see the Processing Queue card),
+                # so they don't belong in a "needs action" count.
+                "pending_processing": bucket_counts["waiting"]
+                + bucket_counts["attention"],
             }
         )
 
@@ -4042,6 +4043,28 @@ STUCK_LIFECYCLE_STATUSES = (
     "fetch_failed_terminal",
     "analysis_failed_retryable",
     "analysis_failed_terminal",
+)
+
+# Every lifecycle_status a case can be in (case_data_store.py's
+# ALLOWED_LIFECYCLE_TRANSITIONS), queried individually and bucketed with
+# Board.simple_status_for to build /admin/order-status-overview's
+# waiting/working/ready/attention breakdown -- the same four buckets
+# Search Orders' status column and the Dashboard already show, so this
+# table can't present a different status language from the rest of the app.
+ALL_LIFECYCLE_STATUSES = (
+    "board_ingested",
+    "fetch_not_due",
+    "fetch_queued",
+    "fetch_in_progress",
+    "fetch_succeeded",
+    "analysis_queued",
+    "analysis_in_progress",
+    "analysed",
+    "fetch_failed_retryable",
+    "fetch_failed_terminal",
+    "analysis_failed_retryable",
+    "analysis_failed_terminal",
+    "manual_review_required",
 )
 
 

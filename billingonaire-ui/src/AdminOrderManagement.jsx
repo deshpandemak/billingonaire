@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, Button, Form, Alert, Badge, ProgressBar, Table, Modal, Nav } from 'react-bootstrap';
 import { auth } from './lib/firebase';
 import ManualReviewQueue from './components/ManualReviewQueue';
+import { SIMPLE_STATUS } from './lib/lifecycleUtils';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -42,20 +43,17 @@ const AdminOrderManagement = () => {
         fn?.();
     };
 
-    const statusLabels = {
-        'not_linked': 'Not Linked',
-        'linked': 'Order Linked (Not Analysed)',
-        'analysed': 'Linked & Analysed',
-        'order_failed': 'Order Failed',
-        'order_analysis_failed': 'Analysis Failed'
-    };
-
-    const statusVariants = {
-        'not_linked': 'secondary',
-        'linked': 'info',
-        'analysed': 'success',
-        'order_failed': 'danger',
-        'order_analysis_failed': 'warning'
+    // Bulk Order Processing's checkboxes select by these specific legacy
+    // order_status values, not the waiting/working/ready/attention buckets
+    // the rest of the app now shows -- deliberately, since each option here
+    // maps to a distinct RECOVERY ACTION (re-fetch vs re-analyse) that a
+    // single "Attention" bucket would collapse and make ambiguous. Labelled
+    // with the matching SIMPLE_STATUS icon so it still reads as the same
+    // status language, not a competing one.
+    const bulkActionLabels = {
+        'not_linked': `${SIMPLE_STATUS.waiting.icon} Not yet fetched`,
+        'order_failed': `${SIMPLE_STATUS.attention.icon} Download failed`,
+        'order_analysis_failed': `${SIMPLE_STATUS.attention.icon} Analysis failed`,
     };
 
     const loadOverview = useCallback(async () => {
@@ -352,13 +350,20 @@ const AdminOrderManagement = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {Object.entries(overview.status_counts)
-                                                .filter(([status, _count]) => status && status.trim() !== '' && statusLabels[status])
-                                                .map(([status, count]) => (
+                                            {/* Fixed order (not object-key order) so the
+                                                pipeline's actual progression -- waiting to
+                                                working to ready, with attention called out
+                                                separately -- always reads top to bottom the
+                                                same way Search Orders' status filter lists
+                                                it. */}
+                                            {['waiting', 'working', 'ready', 'attention'].map((status) => {
+                                                const count = overview.status_counts[status] ?? 0;
+                                                const cfg = SIMPLE_STATUS[status];
+                                                return (
                                                 <tr key={status}>
                                                     <td>
-                                                        <Badge bg={statusVariants[status]}>
-                                                            {statusLabels[status]}
+                                                        <Badge bg={cfg.variant}>
+                                                            {cfg.icon} {cfg.label}
                                                         </Badge>
                                                     </td>
                                                     <td>{count.toLocaleString()}</td>
@@ -366,12 +371,13 @@ const AdminOrderManagement = () => {
                                                     <td>
                                                         <ProgressBar
                                                             now={getStatusPercentage(status)}
-                                                            variant={statusVariants[status]}
+                                                            variant={cfg.variant}
                                                             style={{height: '20px'}}
                                                         />
                                                     </td>
                                                 </tr>
-                                            ))}
+                                                );
+                                            })}
                                         </tbody>
                                     </Table>
                                 </>
@@ -502,7 +508,7 @@ const AdminOrderManagement = () => {
                                                         key={status}
                                                         type="checkbox"
                                                         id={`status-${status}`}
-                                                        label={statusLabels[status]}
+                                                        label={bulkActionLabels[status]}
                                                         checked={selectedStatuses.includes(status)}
                                                         onChange={() => handleStatusToggle(status)}
                                                         className="mb-2"

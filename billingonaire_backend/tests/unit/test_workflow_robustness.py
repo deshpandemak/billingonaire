@@ -1150,7 +1150,11 @@ async def test_process_claimed_analysis_case_maps_users_with_the_resolved_board_
 #     I/O with no await -- on a production-sized collection this could tie
 #     up the single event loop thread for minutes, stalling every other
 #     request (including the poll loops) on top of the request that asked
-#     for it. Replaced with cheap .count() aggregations.
+#     for it. Replaced with cheap .count() aggregations, and later
+#     rebucketed from the legacy order_status vocabulary to the same
+#     waiting/working/ready/attention buckets Search Orders and the
+#     Dashboard already use (Board.simple_status_for), so this table can't
+#     present a different status language from the rest of the app.
 # ---------------------------------------------------------------------------
 
 
@@ -1160,25 +1164,16 @@ def _count_result(n):
     return [[SimpleNamespace(value=n)]]
 
 
-@pytest.mark.asyncio
-async def test_order_status_overview_uses_count_aggregations_not_a_full_scan(
-    monkeypatch,
-):
-    counts_by_status = {
-        "linked": 2,
-        "analysed": 5,
-        "order_failed": 1,
-        "order_analysis_failed": 1,
-    }
-
+def _wire_order_status_overview_db(monkeypatch, *, total_cases, counts_by_status=None):
+    counts_by_status = counts_by_status or {}
     mock_collection = MagicMock()
-    mock_collection.count.return_value.get.return_value = _count_result(10)
+    mock_collection.count.return_value.get.return_value = _count_result(total_cases)
     mock_collection.stream.side_effect = AssertionError(
         "must not stream the full collection -- that's the N+1 bug being fixed"
     )
 
     def where_side_effect(field, op, value):
-        assert field == "latest_order_status"
+        assert field == "lifecycle_status"
         assert op == "=="
         where_mock = MagicMock()
         where_mock.count.return_value.get.return_value = _count_result(
@@ -1187,10 +1182,26 @@ async def test_order_status_overview_uses_count_aggregations_not_a_full_scan(
         return where_mock
 
     mock_collection.where.side_effect = where_side_effect
-
     mock_db = MagicMock()
     mock_db.collection.return_value = mock_collection
     monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    return mock_db
+
+
+@pytest.mark.asyncio
+async def test_order_status_overview_uses_count_aggregations_not_a_full_scan(
+    monkeypatch,
+):
+    _wire_order_status_overview_db(
+        monkeypatch,
+        total_cases=10,
+        counts_by_status={
+            "fetch_succeeded": 2,  # working
+            "analysed": 5,  # ready
+            "fetch_failed_terminal": 1,  # attention
+            "analysis_failed_retryable": 1,  # attention
+        },
+    )
 
     response = await main.get_order_status_overview(current_user={"uid": "admin-1"})
 
@@ -1200,41 +1211,60 @@ async def test_order_status_overview_uses_count_aggregations_not_a_full_scan(
     assert data["success"] is True
     assert data["total_cases"] == 10
     assert data["status_counts"] == {
-        "not_linked": 1,  # 10 - 2 - 5 - 1 - 1
-        "linked": 2,
-        "analysed": 5,
-        "order_failed": 1,
-        "order_analysis_failed": 1,
+        "waiting": 1,  # 10 - 2 - 5 - 1 - 1 (uncounted/absent lifecycle_status)
+        "working": 2,
+        "ready": 5,
+        "attention": 2,
     }
-    assert data["pending_processing"] == 2  # not_linked(1) + order_failed(1)
+    assert data["pending_processing"] == 3  # waiting(1) + attention(2)
 
 
 @pytest.mark.asyncio
-async def test_order_status_overview_never_goes_negative_on_uncounted_statuses(
-    monkeypatch,
-):
-    """If the explicit buckets somehow summed to more than total_cases (e.g.
-    a status value outside the known set), not_linked must clamp at 0
-    rather than go negative and produce a nonsensical percentage."""
-    mock_collection = MagicMock()
-    mock_collection.count.return_value.get.return_value = _count_result(2)
+async def test_order_status_overview_matches_boards_simple_status_for(monkeypatch):
+    """Regression guard against the two ever drifting apart: every raw
+    lifecycle_status this endpoint counts must land in the same bucket
+    Board.simple_status_for (Search Orders' status column, the Dashboard's
+    filter) would put it in."""
+    from Board import simple_status_for
 
-    def where_side_effect(field, op, value):
-        where_mock = MagicMock()
-        where_mock.count.return_value.get.return_value = _count_result(5)
-        return where_mock
-
-    mock_collection.where.side_effect = where_side_effect
-    mock_db = MagicMock()
-    mock_db.collection.return_value = mock_collection
-    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    counts_by_status = {status: 1 for status in main.ALL_LIFECYCLE_STATUSES}
+    _wire_order_status_overview_db(
+        monkeypatch,
+        total_cases=len(counts_by_status),
+        counts_by_status=counts_by_status,
+    )
 
     response = await main.get_order_status_overview(current_user={"uid": "admin-1"})
 
     import json
 
     data = json.loads(response.body)
-    assert data["status_counts"]["not_linked"] == 0
+    expected = {k: 0 for k in ("waiting", "working", "ready", "attention")}
+    for status in main.ALL_LIFECYCLE_STATUSES:
+        expected[simple_status_for(status)] += 1
+
+    assert data["status_counts"] == expected
+
+
+@pytest.mark.asyncio
+async def test_order_status_overview_never_goes_negative_on_uncounted_statuses(
+    monkeypatch,
+):
+    """If the explicit buckets somehow summed to more than total_cases,
+    "waiting" (the catch-all for absent lifecycle_status) must clamp at 0
+    rather than go negative and produce a nonsensical percentage."""
+    _wire_order_status_overview_db(
+        monkeypatch,
+        total_cases=2,
+        counts_by_status={status: 5 for status in main.ALL_LIFECYCLE_STATUSES},
+    )
+
+    response = await main.get_order_status_overview(current_user={"uid": "admin-1"})
+
+    import json
+
+    data = json.loads(response.body)
+    assert all(v >= 0 for v in data["status_counts"].values())
 
 
 # ---------------------------------------------------------------------------
