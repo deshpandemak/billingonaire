@@ -258,8 +258,12 @@ const AdminOrderManagement = () => {
     };
 
     const getStatusPercentage = (status) => {
-        if (!overview || !overview.total_cases) return 0;
-        return ((overview.status_counts[status] / overview.total_cases) * 100).toFixed(1);
+        if (!overview || !overview.total_cases) return '0.0';
+        // Guards a stale/mismatched backend response (e.g. mid-deploy, an
+        // older backend still on the previous status_counts keys) showing
+        // "NaN%" instead of a plain, harmless "0.0%".
+        const count = overview.status_counts?.[status] ?? 0;
+        return ((count / overview.total_cases) * 100).toFixed(1);
     };
 
     if (!currentUser) {
