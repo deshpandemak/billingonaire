@@ -397,7 +397,17 @@ const Dashboard = () => {
   // ─── Effects — staggered to avoid 7 simultaneous Firestore scans ────────────
   useEffect(() => { fetchUserProfile(); }, [fetchUserProfile]);
   useEffect(() => { fetchBoardSummary(); }, [fetchBoardSummary]);
-  useEffect(() => { const t = setTimeout(fetchOverview,   150); return () => clearTimeout(t); }, [fetchOverview]);
+  useEffect(() => {
+    // Was fetch-once-on-mount only, with no recurring refresh -- the
+    // "Fetch orders" / "Analyse" workflow-strip numbers looked frozen no
+    // matter how much real progress the pipeline made, because nothing
+    // ever asked again after the initial page load. /orders/overview-stats
+    // is cached server-side for 120s regardless, so polling every 30s here
+    // costs nothing extra once that cache is warm.
+    const t = setTimeout(fetchOverview, 150);
+    const id = window.setInterval(fetchOverview, 30000);
+    return () => { clearTimeout(t); window.clearInterval(id); };
+  }, [fetchOverview]);
   useEffect(() => { const t = setTimeout(fetchAgpStats,   300); return () => clearTimeout(t); }, [fetchAgpStats]);
   useEffect(() => { const t = setTimeout(fetchMonthlyAvg, 450); return () => clearTimeout(t); }, [fetchMonthlyAvg]);
   useEffect(() => { const t = setTimeout(fetchMatters,    600); return () => clearTimeout(t); }, [fetchMatters]);
