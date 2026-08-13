@@ -1408,6 +1408,11 @@ class OrderDocumentAnalyzer:
 
         # Gate: no-time phrases mean the matter was never heard → always ADJOURNED.
         # Checked before the ML scorer so scoring noise cannot override this.
+        # Deliberately absolute: an AGP being named on an order the matter
+        # never reached is not the same as that AGP actually appearing and
+        # arguing, so the AGP-presence business rule below (however
+        # confident) must never be allowed to override this gate. Confirmed
+        # with the user -- do not relax this ordering.
         if any(p.search(text) for p in self._compiled_no_time):
             logging.info("⏱️ NO_TIME gate triggered — classifying as ADJOURNED")
             return "ADJOURNED", 0.95
