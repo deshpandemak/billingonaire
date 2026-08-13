@@ -154,20 +154,41 @@ jobs:
           BACKEND_ENV_VARS="ORDER_PROCESSING_WORKERS=3,ORDER_MAX_SEQUENCE_RETRIES=50,GOOGLE_CLOUD_PROJECT=${{ env.GCP_PROJECT_ID }},COURT_SCRAPER_PROVIDER=direct_api,ORDER_PDF_BUCKET=billingonaire-court-orders"
 
           # firebase/backend-cloudrun-deploy.sh (the manual deploy path) has
-          # always mounted this secret conditionally; this automated CD path
-          # never did, so every push-triggered deploy silently ran WITHOUT
-          # GEMINI_API_KEY even after the secret was created -- every LLM
-          # feature (review-copilot assist, the assistant chat, portal-drift
-          # diagnosis) degraded to its no-key fallback with nothing in the
-          # UI to say why. Mirror the same conditional mount here.
-          SECRETS_FLAG=""
+          # always mounted these secrets conditionally; this automated CD
+          # path never did, so every push-triggered deploy silently ran
+          # WITHOUT them even after they were created. Mirror the same
+          # conditional mounts here. Both are optional -- a deployment that
+          # never created either secret sees no change.
+          SECRET_MOUNTS=()
+
+          # Without it, every LLM feature (review-copilot assist, the
+          # assistant chat, portal-drift diagnosis) degrades to its no-key
+          # fallback with nothing in the UI to say why.
           if gcloud secrets describe GEMINI_API_KEY >/dev/null 2>&1; then
             echo "🔑 GEMINI_API_KEY secret found -- mounting into the service."
-            SECRETS_FLAG="--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            SECRET_MOUNTS+=("GEMINI_API_KEY=GEMINI_API_KEY:latest")
           else
             echo "ℹ️  GEMINI_API_KEY secret not found -- deploying without the AI"
             echo "    suggestion feature. Run ./firebase/setup-secrets.sh with"
             echo "    GEMINI_API_KEY set, then redeploy, to enable it."
+          fi
+
+          # Without it, the Cloud Scheduler keep-alive tick
+          # (POST /internal/queue/tick) can't authenticate, so the
+          # fetch/analyse poll loops only run while an instance is warm
+          # from other traffic.
+          if gcloud secrets describe SCHEDULER_SHARED_SECRET >/dev/null 2>&1; then
+            echo "🔑 SCHEDULER_SHARED_SECRET secret found -- mounting into the service."
+            SECRET_MOUNTS+=("SCHEDULER_SHARED_SECRET=SCHEDULER_SHARED_SECRET:latest")
+          else
+            echo "ℹ️  SCHEDULER_SHARED_SECRET secret not found -- deploying without"
+            echo "    the Cloud Scheduler keep-alive tick. Run"
+            echo "    ./firebase/setup-scheduler.sh to enable it."
+          fi
+
+          SECRETS_FLAG=""
+          if [ ${#SECRET_MOUNTS[@]} -gt 0 ]; then
+            SECRETS_FLAG="--set-secrets=$(IFS=,; echo "${SECRET_MOUNTS[*]}")"
           fi
 
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \

@@ -42,18 +42,39 @@ gcloud builds submit --tag gcr.io/billingonaire/billingonaire-backend .
 echo "🚀 Deploying to Cloud Run..."
 echo "ℹ️  Backend will use Application Default Credentials (ADC) via service account"
 
-# The review-copilot AI suggestion feature is optional -- only mount the
-# secret if it's actually been created (via ./firebase/setup-secrets.sh
-# with GEMINI_API_KEY set). Without it, POST /admin/orders/{id}/ai-suggestion
-# just returns 501 and the manual review queue works exactly as before.
-SECRETS_FLAG=""
+# Both secrets below are optional and mounted only if they've actually been
+# created, so a deployment that never set either up sees no change.
+SECRET_MOUNTS=()
+
+# The review-copilot AI suggestion feature: without it,
+# POST /admin/orders/{id}/ai-suggestion just returns 501 and the manual
+# review queue works exactly as before. Created via ./firebase/setup-secrets.sh.
 if gcloud secrets describe GEMINI_API_KEY >/dev/null 2>&1; then
   echo "🔑 GEMINI_API_KEY secret found -- mounting into the service."
-  SECRETS_FLAG="--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest"
+  SECRET_MOUNTS+=("GEMINI_API_KEY=GEMINI_API_KEY:latest")
 else
   echo "ℹ️  GEMINI_API_KEY secret not found -- deploying without the AI"
   echo "    suggestion feature. Run ./firebase/setup-secrets.sh with"
   echo "    GEMINI_API_KEY set, then redeploy, to enable it."
+fi
+
+# The Cloud Scheduler keep-alive tick (POST /internal/queue/tick): without
+# it the fetch/analyse poll loops only run while an instance is warm from
+# other traffic -- --min-instances=0 means the backlog stops draining
+# entirely once nobody has a browser tab open. Created via
+# ./firebase/setup-scheduler.sh, which also creates the Scheduler job itself.
+if gcloud secrets describe SCHEDULER_SHARED_SECRET >/dev/null 2>&1; then
+  echo "🔑 SCHEDULER_SHARED_SECRET secret found -- mounting into the service."
+  SECRET_MOUNTS+=("SCHEDULER_SHARED_SECRET=SCHEDULER_SHARED_SECRET:latest")
+else
+  echo "ℹ️  SCHEDULER_SHARED_SECRET secret not found -- deploying without the"
+  echo "    Cloud Scheduler keep-alive tick. Run ./firebase/setup-scheduler.sh"
+  echo "    to set it up, then redeploy, to enable it."
+fi
+
+SECRETS_FLAG=""
+if [ ${#SECRET_MOUNTS[@]} -gt 0 ]; then
+  SECRETS_FLAG="--set-secrets=$(IFS=,; echo "${SECRET_MOUNTS[*]}")"
 fi
 
 # --cpu-boost ensures full CPU during cold start so heavy Python

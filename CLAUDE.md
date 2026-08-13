@@ -135,3 +135,7 @@ GitHub Actions (`.github/workflows/ci.yml`) is path-filtered — backend jobs on
 ```
 
 Production URLs: backend `https://billingonaire-backend-819125105651.asia-south1.run.app` · frontend `https://billingonaire.web.app`.
+
+### Keeping the pipeline running (Cloud Scheduler)
+
+The backend deploys with `--min-instances=0`, and the fetch/analyse poll loops only run while a Cloud Run instance is alive — with no HTTP traffic at all (nobody has the Dashboard open), Cloud Run scales to zero and the backlog stops draining entirely. `./firebase/setup-scheduler.sh` is a one-time setup that creates a `SCHEDULER_SHARED_SECRET` (Secret Manager) and a Cloud Scheduler job hitting `POST /internal/queue/tick` every 5 minutes to wake the poll loops. That endpoint is deliberately not gated by the app's normal admin auth (Cloud Scheduler can't hold a Firebase user token) — it's gated by the shared-secret `X-Scheduler-Secret` header instead. Run the setup script once, then redeploy the backend so the secret actually gets mounted.

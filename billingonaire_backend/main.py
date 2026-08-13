@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -4399,6 +4400,51 @@ async def restart_queue_processing(current_user=Depends(require_admin)):
             status_code=500,
             content={"error": f"Failed to restart queue processing: {str(e)}"},
         )
+
+
+# Set (as a Cloud Run secret/env var) to enable POST /internal/queue/tick --
+# see that endpoint's docstring for why it exists and why it can't reuse
+# require_admin. Left unset, the endpoint always 503s: zero effect on any
+# deployment that hasn't opted in.
+_SCHEDULER_SHARED_SECRET = os.environ.get("SCHEDULER_SHARED_SECRET", "")
+
+
+@app.post("/internal/queue/tick", tags=["Queue Management"])
+async def scheduler_queue_tick(request: Request):
+    """Wake both poll loops immediately -- meant to be called by an
+    external scheduler (Cloud Scheduler) on a fixed interval, not by the UI
+    or an admin.
+
+    Cloud Run scales to zero when idle (--min-instances=0), and the fetch/
+    analysis poll loops only run while an instance is alive -- with no HTTP
+    traffic at all, the backlog stops draining entirely no matter how full
+    the queue is. /queue/status already opportunistically wakes the loops
+    on every request, which covers "someone has the Dashboard open," but
+    nothing covers "nobody has a tab open right now." This endpoint plus a
+    Cloud Scheduler job hitting it every few minutes
+    (firebase/setup-scheduler.sh) is the cheapest fix for that gap, without
+    paying for --min-instances=1 running around the clock.
+
+    Deliberately NOT gated by require_admin: Cloud Scheduler has no way to
+    hold an application user's Firebase ID token, only a service-account
+    identity. Gated instead by a shared-secret header -- the common
+    "internal cron endpoint" pattern -- checked with a constant-time
+    comparison so response timing can't leak the secret.
+    """
+    if not _SCHEDULER_SHARED_SECRET:
+        raise HTTPException(status_code=503, detail="Scheduler endpoint not configured")
+    provided = request.headers.get("X-Scheduler-Secret", "")
+    if not hmac.compare_digest(provided, _SCHEDULER_SHARED_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid scheduler secret")
+
+    _wake_fetch_poll.set()
+    _wake_analysis_poll.set()
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": "Fetch and analysis poll loops woken",
+        }
+    )
 
 
 @app.get("/queue/detail", tags=["Queue Management"])

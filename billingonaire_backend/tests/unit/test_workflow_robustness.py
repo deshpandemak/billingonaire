@@ -2465,3 +2465,63 @@ def test_query_claim_candidates_backlog_tops_up_remaining_room_only(monkeypatch)
         "board_ingested",
         "board_ingested",
     ]
+
+
+# ---------------------------------------------------------------------------
+# 10. POST /internal/queue/tick -- the Cloud Scheduler endpoint that keeps
+#     the poll loops alive when nobody has a browser tab open.
+#     --min-instances=0 means the pipeline stops entirely with no HTTP
+#     traffic at all; require_admin can't be used here because Cloud
+#     Scheduler has no way to hold an application user's Firebase ID token.
+# ---------------------------------------------------------------------------
+
+
+def _fake_request(headers):
+    return SimpleNamespace(headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_503s_when_not_configured(monkeypatch):
+    """No SCHEDULER_SHARED_SECRET set -> the endpoint is inert. This must
+    be the default (unset) behaviour so deployments that never opted into
+    the scheduler see zero change."""
+    monkeypatch.setattr(main, "_SCHEDULER_SHARED_SECRET", "")
+    with pytest.raises(main.HTTPException) as exc_info:
+        await main.scheduler_queue_tick(_fake_request({}))
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_403s_on_wrong_secret(monkeypatch):
+    monkeypatch.setattr(main, "_SCHEDULER_SHARED_SECRET", "correct-secret")
+    with pytest.raises(main.HTTPException) as exc_info:
+        await main.scheduler_queue_tick(
+            _fake_request({"X-Scheduler-Secret": "wrong-secret"})
+        )
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_403s_on_missing_header(monkeypatch):
+    monkeypatch.setattr(main, "_SCHEDULER_SHARED_SECRET", "correct-secret")
+    with pytest.raises(main.HTTPException) as exc_info:
+        await main.scheduler_queue_tick(_fake_request({}))
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_wakes_both_poll_loops_on_correct_secret(monkeypatch):
+    monkeypatch.setattr(main, "_SCHEDULER_SHARED_SECRET", "correct-secret")
+    wake_fetch = Mock()
+    wake_analysis = Mock()
+    monkeypatch.setattr(main, "_wake_fetch_poll", SimpleNamespace(set=wake_fetch))
+    monkeypatch.setattr(main, "_wake_analysis_poll", SimpleNamespace(set=wake_analysis))
+
+    response = await main.scheduler_queue_tick(
+        _fake_request({"X-Scheduler-Secret": "correct-secret"})
+    )
+    import json
+
+    assert json.loads(response.body)["success"] is True
+    wake_fetch.assert_called_once()
+    wake_analysis.assert_called_once()
