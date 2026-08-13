@@ -26,10 +26,11 @@ class TestOrderDocumentAnalyzer:
 
         result = analyzer._classify_order(order_text)
         if result:
-            # _classify_order returns (category, score) tuple
-            category, score = result
+            # _classify_order returns (category, score, matched_nothing) tuple
+            category, score, matched_nothing = result
             assert category in ["ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"]
             assert isinstance(score, (int, float))
+            assert isinstance(matched_nothing, bool)
 
     def test_extract_order_date(self, analyzer):
         """Test order date extraction (private method)"""
@@ -198,7 +199,7 @@ class TestCategoryClassification:
             "The petitioner seeks to withdraw the petition. "
             "The matter is adjourned to 15/10/2024."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     def test_adjourned_not_classified_as_disposed_when_final_order_referenced(
@@ -209,7 +210,7 @@ class TestCategoryClassification:
             "In compliance of the final order dated 01/01/2024, "
             "stand over to next date."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     def test_adjourned_not_classified_as_disposed_when_ia_dismissed(self, analyzer):
@@ -219,7 +220,7 @@ class TestCategoryClassification:
             "The application for time is dismissed. "
             "The matter is adjourned to 15/10/2024."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     def test_heard_and_adjourned_when_interim_relief_granted(self, analyzer):
@@ -228,20 +229,20 @@ class TestCategoryClassification:
             "Interim relief is granted. Stand over to 15/10/2024. "
             "Interim order to continue."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "HEARD_AND_ADJOURNED"
 
     def test_disposed_off_correctly_classified(self, analyzer):
         """Disposal via 'disposed off as infructuous' must still be DISPOSED_OFF."""
         text = "These Petitions are disposed off as being infructuous."
-        category, confidence = analyzer._classify_order(text)
+        category, confidence, _ = analyzer._classify_order(text)
         assert category == "DISPOSED_OFF"
         assert confidence >= 0.6
 
     def test_petition_dismissed_classified_as_disposed(self, analyzer):
         """'Petition is dismissed for want of prosecution' must be DISPOSED_OFF."""
         text = "The petition is dismissed for want of prosecution."
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "DISPOSED_OFF"
 
     def test_heard_and_adjourned_with_court_directives(self, analyzer):
@@ -255,7 +256,7 @@ class TestCategoryClassification:
             "Stand over to 24th February, 2025. "
             "Ad-interim order granted earlier to continue till then."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "HEARD_AND_ADJOURNED"
 
     def test_paucity_of_time_classified_as_adjourned(self, analyzer):
@@ -264,7 +265,7 @@ class TestCategoryClassification:
             "Due to paucity of time, stand over to 23/10/2024. "
             "Interim order, if any, to continue till then."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     @pytest.mark.parametrize(
@@ -282,7 +283,7 @@ class TestCategoryClassification:
     )
     def test_matter_did_not_reach_is_adjourned(self, analyzer, text):
         """Every 'the matter never reached the bench' phrasing must be ADJOURNED."""
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     def test_no_time_gate_beats_disposal_phrase_from_citation(self, analyzer):
@@ -297,7 +298,7 @@ class TestCategoryClassification:
             "In Sharma vs State of Maharashtra the petition was dismissed. "
             "Stand over to 12/08/2026."
         )
-        category, confidence = analyzer._classify_order(text)
+        category, confidence, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
         assert confidence >= 0.9
 
@@ -321,7 +322,7 @@ class TestCategoryClassification:
     )
     def test_no_time_gate_does_not_over_trigger(self, analyzer, text, expected):
         """Genuine disposals must survive the expanded no-time vocabulary."""
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == expected
 
     # ------------------------------------------------------------------
@@ -380,7 +381,7 @@ class TestCategoryClassification:
             "Wrongly on board. To be placed before the appropriate Bench "
             "having the said assignment as per the roster."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
 
     def test_app_pattern_does_not_match_appellate_jurisdiction_boilerplate(
@@ -396,8 +397,71 @@ class TestCategoryClassification:
             "V/S The State Of Maharashtra ....RESPONDENT. "
             "The matter is adjourned to 10th March 2025."
         )
-        category, _ = analyzer._classify_order(text)
+        category, _, _ = analyzer._classify_order(text)
         assert category == "ADJOURNED"
+
+    # ------------------------------------------------------------------
+    # matched_nothing guard -- a classification adjustment must never move
+    # a "the classifier understood nothing about this order" result across
+    # the review gate (AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD, 0.55).
+    # Before this guard, _classify_order_enhanced's document-type
+    # multipliers (x1.15 for COMPLETE_ORDER, 0.8+conf*0.2 for
+    # ADJOURNMENT_ONLY) pushed the 0.5 "matched nothing" fallback above
+    # 0.55, so guesses were billed with no human or LLM ever seeing them.
+    # ------------------------------------------------------------------
+
+    def test_classify_order_flags_matched_nothing(self, analyzer):
+        """Text with no matching pattern at all must set matched_nothing."""
+        text = "Registry to place papers before the appropriate bench."
+        category, confidence, matched_nothing = analyzer._classify_order(text)
+        assert category == "ADJOURNED"
+        assert confidence == 0.5
+        assert matched_nothing is True
+
+    def test_classify_order_does_not_flag_matched_nothing_on_real_signal(
+        self, analyzer
+    ):
+        """A genuine match (even a weak one) must NOT set matched_nothing."""
+        text = "Interim relief is granted. Stand over to 15/10/2024."
+        category, confidence, matched_nothing = analyzer._classify_order(text)
+        assert matched_nothing is False
+
+    @pytest.mark.parametrize(
+        "document_type", ["COMPLETE_ORDER", "ADJOURNMENT_ONLY", "PARTIAL"]
+    )
+    def test_matched_nothing_never_crosses_the_review_gate(
+        self, analyzer, document_type
+    ):
+        """The abbreviated 'S.O.' form (standard Bombay HC shorthand for
+        'stand over') matches no classification pattern. Regardless of
+        document_type, the enhanced classifier's confidence must stay
+        below AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD (0.55) so the
+        case reaches manual review / the LLM assist instead of being
+        billed as a silent guess."""
+        text = "S.O. to 3 weeks."
+        structure = {"document_type": document_type, "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+        assert confidence < 0.55
+
+    def test_matched_nothing_confidence_is_unmodified_by_complete_order_boost(
+        self, analyzer
+    ):
+        """Direct regression for the exact arithmetic that broke: 0.5 * 1.15
+        = 0.575, which used to clear the 0.55 gate."""
+        text = "S.O. to 3 weeks."
+        structure = {"document_type": "COMPLETE_ORDER", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert confidence == 0.5
+
+    def test_genuine_low_confidence_match_still_reaches_review(self, analyzer):
+        """A real (non-matched_nothing) but weak match should still be able
+        to land below the review gate -- the guard must not accidentally
+        make every case unreviewable."""
+        text = "Stand over to 3 weeks."
+        structure = {"document_type": "COMPLETE_ORDER", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert confidence < 0.55
 
 
 class TestEntityExtraction:

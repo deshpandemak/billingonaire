@@ -265,8 +265,11 @@ def explain(analyzer, pdf: Path) -> None:
         for pattern, n, w in sorted(hits, key=lambda h: -h[1] * h[2]):
             print(f"     x{n}  w={w}  {pattern}")
 
-    category, confidence = analyzer._classify_order(text)
-    print(f"\n→ _classify_order      : {category}  ({confidence:.2f})")
+    category, confidence, matched_nothing = analyzer._classify_order(text)
+    print(
+        f"\n→ _classify_order      : {category}  ({confidence:.2f})"
+        f"{'  [matched_nothing]' if matched_nothing else ''}"
+    )
     structure = analyzer._parse_document_structure(text)
     cat2, conf2 = analyzer._classify_order_enhanced(text, structure)
     print(f"→ _classify_order_enhanced: {cat2}  ({conf2:.2f})")

@@ -509,8 +509,17 @@ class OrderDocumentAnalyzer:
         r"\brule\s+(?:is\s+)?made\s+absolute\b",
     ]
 
-    def _classify_order(self, text: str) -> Tuple[str, float]:
-        """Classify order into categories with confidence score"""
+    def _classify_order(self, text: str) -> Tuple[str, float, bool]:
+        """Classify order into categories with confidence score.
+
+        Returns (category, confidence, matched_nothing) -- matched_nothing is
+        True only for the "no pattern matched at all" fallback below. Callers
+        must treat that case as an unmodifiable floor: it is the exact
+        signature of a case the classifier understood nothing about, and no
+        downstream adjustment may raise its confidence (see
+        _classify_order_enhanced's matched_nothing guard) -- doing so is what
+        let unreviewed guesses reach bills before this flag existed.
+        """
         scores: Dict[str, Dict[str, float]] = {}
         logging.info(f"🔍 Classifying order text (length: {len(text)} chars)")
 
@@ -526,7 +535,7 @@ class OrderDocumentAnalyzer:
                 "⏱️ NO_TIME gate triggered by %r — classifying as ADJOURNED",
                 no_time_hit,
             )
-            return "ADJOURNED", 0.95
+            return "ADJOURNED", 0.95, False
 
         for category, patterns in self.order_patterns.items():
             score = 0.0
@@ -563,7 +572,7 @@ class OrderDocumentAnalyzer:
         # Determine best category with enhanced logic
         if not any(scores[cat]["score"] > 0 for cat in scores):
             logging.warning("⚠️ No patterns matched - defaulting to ADJOURNED")
-            return "ADJOURNED", 0.5  # Default assumption
+            return "ADJOURNED", 0.5, True  # Default assumption, unmodifiable floor
 
         # CRITICAL: Give absolute priority to DISPOSED_OFF only when a strong,
         # high-confidence disposal pattern matches.  Weak patterns (e.g. standalone
@@ -580,7 +589,7 @@ class OrderDocumentAnalyzer:
             logging.info(
                 f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f}) - STRONG DISPOSAL DETECTED"
             )
-            return best_category, confidence
+            return best_category, confidence, False
 
         # Enhanced category selection logic for non-disposal cases
         best_category = max(scores.keys(), key=lambda x: scores[x]["score"])
@@ -628,7 +637,7 @@ class OrderDocumentAnalyzer:
             confidence = min(confidence * 1.2, 1.0)
 
         logging.info(f"✅ FINAL DECISION: {best_category} (confidence={confidence:.2f})")
-        return best_category, confidence
+        return best_category, confidence, False
 
     def _parse_document_structure(self, text: str) -> Dict[str, Any]:
         """
@@ -1404,7 +1413,20 @@ class OrderDocumentAnalyzer:
             return "ADJOURNED", 0.95
 
         # For all document types, use the improved classification logic
-        category, confidence = self._classify_order(text)
+        category, confidence, matched_nothing = self._classify_order(text)
+
+        # matched_nothing means the base classifier found not a single
+        # matching pattern and fell back to ADJOURNED @ 0.5 -- the exact
+        # signature of "the classifier understood nothing about this order".
+        # None of the adjustments below may run in that case: every one of
+        # them only ever raises confidence, and the review gate (0.55) sits
+        # just above the 0.5 floor. Before this guard existed, the
+        # COMPLETE_ORDER x1.15 multiplier alone pushed 0.5 -> 0.575, silently
+        # billing a guess that neither a human nor the LLM ever saw. Do not
+        # relax this guard without re-deriving the arithmetic against
+        # AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD.
+        if matched_nothing:
+            return category, confidence
 
         # BUSINESS RULE: If AGP names are present AND text contains "stand over",
         # classify as HEARD_AND_ADJOURNED instead of ADJOURNED

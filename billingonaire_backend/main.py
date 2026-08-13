@@ -6212,8 +6212,8 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
     order_link.  This prevents a later hearing's order from being shown
     against an earlier bill entry for the same case.
     """
+    case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
     try:
-        case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
         case_details = (
             get_auto_order_manager().case_store.get_case_details(case_ref) or {}
         )
@@ -6257,18 +6257,16 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
         # How sure the classifier was. Surfaced on the bill so a low-confidence
         # categorisation — which sets the fee — is visible before submission.
         category_confidence = target_order.get("order_category_confidence")
-        order_text = str(target_order.get("order_text") or "").lower()
-        order_disposal_reason = str(
-            target_order.get("order_disposal_reason") or ""
-        ).lower()
 
-        # Fee calculation logic based on order category and content
-        # Check for disposal first (highest fee)
-        if (
-            "DISPOSED" in order_category
-            or "disposed" in order_text
-            or "disposed" in order_disposal_reason
-        ):
+        # Fee calculation logic based on order category alone. order_category
+        # is the single source of truth here -- it must never be widened back
+        # to also match against order text/reason strings: order_analyzer
+        # never persists order_text to Firestore (only category + confidence
+        # + a few metadata fields), so a text-matching branch here would
+        # either be permanently dead or, the moment text does get persisted,
+        # silently start letting stray prose in the order body pick the fee
+        # instead of the classifier's actual category.
+        if "DISPOSED" in order_category:
             return {
                 "result": "WP DISPOSED OF",
                 "fee": 2500,
@@ -6288,7 +6286,7 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
             }
 
         # Check for simple adjournment (lowest fee)
-        elif "ADJOURNED" in order_category or "adjourned" in order_text:
+        elif "ADJOURNED" in order_category:
             return {
                 "result": "ADJOURNED",
                 "fee": 1250,
@@ -6316,12 +6314,21 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
                 }
 
     except Exception as e:
-        logger.error(f"Error calculating case fee for case: {e}")
+        # Bills the same floor rate as a legitimate "no order on file" (there
+        # is no better fee to guess) but order_category distinguishes the two
+        # causes -- None means genuinely no order was ever matched; this
+        # sentinel means the calculation itself crashed and needs
+        # investigating, not just review. Previously both cases returned an
+        # identical dict, so a code fault was indistinguishable from a normal
+        # gap on the bill and in bill_qa's flagged-entries output.
+        logger.error(
+            f"Error calculating case fee for case_ref={case_ref}: {e}", exc_info=True
+        )
         return {
             "result": "*ADJOURNED*",
             "fee": 1250,
             "order_link": None,
-            "order_category": None,
+            "order_category": "CALCULATION_ERROR",
         }
 
 

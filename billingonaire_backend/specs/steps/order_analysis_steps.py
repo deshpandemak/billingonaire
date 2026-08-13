@@ -132,7 +132,7 @@ def post_analyze_order(ctx, api_client, auth_headers):
     from order_analyzer import OrderDocumentAnalyzer
 
     analyzer = OrderDocumentAnalyzer()
-    inferred_category, _ = analyzer._classify_order(order_text)
+    inferred_category, _, _ = analyzer._classify_order(order_text)
 
     mock_result = MagicMock()
     mock_result.order_category = inferred_category

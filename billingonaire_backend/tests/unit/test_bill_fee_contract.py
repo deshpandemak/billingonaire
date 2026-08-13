@@ -78,6 +78,34 @@ def test_the_three_fees_are_distinct_and_ordered():
     assert len(set(fees.values())) == 3
 
 
+def test_order_text_never_influences_the_fee():
+    """order_category must be the only fee input. order_analyzer never
+    persists order_text to Firestore, so stray prose in a field nobody
+    writes must not be able to pick the fee -- and if order_text is ever
+    persisted later, it still must not silently start driving billing."""
+    order = _order("ADJOURNED")
+    order["order_text"] = "the petition is disposed of and rule is made absolute"
+    with _with_orders([order]):
+        out = calculate_case_fee(CASE, board_date="2025-03-01")
+    assert out["result"] == "ADJOURNED"
+    assert out["fee"] == 1250
+
+
+def test_calculation_error_is_distinguishable_from_no_order_on_file():
+    """A crash inside calculate_case_fee must not be silently indistinguishable
+    from the ordinary 'no order matched this hearing' case -- both bill at
+    the same floor rate (there is no better fee to guess) but order_category
+    must carry a distinct marker so bill_qa / a human can tell a code fault
+    from a normal gap."""
+    manager = MagicMock()
+    manager.case_store.get_case_details.side_effect = RuntimeError("boom")
+    with patch("main.get_auto_order_manager", return_value=manager):
+        out = calculate_case_fee(CASE, board_date="2025-03-01")
+    assert out["result"] == "*ADJOURNED*"
+    assert out["fee"] == 1250
+    assert out["order_category"] == "CALCULATION_ERROR"
+
+
 class TestConfidenceReachesTheBill:
     """The bill screen warns about guesses only if the backend sends the
     numbers. Two separate bill-entry paths previously disagreed on the field
