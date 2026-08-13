@@ -1428,15 +1428,32 @@ class OrderDocumentAnalyzer:
         if matched_nothing:
             return category, confidence
 
-        # BUSINESS RULE: If AGP names are present AND text contains "stand over",
-        # classify as HEARD_AND_ADJOURNED instead of ADJOURNED
-        # This indicates the matter was heard (AGP appeared) even though just adjourned
-        has_agp_names = bool(document_structure.get("advocates_section", "").strip())
-        has_standover = bool(re.search(r"\bstand\s+over\b", text, re.IGNORECASE))
+        # BUSINESS RULE: an AGP named on the order means the government's
+        # counsel appeared -- even if the matter was only adjourned/stood
+        # over, that is a billable appearance, not a silent non-appearance
+        # adjournment. Classify as HEARD_AND_ADJOURNED instead of ADJOURNED.
+        #
+        # This used to also require the literal phrase "stand over" AND used
+        # document_structure["advocates_section"] to detect the AGP, which
+        # never worked: _extract_with_pdfplumber (ml_enhanced_parser.py)
+        # joins every line with a space, not a newline, before this text
+        # ever reaches _parse_document_structure -- whose section detection
+        # is entirely newline-based (`text.split("\n")`). A real order's
+        # extracted text has zero newlines, so it collapses to a single
+        # "line" and advocates_section is empty for every real order except
+        # by the coincidence of which section pattern that one giant line
+        # happens to match first. Checking entity_patterns["AGP_ENHANCED"]
+        # directly against the raw text sidesteps that broken pipeline
+        # entirely -- confirmed against real orders where advocates_section
+        # was empty but an AGP name was genuinely present in the text.
+        has_agp_names = any(
+            re.search(pattern, text, re.IGNORECASE)
+            for pattern in self.entity_patterns["AGP_ENHANCED"]
+        )
 
-        if category == "ADJOURNED" and has_agp_names and has_standover:
+        if category == "ADJOURNED" and has_agp_names:
             logging.info(
-                "Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP present + Standover found"
+                "Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP named on the order"
             )
             category = "HEARD_AND_ADJOURNED"
             confidence = min(

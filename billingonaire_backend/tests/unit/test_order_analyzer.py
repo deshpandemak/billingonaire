@@ -463,6 +463,80 @@ class TestCategoryClassification:
         category, confidence = analyzer._classify_order_enhanced(text, structure)
         assert confidence < 0.55
 
+    # ------------------------------------------------------------------
+    # AGP-presence business rule: an AGP named on the order means the
+    # government's counsel appeared -- even a bare adjournment is then a
+    # billable appearance (HEARD_AND_ADJOURNED), not a silent
+    # non-appearance (ADJOURNED). Previously gated on BOTH an AGP name
+    # AND the literal phrase "stand over", using
+    # document_structure["advocates_section"] to detect the AGP -- which
+    # was always empty for real orders (see the comment above this rule
+    # in order_analyzer.py: PDF text extraction joins lines with spaces,
+    # not newlines, so the newline-based section parser never finds an
+    # advocates section). Confirmed empirically against real Bombay HC
+    # orders before this fix: WP-10460/2023 and WP-10466/2025 both name
+    # an AGP and were classified as plain ADJOURNED.
+    # ------------------------------------------------------------------
+
+    def test_agp_named_promotes_bare_adjournment_to_heard_and_adjourned(self, analyzer):
+        """No 'stand over' phrase at all -- AGP presence alone must be
+        enough now (this is the real WP-10466/2025 order text: an
+        administrative mis-listing, not a hearing, but Smt. P.M.J.
+        Deshpande, AGP is named)."""
+        text = (
+            "Prajakta Hanumant Koli ....PETITIONER V/S The State Of "
+            "Maharashtra Dept Of Tribal Development And Anr Adv Sahil "
+            "Chaudhari i/b Yeramwar sushant chandrakantrao for Petitioner "
+            "Smt. P.M.J. Deshpande AGP CORAM : HON'BLE JUSTICE REVATI "
+            "MOHITE DERE & HON'BLE JUSTICE DR. NEELA KEDAR GOKHALE, JJ "
+            "DATE : 7th August, 2025 P.C. : Wrongly on board. Remove "
+            "from the Board."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+
+    def test_no_agp_named_stays_plain_adjourned(self, analyzer):
+        """The rule must not fire when no AGP is named -- a bare
+        adjournment with no government appearance stays ADJOURNED."""
+        text = "Due to paucity of time, stand over to 23/10/2024."
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+
+    def test_agp_presence_rule_does_not_override_matched_nothing_floor(self, analyzer):
+        """The matched_nothing guard (confidence == 0.5, category ==
+        ADJOURNED, nothing else may run) must still take priority even
+        when an AGP is named -- an AGP mention alone is not itself a
+        classification pattern match, so a case the base classifier
+        understood nothing about must still land at the unmodifiable
+        floor and go to review."""
+        text = "Mr. R. S. Pawar, AGP present. Registry to verify record."
+        structure = {"document_type": "COMPLETE_ORDER", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+        assert confidence == 0.5
+
+    def test_no_time_gate_still_takes_priority_over_agp_presence(self, analyzer):
+        """Documents current, UNCHANGED behavior: the NO_TIME hard gate
+        ("the matter was never reached") is checked before this business
+        rule and returns immediately, so it is not overridden by an AGP
+        being named -- this is the real WP-10601/2014 order text, which
+        genuinely names Ms. Pooja Joshi Deshpande, AGP, but was never
+        reached ("office to list the same on ... for a final hearing").
+        If this is ever meant to change, this test must be updated
+        deliberately, not as a side effect."""
+        text = (
+            "Mr. Rakesh Saroj for the Petitioner. Ms. Pooja Joshi "
+            "Deshpande for Respondent Nos.3 to 5-State, AGP. Considering "
+            "that these proceedings are pending for a long time, office "
+            "to list the same on 6th March, 2025 for a final hearing."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+        assert confidence == 0.95
+
 
 class TestEntityExtraction:
     """Test entity extraction from orders"""
