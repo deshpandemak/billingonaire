@@ -49,6 +49,26 @@ class TestUserMatterMatcher:
         if score is not None:
             assert 0 <= score <= 1
 
+    def test_fuzzy_match_score_delegates_to_the_one_shared_algorithm(
+        self, matcher, matcher_module
+    ):
+        """This method used to carry its own independently-tuned weights
+        (25/35/25/15, no last-name gate) that could disagree with
+        UserManager.match_user_name_to_all_agps / Board's any_name_matches
+        on the same two names -- those already delegate to
+        score_name_match (35/25/25/15, with a last-name gate). Assert exact
+        equality, not just "close", so a re-divergence fails loudly."""
+        cases = [
+            ("Pooja Makarand Joshi Deshpande", "SMT.P.M.JOSHI,AGP"),
+            ("S D Vyas", "SHRI S.D.CHIPADE, AGP"),  # last-name gate: must be 0.0
+            ("", "SHRI S.D.VYAS, AGP"),
+            ("Neha Bhide", ""),
+        ]
+        for user_name, candidate_name in cases:
+            assert matcher.fuzzy_match_score(
+                user_name, candidate_name
+            ) == matcher_module.score_name_match(user_name, candidate_name)
+
     def test_normalize_for_matching(self, matcher):
         """Test name normalization for matching"""
         name = "SMT.POOJA JOSHI,AGP"

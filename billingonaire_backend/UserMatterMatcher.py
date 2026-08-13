@@ -237,112 +237,20 @@ class UserMatterMatcher:
         return unique_variations
 
     def fuzzy_match_score(self, name1: str, name2: str) -> float:
-        """Calculate fuzzy matching score between two names - enhanced for legal name variations"""
-        if not name1 or not name2:
-            return 0.0
+        """Calculate fuzzy matching score between two names.
 
-        # Normalize both names
-        norm1 = self.normalize_name(name1)
-        norm2 = self.normalize_name(name2)
-
-        if norm1 == norm2:
-            return 1.0
-
-        import re
-        from difflib import SequenceMatcher
-
-        # Extract words from both names
-        words1 = re.findall(r"\b\w+\b", norm1)
-        words2 = re.findall(r"\b\w+\b", norm2)
-
-        if not words1 or not words2:
-            return 0.0
-
-        scores = []
-
-        # 1. Last name matching (but more flexible for legal names)
-        last_name_score = 0.0
-        if len(words1) > 0 and len(words2) > 0:
-            last1 = words1[-1]
-            last2 = words2[-1]
-
-            if last1 == last2:
-                last_name_score = 1.0
-            elif last1 in last2 or last2 in last1:
-                last_name_score = 0.8
-            else:
-                # Check for close spelling variations
-                word_similarity = SequenceMatcher(None, last1, last2).ratio()
-                if word_similarity >= 0.75:
-                    last_name_score = word_similarity * 0.9
-                else:
-                    # For legal names, check if the "last name" in name2 could be a middle name in name1
-                    # E.g., "P.M.Joshi" vs "Pooja Makarand Joshi Deshpande"
-                    if (
-                        len(words1) >= 3 and last2 in words1[:-1]
-                    ):  # last2 appears in name1 except actual last name
-                        last_name_score = (
-                            0.7  # Good score for middle name used as last name
-                        )
-
-        scores.append(("last_name", last_name_score, 0.25))  # Reduced weight
-
-        # 2. Initials pattern matching (higher priority for legal names)
-        initials1 = [word[0] for word in words1]
-        initials2 = [word[0] for word in words2]
-
-        initials_match = 0.0
-        if initials1 and initials2:
-            # Check if name2 initials are a prefix of name1 initials
-            if len(initials2) <= len(initials1):
-                matches = sum(
-                    1
-                    for i, init2 in enumerate(initials2)
-                    if i < len(initials1) and init2 == initials1[i]
-                )
-                if matches > 0:
-                    initials_match = matches / len(initials1)
-                    # Boost score if we have strong initials match
-                    if initials_match >= 0.5:
-                        initials_match = min(1.0, initials_match + 0.2)
-
-        scores.append(("initials", initials_match, 0.35))  # Increased weight
-
-        # 3. Full word matches (check for shared names)
-        full_word_matches = 0
-        for word1 in words1:
-            for word2 in words2:
-                if len(word1) > 1 and len(word2) > 1:
-                    if word1 == word2:
-                        full_word_matches += 1
-                    elif word1 in word2 or word2 in word1:
-                        full_word_matches += 0.5
-
-        if words1:
-            full_word_score = min(full_word_matches / len(words1), 1.0)
-            scores.append(("full_words", full_word_score, 0.25))
-
-        # 4. Overall sequence similarity
-        seq_score = SequenceMatcher(None, norm1, norm2).ratio()
-        scores.append(("sequence", seq_score, 0.15))
-
-        # Calculate weighted combined score
-        combined_score = sum(score * weight for _, score, weight in scores)
-
-        # Special case: If initials match very well but last name doesn't,
-        # still give a reasonable score (for cases like "P.M.Joshi" -> "Pooja Makarand Joshi Deshpande")
-        initials_score = next(
-            (score for name, score, _ in scores if name == "initials"), 0
-        )
-        last_name_score = next(
-            (score for name, score, _ in scores if name == "last_name"), 0
-        )
-
-        if initials_score >= 0.6 and last_name_score < 0.5:
-            # Boost the score for strong initials match even with weak last name match
-            combined_score = min(1.0, combined_score + 0.2)
-
-        return combined_score
+        Delegates to the module-level score_name_match -- this method used to
+        carry its own, independently-tuned scoring (different component
+        weights: 25/35/25/15 here vs 35/25/25/15 there, and no last-name
+        gate), which meant this class's matches and UserManager's
+        match_user_name_to_all_agps/Board's any_name_matches could disagree
+        on the exact same two names depending on which code path asked.
+        UserManager.py already made this same fix (see
+        match_user_name_to_all_agps's docstring: "so the scoring logic is
+        defined in one place"); this brings the last caller into line so
+        there is exactly one scoring algorithm in the codebase.
+        """
+        return score_name_match(name1, name2)
 
     def extract_role_from_text(self, text: str) -> Optional[str]:
         """Extract government pleader role from text using pattern matching"""
