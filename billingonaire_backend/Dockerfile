@@ -1,4 +1,3 @@
-# Build timestamp: 2025-10-27T17:55:00Z - Force rebuild with spaCy model and --no-cache flag
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -12,9 +11,6 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Download spaCy language model - using direct URL for reliability
-RUN pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 # Install OS-level dependencies required by Playwright's Chromium browser.
 # We install them manually instead of using --with-deps because that flag

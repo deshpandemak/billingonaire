@@ -27,4 +27,33 @@ def test_normalize_legal_name_empty():
     assert result == ""
 
 
-# Add more tests for _extract_with_pdfplumber, get_enhancement_status, learn_from_correction
+def test_get_enhancement_status_has_no_spacy_or_learning_claims():
+    """spaCy NER and the write-only ml_learning_data/ml_corrections
+    "learning" path were removed (dead weight: spaCy shipped a ~50MB model
+    to produce entity matches that were strictly worse than -- and
+    outranked -- the regex path's own matches; the learning collections
+    were written to on every parse and never read by anything). The status
+    endpoint must not keep claiming either capability exists."""
+    parser = MLEnhancedParser()
+    status = parser.get_enhancement_status()
+    assert "spacy_available" not in status
+    assert "spacy_model" not in status
+    assert "ner" not in status["capabilities"]
+    assert "learning" not in status["capabilities"]
+
+
+def test_enhance_pdf_extraction_does_not_double_extract(monkeypatch):
+    """A second "enhanced preprocessing" pdfplumber pass used to run in
+    parallel and always lose a hardcoded-confidence comparison (0.85 vs
+    0.95) -- pure wasted work on every single PDF parse. Assert the
+    now-removed method is never called."""
+    parser = MLEnhancedParser()
+    assert not hasattr(parser, "_extract_with_advanced_preprocessing")
+    assert not hasattr(parser, "_preprocess_legal_text")
+
+    monkeypatch.setattr(
+        parser, "_extract_with_pdfplumber", lambda content: ("Some order text", 0.95)
+    )
+    result = parser.enhance_pdf_extraction("dummy.pdf", b"irrelevant")
+    assert result.extraction_method == "pdfplumber"
+    assert result.text == "Some order text"

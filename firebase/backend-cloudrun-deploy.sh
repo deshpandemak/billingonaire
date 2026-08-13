@@ -56,8 +56,8 @@ else
   echo "    GEMINI_API_KEY set, then redeploy, to enable it."
 fi
 
-# --cpu-boost ensures full CPU during cold start so heavy Python/ML
-# imports (spaCy, pandas, scikit-learn) complete before the startup probe times out
+# --cpu-boost ensures full CPU during cold start so heavy Python
+# imports (pandas, Playwright/Chromium) complete before the startup probe times out
 gcloud run deploy billingonaire-backend \
   --image=gcr.io/billingonaire/billingonaire-backend \
   --region=asia-south1 \

@@ -1,12 +1,24 @@
 """
-ML-Enhanced PDF Parser for Legal Documents
-==========================================
+PDF Parser for Legal Documents
+===============================
 
-This module provides machine learning enhancements to the existing PDF parsing system:
-1. Advanced text preprocessing and cleaning
-2. Named Entity Recognition (NER) for legal entities (AGP/GP/AG/Addl GP/B'Pnl)
-3. Fuzzy string matching for name mapping to users
-4. Learning algorithm that improves accuracy over time
+This module handles PDF text extraction and entity recognition for legal
+board/order documents:
+1. Text extraction via pdfplumber
+2. Regex-based entity recognition for legal entities (AGP/GP/AG/Addl GP/B'Pnl)
+3. Fuzzy string matching for name mapping to users (rapidfuzz, with a
+   difflib fallback)
+
+A spaCy NER path used to run alongside the regex extraction above and was
+removed: it converted the rich, name-capturing regexes into single-token
+spaCy Matcher rules (e.g. every AGP pattern collapsed to one bare-keyword
+match, `{"LOWER": {"REGEX": r"agp|a\\.g\\.p"}}`), discarding all name-capture
+structure, then emitted those bare-keyword matches at a hardcoded confidence
+of 0.9 -- higher than the regex path's own 0.8 -- so during deduplication
+the strictly worse spaCy hits silently outranked the richer regex ones. It
+shipped a ~50MB model in the Docker image and cost real cold-start time for
+a net-negative result. See dev_server.py's local-dev shim, which already
+documented "no functional difference" running without it.
 
 Author: Billingonaire Legal Billing System
 Date: September 2025
@@ -17,11 +29,7 @@ import io
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
-
-# Basic libraries (always available)
-import pdfplumber
 
 # Advanced ML libraries (optional)
 try:
@@ -31,14 +39,6 @@ try:
 except ImportError:
     # Fallback to difflib for basic fuzzy matching
     RAPIDFUZZ_AVAILABLE = False
-
-try:
-    import spacy
-    from spacy.matcher import Matcher
-
-    SPACY_AVAILABLE = True
-except ImportError:
-    SPACY_AVAILABLE = False
 
 # Firebase imports
 from firebase_admin import firestore
@@ -82,43 +82,10 @@ class MLEnhancedParser:
         self.db = firestore.client()
         self.fallback_parser = fallback_parser
 
-        # Initialize ML components
-        self.nlp = None
-        self.matcher = None
-        self.user_cache = {}
-        self.learning_data = {}
-
-        # Load ML models and components
-        self._initialize_ml_components()
-
         # Legal entity patterns
         self.legal_patterns = self._create_legal_patterns()
 
         logging.info("ML Enhanced Parser initialized successfully")
-
-    def _initialize_ml_components(self):
-        """Initialize spaCy and other ML components"""
-        if SPACY_AVAILABLE:
-            try:
-                # Try to load legal model first, fallback to general model
-                try:
-                    self.nlp = spacy.load("en_core_web_lg")
-                except OSError:
-                    try:
-                        self.nlp = spacy.load("en_core_web_md")
-                    except OSError:
-                        self.nlp = spacy.load("en_core_web_sm")
-
-                # Initialize matcher for legal entities
-                self.matcher = Matcher(self.nlp.vocab)
-                self._add_legal_patterns()
-
-                logging.info(f"SpaCy model loaded: {self.nlp.meta['name']}")
-            except Exception as e:
-                logging.warning(f"Could not initialize spaCy: {e}")
-                self.nlp = None
-        else:
-            logging.warning("SpaCy not available. Install with: pip install spacy")
 
     def _create_legal_patterns(self) -> Dict[str, List[str]]:
         """Create enhanced patterns for legal entity recognition - addressing architect feedback"""
@@ -185,33 +152,6 @@ class MLEnhancedParser:
             ],
         }
 
-    def _add_legal_patterns(self):
-        """Add legal entity patterns to spaCy matcher"""
-        if not self.matcher:
-            return
-
-        for entity_type, patterns in self.legal_patterns.items():
-            for i, pattern in enumerate(patterns):
-                try:
-                    # Convert regex to spaCy pattern
-                    pattern_name = f"{entity_type}_{i}"
-                    # Simple word-based pattern for spaCy
-                    if "AGP" in pattern:
-                        self.matcher.add(
-                            pattern_name, [[{"LOWER": {"REGEX": r"agp|a\.g\.p"}}]]
-                        )
-                    elif "GP" in pattern and "AGP" not in pattern:
-                        self.matcher.add(
-                            pattern_name, [[{"LOWER": {"REGEX": r"^gp$|g\.p"}}]]
-                        )
-                    elif "GOVERNMENT" in pattern:
-                        self.matcher.add(
-                            pattern_name,
-                            [[{"LOWER": "government"}, {"LOWER": "pleader"}]],
-                        )
-                except Exception as e:
-                    logging.warning(f"Could not add pattern {pattern}: {e}")
-
     def enhance_pdf_extraction(
         self, filename: str, file_content: bytes
     ) -> ExtractionResult:
@@ -227,64 +167,45 @@ class MLEnhancedParser:
         """
         logging.info(f"Starting ML-enhanced extraction for {filename}")
 
-        # Try multiple extraction methods
-        extraction_results = []
-
-        # Method 1: Standard pdfplumber (existing method)
+        # A second "enhanced preprocessing" pass used to run here in parallel
+        # (same pdfplumber extraction plus a regex cleanup pass) and the two
+        # results were compared by confidence -- but that confidence was a
+        # hardcoded 0.95 for this path vs 0.85 for the other, so the second
+        # pass could never win the max() comparison and was pure dead work.
+        # Its cleanup pass (_preprocess_legal_text, since removed) was also
+        # actively harmful: a blanket `re.sub(r"\bl\b", "I")` /
+        # `re.sub(r"\b0\b", "O")` applied to text full of case numbers.
         try:
             text, confidence = self._extract_with_pdfplumber(file_content)
-            if text.strip():
-                extraction_results.append(
-                    {"text": text, "confidence": confidence, "method": "pdfplumber"}
-                )
         except Exception as e:
-            logging.warning(f"pdfplumber extraction failed: {e}")
-
-        # Method 2: Enhanced preprocessing for better text quality
-        try:
-            text, confidence = self._extract_with_advanced_preprocessing(file_content)
-            if text.strip():
-                extraction_results.append(
-                    {
-                        "text": text,
-                        "confidence": confidence,
-                        "method": "enhanced_preprocessing",
-                    }
-                )
-        except Exception as e:
-            logging.warning(f"Enhanced preprocessing failed: {e}")
-
-        # Select best extraction result
-        if not extraction_results:
+            raise ValueError(
+                f"Could not extract text from PDF '{filename}'. File may be "
+                f"corrupted or invalid."
+            ) from e
+        if not text.strip():
             raise ValueError(
                 f"Could not extract text from PDF '{filename}'. File may be corrupted or invalid."
             )
 
-        # Choose best result based on confidence and text quality
-        best_result = max(extraction_results, key=lambda x: x["confidence"])
-
-        # Extract legal entities using NER
-        entities = self._extract_legal_entities(best_result["text"])
+        # Extract legal entities via regex
+        entities = self._extract_legal_entities(text)
 
         # Map names to existing users using fuzzy matching
         name_mappings = self._map_names_to_users(entities)
 
         # Calculate overall quality score
         quality_score = self._calculate_quality_score(
-            best_result["text"], entities, name_mappings, best_result["confidence"]
+            text, entities, name_mappings, confidence
         )
 
         result = ExtractionResult(
-            text=best_result["text"],
-            confidence=best_result["confidence"],
-            extraction_method=best_result["method"],
+            text=text,
+            confidence=confidence,
+            extraction_method="pdfplumber",
             entities=entities,
             name_mappings=name_mappings,
             quality_score=quality_score,
         )
-
-        # Store learning data for future improvements
-        self._store_learning_data(filename, result)
 
         logging.info(
             f"ML extraction completed. Method: {result.extraction_method}, Quality: {quality_score:.2f}"
@@ -311,77 +232,10 @@ class MLEnhancedParser:
 
         return text, confidence
 
-    def _extract_with_advanced_preprocessing(
-        self, file_content: bytes
-    ) -> Tuple[str, float]:
-        """Enhanced text extraction with advanced preprocessing"""
-        try:
-            file_obj = io.BytesIO(file_content)
-            text = ""
-            confidence = 0.85  # Good confidence for enhanced preprocessing
-
-            with pdfplumber.open(file_obj) as reader:
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        # Advanced preprocessing
-                        cleaned_text = self._preprocess_legal_text(page_text)
-                        text += cleaned_text + " "
-
-            if not text.strip():
-                confidence = 0.0
-
-            return text, confidence
-
-        except Exception as e:
-            logging.error(f"Advanced preprocessing error: {e}")
-            return "", 0.0
-
-    def _preprocess_legal_text(self, text: str) -> str:
-        """Preprocess legal document text to improve quality"""
-        # Remove excessive whitespace
-        text = re.sub(r"\s+", " ", text)
-
-        # Fix common OCR errors in legal documents
-        text = re.sub(
-            r"\bGOVERNMENT\s+PLEADER\b", "GOVERNMENT PLEADER", text, flags=re.IGNORECASE
-        )
-        text = re.sub(
-            r"\bASS[I1]STANT\s+GOVERNMENT\s+PLEADER\b",
-            "ASSISTANT GOVERNMENT PLEADER",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(
-            r"\bADVOCATE\s+GENERAL\b", "ADVOCATE GENERAL", text, flags=re.IGNORECASE
-        )
-
-        # Fix common character replacements
-        text = re.sub(r"\bl\b", "I", text)  # lowercase l to I
-        text = re.sub(r"\b0\b", "O", text)  # zero to O
-
-        # Standardize case formats
-        text = re.sub(r"\bSHR[I1]\b", "SHRI", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bSMT\b", "SMT", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bMS\b", "MS", text, flags=re.IGNORECASE)
-
-        return text
-
     def _extract_legal_entities(self, text: str) -> List[Dict[str, Any]]:
-        """Extract legal entities (AGP/GP/AG etc.) from text using NER"""
-        entities = []
-
-        # Method 1: Regex-based extraction (always available)
-        entities.extend(self._extract_entities_regex(text))
-
-        # Method 2: spaCy NER (if available)
-        if self.nlp and self.matcher:
-            entities.extend(self._extract_entities_spacy(text))
-
-        # Deduplicate entities
-        entities = self._deduplicate_entities(entities)
-
-        return entities
+        """Extract legal entities (AGP/GP/AG etc.) from text via regex."""
+        entities = self._extract_entities_regex(text)
+        return self._deduplicate_entities(entities)
 
     def _extract_entities_regex(self, text: str) -> List[Dict[str, Any]]:
         """Extract entities using regex patterns"""
@@ -401,34 +255,6 @@ class MLEnhancedParser:
                             "method": "regex",
                         }
                     )
-
-        return entities
-
-    def _extract_entities_spacy(self, text: str) -> List[Dict[str, Any]]:
-        """Extract entities using spaCy NER"""
-        entities = []
-
-        try:
-            doc = self.nlp(text)
-            matches = self.matcher(doc)
-
-            for match_id, start, end in matches:
-                span = doc[start:end]
-                label = self.nlp.vocab.strings[match_id].split("_")[0]
-
-                entities.append(
-                    {
-                        "text": span.text,
-                        "label": label,
-                        "start": span.start_char,
-                        "end": span.end_char,
-                        "confidence": 0.9,  # High confidence for spaCy
-                        "method": "spacy",
-                    }
-                )
-
-        except Exception as e:
-            logging.warning(f"spaCy entity extraction failed: {e}")
 
         return entities
 
@@ -786,66 +612,13 @@ class MLEnhancedParser:
 
         return min(score, 1.0)  # Cap at 1.0
 
-    def _store_learning_data(self, filename: str, result: ExtractionResult):
-        """Store extraction results for learning and improvement"""
-        try:
-            learning_doc = {
-                "filename": filename,
-                "timestamp": datetime.now(),
-                "extraction_method": result.extraction_method,
-                "confidence": result.confidence,
-                "quality_score": result.quality_score,
-                "entities_found": len(result.entities),
-                "mappings_found": len(result.name_mappings),
-                "text_length": len(result.text),
-            }
-
-            # Store in Firestore for analysis
-            self.db.collection("ml_learning_data").add(learning_doc)
-
-        except Exception as e:
-            logging.warning(f"Could not store learning data: {e}")
-
     def get_enhancement_status(self) -> Dict[str, Any]:
-        """Get status of ML enhancement capabilities"""
+        """Get status of PDF-parsing enhancement capabilities."""
         return {
-            "spacy_available": SPACY_AVAILABLE,
             "rapidfuzz_available": RAPIDFUZZ_AVAILABLE,
-            "spacy_model": self.nlp.meta["name"] if self.nlp else None,
             "capabilities": {
                 "enhanced_preprocessing": True,
-                "ner": SPACY_AVAILABLE,
                 "fuzzy_matching": True,  # Always available (difflib fallback)
-                "learning": True,
                 "advanced_fuzzy": RAPIDFUZZ_AVAILABLE,
             },
         }
-
-    def learn_from_correction(
-        self,
-        filename: str,
-        original_extraction: str,
-        corrected_extraction: str,
-        user_feedback: Dict[str, Any],
-    ):
-        """Learn from user corrections to improve future extractions"""
-        try:
-            correction_data = {
-                "filename": filename,
-                "timestamp": datetime.now(),
-                "original_extraction": original_extraction,
-                "corrected_extraction": corrected_extraction,
-                "user_feedback": user_feedback,
-                "improvement_type": "user_correction",
-            }
-
-            # Store correction for learning
-            self.db.collection("ml_corrections").add(correction_data)
-
-            # Clear user cache to get updated data
-            self.user_cache = {}
-
-            logging.info(f"Stored user correction for {filename}")
-
-        except Exception as e:
-            logging.error(f"Error storing correction: {e}")

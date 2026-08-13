@@ -1771,9 +1771,7 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
                 "ml_parser_available": False,
                 "capabilities": {
                     "enhanced_preprocessing": False,
-                    "ner": False,
                     "fuzzy_matching": False,
-                    "learning": False,
                     "advanced_fuzzy": False,
                 },
                 "message": "ML Enhanced Parser not available - using standard PDF processing",
@@ -1784,32 +1782,6 @@ async def get_ml_enhancement_status(current_user=Depends(get_current_user)):
         raise HTTPException(
             status_code=500, detail="Failed to fetch ML enhancement status"
         )
-
-
-@app.post("/ml/learn-from-correction")
-async def learn_from_correction(
-    correction_data: dict, current_user=Depends(get_current_user)
-):
-    """Allow users to provide corrections for ML learning"""
-    try:
-        board = Board()
-        if hasattr(board, "ml_parser") and board.ml_parser:
-            board.ml_parser.learn_from_correction(
-                filename=correction_data.get("filename", ""),
-                original_extraction=correction_data.get("original_extraction", ""),
-                corrected_extraction=correction_data.get("corrected_extraction", ""),
-                user_feedback=correction_data.get("user_feedback", {}),
-            )
-            return JSONResponse(
-                content={"message": "Learning data stored successfully"}
-            )
-        else:
-            return JSONResponse(
-                content={"message": "ML Enhanced Parser not available for learning"}
-            )
-    except Exception as e:
-        logger.error(f"Error storing learning data: {e}")
-        raise HTTPException(status_code=500, detail="Failed to store learning data")
 
 
 # Court integration endpoints

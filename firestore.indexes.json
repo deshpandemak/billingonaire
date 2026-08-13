@@ -57,14 +57,6 @@
         { "fieldPath": "email", "order": "ASCENDING" },
         { "fieldPath": "role", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "order-search-index",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "order_category", "order": "ASCENDING" },
-        { "fieldPath": "date_validation_valid", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []
