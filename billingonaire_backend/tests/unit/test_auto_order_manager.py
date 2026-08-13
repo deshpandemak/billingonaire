@@ -151,6 +151,106 @@ def test_upload_order_to_gcs_failure_returns_none(auto_order_manager):
     assert result is None
 
 
+def test_upload_order_text_to_gcs_disabled_when_no_bucket(auto_order_manager):
+    auto_order_manager._gcs_bucket_name = ""
+    result = auto_order_manager._upload_order_text_to_gcs(
+        "Some order text", "WP/123/2025", "2025-03-01"
+    )
+    assert result is None
+
+
+def test_upload_order_text_to_gcs_returns_none_for_empty_text(auto_order_manager):
+    """No point uploading (and no crash from) an empty extraction result."""
+    auto_order_manager._gcs_bucket_name = "test-bucket"
+    result = auto_order_manager._upload_order_text_to_gcs(
+        "", "WP/123/2025", "2025-03-01"
+    )
+    assert result is None
+
+
+def test_upload_order_text_to_gcs_success(auto_order_manager):
+    """Upload text alongside the PDF at the same stable key, .txt extension."""
+    auto_order_manager._gcs_bucket_name = "test-bucket"
+
+    mock_blob = Mock()
+    mock_bucket = Mock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_client = Mock()
+    mock_client.bucket.return_value = mock_bucket
+
+    with patch("billingonaire_backend.AutoOrderManager.gcs_storage") as mock_gcs:
+        mock_gcs.Client.return_value = mock_client
+        result = auto_order_manager._upload_order_text_to_gcs(
+            "Heard and adjourned.", "WP/123/2025", "2025-03-01"
+        )
+
+    assert result == (
+        "https://storage.googleapis.com/test-bucket"
+        "/court-orders/WP-123-2025/2025-03-01.txt"
+    )
+    mock_blob.upload_from_string.assert_called_once_with(
+        "Heard and adjourned.", content_type="text/plain"
+    )
+
+
+def test_upload_order_text_to_gcs_failure_returns_none(auto_order_manager):
+    """A text-upload failure must never raise -- the already-computed
+    category/confidence result still has to be saved."""
+    auto_order_manager._gcs_bucket_name = "test-bucket"
+
+    with patch("billingonaire_backend.AutoOrderManager.gcs_storage") as mock_gcs:
+        mock_gcs.Client.side_effect = Exception("connection refused")
+        result = auto_order_manager._upload_order_text_to_gcs(
+            "Heard and adjourned.", "WP/123/2025", "2025-03-01"
+        )
+
+    assert result is None
+
+
+def test_analyze_order_with_api_metadata_persists_order_text_url(
+    auto_order_manager,
+):
+    """The order_text_url returned by _upload_order_text_to_gcs must flow
+    through to both the returned data and the append_case_order payload --
+    this is what lets /admin/orders/{doc_id}/ai-suggestion skip
+    re-downloading and re-analysing the PDF a second time."""
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="ADJOURNED",
+            category_confidence=0.9,
+            order_text="Heard and adjourned.",
+            analysis_metadata={},
+            cases=[],
+        )
+    )
+    text_url = (
+        "https://storage.googleapis.com/test-bucket"
+        "/court-orders/WP-123-2025/2025-03-01.txt"
+    )
+    auto_order_manager._upload_order_text_to_gcs = Mock(return_value=text_url)
+
+    result = auto_order_manager._analyze_order_with_api_metadata(
+        case_id="board-abc",
+        case_ref="WP/123/2025",
+        pdf_content=b"%PDF-1.4",
+        api_order_date="2025-03-01",
+        api_petitioner="Petitioner Co",
+        api_respondent="State of Maharashtra",
+        order_link="https://example.com/order.pdf",
+    )
+
+    auto_order_manager._upload_order_text_to_gcs.assert_called_once_with(
+        "Heard and adjourned.", "WP/123/2025", "2025-03-01"
+    )
+    assert result["data"]["order_text_url"] == text_url
+    call_kwargs = auto_order_manager.case_store.append_case_order.call_args[0][1]
+    assert call_kwargs["order_text_url"] == text_url
+
+
 def test_analyze_order_with_api_metadata_success(auto_order_manager):
     """Persist order using API-provided date and party names."""
     auto_order_manager.case_store.transition_lifecycle = Mock(

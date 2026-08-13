@@ -411,6 +411,10 @@ class AutoOrderManager:
             or "not_linked",
             "order_link": case_detail.get("latest_order_link")
             or latest_order.get("order_link"),
+            # Only present for orders analysed after order text persistence
+            # shipped (see _upload_order_text_to_gcs) -- callers must handle
+            # None by falling back to re-downloading/re-parsing order_link.
+            "order_text_url": latest_order.get("order_text_url"),
         }
 
     @staticmethod
@@ -487,6 +491,60 @@ class AutoOrderManager:
                 order_date,
                 exc,
                 self._gcs_bucket_name,
+                exc_info=True,
+            )
+            return None
+
+    def _upload_order_text_to_gcs(
+        self, order_text: str, case_ref: str, order_date: str
+    ) -> Optional[str]:
+        """Upload the extracted order text alongside its PDF and return a
+        permanent public HTTPS URL, or None when GCS is not configured, the
+        upload fails, or there is no text to store.
+
+        order_analyzer.analyze_order_document() produces this text on every
+        analysis (OrderAnalysisResult.order_text) but nothing has ever
+        persisted it -- it is discarded the moment the request returns.
+        That means there are no features to train or evaluate a classifier
+        change against without re-downloading and re-parsing every PDF, and
+        main.calculate_case_fee's order_text-matching branches were
+        permanently dead code (order_text was always the empty string).
+
+        Stored at the same stable key _upload_order_to_gcs uses, so the two
+        blobs sit side by side:
+            court-orders/<case_ref_dashes>/<order_date>.pdf
+            court-orders/<case_ref_dashes>/<order_date>.txt
+        Text, not a Firestore field: Firestore documents cap out at 1MB and
+        case-details.orders[] already holds up to 100 entries per case, so
+        inlining full order text there would eventually break large cases.
+        """
+        if not order_text or not self._gcs_bucket_name or gcs_storage is None:
+            return None
+        try:
+            client = gcs_storage.Client()
+            bucket = client.bucket(self._gcs_bucket_name)
+            blob_name = f"court-orders/{case_ref.replace('/', '-')}/{order_date}.txt"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(order_text, content_type="text/plain")
+            https_url = (
+                f"https://storage.googleapis.com/{self._gcs_bucket_name}/{blob_name}"
+            )
+            logger.info(
+                "_upload_order_text_to_gcs: uploaded %s for case_ref=%s date=%s",
+                blob_name,
+                case_ref,
+                order_date,
+            )
+            return https_url
+        except Exception as exc:
+            # Never let a text-persistence failure break analysis -- the
+            # category/confidence result is already computed and must still
+            # be saved even if this best-effort text upload fails.
+            logger.error(
+                "_upload_order_text_to_gcs failed for case_ref=%s date=%s: %s",
+                case_ref,
+                order_date,
+                exc,
                 exc_info=True,
             )
             return None
@@ -768,6 +826,11 @@ class AutoOrderManager:
                 temp_filename, pdf_content
             )
             analysis_metadata = getattr(analysis_result, "analysis_metadata", {}) or {}
+            order_text_url = self._upload_order_text_to_gcs(
+                getattr(analysis_result, "order_text", "") or "",
+                case_ref,
+                api_order_date,
+            )
 
             llm_assist = self._maybe_llm_assist(analysis_result)
             if llm_assist["llm_suggestion"] is not None:
@@ -806,6 +869,7 @@ class AutoOrderManager:
                 "order_analysis_metadata": analysis_metadata,
                 "date_source": "api",
                 "gcs_upload_failed": gcs_upload_failed,
+                "order_text_url": order_text_url,
             }
 
             self.case_store.transition_lifecycle(
@@ -836,6 +900,7 @@ class AutoOrderManager:
                     ],
                     "date_source": "api",
                     "gcs_upload_failed": gcs_upload_failed,
+                    "order_text_url": order_analysis["order_text_url"],
                 },
             )
             # Route a low-confidence classification to a human instead of

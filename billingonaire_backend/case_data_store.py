@@ -669,6 +669,7 @@ class CaseDataStore:
         order_category: str,
         actor_uid: Optional[str] = None,
         notes: Optional[str] = None,
+        review_ai_suggestion: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Record a human's correction of an order's category.
 
@@ -682,6 +683,15 @@ class CaseDataStore:
 
         This writes the correction where the readers actually look, keeps the
         rollup in step, and emits a lifecycle event.
+
+        ``review_ai_suggestion``, when given, is the review screen's "Get AI
+        read" result (category/confidence/rationale) recorded alongside
+        ``previous_category`` in the lifecycle event -- so every reviewed
+        case carries the full (regex, LLM, human) triple instead of just
+        (regex, human). Before this, an LLM suggestion shown on the review
+        screen was never written anywhere: it existed only in the browser
+        tab that requested it, so nothing could ever be measured against a
+        (regex, LLM, human) triple even though a human had seen all three.
 
         Returns ``{"success", "order_date", "board_date", "previous_category"}``
         so the caller can propagate the change to daily-boards.
@@ -743,16 +753,20 @@ class CaseDataStore:
             merge=True,
         )
 
+        override_metadata = {
+            "source": "manual-override",
+            "actor_uid": actor_uid,
+            "previous_category": previous_category,
+            "order_category": order_category,
+        }
+        if review_ai_suggestion:
+            override_metadata["review_ai_suggestion"] = review_ai_suggestion
+
         self.transition_lifecycle(
             case_ref,
             "analysed",
             reason=notes or "Category corrected by reviewer",
-            metadata={
-                "source": "manual-override",
-                "actor_uid": actor_uid,
-                "previous_category": previous_category,
-                "order_category": order_category,
-            },
+            metadata=override_metadata,
             event_type="manual_override",
             force=True,
         )

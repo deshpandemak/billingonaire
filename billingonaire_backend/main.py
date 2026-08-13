@@ -918,7 +918,13 @@ async def _start_poll_loops():
 @app.get("/", tags=["Root"])
 async def read_root():
     return {
-        "message": "Hello, World! 🚀 Billingonaire API is running with async order processing."
+        "message": "Hello, World! 🚀 Billingonaire API is running with async order processing.",
+        # Every LLM-backed feature (review-copilot assist, the assistant
+        # chat, portal-drift diagnosis) degrades silently to its no-key
+        # fallback when GEMINI_API_KEY is absent -- there was previously no
+        # way to tell, short of poking each feature individually, whether
+        # that had actually happened on a given deploy.
+        "ai_features_enabled": bool(os.environ.get("GEMINI_API_KEY")),
     }
 
 
@@ -3833,20 +3839,67 @@ async def get_order_status_overview(current_user=Depends(require_admin)):
 
 
 @app.get("/admin/review-queue", tags=["Admin Order Management"])
-async def get_admin_review_queue(current_user=Depends(require_admin)):
-    """Return cases in the manual_review_required lifecycle state."""
+async def get_admin_review_queue(
+    limit: int = Query(200, description="Maximum cases to return"),
+    current_user=Depends(require_admin),
+):
+    """Cases in the manual_review_required lifecycle state, in the exact
+    shape ManualReviewQueue.jsx needs to render every column.
+
+    This used to return raw case-details docs. Those docs carry
+    latest_order_category / latest_order_link / latest_board_date, and
+    confidence only nested inside orders[].order_category_confidence --
+    none of which match the field names the UI reads (order_category,
+    order_link, board_date, confidence_score). Every one of those columns
+    silently rendered "--" and the "View PDF" button never appeared, so
+    reviewers were choosing a category without seeing the order, the
+    classifier's read, or its confidence. That poisons the one labelled
+    dataset this system collects: apply_category_override records the
+    human's choice next to what the classifier predicted, and a blind
+    choice is not a meaningful correction.
+
+    Also newly bounded (was an unbounded stream of every matching doc) and
+    surfaces the LLM's own suggestion when one was recorded during analysis
+    (AutoOrderManager._maybe_llm_assist), so the UI's "Get AI read" button
+    can show it immediately instead of always re-calling Gemini.
+    """
     try:
+        limit = max(1, min(limit, 500))
         db = firestore.client()
         docs = (
             db.collection("case-details")
             .where("lifecycle_status", "==", "manual_review_required")
+            .limit(limit)
             .stream()
         )
         cases = []
         for doc in docs:
             data = doc.to_dict() or {}
-            data.setdefault("id", doc.id)
-            cases.append(data)
+            orders = data.get("orders") or []
+            # Same "last entry that actually has a link" selection
+            # AutoOrderManager._get_case_order_context and
+            # CaseDataStore.append_case_order use -- status-only entries
+            # (no order_link) must not be mistaken for the analysed order.
+            orders_with_link = [
+                o for o in orders if isinstance(o, dict) and o.get("order_link")
+            ]
+            latest_order = orders_with_link[-1] if orders_with_link else {}
+            llm_suggestion = (latest_order.get("order_analysis_metadata") or {}).get(
+                "llm_suggestion"
+            )
+            cases.append(
+                {
+                    "id": doc.id,
+                    "case_ref": data.get("case_ref"),
+                    "board_date": data.get("latest_board_date"),
+                    "petitioner": data.get("petitioner"),
+                    "respondent": data.get("respondent"),
+                    "order_category": data.get("latest_order_category"),
+                    "confidence_score": latest_order.get("order_category_confidence"),
+                    "order_link": data.get("latest_order_link"),
+                    "llm_suggestion": llm_suggestion,
+                }
+            )
         return JSONResponse(content=cases)
     except Exception as e:
         logger.error(f"Error fetching review queue: {e}")
@@ -3879,23 +3932,37 @@ async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_a
 
         case_ref = doc_id.replace("-", "/")
         manager = get_auto_order_manager()
-        order_link = manager._get_case_order_context(case_ref).get("order_link")
+        order_context = manager._get_case_order_context(case_ref)
+        order_link = order_context.get("order_link")
+        order_text_url = order_context.get("order_text_url")
         if not order_link:
             return JSONResponse(
                 status_code=404,
                 content={"error": "No order PDF on file for this case."},
             )
 
-        pdf_response = requests.get(order_link, timeout=30)
-        pdf_response.raise_for_status()
-        analysis = manager.order_analyzer.analyze_order_document(
-            f"{doc_id}.pdf", pdf_response.content
-        )
+        if order_text_url:
+            # The order text is already persisted (see
+            # AutoOrderManager._upload_order_text_to_gcs) -- fetch that
+            # directly instead of re-downloading the PDF and re-running the
+            # full analyzer just to recover the same text a second time.
+            text_response = requests.get(order_text_url, timeout=15)
+            text_response.raise_for_status()
+            order_text = text_response.text
+        else:
+            # Legacy order analysed before text persistence shipped -- fall
+            # back to the original re-download + re-analyze path.
+            pdf_response = requests.get(order_link, timeout=30)
+            pdf_response.raise_for_status()
+            analysis = manager.order_analyzer.analyze_order_document(
+                f"{doc_id}.pdf", pdf_response.content
+            )
+            order_text = analysis.order_text
 
         from review_copilot import ReviewCopilotError, call_gemini
 
         try:
-            suggestion = call_gemini(analysis.order_text, api_key)
+            suggestion = call_gemini(order_text, api_key)
         except ReviewCopilotError as e:
             return JSONResponse(
                 status_code=502, content={"error": f"AI suggestion failed: {e}"}
@@ -3940,6 +4007,7 @@ async def admin_override_order_category(
             order_category,
             actor_uid=current_user.get("uid"),
             notes=body.get("notes"),
+            review_ai_suggestion=body.get("ai_suggestion"),
         )
         if not result.get("success"):
             return JSONResponse(

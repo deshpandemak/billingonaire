@@ -55,9 +55,18 @@ const ManualReviewQueue = () => {
     const key = item.id || item.doc_id || item.case_ref;
     setOverriding(key);
     try {
+      // When "Get AI read" was used, send its result along so the human's
+      // decision is recorded next to what the classifier AND the LLM each
+      // said -- the (regex, LLM, human) triple everything downstream
+      // (accuracy measurement, the eval harness) needs. A suggestion that's
+      // still loading or errored out is not a real reading, so it's left out.
+      const suggestion = aiSuggestions[key];
+      const aiSuggestion = (suggestion && suggestion !== 'loading' && !suggestion.error)
+        ? suggestion
+        : undefined;
       await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/override`, {
         method: 'POST',
-        body: JSON.stringify({ order_category: category }),
+        body: JSON.stringify({ order_category: category, ai_suggestion: aiSuggestion }),
       });
       const catLabel = ORDER_CATEGORIES.find(c => c.value === category)?.label ?? category;
       setMessage({ type: 'success', text: `${item.case_ref || key} — set to ${catLabel}` });

@@ -396,6 +396,14 @@ def manual_review_case_by_id(ctx, mock_firestore_client, doc_id):
     mock_firestore_client.collection.return_value.where.return_value.stream.return_value = [
         mock_doc_ref
     ]
+    # /admin/review-queue also chains .limit(...) before .stream() -- wire
+    # both so a scenario driving that endpoint (see the "Admin fetches the
+    # manual review queue" scenario) actually exercises the configured doc
+    # instead of silently hitting an unconfigured MagicMock and returning
+    # an empty (but still assertion-passing) list.
+    mock_firestore_client.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        mock_doc_ref
+    ]
     ctx["doc_id"] = doc_id
 
 

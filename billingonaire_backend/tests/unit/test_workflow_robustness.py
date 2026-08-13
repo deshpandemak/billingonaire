@@ -668,6 +668,56 @@ async def test_ai_suggestion_404s_when_case_has_no_order_link(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ai_suggestion_uses_persisted_text_without_redownloading_pdf(
+    monkeypatch,
+):
+    """When order_text_url is present (text persisted at analysis time),
+    the endpoint must fetch that blob directly and skip re-downloading the
+    PDF and re-running the full analyzer a second time."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mgr = MagicMock()
+    mgr._get_case_order_context = Mock(
+        return_value={
+            "order_link": "https://example.com/order.pdf",
+            "order_text_url": "https://storage.googleapis.com/bucket/order.txt",
+        }
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    get_mock = Mock(
+        return_value=SimpleNamespace(
+            text="Persisted order text",
+            content=b"unused",
+            raise_for_status=Mock(),
+        )
+    )
+    monkeypatch.setattr(main.requests, "get", get_mock)
+
+    import review_copilot
+
+    monkeypatch.setattr(
+        review_copilot,
+        "call_gemini",
+        Mock(
+            return_value={
+                "category": "ADJOURNED",
+                "confidence": 0.8,
+                "rationale": "No hearing indicators.",
+            }
+        ),
+    )
+
+    response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
+    assert response.status_code == 200
+
+    get_mock.assert_called_once_with(
+        "https://storage.googleapis.com/bucket/order.txt", timeout=15
+    )
+    mgr.order_analyzer.analyze_order_document.assert_not_called()
+    call_gemini_text = review_copilot.call_gemini.call_args[0][0]
+    assert call_gemini_text == "Persisted order text"
+
+
+@pytest.mark.asyncio
 async def test_ai_suggestion_returns_category_confidence_and_rationale(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     mgr = MagicMock()
@@ -739,6 +789,148 @@ async def test_ai_suggestion_returns_502_when_gemini_call_fails(monkeypatch):
 
     response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
     assert response.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# 5a. GET / -- reports whether GEMINI_API_KEY is actually mounted, so a
+#     deploy that's silently missing the secret is visible without poking
+#     every LLM-backed feature individually.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_root_reports_ai_enabled_when_key_present(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    response = await main.read_root()
+    assert response["ai_features_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_root_reports_ai_disabled_when_key_absent(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    response = await main.read_root()
+    assert response["ai_features_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# 5b. GET /admin/review-queue -- must return the exact field names
+#     ManualReviewQueue.jsx reads (order_category, order_link, board_date,
+#     confidence_score), mapped from the raw case-details doc's latest_*
+#     rollups and orders[]. It used to return the raw doc verbatim, whose
+#     field names (latest_order_category, latest_order_link, ...) don't
+#     match what the UI reads -- every column silently rendered "--".
+# ---------------------------------------------------------------------------
+
+
+def _review_queue_doc(doc_id, **fields):
+    data = {
+        "case_ref": doc_id.replace("-", "/"),
+        "latest_board_date": "2026-01-05",
+        "petitioner": "ABC Corp",
+        "respondent": "State of Maharashtra",
+        "latest_order_category": "ADJOURNED",
+        "latest_order_link": "https://storage.googleapis.com/bucket/order.pdf",
+        "orders": [
+            {
+                "order_link": "https://storage.googleapis.com/bucket/order.pdf",
+                "order_category_confidence": 0.42,
+            }
+        ],
+        **fields,
+    }
+    return SimpleNamespace(id=doc_id, to_dict=lambda: data)
+
+
+@pytest.mark.asyncio
+async def test_review_queue_maps_to_the_fields_the_ui_actually_reads(monkeypatch):
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        _review_queue_doc("WP-1-2026")
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_admin_review_queue(limit=200, current_user=None)
+    import json
+
+    cases = json.loads(response.body)
+    assert len(cases) == 1
+    case = cases[0]
+    assert case["id"] == "WP-1-2026"
+    assert case["case_ref"] == "WP/1/2026"
+    assert case["board_date"] == "2026-01-05"
+    assert case["petitioner"] == "ABC Corp"
+    assert case["respondent"] == "State of Maharashtra"
+    assert case["order_category"] == "ADJOURNED"
+    assert case["confidence_score"] == 0.42
+    assert case["order_link"] == "https://storage.googleapis.com/bucket/order.pdf"
+
+
+@pytest.mark.asyncio
+async def test_review_queue_surfaces_the_stored_llm_suggestion(monkeypatch):
+    """Once _maybe_llm_assist has recorded a suggestion during analysis, the
+    review queue must surface it directly instead of the UI needing to
+    call /admin/orders/{doc_id}/ai-suggestion (a second Gemini call) just
+    to show what the pipeline already knows."""
+    doc = _review_queue_doc(
+        "WP-2-2026",
+        orders=[
+            {
+                "order_link": "https://storage.googleapis.com/bucket/order.pdf",
+                "order_category_confidence": 0.3,
+                "order_analysis_metadata": {
+                    "llm_suggestion": {
+                        "category": "HEARD_AND_ADJOURNED",
+                        "confidence": 0.9,
+                        "rationale": "Notice was issued.",
+                        "agreed_with_regex": False,
+                    }
+                },
+            }
+        ],
+    )
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_admin_review_queue(limit=200, current_user=None)
+    import json
+
+    case = json.loads(response.body)[0]
+    assert case["llm_suggestion"]["category"] == "HEARD_AND_ADJOURNED"
+    assert case["llm_suggestion"]["agreed_with_regex"] is False
+
+
+@pytest.mark.asyncio
+async def test_review_queue_handles_a_case_with_no_orders_yet(monkeypatch):
+    """A manual_review_required doc with an empty/missing orders[] (e.g. a
+    corrupted or partially-written doc) must not 500 the whole queue."""
+    doc = _review_queue_doc("WP-3-2026", orders=[])
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_admin_review_queue(limit=200, current_user=None)
+    import json
+
+    case = json.loads(response.body)[0]
+    assert case["confidence_score"] is None
+    assert case["llm_suggestion"] is None
+
+
+@pytest.mark.asyncio
+async def test_review_queue_limit_is_passed_to_the_query_and_clamped(monkeypatch):
+    mock_db = MagicMock()
+    limit_mock = mock_db.collection.return_value.where.return_value.limit
+    limit_mock.return_value.stream.return_value = []
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    await main.get_admin_review_queue(limit=10_000, current_user=None)
+
+    limit_mock.assert_called_once_with(500)  # clamped to the max
 
 
 # ---------------------------------------------------------------------------

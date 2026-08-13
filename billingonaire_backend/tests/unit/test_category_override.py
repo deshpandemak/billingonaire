@@ -77,6 +77,39 @@ def test_emits_a_lifecycle_event_for_audit(store_and_doc):
     assert kwargs["metadata"]["previous_category"] == "ADJOURNED"
 
 
+def test_review_ai_suggestion_is_recorded_alongside_previous_category(store_and_doc):
+    """Every reviewed case should carry the full (regex, LLM, human) triple:
+    previous_category is the regex's read, review_ai_suggestion is what the
+    review screen's "Get AI read" button returned, order_category is the
+    human's final call."""
+    store, doc_ref = store_and_doc
+    suggestion = {
+        "category": "DISPOSED_OFF",
+        "confidence": 0.85,
+        "rationale": "Rule made absolute.",
+    }
+    store.apply_category_override(
+        "WP/123/2025",
+        "DISPOSED_OFF",
+        "uid-1",
+        review_ai_suggestion=suggestion,
+    )
+
+    args, kwargs = store.transition_lifecycle.call_args
+    assert kwargs["metadata"]["review_ai_suggestion"] == suggestion
+    assert kwargs["metadata"]["previous_category"] == "ADJOURNED"
+
+
+def test_review_ai_suggestion_omitted_when_not_provided(store_and_doc):
+    """No 'Get AI read' click -> no review_ai_suggestion key at all, not a
+    None placeholder cluttering every override that never used it."""
+    store, doc_ref = store_and_doc
+    store.apply_category_override("WP/123/2025", "DISPOSED_OFF", "uid-1")
+
+    args, kwargs = store.transition_lifecycle.call_args
+    assert "review_ai_suggestion" not in kwargs["metadata"]
+
+
 def test_returns_the_date_so_daily_boards_can_be_updated(store_and_doc):
     store, _ = store_and_doc
     result = store.apply_category_override("WP/123/2025", "DISPOSED_OFF", "uid-1")
