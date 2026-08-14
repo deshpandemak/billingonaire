@@ -2,12 +2,14 @@ import logging
 import os
 import random
 import re
+import ssl
 import time
 from typing import Any, Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -20,6 +22,32 @@ except ImportError:
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# OpenSSL's SSL_OP_LEGACY_SERVER_CONNECT flag. Not exposed as a named
+# ssl.OP_* constant until Python 3.12 (this project runs 3.11), but
+# SSLContext.options accepts the raw OpenSSL bit on any version.
+_SSL_OP_LEGACY_SERVER_CONNECT = 0x4
+
+
+class _LegacyRenegotiationAdapter(HTTPAdapter):
+    """bombayhighcourt.gov.in's web server still requires the old,
+    insecure TLS renegotiation handshake that OpenSSL 3.x refuses by
+    default -- every plain `requests` call to it fails before it even
+    reaches application code, with "[SSL: UNSAFE_LEGACY_RENEGOTIATION_
+    DISABLED] unsafe legacy renegotiation disabled". A real browser (and
+    so Playwright) tolerates this silently, which is why the HTTP
+    provider always failed and every single fetch was quietly falling
+    through to the much slower, flakier Playwright path -- not because
+    Playwright was ever configured as the default, but because the
+    "API" default was failing its TLS handshake on every attempt before
+    it could try anything else. This opts back into the legacy
+    handshake for this one host only, the same as a browser already does."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        ctx.options |= _SSL_OP_LEGACY_SERVER_CONNECT
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class BombayHighCourtScraper:
@@ -47,6 +75,7 @@ class BombayHighCourtScraper:
         )
         self.session = requests.Session()
         self.session.headers.update(self._browser_headers())
+        self.session.mount("https://", _LegacyRenegotiationAdapter())
 
     def _browser_headers(self) -> Dict[str, str]:
         return {

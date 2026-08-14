@@ -109,6 +109,25 @@ def test_scraper_initialization_defaults_to_http():
     assert scraper.get_scraper_config()["supported_providers"] == ["http", "playwright"]
 
 
+def test_session_mounts_legacy_renegotiation_adapter_for_https():
+    """bombayhighcourt.gov.in requires the old TLS renegotiation handshake
+    that OpenSSL 3.x refuses by default (every plain request would fail with
+    "[SSL: UNSAFE_LEGACY_RENEGOTIATION_DISABLED]" before reaching the court
+    site at all). The session's https:// adapter must opt back into it."""
+    from billingonaire_backend.CourtScraper import (
+        _SSL_OP_LEGACY_SERVER_CONNECT,
+        _LegacyRenegotiationAdapter,
+    )
+
+    scraper = BombayHighCourtScraper()
+    adapter = scraper.session.get_adapter("https://bombayhighcourt.gov.in/x")
+    assert isinstance(adapter, _LegacyRenegotiationAdapter)
+
+    ssl_context = adapter.poolmanager.connection_pool_kw.get("ssl_context")
+    assert ssl_context is not None
+    assert ssl_context.options & _SSL_OP_LEGACY_SERVER_CONNECT
+
+
 # ---------------------------------------------------------------------------
 # _get_side_for_case_type
 # ---------------------------------------------------------------------------
