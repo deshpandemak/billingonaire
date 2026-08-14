@@ -18,6 +18,8 @@ try:
     from case_data_store import CaseDataStore
 except ImportError:
     from .case_data_store import CaseDataStore
+
+from court_http import court_get
 from order_analyzer import OrderDocumentAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -1019,7 +1021,9 @@ class AutoOrderManager:
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " "AppleWebKit/537.36"
                 )
             }
-            response = requests.get(order_link, headers=headers, timeout=30)
+            # court_get, not requests.get -- the court requires legacy TLS
+            # renegotiation that a default session refuses. See court_http.
+            response = court_get(order_link, headers=headers, timeout=30)
             content_type = response.headers.get("Content-Type", "")
             pdf_content = response.content or b""
             is_pdf = (
@@ -1258,9 +1262,12 @@ class AutoOrderManager:
                             "AppleWebKit/537.36"
                         )
                     }
-                    dl_response = requests.get(
-                        download_link, headers=headers, timeout=30
-                    )
+                    # court_get, not requests.get -- the court requires
+                    # legacy TLS renegotiation that a default session
+                    # refuses. This is the download that was failing for
+                    # every order with UNSAFE_LEGACY_RENEGOTIATION_DISABLED
+                    # even after the case-status lookup started working.
+                    dl_response = court_get(download_link, headers=headers, timeout=30)
                     content_type = dl_response.headers.get("Content-Type", "")
                     pdf_bytes = dl_response.content or b""
                     is_pdf = (

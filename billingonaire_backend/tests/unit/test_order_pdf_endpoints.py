@@ -133,7 +133,7 @@ def test_get_order_pdf_reads_order_link_from_case_details(client, monkeypatch):
     fake_resp = MagicMock()
     fake_resp.content = FAKE_PDF
     fake_resp.raise_for_status.return_value = None
-    monkeypatch.setattr(main.requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(main, "court_get", lambda *a, **kw: fake_resp)
 
     # Suppress background executor call
     monkeypatch.setattr(
@@ -307,7 +307,7 @@ def test_get_order_pdf_live_court_url_streams_pdf(client, monkeypatch):
     fake_http = MagicMock()
     fake_http.content = FAKE_PDF
     fake_http.raise_for_status.return_value = None
-    monkeypatch.setattr(main.requests, "get", lambda *a, **kw: fake_http)
+    monkeypatch.setattr(main, "court_get", lambda *a, **kw: fake_http)
 
     mgr = MagicMock()
     mgr._upload_order_to_gcs.return_value = None
@@ -335,7 +335,7 @@ def test_get_order_pdf_court_url_non_pdf_response_treated_as_expired(
     fake_http = MagicMock()
     fake_http.content = b"<html>Session Expired</html>"  # not a PDF
     fake_http.raise_for_status.return_value = None
-    monkeypatch.setattr(main.requests, "get", lambda *a, **kw: fake_http)
+    monkeypatch.setattr(main, "court_get", lambda *a, **kw: fake_http)
 
     mgr = MagicMock()
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
@@ -365,8 +365,8 @@ def test_get_order_pdf_expired_court_url_returns_503(client, monkeypatch):
     import requests as _requests
 
     monkeypatch.setattr(
-        main.requests,
-        "get",
+        main,
+        "court_get",
         lambda *a, **kw: (_ for _ in ()).throw(_requests.exceptions.Timeout()),
     )
 
@@ -393,8 +393,8 @@ def test_get_order_pdf_expired_queues_reprocess(client, monkeypatch):
     import requests as _requests
 
     monkeypatch.setattr(
-        main.requests,
-        "get",
+        main,
+        "court_get",
         lambda *a, **kw: (_ for _ in ()).throw(_requests.exceptions.ConnectionError()),
     )
 

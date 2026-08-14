@@ -382,7 +382,7 @@ def test_process_all_orders_from_api_success(auto_order_manager):
     )
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -583,7 +583,7 @@ def test_process_all_orders_from_api_uses_gcs_url_when_available(auto_order_mana
     # Mock the public update_case_party_names method
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -704,7 +704,7 @@ def test_process_all_orders_from_api_normalises_ddmmyyyy_dates(auto_order_manage
     )
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -774,7 +774,7 @@ def test_process_all_orders_from_api_links_each_order_to_its_own_board_entry(
     )
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -848,7 +848,7 @@ def test_process_all_orders_from_api_processes_all_dates_in_one_portal_call(
     )
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -904,7 +904,7 @@ def test_process_all_orders_from_api_no_board_date_processes_all_orders(
     )
     auto_order_manager.case_store.update_case_party_names = Mock()
 
-    with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
         mock_resp = Mock()
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/pdf"}
@@ -1042,7 +1042,7 @@ class TestAnalyzeExistingOrder:
             headers={"Content-Type": "application/pdf"},
         )
         with patch(
-            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+            "billingonaire_backend.AutoOrderManager.court_get", return_value=resp
         ):
             result = auto_order_manager._analyze_existing_order(
                 self._case(), self._template()
@@ -1086,7 +1086,7 @@ class TestAnalyzeExistingOrder:
             headers={"Content-Type": "application/pdf"},
         )
         with patch(
-            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+            "billingonaire_backend.AutoOrderManager.court_get", return_value=resp
         ):
             # The case is being processed off a case-details row whose
             # latest_board_date is a LATER appearance than this order.
@@ -1118,7 +1118,7 @@ class TestAnalyzeExistingOrder:
             return_value={"order_category": "DISPOSED_OFF"}
         )
 
-        with patch("billingonaire_backend.AutoOrderManager.requests.get") as mock_get:
+        with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
             result = auto_order_manager._analyze_existing_order(
                 self._case(), self._template()
             )
@@ -1145,7 +1145,7 @@ class TestAnalyzeExistingOrder:
             headers={"Content-Type": "text/html"},
         )
         with patch(
-            "billingonaire_backend.AutoOrderManager.requests.get", return_value=resp
+            "billingonaire_backend.AutoOrderManager.court_get", return_value=resp
         ):
             result = auto_order_manager._analyze_existing_order(
                 self._case(), self._template()
@@ -1161,7 +1161,7 @@ class TestAnalyzeExistingOrder:
         )
         auto_order_manager._is_order_already_analysed = Mock(return_value=False)
         with patch(
-            "billingonaire_backend.AutoOrderManager.requests.get",
+            "billingonaire_backend.AutoOrderManager.court_get",
             side_effect=_rq.exceptions.ConnectionError("boom"),
         ):
             result = auto_order_manager._analyze_existing_order(

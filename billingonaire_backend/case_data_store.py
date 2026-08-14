@@ -87,6 +87,22 @@ class CaseDataStore:
             "fetch_failed_terminal",
             "manual_review_required",
             "fetch_queued",
+            # A terminal FAILURE must stop automatic retries -- it must not
+            # also block recording a SUCCESS that actually happened. Several
+            # board rows can share one case_ref, so two workers routinely
+            # process the same case concurrently: when one gave up (timeout
+            # -> fetch_failed_terminal) while another went on to download and
+            # analyse the order successfully, the winner's
+            # fetch_failed_terminal -> analysed transition was rejected, its
+            # completed work silently discarded, and the case left sitting in
+            # "needs attention" with a perfectly good analysed order on file.
+            # Forward progress is allowed; only the failure->retryable edge
+            # stays closed, so "terminal" still means "stop auto-retrying".
+            "fetch_in_progress",
+            "fetch_succeeded",
+            "analysis_queued",
+            "analysis_in_progress",
+            "analysed",
         },
         "analysis_queued": {
             "analysis_queued",
@@ -122,6 +138,10 @@ class CaseDataStore:
             "analysis_failed_terminal",
             "manual_review_required",
             "analysis_queued",
+            # Same reasoning as fetch_failed_terminal above: a concurrent
+            # worker that actually succeeded must be able to record it.
+            "analysis_in_progress",
+            "analysed",
         },
         "manual_review_required": {
             "manual_review_required",

@@ -67,6 +67,9 @@ try:
 except ImportError:
     sys.exit("Run:  pip install requests beautifulsoup4")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from court_http import mount_court_adapter  # noqa: E402
+
 CASE_STATUS_URL = "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
 CASE_TYPES_URL = "https://bombayhighcourt.gov.in/bhc/get-case-types-by-side"
 SIDE = "1"
@@ -110,6 +113,9 @@ class Portal:
 
     def reinit(self):
         self.s = requests.Session()
+        # The court requires legacy TLS renegotiation; without this every
+        # request fails in the handshake. See court_http.
+        mount_court_adapter(self.s)
         self.s.headers["User-Agent"] = UA
         self.refresh()
         try:

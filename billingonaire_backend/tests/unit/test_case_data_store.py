@@ -318,6 +318,69 @@ def test_fetch_in_progress_can_reach_analysed_directly():
     assert transition["applied"] is True
 
 
+def test_terminal_fetch_failure_can_still_record_a_concurrent_success():
+    """Several board rows can share one case_ref, so two workers routinely
+    process the same case at once. When one gave up (worker timeout ->
+    fetch_failed_terminal) while the other went on to download and analyse
+    the order successfully, the winner's transition to `analysed` was
+    rejected and its completed work silently discarded -- leaving the case
+    in "needs attention" with a perfectly good analysed order on file.
+    A terminal failure must stop auto-retries, not block recording success."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-15540-2025").set(
+        {
+            "case_ref": "WP/15540/2025",
+            "lifecycle_status": "fetch_failed_terminal",
+            "lifecycle_events": [],
+        }
+    )
+
+    recovered = store.transition_lifecycle("WP/15540/2025", "analysed")
+    assert recovered["applied"] is True
+    assert (
+        db.get_collection("case-details")["WP-15540-2025"]["lifecycle_status"]
+        == "analysed"
+    )
+
+
+def test_terminal_fetch_failure_still_blocks_going_back_to_retryable():
+    """The other half of the contract: "terminal" must keep meaning "stop
+    automatically retrying this", so the failure -> retryable edge stays
+    closed even though forward progress is now allowed."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-15572-2025").set(
+        {
+            "case_ref": "WP/15572/2025",
+            "lifecycle_status": "fetch_failed_terminal",
+            "lifecycle_events": [],
+        }
+    )
+
+    rejected = store.transition_lifecycle("WP/15572/2025", "fetch_failed_retryable")
+    assert rejected["applied"] is False
+    assert rejected["reason"] == "invalid_transition"
+
+
+def test_terminal_analysis_failure_can_still_record_a_concurrent_success():
+    """Same reasoning as the fetch-side terminal state."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    db.collection("case-details").document("WP-16-2026").set(
+        {
+            "case_ref": "WP/16/2026",
+            "lifecycle_status": "analysis_failed_terminal",
+            "lifecycle_events": [],
+        }
+    )
+
+    assert store.transition_lifecycle("WP/16/2026", "analysed")["applied"] is True
+
+
 def test_claim_for_processing_succeeds_once_then_fails_on_replay():
     """Simulates two Cloud Run instances racing to claim the same
     fetch_queued case: only the first claim (sequential, since the fake is

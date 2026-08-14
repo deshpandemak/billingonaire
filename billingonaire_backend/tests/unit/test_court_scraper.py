@@ -109,23 +109,35 @@ def test_scraper_initialization_defaults_to_http():
     assert scraper.get_scraper_config()["supported_providers"] == ["http", "playwright"]
 
 
-def test_session_mounts_legacy_renegotiation_adapter_for_https():
+def test_session_mounts_legacy_renegotiation_adapter_for_the_court_host():
     """bombayhighcourt.gov.in requires the old TLS renegotiation handshake
     that OpenSSL 3.x refuses by default (every plain request would fail with
     "[SSL: UNSAFE_LEGACY_RENEGOTIATION_DISABLED]" before reaching the court
-    site at all). The session's https:// adapter must opt back into it."""
-    from billingonaire_backend.CourtScraper import (
-        _SSL_OP_LEGACY_SERVER_CONNECT,
-        _LegacyRenegotiationAdapter,
-    )
+    site at all). The scraper's session must opt back into it."""
+    # Top-level import path, matching how CourtScraper itself imports it --
+    # importing the same file under two module names would yield two
+    # distinct classes and break the isinstance check below.
+    from court_http import SSL_OP_LEGACY_SERVER_CONNECT, LegacyRenegotiationAdapter
 
     scraper = BombayHighCourtScraper()
     adapter = scraper.session.get_adapter("https://bombayhighcourt.gov.in/x")
-    assert isinstance(adapter, _LegacyRenegotiationAdapter)
+    assert isinstance(adapter, LegacyRenegotiationAdapter)
 
     ssl_context = adapter.poolmanager.connection_pool_kw.get("ssl_context")
     assert ssl_context is not None
-    assert ssl_context.options & _SSL_OP_LEGACY_SERVER_CONNECT
+    assert ssl_context.options & SSL_OP_LEGACY_SERVER_CONNECT
+
+
+def test_non_court_hosts_keep_strict_default_tls():
+    """The legacy-renegotiation opt-in is scoped to the court's own hosts --
+    archived PDFs on Google Cloud Storage must not be downgraded to it."""
+    from court_http import LegacyRenegotiationAdapter
+
+    scraper = BombayHighCourtScraper()
+    gcs_adapter = scraper.session.get_adapter(
+        "https://storage.googleapis.com/bucket/order.pdf"
+    )
+    assert not isinstance(gcs_adapter, LegacyRenegotiationAdapter)
 
 
 # ---------------------------------------------------------------------------

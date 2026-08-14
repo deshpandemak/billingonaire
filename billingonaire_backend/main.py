@@ -53,6 +53,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from Board import Board  # noqa: E402
 from Board import SIMPLE_STATUS_KEYS, simple_status_for  # noqa: E402
+from court_http import court_get  # noqa: E402
 from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
@@ -1905,7 +1906,9 @@ def _derive_pdf_filename(source_url: str) -> str:
 
 
 def _download_pdf_from_url(source_url: str) -> Dict[str, Any]:
-    response = requests.get(source_url, timeout=60)
+    # court_get, not requests.get -- court URLs need legacy TLS
+    # renegotiation; non-court URLs (GCS) are unaffected. See court_http.
+    response = court_get(source_url, timeout=60)
     response.raise_for_status()
 
     file_content = response.content or b""
@@ -3956,13 +3959,13 @@ async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_a
             # AutoOrderManager._upload_order_text_to_gcs) -- fetch that
             # directly instead of re-downloading the PDF and re-running the
             # full analyzer just to recover the same text a second time.
-            text_response = requests.get(order_text_url, timeout=15)
+            text_response = court_get(order_text_url, timeout=15)
             text_response.raise_for_status()
             order_text = text_response.text
         else:
             # Legacy order analysed before text persistence shipped -- fall
             # back to the original re-download + re-analyze path.
-            pdf_response = requests.get(order_link, timeout=30)
+            pdf_response = court_get(order_link, timeout=30)
             pdf_response.raise_for_status()
             analysis = manager.order_analyzer.analyze_order_document(
                 f"{doc_id}.pdf", pdf_response.content
@@ -5395,7 +5398,8 @@ async def get_order_pdf(doc_id: str):
 
         # Court URL: attempt download
         try:
-            resp = requests.get(order_link, timeout=15)
+            # court_get: court URLs need legacy TLS renegotiation.
+            resp = court_get(order_link, timeout=15)
             resp.raise_for_status()
             pdf_bytes = resp.content
             if not pdf_bytes or b"%PDF" not in pdf_bytes[:10]:
@@ -5599,7 +5603,8 @@ async def migrate_orders_to_gcs(
         order_date = str(data.get("latest_order_date") or data.get("board_date") or "")
 
         try:
-            resp = requests.get(order_link, timeout=15)
+            # court_get: court URLs need legacy TLS renegotiation.
+            resp = court_get(order_link, timeout=15)
             resp.raise_for_status()
             pdf_bytes = resp.content
             if not pdf_bytes or b"%PDF" not in pdf_bytes[:10]:

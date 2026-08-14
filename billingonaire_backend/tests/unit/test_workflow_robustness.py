@@ -690,7 +690,7 @@ async def test_ai_suggestion_uses_persisted_text_without_redownloading_pdf(
             raise_for_status=Mock(),
         )
     )
-    monkeypatch.setattr(main.requests, "get", get_mock)
+    monkeypatch.setattr(main, "court_get", get_mock)
 
     import review_copilot
 
@@ -729,8 +729,8 @@ async def test_ai_suggestion_returns_category_confidence_and_rationale(monkeypat
     )
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
     monkeypatch.setattr(
-        main.requests,
-        "get",
+        main,
+        "court_get",
         Mock(
             return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
         ),
@@ -772,8 +772,8 @@ async def test_ai_suggestion_returns_502_when_gemini_call_fails(monkeypatch):
     )
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
     monkeypatch.setattr(
-        main.requests,
-        "get",
+        main,
+        "court_get",
         Mock(
             return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
         ),
