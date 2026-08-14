@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import Mock, patch
 
 import pytest
@@ -138,6 +139,54 @@ def test_non_court_hosts_keep_strict_default_tls():
         "https://storage.googleapis.com/bucket/order.pdf"
     )
     assert not isinstance(gcs_adapter, LegacyRenegotiationAdapter)
+
+
+# ---------------------------------------------------------------------------
+# session (per-thread) -- regression guards for the shared-session CSRF race
+# ---------------------------------------------------------------------------
+
+
+def test_session_is_per_thread_not_shared():
+    """AutoOrderManager holds one BombayHighCourtScraper instance for the
+    whole process and dispatches _fetch_with_http from a ThreadPoolExecutor.
+    A single shared session's cookie jar being mutated by concurrent
+    GET-then-POST sequences was confirmed (from production logs) to corrupt
+    a thread's CSRF token mid-flight and produce a real but
+    self-inflicted "Invalid or expired form submission" rejection, plus
+    duplicate work when two threads independently reprocessed the same
+    case. Each thread must get its own session."""
+    scraper = BombayHighCourtScraper()
+    sessions = {}
+
+    def record(name):
+        sessions[name] = scraper.session
+
+    threads = [threading.Thread(target=record, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(sessions) == 4
+    assert len({id(s) for s in sessions.values()}) == 4
+
+
+def test_session_is_reused_within_the_same_thread():
+    """Per-thread, not per-access -- connection pooling still applies, and
+    a caller reading scraper.session twice in a row (as _fetch_with_http's
+    419-retry path does) must see the same cookies/adapter."""
+    scraper = BombayHighCourtScraper()
+    assert scraper.session is scraper.session
+
+
+def test_session_setter_still_works_for_test_mocking():
+    """Existing tests inject a mock session via `scraper.session = mock`;
+    the property must keep that assignment working exactly as a plain
+    attribute did."""
+    scraper = BombayHighCourtScraper()
+    mock_session = Mock()
+    scraper.session = mock_session
+    assert scraper.session is mock_session
 
 
 # ---------------------------------------------------------------------------

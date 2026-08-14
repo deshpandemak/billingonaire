@@ -2,6 +2,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -47,11 +48,39 @@ class BombayHighCourtScraper:
         self.request_timeout_seconds = int(
             os.getenv("COURT_REQUEST_TIMEOUT_SECONDS", "20")
         )
-        self.session = requests.Session()
-        self.session.headers.update(self._browser_headers())
-        # The court still requires legacy TLS renegotiation; without this
-        # every request dies in the handshake. See court_http.
-        mount_court_adapter(self.session)
+        self._thread_local = threading.local()
+
+    @property
+    def session(self) -> requests.Session:
+        """A session private to the calling thread.
+
+        AutoOrderManager holds one BombayHighCourtScraper instance for the
+        whole process and dispatches _fetch_with_http calls from a
+        ThreadPoolExecutor (ORDER_PROCESSING_WORKERS threads, default 5). A
+        single shared requests.Session's cookie jar is mutated by every
+        GET/POST; _fetch_with_http does an unsynchronized GET (fetch a
+        fresh CSRF token) then POST (submit with that token), so two
+        threads sharing one session can interleave and invalidate each
+        other's token mid-flight. Confirmed against production logs: 22 of
+        32 cases processed in one five-minute window were independently
+        re-fetched by more than one worker at once, some producing a real
+        but entirely self-inflicted "Invalid or expired form submission"
+        rejection from the court's server. One session per thread removes
+        the race; each still gets the legacy-TLS adapter it needs.
+        """
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(self._browser_headers())
+            # The court still requires legacy TLS renegotiation; without
+            # this every request dies in the handshake. See court_http.
+            mount_court_adapter(session)
+            self._thread_local.session = session
+        return session
+
+    @session.setter
+    def session(self, value: requests.Session) -> None:
+        self._thread_local.session = value
 
     def _browser_headers(self) -> Dict[str, str]:
         return {
