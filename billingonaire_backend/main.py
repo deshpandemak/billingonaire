@@ -5769,13 +5769,30 @@ async def generate_bill_data(
                             ):
                                 case_ids.add(case_id)
 
+                                # Fetch the case-details doc once and reuse it for
+                                # both the fee and the parties lookup below --
+                                # each used to independently re-fetch the exact
+                                # same document, doubling Firestore reads for
+                                # every bill line for no benefit.
+                                case_ref_for_bill = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                                case_details_for_bill = (
+                                    get_auto_order_manager().case_store.get_case_details(
+                                        case_ref_for_bill
+                                    )
+                                    or {}
+                                )
+
                                 # Determine fee and result based on order analysis
                                 fee_info = calculate_case_fee(
-                                    case_data, board_date=board_date_str
+                                    case_data,
+                                    board_date=board_date_str,
+                                    case_details=case_details_for_bill,
                                 )
 
                                 # Extract parties information
-                                parties = extract_parties_info(case_data)
+                                parties = extract_parties_info(
+                                    case_data, case_details=case_details_for_bill
+                                )
 
                                 bill_entry = {
                                     "id": case_id,
@@ -5867,13 +5884,30 @@ async def generate_bill_data(
                             ):
                                 case_ids.add(case_id)
 
+                                # Fetch the case-details doc once and reuse it for
+                                # both the fee and the parties lookup below -- each
+                                # used to independently re-fetch the exact same
+                                # document, doubling Firestore reads for every bill
+                                # line for no benefit.
+                                case_ref_for_bill = f"{case_data.get('case_type')}/{case_data.get('case_no')}/{case_data.get('case_year')}"
+                                case_details_for_bill = (
+                                    get_auto_order_manager().case_store.get_case_details(
+                                        case_ref_for_bill
+                                    )
+                                    or {}
+                                )
+
                                 # Determine fee and result based on order analysis
                                 fee_info = calculate_case_fee(
-                                    case_data, board_date=board_date_str
+                                    case_data,
+                                    board_date=board_date_str,
+                                    case_details=case_details_for_bill,
                                 )
 
                                 # Extract parties information
-                                parties = extract_parties_info(case_data)
+                                parties = extract_parties_info(
+                                    case_data, case_details=case_details_for_bill
+                                )
 
                                 bill_entry = {
                                     "id": case_id,
@@ -6286,7 +6320,11 @@ async def get_my_bills(
         )
 
 
-def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dict:
+def calculate_case_fee(
+    case_data: Dict,
+    board_date: Optional[str] = None,
+    case_details: Optional[Dict] = None,
+) -> Dict:
     """Calculate fee and result based on order analysis.
 
     Returns a dict with keys: result, fee, order_link, order_category.
@@ -6297,12 +6335,22 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
     or order_date matches is used for fee calculation and the returned
     order_link.  This prevents a later hearing's order from being shown
     against an earlier bill entry for the same case.
+
+    *case_details*, when given, is used as-is instead of re-fetching --
+    bill generation calls this once per line and also calls
+    extract_parties_info() for the same case; both used to independently
+    fetch the identical case-details doc, so a bill covering a full
+    quarter did two Firestore reads of the same document per line for no
+    reason. Pass the doc in once you've already fetched it. Legacy callers
+    that don't have it handy keep working -- omit it and this fetches it
+    itself, same as before.
     """
     case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
     try:
-        case_details = (
-            get_auto_order_manager().case_store.get_case_details(case_ref) or {}
-        )
+        if case_details is None:
+            case_details = (
+                get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+            )
 
         orders = case_details.get("orders") or []
 
@@ -6418,13 +6466,19 @@ def calculate_case_fee(case_data: Dict, board_date: Optional[str] = None) -> Dic
         }
 
 
-def extract_parties_info(case_data: Dict) -> str:
-    """Extract parties information from case data (format: Petitioner vs Respondent)"""
+def extract_parties_info(case_data: Dict, case_details: Optional[Dict] = None) -> str:
+    """Extract parties information from case data (format: Petitioner vs Respondent).
+
+    *case_details*, when given, is used as-is instead of re-fetching -- see
+    calculate_case_fee's docstring for why (both used to independently
+    re-fetch the same case-details doc for the same bill line).
+    """
     try:
         case_ref = f"{case_data.get('case_type', '')}/{case_data.get('case_no', '')}/{case_data.get('case_year', '')}"
-        case_details = (
-            get_auto_order_manager().case_store.get_case_details(case_ref) or {}
-        )
+        if case_details is None:
+            case_details = (
+                get_auto_order_manager().case_store.get_case_details(case_ref) or {}
+            )
         petitioner = str(case_details.get("petitioner") or "").strip()
         respondent = str(case_details.get("respondent") or "").strip()
         if petitioner and respondent:

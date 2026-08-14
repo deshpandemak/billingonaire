@@ -13,7 +13,7 @@ import pytest
 
 os.environ.setdefault("TESTING", "true")
 
-from main import calculate_case_fee  # noqa: E402
+from main import calculate_case_fee, extract_parties_info  # noqa: E402
 
 CASE = {"case_type": "WP", "case_no": "123", "case_year": "2025"}
 
@@ -134,3 +134,49 @@ class TestConfidenceReachesTheBill:
         with _with_orders([_order("ADJOURNED")]):
             out = calculate_case_fee(CASE, board_date="2025-03-01")
         assert out["order_category_confidence"] is None
+
+
+class TestCaseDetailsIsFetchedOnceAndShared:
+    """/bills/generate calls calculate_case_fee and extract_parties_info for the
+    same case_ref on every bill line; each used to independently re-fetch the
+    identical case-details doc. Passing case_details explicitly must skip the
+    fetch, and omitting it must keep working exactly as before."""
+
+    def test_calculate_case_fee_uses_the_given_case_details_without_fetching(self):
+        manager = MagicMock()
+        with patch("main.get_auto_order_manager", return_value=manager):
+            out = calculate_case_fee(
+                CASE,
+                board_date="2025-03-01",
+                case_details={"orders": [_order("DISPOSED_OFF")]},
+            )
+        manager.case_store.get_case_details.assert_not_called()
+        assert out["result"] == "WP DISPOSED OF"
+        assert out["fee"] == 2500
+
+    def test_calculate_case_fee_fetches_when_case_details_omitted(self):
+        with _with_orders([_order("DISPOSED_OFF")]) as get_manager:
+            out = calculate_case_fee(CASE, board_date="2025-03-01")
+        get_manager.return_value.case_store.get_case_details.assert_called_once()
+        assert out["result"] == "WP DISPOSED OF"
+
+    def test_extract_parties_info_uses_the_given_case_details_without_fetching(self):
+        manager = MagicMock()
+        with patch("main.get_auto_order_manager", return_value=manager):
+            parties = extract_parties_info(
+                CASE,
+                case_details={"petitioner": "Foo", "respondent": "Bar"},
+            )
+        manager.case_store.get_case_details.assert_not_called()
+        assert parties == "Foo Versus Bar"
+
+    def test_extract_parties_info_fetches_when_case_details_omitted(self):
+        manager = MagicMock()
+        manager.case_store.get_case_details.return_value = {
+            "petitioner": "Foo",
+            "respondent": "Bar",
+        }
+        with patch("main.get_auto_order_manager", return_value=manager):
+            parties = extract_parties_info(CASE)
+        manager.case_store.get_case_details.assert_called_once()
+        assert parties == "Foo Versus Bar"

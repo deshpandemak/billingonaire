@@ -1,5 +1,6 @@
 import re
 import statistics
+import time as _time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
@@ -11,10 +12,33 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 _agp_name_mapping_cache: dict = {"key": None, "mapping": {}}
 
+_DASHBOARD_STATS_CACHE_TTL_SECONDS = 120
+
 
 class DashboardData:
     def __init__(self, db=None):
         self.db = db or firestore.client()
+        # get_agp_stats/get_monthly_avg with no agp filter (the admin "all
+        # AGPs" default view) scan every daily-boards doc unfiltered --
+        # ~82k docs -- and then run the O(N^2) fuzzy-name grouping below
+        # over every distinct raw name found. Unlike /orders/overview-stats
+        # and /queue/status (each with their own request-level cache, see
+        # main.py), these two had no cache at all, so the full scan +
+        # grouping pass re-ran on every dashboard page load. Keyed by the
+        # actual query params (not a single slot) so a per-AGP-user's
+        # already-cheap filtered call never collides with the admin's
+        # expensive unfiltered one.
+        #
+        # Instance-level, not module-level: main.py's get_dashboard_data()
+        # holds one DashboardData singleton per process, so this still
+        # persists across requests within a Cloud Run instance's lifetime
+        # (lost on cold start, same as the module-level caches in main.py)
+        # -- but it also means tests that construct a fresh DashboardData()
+        # per test (as the existing tests do) get a fresh, empty cache
+        # rather than silently reading another test's cached result for
+        # the same (empty) params.
+        self._agp_stats_cache: dict = {}
+        self._monthly_avg_cache: dict = {}
 
     def normalize_agp_name(self, name: str) -> str:
         """Normalize AGP name for fuzzy matching"""
@@ -122,9 +146,15 @@ class DashboardData:
     async def get_agp_stats(
         self, agp_name: str = None, agp_filter=None, use_fuzzy_matching: bool = True
     ):
-        query = self.db.collection("daily-boards")
         # Use agp_filter if provided (for role-based access), otherwise use agp_name parameter
         target_agp = agp_filter or agp_name
+
+        cache_key = (target_agp or "", use_fuzzy_matching)
+        cached = self._agp_stats_cache.get(cache_key)
+        if cached and _time.time() - cached["ts"] < _DASHBOARD_STATS_CACHE_TTL_SECONDS:
+            return cached["data"]
+
+        query = self.db.collection("daily-boards")
         if target_agp:
             query = query.where(
                 filter=FieldFilter("respondent_lawyer", "==", target_agp)
@@ -140,14 +170,21 @@ class DashboardData:
         if use_fuzzy_matching and len(agp_counts) > 0:
             agp_counts = self.group_similar_agp_names(agp_counts, threshold=0.85)
 
-        return [
+        result = [
             {"agp_name": k, "matters": v}
             for k, v in sorted(agp_counts.items(), key=lambda x: -x[1])
         ]
+        self._agp_stats_cache[cache_key] = {"ts": _time.time(), "data": result}
+        return result
 
     async def get_monthly_avg(
         self, year: str = None, agp_filter=None, use_fuzzy_matching: bool = True
     ):
+        cache_key = (year or "", agp_filter or "", use_fuzzy_matching)
+        cached = self._monthly_avg_cache.get(cache_key)
+        if cached and _time.time() - cached["ts"] < _DASHBOARD_STATS_CACHE_TTL_SECONDS:
+            return cached["data"]
+
         query = self.db.collection("daily-boards")
 
         # Apply AGP filter if specified
@@ -204,7 +241,9 @@ class DashboardData:
         for agp, months in agp_month_counts.items():
             avg = sum(months.values()) / len(months)
             result.append({"agp_name": agp, "monthly_avg": round(avg, 2)})
-        return sorted(result, key=lambda x: -x["monthly_avg"])
+        result = sorted(result, key=lambda x: -x["monthly_avg"])
+        self._monthly_avg_cache[cache_key] = {"ts": _time.time(), "data": result}
+        return result
 
     async def get_matters_by_date_range(
         self, start_date=None, end_date=None, agp_filter=None

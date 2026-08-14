@@ -67,6 +67,67 @@ async def test_get_agp_stats(mock_firestore):
     assert isinstance(result, list)
 
 
+@pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
+async def test_get_agp_stats_second_call_is_served_from_cache(mock_firestore):
+    """The unfiltered ('all AGPs') call is the expensive one -- a full
+    daily-boards scan plus O(N^2) fuzzy grouping. A second call with the
+    same params within the TTL must not touch Firestore again."""
+    from Dashboard import DashboardData
+
+    mock_docs = [
+        MagicMock(to_dict=lambda: {"respondent_lawyer": "POOJA JOSHI"}),
+        MagicMock(to_dict=lambda: {"respondent_lawyer": "POOJA JOSHI"}),
+    ]
+    stream_mock = mock_firestore.return_value.collection.return_value.stream
+    stream_mock.return_value = mock_docs
+
+    dashboard = DashboardData()
+    first = await dashboard.get_agp_stats()
+    second = await dashboard.get_agp_stats()
+
+    assert second == first
+    stream_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
+async def test_get_agp_stats_different_agp_bypasses_cache(mock_firestore):
+    """A different agp_name must be its own cache entry, not collide with
+    (or be served by) the unfiltered admin view's cached result."""
+    from Dashboard import DashboardData
+
+    mock_docs = [MagicMock(to_dict=lambda: {"respondent_lawyer": "POOJA JOSHI"})]
+    stream_mock = (
+        mock_firestore.return_value.collection.return_value.where.return_value.stream
+    )
+    stream_mock.return_value = mock_docs
+
+    dashboard = DashboardData()
+    await dashboard.get_agp_stats(agp_name="POOJA JOSHI")
+    await dashboard.get_agp_stats(agp_name="SHARMA")
+
+    assert stream_mock.call_count == 2
+
+
+@pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
+async def test_get_agp_stats_cache_is_scoped_to_the_instance(mock_firestore):
+    """Regression guard: the cache must be instance-level, not a module
+    global -- two separate DashboardData() instances (e.g. two separate
+    tests, or two request-scoped instances) must not share a cache entry."""
+    from Dashboard import DashboardData
+
+    mock_docs = [MagicMock(to_dict=lambda: {"respondent_lawyer": "POOJA JOSHI"})]
+    stream_mock = mock_firestore.return_value.collection.return_value.stream
+    stream_mock.return_value = mock_docs
+
+    await DashboardData().get_agp_stats()
+    await DashboardData().get_agp_stats()
+
+    assert stream_mock.call_count == 2
+
+
 @patch("Dashboard.firestore.client")
 def test_group_similar_agp_names(mock_firestore):
     """Test fuzzy AGP name grouping"""
@@ -117,6 +178,59 @@ async def test_get_monthly_avg(mock_firestore):
     dashboard = DashboardData()
     result = await dashboard.get_monthly_avg(2024)
     assert isinstance(result, list)
+
+
+@pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
+async def test_get_monthly_avg_second_call_is_served_from_cache(mock_firestore):
+    """Same unbounded-scan-plus-fuzzy-grouping cost as get_agp_stats when
+    no year/agp filter is given -- a repeat call within the TTL must not
+    re-query Firestore."""
+    from Dashboard import DashboardData
+
+    mock_docs = [
+        MagicMock(
+            to_dict=lambda: {
+                "respondent_lawyer": "POOJA JOSHI",
+                "board_date": "2024-01-15",
+            }
+        )
+    ]
+    stream_mock = mock_firestore.return_value.collection.return_value.stream
+    stream_mock.return_value = mock_docs
+
+    dashboard = DashboardData()
+    first = await dashboard.get_monthly_avg()
+    second = await dashboard.get_monthly_avg()
+
+    assert second == first
+    stream_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("Dashboard.firestore.client")
+async def test_get_monthly_avg_different_year_bypasses_cache(mock_firestore):
+    """A different year must be its own cache entry."""
+    from Dashboard import DashboardData
+
+    mock_docs = [
+        MagicMock(
+            to_dict=lambda: {
+                "respondent_lawyer": "POOJA JOSHI",
+                "board_date": "2024-01-15",
+            }
+        )
+    ]
+    stream_mock = (
+        mock_firestore.return_value.collection.return_value.where.return_value.where.return_value.stream
+    )
+    stream_mock.return_value = mock_docs
+
+    dashboard = DashboardData()
+    await dashboard.get_monthly_avg(year="2024")
+    await dashboard.get_monthly_avg(year="2025")
+
+    assert stream_mock.call_count == 2
 
 
 @pytest.mark.asyncio
