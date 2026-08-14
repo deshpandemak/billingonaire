@@ -1215,6 +1215,138 @@ async def test_auto_map_case_to_users_writes_near_misses_as_pending(monkeypatch)
     assert pending_write["case_ref"] == "WP/1/2026"
 
 
+@pytest.mark.asyncio
+async def test_auto_map_case_to_users_routes_initials_collisions_to_review(
+    monkeypatch,
+):
+    """Modern boards print government lawyers as bare initials ("P M J, AGP"
+    -- see Board.py's _GP_INITIALS_PATTERN). When two different registered
+    AGPs both accept-match the same bare-initials board text (a real
+    collision, not a hypothetical one -- e.g. "Pooja Makarand Joshi
+    Deshpande" and "Priya Manoj Jadhav" both being "P M J"), neither must be
+    auto-mapped: both go to user-matter-pending-confirmations instead of
+    user-case-mappings, so a human confirms which one actually appeared."""
+    user_a = SimpleNamespace(
+        id="user-a",
+        to_dict=lambda: {"role_type": "AGP", "full_name": "Pooja Makarand Joshi"},
+    )
+    user_b = SimpleNamespace(
+        id="user-b",
+        to_dict=lambda: {"role_type": "AGP", "full_name": "Priya Manoj Jadhav"},
+    )
+
+    match_a = SimpleNamespace(
+        match_source="board_data",
+        match_field="respondent_lawyer",
+        matched_text="P M J",
+        confidence_score=0.80,
+        role_type="AGP",
+        board_date="2026-07-24",
+    )
+    match_b = SimpleNamespace(
+        match_source="board_data",
+        match_field="respondent_lawyer",
+        matched_text="P M J",
+        confidence_score=0.80,
+        role_type="AGP",
+        board_date="2026-07-24",
+    )
+
+    def fake_matches_for_case(user_id, user_role, case_id):
+        return [match_a] if user_id == "user-a" else [match_b]
+
+    mock_matcher = MagicMock()
+    mock_matcher.find_user_matters_for_case.side_effect = fake_matches_for_case
+    mock_matcher.find_near_miss_matters_for_case.return_value = []
+    monkeypatch.setattr(main, "get_user_matter_matcher", lambda: mock_matcher)
+
+    mock_pending_doc_ref = MagicMock()
+    mock_mapping_doc_ref = MagicMock()
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "user-roles":
+            col.stream.return_value = [user_a, user_b]
+        elif name == "user-matter-pending-confirmations":
+            col.document.return_value = mock_pending_doc_ref
+        elif name == "user-case-mappings":
+            col.document.return_value = mock_mapping_doc_ref
+        return col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+
+    await main.auto_map_case_to_users("board-doc-1", {"case_ref": "WP/8923/2026"})
+
+    # Neither colliding match is auto-accepted into user-case-mappings.
+    mock_mapping_doc_ref.set.assert_not_called()
+
+    # Both users' matches are routed to pending-confirmations for review.
+    assert mock_pending_doc_ref.set.call_count == 2
+    written_users = {
+        call.args[0]["user_id"] for call in mock_pending_doc_ref.set.call_args_list
+    }
+    assert written_users == {"user-a", "user-b"}
+    for call in mock_pending_doc_ref.set.call_args_list:
+        assert call.args[0]["matched_text"] == "P M J"
+        assert call.args[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_auto_map_case_to_users_still_auto_maps_a_unique_initials_match(
+    monkeypatch,
+):
+    """A bare-initials match with no colliding second user must still be
+    auto-mapped as before -- the collision check must not demote every
+    initials-format match indiscriminately."""
+    user_a = SimpleNamespace(
+        id="user-a",
+        to_dict=lambda: {"role_type": "AGP", "full_name": "Nitin Shashikant Bansode"},
+    )
+
+    match_a = SimpleNamespace(
+        match_source="board_data",
+        match_field="respondent_lawyer",
+        matched_text="N S B",
+        confidence_score=0.80,
+        role_type="AGP",
+        board_date="2026-07-24",
+    )
+
+    mock_matcher = MagicMock()
+    mock_matcher.find_user_matters_for_case.return_value = [match_a]
+    mock_matcher.find_near_miss_matters_for_case.return_value = []
+    monkeypatch.setattr(main, "get_user_matter_matcher", lambda: mock_matcher)
+
+    mock_mapping_doc_ref = MagicMock()
+
+    def collection_side_effect(name):
+        col = MagicMock()
+        if name == "user-roles":
+            col.stream.return_value = [user_a]
+        elif name == "user-case-mappings":
+            col.document.return_value = mock_mapping_doc_ref
+        return col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = collection_side_effect
+    monkeypatch.setattr(
+        main,
+        "firestore",
+        SimpleNamespace(client=lambda: mock_db, SERVER_TIMESTAMP="ts"),
+    )
+
+    await main.auto_map_case_to_users("board-doc-1", {"case_ref": "WP/318/2026"})
+
+    mock_mapping_doc_ref.set.assert_called_once()
+    assert mock_mapping_doc_ref.set.call_args.args[0]["matched_text"] == "N S B"
+
+
 # ---------------------------------------------------------------------------
 # 7b. _resolve_board_doc_id / poll-loop auto-mapping -- the poll loops key
 #     candidates off case-details ("TYPE-NO-YEAR"), but auto_map_case_to_users

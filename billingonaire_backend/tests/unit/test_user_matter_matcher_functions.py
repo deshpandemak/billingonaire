@@ -109,3 +109,60 @@ def test_score_name_match_initial_only_user_words_cannot_pass_gate():
 
     # "b" is a substring of "bane" — should not pass the gate
     assert score_name_match("A B Naik", "A B Bane") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# score_name_match — bare-initials board format (modern Bombay HC boards
+# print government lawyers as e.g. "P M J, AGP" with no surname at all;
+# Board.py's _GP_INITIALS_PATTERN strips the role and keeps just "P M J")
+# ---------------------------------------------------------------------------
+
+
+def test_score_name_match_initials_prefix_matches_the_right_person():
+    from UserMatterMatcher import score_name_match
+
+    # "P M J" is a prefix of Pooja's first three name-words; the board
+    # never prints her fourth word (the surname) at all.
+    assert score_name_match("Pooja Makarand Joshi Deshpande", "P M J") >= 0.50
+    assert score_name_match("Pooja Makarand Joshi Deshpande", "p.m.j.") >= 0.50
+
+
+def test_score_name_match_initials_collision_no_longer_favors_the_wrong_person():
+    """Regression: before the bare-initials scoring path existed, the
+    last-name gate's substring check gave the WRONG same-initialed person
+    (Priya Manoj Jadhav) a higher score than the RIGHT one (Pooja Makarand
+    Joshi Deshpande) against board text "P M J" -- 0.595 vs 0.510. Both
+    must now score identically, so a collision is a clean, detectable tie
+    for the caller to route to manual review, not a coin-flip in disguise.
+    """
+    from UserMatterMatcher import score_name_match
+
+    right = score_name_match("Pooja Makarand Joshi Deshpande", "P M J")
+    wrong = score_name_match("Priya Manoj Jadhav", "P M J")
+    assert right == wrong
+    assert right >= 0.50
+
+
+def test_score_name_match_initials_mismatch_scores_zero():
+    """A wrong letter anywhere in the initials means it isn't this person
+    -- no partial credit, unlike the old substring-luck behavior."""
+    from UserMatterMatcher import score_name_match
+
+    assert score_name_match("Sunita Ramesh Bhosale", "S R C") == 0.0
+    assert score_name_match("Rajesh Suresh Chavan", "S R C") == 0.0
+
+
+def test_score_name_match_initials_longer_than_name_scores_zero():
+    from UserMatterMatcher import score_name_match
+
+    assert score_name_match("A B", "A B C D") == 0.0
+
+
+def test_is_bare_initials():
+    from UserMatterMatcher import is_bare_initials
+
+    assert is_bare_initials("P M J") is True
+    assert is_bare_initials("p.m.j.") is True
+    assert is_bare_initials("S.D.VYAS, AGP") is False
+    assert is_bare_initials("") is False
+    assert is_bare_initials(None) is False

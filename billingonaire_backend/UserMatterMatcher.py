@@ -703,6 +703,18 @@ _PUNCT_RE = re.compile(r"[.,*#\-/;]+")
 _WS_RE = re.compile(r"\s+")
 
 
+def is_bare_initials(text: str) -> bool:
+    """True when *text* is nothing but single-letter initials (e.g. "P M J"
+    or "p.m.j.") -- the modern Bombay HC board format for government
+    lawyers, printed with no surname at all. Callers that see two different
+    registered users both match a bare-initials board value should treat it
+    as a genuine collision (several AGPs can share 3 initials) rather than
+    auto-picking whichever one scored fractionally higher.
+    """
+    words = re.findall(r"\b\w+\b", (text or "").strip())
+    return bool(words) and all(len(w) == 1 for w in words)
+
+
 def score_name_match(user_name: str, candidate_name: str) -> float:
     """
     Score how well *candidate_name* (a raw field value from a Firestore doc,
@@ -732,6 +744,31 @@ def score_name_match(user_name: str, candidate_name: str) -> float:
     cand_norm = _WS_RE.sub(" ", cand_norm).strip()
     cand_words = [w for w in re.findall(r"\b\w+\b", cand_norm) if w]
     if not cand_words:
+        return 0.0
+
+    # Bare-initials candidate (e.g. "P M J" — the modern Bombay HC board
+    # format prints only single-letter initials with no surname at all;
+    # see Board.py's _GP_INITIALS_PATTERN). The last-name gate below
+    # assumes cand_words[-1] is a real surname; for an all-initials
+    # candidate that word is just one letter, and the substring-match
+    # branch then passes for nearly any name containing that letter
+    # anywhere — verified in practice to let a same-initialed but
+    # different AGP outscore the correct one (e.g. "Priya Manoj Jadhav"
+    # outscoring "Pooja Makarand Joshi Deshpande" against board text
+    # "P M J"). Score these on an exact, in-order initials-PREFIX match
+    # instead: real board initials are always a left-to-right prefix of
+    # the true name's word-initials, never reordered or gapped. No
+    # partial credit — a wrong letter anywhere means it isn't this
+    # person. The caller is still responsible for checking whether more
+    # than one registered person's initials match the same board text
+    # (a genuine collision at this length) before treating this as a
+    # confident, sole match.
+    if all(len(w) == 1 for w in cand_words):
+        if len(cand_words) > len(user_words):
+            return 0.0
+        user_initials_prefix = [w[0] for w in user_words[: len(cand_words)]]
+        if cand_words == user_initials_prefix:
+            return 0.80
         return 0.0
 
     # 1. Last-name gate (35 %)

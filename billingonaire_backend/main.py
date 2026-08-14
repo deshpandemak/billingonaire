@@ -57,7 +57,7 @@ from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
 from UserManager import UserManager  # noqa: E402
-from UserMatterMatcher import UserRole  # noqa: E402
+from UserMatterMatcher import UserRole, is_bare_initials  # noqa: E402
 
 app = FastAPI(
     title="Billingonaire API",
@@ -797,6 +797,14 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
 
         mapped_users = []
 
+        # Collect every user's accepted matches and near-misses before
+        # writing anything. A bare-initials board field (the modern
+        # "P M J" format -- see Board.py's _GP_INITIALS_PATTERN) can score
+        # above threshold for more than one registered AGP who happens to
+        # share those initials; that collision is only visible by looking
+        # across all users for this one case, not one user at a time.
+        per_user_results = []  # (user_id, user_role, matches, near_misses)
+
         for user_doc in user_docs:
             try:
                 user_id = user_doc.id
@@ -830,66 +838,95 @@ async def auto_map_case_to_users(case_id: str, case_info: Dict):
                 near_misses = matcher.find_near_miss_matters_for_case(
                     user_id, user_role, case_id
                 )
-                for near_miss in near_misses:
-                    pending_key = (
-                        f"{user_id}_{case_id}_{near_miss.match_source}_"
-                        f"{near_miss.match_field}"
-                    )
-                    db.collection("user-matter-pending-confirmations").document(
-                        pending_key
-                    ).set(
-                        {
-                            "user_id": user_id,
-                            "case_id": case_id,
-                            "case_ref": case_info.get("case_ref"),
-                            "match_source": near_miss.match_source,
-                            "match_field": near_miss.match_field,
-                            "matched_text": near_miss.matched_text,
-                            "confidence_score": near_miss.confidence_score,
-                            "role_type": near_miss.role_type,
-                            "board_date": near_miss.board_date,
-                            "created_at": firestore.SERVER_TIMESTAMP,
-                            "status": "pending",
-                        },
-                        merge=True,
-                    )
 
-                if user_matches:
-                    # Store the mapping in user-case-mappings collection
-                    for match in user_matches:
-                        mapping_data = {
-                            "user_id": user_id,
-                            "case_id": case_id,
-                            "case_ref": case_info.get("case_ref"),
-                            "match_source": match.match_source,
-                            "match_field": match.match_field,
-                            "matched_text": match.matched_text,
-                            "confidence_score": match.confidence_score,
-                            "role_type": match.role_type,
-                            "board_date": match.board_date,
-                            "mapped_at": firestore.SERVER_TIMESTAMP,
-                            "auto_mapped": True,
-                        }
-
-                        # Use composite key to prevent duplicates
-                        mapping_key = f"{user_id}_{case_id}_{match.match_source}_{match.match_field}"
-                        db.collection("user-case-mappings").document(mapping_key).set(
-                            mapping_data, merge=True
-                        )
-
-                        mapped_users.append(
-                            {
-                                "user_id": user_id,
-                                "role_type": user_role.role_type,
-                                "confidence": match.confidence_score,
-                            }
-                        )
+                per_user_results.append((user_id, user_role, user_matches, near_misses))
 
             except Exception as user_error:
                 logger.error(
                     f"Error processing user {user_doc.id} for case mapping: {user_error}"
                 )
                 continue
+
+        # An accepted match whose matched_text is bare initials and belongs
+        # to more than one distinct user is a genuine collision at this
+        # length (several AGPs can share 3 initials) -- neither is
+        # auto-accepted; both go to manual review instead of picking
+        # whichever user's score happened to land a hair higher.
+        matched_text_to_users = {}
+        for user_id, _role, user_matches, _near in per_user_results:
+            for match in user_matches:
+                if is_bare_initials(match.matched_text):
+                    matched_text_to_users.setdefault(match.matched_text, set()).add(
+                        user_id
+                    )
+        colliding_texts = {
+            text for text, users in matched_text_to_users.items() if len(users) > 1
+        }
+
+        for user_id, user_role, user_matches, near_misses in per_user_results:
+            accepted_matches = [
+                m for m in user_matches if m.matched_text not in colliding_texts
+            ]
+            demoted_matches = [
+                m for m in user_matches if m.matched_text in colliding_texts
+            ]
+
+            for pending in list(near_misses) + demoted_matches:
+                pending_key = (
+                    f"{user_id}_{case_id}_{pending.match_source}_"
+                    f"{pending.match_field}"
+                )
+                db.collection("user-matter-pending-confirmations").document(
+                    pending_key
+                ).set(
+                    {
+                        "user_id": user_id,
+                        "case_id": case_id,
+                        "case_ref": case_info.get("case_ref"),
+                        "match_source": pending.match_source,
+                        "match_field": pending.match_field,
+                        "matched_text": pending.matched_text,
+                        "confidence_score": pending.confidence_score,
+                        "role_type": pending.role_type,
+                        "board_date": pending.board_date,
+                        "created_at": firestore.SERVER_TIMESTAMP,
+                        "status": "pending",
+                    },
+                    merge=True,
+                )
+
+            if accepted_matches:
+                # Store the mapping in user-case-mappings collection
+                for match in accepted_matches:
+                    mapping_data = {
+                        "user_id": user_id,
+                        "case_id": case_id,
+                        "case_ref": case_info.get("case_ref"),
+                        "match_source": match.match_source,
+                        "match_field": match.match_field,
+                        "matched_text": match.matched_text,
+                        "confidence_score": match.confidence_score,
+                        "role_type": match.role_type,
+                        "board_date": match.board_date,
+                        "mapped_at": firestore.SERVER_TIMESTAMP,
+                        "auto_mapped": True,
+                    }
+
+                    # Use composite key to prevent duplicates
+                    mapping_key = (
+                        f"{user_id}_{case_id}_{match.match_source}_{match.match_field}"
+                    )
+                    db.collection("user-case-mappings").document(mapping_key).set(
+                        mapping_data, merge=True
+                    )
+
+                    mapped_users.append(
+                        {
+                            "user_id": user_id,
+                            "role_type": user_role.role_type,
+                            "confidence": match.confidence_score,
+                        }
+                    )
 
         if mapped_users:
             logger.info(
