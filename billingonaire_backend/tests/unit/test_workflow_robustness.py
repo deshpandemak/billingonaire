@@ -2253,6 +2253,28 @@ async def test_overview_stats_fetch_and_analyse_are_independent_numbers(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_poll_heartbeat_write_ensures_firebase_is_initialized_first(monkeypatch):
+    """Regression guard: both poll loops called _write_poll_heartbeat before
+    their own ensure_firebase() call, so on a cold-started instance this was
+    the very first Firestore touch of the process -- "the default Firebase
+    app does not exist" on every instance's first tick (confirmed across 10
+    concurrently cold-started Cloud Run instances in production logs).
+    _write_poll_heartbeat and _poll_loop_is_active must not depend on being
+    called after some other code path's ensure_firebase()."""
+    mock_db = MagicMock()
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+    ensure_mock = Mock()
+    monkeypatch.setattr(main, "ensure_firebase", ensure_mock)
+
+    main._write_poll_heartbeat("fetch_last_tick")
+    ensure_mock.assert_called_once()
+
+    ensure_mock.reset_mock()
+    main._poll_loop_is_active("fetch_last_tick")
+    ensure_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_poll_heartbeat_write_and_read_round_trips(monkeypatch):
     mock_db = MagicMock()
     stored = {}

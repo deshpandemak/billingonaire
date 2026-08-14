@@ -4216,6 +4216,15 @@ _POLL_HEARTBEAT_DOC_ID = "poll-loops"
 
 def _write_poll_heartbeat(field: str) -> None:
     try:
+        # Firebase is initialized lazily on first use. Both poll loops call
+        # this before ensure_firebase() runs later in the same tick (see
+        # fetch_poll_loop/analysis_poll_loop), so on a cold start this was
+        # the first Firestore touch of the process -- "the default Firebase
+        # app does not exist" on every instance's very first tick, one per
+        # cold start. Self-heals by the next tick once ensure_firebase()
+        # elsewhere succeeds, but there's no reason to depend on that
+        # ordering when this can just ensure it directly.
+        ensure_firebase()
         firestore.client().collection(_POLL_HEARTBEAT_COLLECTION).document(
             _POLL_HEARTBEAT_DOC_ID
         ).set({field: datetime.now().isoformat()}, merge=True)
@@ -4225,6 +4234,7 @@ def _write_poll_heartbeat(field: str) -> None:
 
 def _poll_loop_is_active(field: str) -> bool:
     try:
+        ensure_firebase()
         doc = (
             firestore.client()
             .collection(_POLL_HEARTBEAT_COLLECTION)
