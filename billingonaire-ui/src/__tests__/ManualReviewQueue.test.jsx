@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../lib/api', () => ({
   authenticatedFetchJSON: vi.fn(),
+  getApiUrl: (path) => `/api${path.startsWith('/') ? path : `/${path}`}`,
 }));
 
 import * as api from '../lib/api';
@@ -11,17 +12,19 @@ import ManualReviewQueue from '../components/ManualReviewQueue';
 
 const mockItems = [
   {
-    doc_id: 'case_mr_01',
+    // Matches the real /admin/review-queue response shape ("id": doc.id) --
+    // the component reads item.id first, falling back to doc_id/case_ref.
+    id: 'WP-1-2024',
     case_ref: 'WP/1/2024',
     board_date: '2024-10-01',
     petitioner: 'State of Maharashtra',
     respondent: 'ABC Corp',
     order_category: 'ADJOURNED',
     confidence_score: 0.45,
-    order_link: 'https://example.com/order.pdf',
+    order_link: 'https://storage.googleapis.com/billingonaire-court-orders/court-orders/WP-1-2024/2024-10-01.pdf',
   },
   {
-    doc_id: 'case_mr_02',
+    id: 'WP-2-2024',
     case_ref: 'WP/2/2024',
     board_date: '2024-10-02',
     petitioner: 'Union of India',
@@ -31,7 +34,7 @@ const mockItems = [
     order_link: null,
   },
   {
-    doc_id: 'case_mr_03',
+    id: 'WP-3-2024',
     case_ref: 'WP/3/2024',
     board_date: '2024-10-03',
     petitioner: 'Central Govt',
@@ -102,6 +105,22 @@ describe('ManualReviewQueue', () => {
     await waitFor(() => {
       const pdfLinks = screen.getAllByText('View PDF');
       expect(pdfLinks).toHaveLength(1);
+    });
+  });
+
+  it('View PDF links to the authenticated backend proxy, never the raw GCS URL', async () => {
+    // The GCS bucket is deliberately private (Cloud Run's service account
+    // can read it, an anonymous browser cannot) -- item.order_link is a
+    // storage.googleapis.com URL a browser 403s on directly. The link must
+    // go through /orders/pdf/{doc_id}, the same authenticated-proxy
+    // endpoint Table.jsx/BillGeneration.jsx/CaseDetailModal.jsx use, built
+    // from the date-prefixed id ("YYYY-MM-DD-TYPE-NO-YEAR") that endpoint
+    // needs to resolve the order.
+    render(<ManualReviewQueue />);
+    await waitFor(() => {
+      const link = screen.getByText('View PDF').closest('a');
+      expect(link.getAttribute('href')).toBe('/api/orders/pdf/2024-10-01-WP-1-2024');
+      expect(link.getAttribute('href')).not.toContain('storage.googleapis.com');
     });
   });
 
@@ -234,7 +253,7 @@ describe('ManualReviewQueue', () => {
         expect(screen.getByText(/Notice was issued to the respondent/)).toBeTruthy();
       });
       expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
-        '/admin/orders/case_mr_01/ai-suggestion',
+        '/admin/orders/WP-1-2024/ai-suggestion',
         expect.objectContaining({ method: 'POST' })
       );
       // The matching category button is marked as agreeing with the AI read.

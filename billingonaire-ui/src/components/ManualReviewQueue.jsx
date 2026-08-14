@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, Button, Alert, Badge, Spinner, Table } from 'react-bootstrap';
-import { authenticatedFetchJSON } from '../lib/api';
+import { authenticatedFetchJSON, getApiUrl } from '../lib/api';
 
 const ORDER_CATEGORIES = [
   { value: 'ADJOURNED',           label: 'Adjourned',    variant: 'warning' },
@@ -215,12 +215,21 @@ const ManualReviewQueue = () => {
                                   </Button>
                                 );
                               })}
-                              {item.order_link && (
+                              {item.order_link && item.board_date && (
                                 <Button
                                   size="sm"
                                   variant="outline-secondary"
                                   as="a"
-                                  href={item.order_link}
+                                  // Never link to item.order_link directly -- it's the raw
+                                  // GCS URL and the bucket is deliberately private (Cloud
+                                  // Run's service account can read it, an anonymous browser
+                                  // cannot, so a direct link 403s). /orders/pdf/{doc_id} is
+                                  // the same authenticated-proxy endpoint Table.jsx,
+                                  // BillGeneration.jsx and CaseDetailModal.jsx already use;
+                                  // it needs a date-prefixed id ("YYYY-MM-DD-TYPE-NO-YEAR")
+                                  // to resolve the order, which item.id alone (the
+                                  // case-details doc id, undated) doesn't provide.
+                                  href={getApiUrl(`/orders/pdf/${item.board_date}-${item.id}`)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                 >
