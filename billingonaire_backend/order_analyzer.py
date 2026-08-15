@@ -1456,14 +1456,39 @@ class OrderDocumentAnalyzer:
             for pattern in self.entity_patterns["AGP_ENHANCED"]
         )
 
-        if category == "ADJOURNED" and has_agp_names:
+        # AGP presence is treated as strong, near-decisive evidence for this
+        # business rule (confirmed with the user) -- a multiplicative boost
+        # alone is not enough when the base score is tiny: production logs
+        # show real "by consent"/"at the request of" stand-over orders
+        # naming an AGP scoring 0.10-0.28 before any boost (the
+        # HEARD_AND_ADJOURNED patterns look for hearing-specific language
+        # like "heard"/"notice issued"/"interim relief", not generic
+        # consent-adjournment phrasing), so a x1.2 multiplier lands at
+        # 0.12-0.34 -- still well below the 0.55 review threshold, sending
+        # a routine, AGP-confirmed appearance to manual review for no
+        # reason. A floor guarantees this business rule actually clears the
+        # gate it exists to clear, while max() ensures it never LOWERS a
+        # case the base scorer was already more confident about. The
+        # NO_TIME_PATTERNS gate above still takes absolute priority, so this
+        # never fires for a matter genuinely not reached.
+        AGP_PRESENCE_CONFIDENCE_FLOOR = 0.75
+        if has_agp_names and category == "ADJOURNED":
             logging.info(
                 "Overriding ADJOURNED to HEARD_AND_ADJOURNED: AGP named on the order"
             )
             category = "HEARD_AND_ADJOURNED"
-            confidence = min(
-                confidence * 1.2, 1.0
-            )  # Boost confidence for this business rule match
+            confidence = max(min(confidence * 1.2, 1.0), AGP_PRESENCE_CONFIDENCE_FLOOR)
+        elif has_agp_names and category == "HEARD_AND_ADJOURNED":
+            # Same evidence, just already agreeing with the base classifier's
+            # own category -- credit it the same way instead of only ever
+            # boosting confidence on the override path above. Confirmed
+            # against production logs: IA/1339/2026 and IA(ST)/16151/2026
+            # both independently scored HEARD_AND_ADJOURNED this way, at
+            # confidence too low to clear review without this.
+            logging.info(
+                "Boosting HEARD_AND_ADJOURNED confidence: AGP named on the order"
+            )
+            confidence = max(min(confidence * 1.2, 1.0), AGP_PRESENCE_CONFIDENCE_FLOOR)
 
         # Apply document-type-specific adjustments
         if document_structure["document_type"] == "ADJOURNMENT_ONLY":

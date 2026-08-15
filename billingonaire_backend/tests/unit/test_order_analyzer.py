@@ -517,6 +517,47 @@ class TestCategoryClassification:
         assert category == "ADJOURNED"
         assert confidence == 0.5
 
+    def test_agp_override_clears_the_review_threshold_even_from_a_tiny_base_score(
+        self, analyzer
+    ):
+        """Confirmed against production logs: a x1.2 multiplier alone was
+        not enough when the base "stand over" score is tiny -- real orders
+        like IA/1339/2026 and IA(ST)/16151/2026 scored 0.12-0.34 after the
+        boost, still well under the 0.55 review threshold, sending a
+        routine AGP-confirmed appearance to manual review for no reason.
+        The floor must push this comfortably above that gate."""
+        text = (
+            "By consent of learned Advocates for the respective parties, "
+            "stand over to 27th April 2026. Ms. A. Deshpande, AGP for the "
+            "Respondent-State."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+        assert confidence >= 0.55
+
+    def test_agp_confidence_floor_also_applies_when_the_base_scorer_already_agreed(
+        self, analyzer
+    ):
+        """Same rule, the other branch: the base classifier independently
+        landed on HEARD_AND_ADJOURNED (not via the ADJOURNED override) but
+        at a low score -- an AGP being named must credit that classification
+        the same way, not only when it overrides a wrongly-scored
+        ADJOURNED."""
+        text = (
+            "Heard, stand over to 12th August 2026. Mr. R.S. Pawar, AGP "
+            "for the Respondent-State."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        base_category, _base_score, _matched_nothing = analyzer._classify_order(text)
+        assert (
+            base_category == "HEARD_AND_ADJOURNED"
+        )  # sanity: base scorer agrees already
+
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+        assert confidence >= 0.55
+
     def test_no_time_gate_still_takes_priority_over_agp_presence(self, analyzer):
         """Documents current, UNCHANGED behavior: the NO_TIME hard gate
         ("the matter was never reached") is checked before this business

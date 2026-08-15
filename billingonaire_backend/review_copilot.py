@@ -20,15 +20,24 @@ CATEGORIES = ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF")
 DEFAULT_MODEL = "gemini-flash-latest"
 
 PROMPT_TEMPLATE = """You are classifying a single entry from a Bombay High Court daily
-cause-list order sheet. Classify it into exactly one of these three categories:
+cause-list order sheet, for AGP (Assistant Government Pleader) billing purposes.
+Classify it into exactly one of these three categories:
 
 - DISPOSED_OFF: the matter was finally decided/disposed of on this date.
-- HEARD_AND_ADJOURNED: the matter was heard/argued (notice issued, interim
-  relief granted or considered, submissions made) and then adjourned to a
-  future date -- some substantive progress happened.
-- ADJOURNED: the matter was adjourned with no substantive hearing -- it was
-  not reached, or postponed for want of time, with no argument or interim
-  order.
+- HEARD_AND_ADJOURNED: the matter was called before the court and then
+  adjourned to a future date. This does NOT require substantive arguments,
+  interim relief, or a hearing on merits -- a routine "stand over" / "by
+  consent" / "at the request of" adjournment still counts, because the
+  matter was reached and the government's counsel's appearance is
+  billable regardless of how much was argued. In particular: if any AGP
+  or Government Pleader is named in the text as present, appearing,
+  submitting, requesting, or consenting, the matter was necessarily
+  called that day -- classify it as HEARD_AND_ADJOURNED, never ADJOURNED,
+  even if no arguments were made and nothing beyond a routine adjournment
+  was ordered.
+- ADJOURNED: the matter was NOT reached/called at all on this date -- e.g.
+  adjourned for want/paucity of court time, or a generic date-shift with
+  no advocate or AGP named as present for this specific matter.
 
 Order text:
 \"\"\"{text}\"\"\"
