@@ -1422,3 +1422,60 @@ class TestMaybeLlmAssist:
         assert result["category"] == "ADJOURNED"
         assert result["confidence"] == 0.4
         assert result["llm_suggestion"] is None
+
+    def test_disagreement_is_logged_with_the_case_ref(
+        self, auto_order_manager, monkeypatch, caplog
+    ):
+        """Regression guard: before this log line existed, a disagreement
+        was completely invisible in Cloud Logging -- only the "agree"
+        branch logged anything, so a disagreement and "the LLM was never
+        called" looked identical from the logs alone. Confirmed live: a
+        production case (WP/16083/2022) went to manual review with no LLM
+        log output at all and no WARNING either, meaning it had silently
+        disagreed. This is the fix -- disagreement must produce a log line
+        an operator can find and act on, carrying the case_ref so it's
+        traceable back to the case."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Notice was issued.",
+            },
+        ):
+            with caplog.at_level("INFO"):
+                auto_order_manager._maybe_llm_assist(
+                    self._analysis_result(category="ADJOURNED", confidence=0.4),
+                    case_ref="WP/16083/2022",
+                )
+
+        disagreement_logs = [
+            r.message for r in caplog.records if "DISAGREE" in r.message
+        ]
+        assert len(disagreement_logs) == 1
+        assert "WP/16083/2022" in disagreement_logs[0]
+        assert "ADJOURNED" in disagreement_logs[0]
+        assert "HEARD_AND_ADJOURNED" in disagreement_logs[0]
+
+    def test_agreement_is_logged_with_the_case_ref(
+        self, auto_order_manager, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Stand over, no hearing.",
+            },
+        ):
+            with caplog.at_level("INFO"):
+                auto_order_manager._maybe_llm_assist(
+                    self._analysis_result(category="ADJOURNED", confidence=0.4),
+                    case_ref="WP/1/2026",
+                )
+
+        agree_logs = [r.message for r in caplog.records if "agree" in r.message]
+        assert len(agree_logs) == 1
+        assert "WP/1/2026" in agree_logs[0]

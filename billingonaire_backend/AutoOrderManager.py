@@ -730,7 +730,9 @@ class AutoOrderManager:
             )
             return 0
 
-    def _maybe_llm_assist(self, analysis_result) -> Dict[str, Any]:
+    def _maybe_llm_assist(
+        self, analysis_result, case_ref: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Roadmap #2: route only the ambiguous cases to an LLM, not every
         order. The regex classifier's hard gates (NO_TIME_PATTERNS,
         STRONG_DISPOSAL_PATTERNS) are already reliable and stay untouched --
@@ -792,14 +794,35 @@ class AutoOrderManager:
         if agreed:
             new_confidence = max(confidence, float(suggestion.get("confidence") or 0.0))
             logger.info(
-                "LLM-assist: regex and LLM agree on %s (regex=%.2f, llm=%.2f) -- "
-                "confidence raised to %.2f",
+                "LLM-assist: regex and LLM agree on %s for case_ref=%s "
+                "(regex=%.2f, llm=%.2f) -- confidence raised to %.2f",
                 category,
+                case_ref or "unknown",
                 confidence,
                 suggestion.get("confidence") or 0.0,
                 new_confidence,
             )
             result["confidence"] = new_confidence
+        else:
+            # Disagreement is the interesting case for tuning the regex
+            # classifier or the LLM prompt -- the case still goes to manual
+            # review either way (confidence is deliberately left untouched
+            # here), but until this line existed there was no log signal
+            # for it at all: only the "agree" branch above logged anything,
+            # so a disagreement was indistinguishable from the LLM call
+            # never having been attempted. The (regex, LLM, human) triple
+            # this and tools/export_correction_dataset.py are meant to
+            # build depends on being able to find these.
+            logger.info(
+                "LLM-assist: regex and LLM DISAGREE for case_ref=%s -- "
+                "regex=%s (%.2f), llm=%s (%.2f): %s",
+                case_ref or "unknown",
+                category,
+                confidence,
+                suggestion.get("category"),
+                suggestion.get("confidence") or 0.0,
+                (suggestion.get("rationale") or "")[:200],
+            )
         return result
 
     def _analyze_order_with_api_metadata(
@@ -834,7 +857,7 @@ class AutoOrderManager:
                 api_order_date,
             )
 
-            llm_assist = self._maybe_llm_assist(analysis_result)
+            llm_assist = self._maybe_llm_assist(analysis_result, case_ref=case_ref)
             if llm_assist["llm_suggestion"] is not None:
                 analysis_metadata = {
                     **analysis_metadata,
