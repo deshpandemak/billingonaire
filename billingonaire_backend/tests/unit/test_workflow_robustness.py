@@ -961,6 +961,48 @@ async def test_review_queue_maps_to_the_fields_the_ui_actually_reads(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_review_queue_sources_board_date_from_the_same_order_as_the_link(
+    monkeypatch,
+):
+    """A case with multiple hearing dates has latest_board_date (written by
+    board ingestion) and latest_order_link/latest_order_category (written by
+    append_case_order whenever ANY date's analysis completes) drift apart --
+    each is last-write-wins from an unsynchronised process. Confirmed live:
+    CP/416/2024 showed board_date=2025-04-02 next to a category/confidence
+    that belonged to a 2026-04-22 order and a PDF link from a 2025-12-24
+    order. The fix sources all four fields from the same orders[] entry, so
+    the PDF the reviewer opens always matches the date and category shown."""
+    doc = _review_queue_doc(
+        "CP-416-2024",
+        latest_board_date="2025-04-02",
+        latest_order_category="ADJOURNED",
+        latest_order_link="https://storage.googleapis.com/bucket/2025-12-24.pdf",
+        orders=[
+            {
+                "order_link": "https://storage.googleapis.com/bucket/2026-04-22.pdf",
+                "order_category": "ADJOURNED",
+                "order_category_confidence": 0.5,
+                "board_date": "2026-04-22",
+            }
+        ],
+    )
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_admin_review_queue(limit=200, current_user=None)
+    import json
+
+    case = json.loads(response.body)[0]
+    assert case["board_date"] == "2026-04-22"
+    assert case["order_link"] == "https://storage.googleapis.com/bucket/2026-04-22.pdf"
+    assert case["order_category"] == "ADJOURNED"
+    assert case["confidence_score"] == 0.5
+
+
+@pytest.mark.asyncio
 async def test_review_queue_surfaces_the_stored_llm_suggestion(monkeypatch):
     """Once _maybe_llm_assist has recorded a suggestion during analysis, the
     review queue must surface it directly instead of the UI needing to

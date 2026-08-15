@@ -3936,16 +3936,31 @@ async def get_admin_review_queue(
             llm_suggestion = (latest_order.get("order_analysis_metadata") or {}).get(
                 "llm_suggestion"
             )
+            # board_date/order_category/order_link/confidence_score must all
+            # come from this SAME orders[] entry. A case with multiple
+            # hearing dates gets each date fetched and analysed
+            # independently; latest_board_date (written by board ingestion)
+            # and latest_order_category/latest_order_link (written by
+            # append_case_order whenever ANY date finishes analysis) are
+            # each last-write-wins from a different, unsynchronised process,
+            # so mixing them here showed reviewers a category/confidence
+            # from one hearing date next to a board_date and PDF link from
+            # a completely different one. Falling back to the doc-level
+            # rollups only covers the (should-be-rare) case where orders[]
+            # itself is empty.
             cases.append(
                 {
                     "id": doc.id,
                     "case_ref": data.get("case_ref"),
-                    "board_date": data.get("latest_board_date"),
+                    "board_date": latest_order.get("board_date")
+                    or data.get("latest_board_date"),
                     "petitioner": data.get("petitioner"),
                     "respondent": data.get("respondent"),
-                    "order_category": data.get("latest_order_category"),
+                    "order_category": latest_order.get("order_category")
+                    or data.get("latest_order_category"),
                     "confidence_score": latest_order.get("order_category_confidence"),
-                    "order_link": data.get("latest_order_link"),
+                    "order_link": latest_order.get("order_link")
+                    or data.get("latest_order_link"),
                     "llm_suggestion": llm_suggestion,
                 }
             )
