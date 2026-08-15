@@ -349,6 +349,91 @@ def test_analyze_order_with_api_metadata_llm_agreement_avoids_manual_review(
     assert transition_call.args[1] == "analysed"
 
 
+def test_analyze_order_with_api_metadata_flags_a_low_confidence_result(
+    auto_order_manager,
+):
+    """A low-confidence classification must record its own date as pending
+    review (CaseDataStore.add_pending_review_date) and transition the case
+    to manual_review_required."""
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.case_store.add_pending_review_date = Mock()
+    auto_order_manager.case_store.get_pending_review_dates = Mock(
+        return_value=["2025-03-01"]
+    )
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="ADJOURNED",
+            category_confidence=0.3,
+            order_text="",
+            analysis_metadata={},
+            cases=[],
+        )
+    )
+
+    auto_order_manager._analyze_order_with_api_metadata(
+        case_id="board-abc",
+        case_ref="WP/123/2025",
+        pdf_content=b"%PDF-1.4",
+        api_order_date="2025-03-01",
+        api_petitioner="Petitioner Co",
+        api_respondent="State of Maharashtra",
+        order_link="https://example.com/order.pdf",
+    )
+
+    auto_order_manager.case_store.add_pending_review_date.assert_called_once_with(
+        "WP/123/2025", "2025-03-01"
+    )
+    transition_call = auto_order_manager.case_store.transition_lifecycle.call_args
+    assert transition_call.args[1] == "manual_review_required"
+
+
+def test_analyze_order_with_api_metadata_stays_flagged_when_another_date_is_pending(
+    auto_order_manager,
+):
+    """Confirmed live: a case with many hearing dates being backlog-
+    processed had an earlier low-confidence date's manual_review_required
+    silently cleared the moment the NEXT date analysed successfully -- that
+    order was never actually reviewed by a human. This order succeeds on
+    its own, but a different, still-unresolved date must keep the case
+    flagged rather than being forced back to "analysed"."""
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.case_store.add_pending_review_date = Mock()
+    auto_order_manager.case_store.get_pending_review_dates = Mock(
+        return_value=["2026-04-22"]
+    )
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="DISPOSED_OFF",
+            category_confidence=0.95,
+            order_text="",
+            analysis_metadata={},
+            cases=[],
+        )
+    )
+
+    auto_order_manager._analyze_order_with_api_metadata(
+        case_id="board-abc",
+        case_ref="CP/416/2024",
+        pdf_content=b"%PDF-1.4",
+        api_order_date="2025-12-24",
+        api_petitioner="Petitioner Co",
+        api_respondent="State of Maharashtra",
+        order_link="https://example.com/order.pdf",
+    )
+
+    # This order (2025-12-24) is confident enough on its own -- it must not
+    # itself be added to the pending set.
+    auto_order_manager.case_store.add_pending_review_date.assert_not_called()
+    transition_call = auto_order_manager.case_store.transition_lifecycle.call_args
+    assert transition_call.args[1] == "manual_review_required"
+
+
 def test_process_all_orders_from_api_success(auto_order_manager):
     """All portal orders are downloaded, analysed, and linked to their board entries."""
     auto_order_manager.court_scraper._fetch_with_provider = Mock(
@@ -1479,3 +1564,72 @@ class TestMaybeLlmAssist:
         agree_logs = [r.message for r in caplog.records if "agree" in r.message]
         assert len(agree_logs) == 1
         assert "WP/1/2026" in agree_logs[0]
+
+
+class TestGetCaseOrderContextTargetsADate:
+    """A case can have several hearing dates pending review at once (see
+    CaseDataStore.add_pending_review_date). Without order_date,
+    _get_case_order_context always picked the last order appended overall --
+    "Get AI read" for an older flagged date would silently analyse a newer,
+    unrelated order instead."""
+
+    def _case_detail(self):
+        return {
+            "latest_order_link": "https://storage.googleapis.com/b/2025-12-24.pdf",
+            "latest_order_status": "analysed",
+            "orders": [
+                {
+                    "order_link": "https://storage.googleapis.com/b/2026-04-22.pdf",
+                    "order_date": "2026-04-22",
+                    "board_date": "2026-04-22",
+                    "order_status": "analysed",
+                    "order_text_url": "https://storage.googleapis.com/b/2026-04-22.txt",
+                },
+                {
+                    "order_link": "https://storage.googleapis.com/b/2025-12-24.pdf",
+                    "order_date": "2025-12-24",
+                    "board_date": "2025-12-24",
+                    "order_status": "analysed",
+                    "order_text_url": "https://storage.googleapis.com/b/2025-12-24.txt",
+                },
+            ],
+        }
+
+    def test_no_date_falls_back_to_the_last_order_appended(self, auto_order_manager):
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value=self._case_detail()
+        )
+        context = auto_order_manager._get_case_order_context("CP/416/2024")
+        assert (
+            context["order_link"] == "https://storage.googleapis.com/b/2025-12-24.pdf"
+        )
+
+    def test_date_targets_the_matching_entry_even_when_it_is_not_the_last_one(
+        self, auto_order_manager
+    ):
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value=self._case_detail()
+        )
+        context = auto_order_manager._get_case_order_context(
+            "CP/416/2024", order_date="2026-04-22"
+        )
+        assert (
+            context["order_link"] == "https://storage.googleapis.com/b/2026-04-22.pdf"
+        )
+        assert (
+            context["order_text_url"]
+            == "https://storage.googleapis.com/b/2026-04-22.txt"
+        )
+
+    def test_unmatched_date_falls_back_to_the_last_order_appended(
+        self, auto_order_manager
+    ):
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value=self._case_detail()
+        )
+        context = auto_order_manager._get_case_order_context(
+            "CP/416/2024", order_date="2025-04-02"
+        )
+        assert (
+            context["order_link"] == "https://storage.googleapis.com/b/2025-12-24.pdf"
+        )

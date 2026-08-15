@@ -391,28 +391,63 @@ class AutoOrderManager:
         logger.info("_get_filtered_matters returned %d actionable cases", len(cases))
         return cases
 
-    def _get_case_order_context(self, case_ref: str) -> Dict[str, Any]:
+    def _get_case_order_context(
+        self, case_ref: str, order_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """*order_date*, when given, targets that specific hearing date's
+        order entry instead of the last one appended. Needed once a case
+        can have several hearing dates pending review at once (see
+        add_pending_review_date) -- "Get AI read" for an older flagged date
+        must not silently analyse a newer, unrelated order instead."""
         case_detail = self.case_store.get_case_details(case_ref) or {}
         orders = case_detail.get("orders") or []
-        # Use the last entry that actually has an order_link — blank status-only
-        # entries (order_failed, not_linked markers) have no order_link and must
-        # not shadow a previously stored valid link.
-        orders_with_link = [
-            o for o in orders if isinstance(o, dict) and o.get("order_link")
-        ]
-        latest_order = (
-            orders_with_link[-1]
-            if orders_with_link
-            else (orders[-1] if orders and isinstance(orders[-1], dict) else {})
+        normalized_date = (
+            self.case_store._to_iso_date(order_date) if order_date else None
         )
+        matched_order: Dict[str, Any] = {}
+        if normalized_date:
+            for o in reversed(orders):
+                if not isinstance(o, dict):
+                    continue
+                if normalized_date in (
+                    self.case_store._to_iso_date(o.get("order_date")),
+                    self.case_store._to_iso_date(o.get("board_date")),
+                ):
+                    matched_order = o
+                    break
+        if matched_order:
+            latest_order = matched_order
+        else:
+            # No date given, or none matched it — fall back to the last
+            # entry that actually has an order_link. Blank status-only
+            # entries (order_failed, not_linked markers) have no order_link
+            # and must not shadow a previously stored valid link.
+            orders_with_link = [
+                o for o in orders if isinstance(o, dict) and o.get("order_link")
+            ]
+            latest_order = (
+                orders_with_link[-1]
+                if orders_with_link
+                else (orders[-1] if orders and isinstance(orders[-1], dict) else {})
+            )
         return {
             "case_detail": case_detail,
             "latest_order": latest_order,
-            "order_status": case_detail.get("latest_order_status")
-            or latest_order.get("order_status")
-            or "not_linked",
-            "order_link": case_detail.get("latest_order_link")
-            or latest_order.get("order_link"),
+            "order_status": (
+                latest_order.get("order_status")
+                or case_detail.get("latest_order_status")
+                or "not_linked"
+                if matched_order
+                else case_detail.get("latest_order_status")
+                or latest_order.get("order_status")
+                or "not_linked"
+            ),
+            "order_link": (
+                latest_order.get("order_link") or case_detail.get("latest_order_link")
+                if matched_order
+                else case_detail.get("latest_order_link")
+                or latest_order.get("order_link")
+            ),
             # Only present for orders analysed after order text persistence
             # shipped (see _upload_order_text_to_gcs) -- callers must handle
             # None by falling back to re-downloading/re-parsing order_link.
@@ -936,14 +971,35 @@ class AutoOrderManager:
             # docs/CURRENT_WORKFLOW.md section 7.3.
             confidence = float(order_analysis.get("order_category_confidence") or 0.0)
             needs_review = confidence < self.REVIEW_CONFIDENCE_THRESHOLD
+            if needs_review:
+                # ArrayUnion, not a read-modify-write -- a case with many
+                # hearing dates gets each one analysed independently (often
+                # within seconds of each other during backlog processing),
+                # so this must survive a concurrent add for a different date
+                # of the same case.
+                self.case_store.add_pending_review_date(case_ref, api_order_date)
+            # The case must stay flagged as long as ANY hearing date is still
+            # unresolved, not just this one. Confirmed live: a case with 15+
+            # hearing dates had an earlier low-confidence date's
+            # manual_review_required silently cleared the moment the NEXT
+            # date analysed successfully -- that order was never actually
+            # reviewed by a human, it just fell out of the queue. Reading
+            # the pending set fresh (rather than trusting only this order's
+            # own outcome) closes that gap.
+            still_pending = self.case_store.get_pending_review_dates(case_ref)
+            target_status = "manual_review_required" if still_pending else "analysed"
             self.case_store.transition_lifecycle(
                 case_ref,
-                "manual_review_required" if needs_review else "analysed",
+                target_status,
                 reason=(
                     f"Classified {order_analysis['order_category']} with low "
                     f"confidence ({confidence:.2f}) — needs review"
                     if needs_review
-                    else None
+                    else (
+                        f"Other hearing dates still awaiting review: {still_pending}"
+                        if still_pending
+                        else None
+                    )
                 ),
                 metadata={
                     "source": "auto_order_manager",
@@ -952,7 +1008,13 @@ class AutoOrderManager:
                     "order_category_confidence": confidence,
                 },
                 event_type=(
-                    "analysis_low_confidence" if needs_review else "analysis_succeeded"
+                    "analysis_low_confidence"
+                    if needs_review
+                    else (
+                        "analysis_succeeded_case_still_flagged"
+                        if still_pending
+                        else "analysis_succeeded"
+                    )
                 ),
             )
             if needs_review:

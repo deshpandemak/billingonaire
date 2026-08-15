@@ -140,6 +140,131 @@ def test_missing_case_reports_failure_without_writing():
     doc_ref.set.assert_not_called()
 
 
+def test_stays_manual_review_required_when_another_date_is_still_pending():
+    """A case can have several hearing dates flagged for review at once
+    (see CaseDataStore.add_pending_review_date). Resolving one of them must
+    not silently clear the flag for the others -- that is exactly how an
+    unrelated low-confidence order used to disappear from the queue before
+    a human ever saw it."""
+    db = MagicMock()
+    doc_ref = MagicMock()
+    snapshot = MagicMock()
+    snapshot.exists = True
+    snapshot.to_dict.return_value = {
+        "case_ref": "WP/123/2025",
+        "pending_review_order_dates": ["2025-03-01", "2025-06-01"],
+        "orders": [
+            {
+                "order_link": "https://example.test/march.pdf",
+                "order_date": "2025-03-01",
+                "board_date": "2025-03-01",
+                "order_status": "analysed",
+                "order_category": "ADJOURNED",
+            },
+            {
+                "order_link": "https://example.test/june.pdf",
+                "order_date": "2025-06-01",
+                "board_date": "2025-06-01",
+                "order_status": "analysed",
+                "order_category": "ADJOURNED",
+            },
+        ],
+    }
+    doc_ref.get.return_value = snapshot
+    db.collection.return_value.document.return_value = doc_ref
+    store = CaseDataStore(db)
+    store.transition_lifecycle = MagicMock(return_value={"success": True})
+
+    result = store.apply_category_override(
+        "WP/123/2025", "DISPOSED_OFF", "uid-1", order_date="2025-03-01"
+    )
+
+    assert result["success"] is True
+    # Only the March order was corrected -- June is untouched.
+    orders = _written(doc_ref)["orders"]
+    assert orders[0]["order_category"] == "DISPOSED_OFF"
+    assert orders[1]["order_category"] == "ADJOURNED"
+
+    args, kwargs = store.transition_lifecycle.call_args
+    assert args[1] == "manual_review_required"
+
+
+def test_returns_to_analysed_once_the_last_pending_date_is_resolved():
+    db = MagicMock()
+    doc_ref = MagicMock()
+    snapshot = MagicMock()
+    snapshot.exists = True
+    snapshot.to_dict.return_value = {
+        "case_ref": "WP/123/2025",
+        "pending_review_order_dates": ["2025-03-01"],
+        "orders": [
+            {
+                "order_link": "https://example.test/march.pdf",
+                "order_date": "2025-03-01",
+                "board_date": "2025-03-01",
+                "order_status": "analysed",
+                "order_category": "ADJOURNED",
+            }
+        ],
+    }
+    doc_ref.get.return_value = snapshot
+    db.collection.return_value.document.return_value = doc_ref
+    store = CaseDataStore(db)
+    store.transition_lifecycle = MagicMock(return_value={"success": True})
+
+    store.apply_category_override(
+        "WP/123/2025", "DISPOSED_OFF", "uid-1", order_date="2025-03-01"
+    )
+
+    args, kwargs = store.transition_lifecycle.call_args
+    assert args[1] == "analysed"
+
+
+def test_order_date_targets_the_matching_entry_not_the_last_one_appended():
+    """Without order_date, the override used to always land on the most
+    recently appended order -- wrong when an OLDER flagged date is the one
+    actually being reviewed and a newer, unrelated order has since been
+    appended for the same case."""
+    db = MagicMock()
+    doc_ref = MagicMock()
+    snapshot = MagicMock()
+    snapshot.exists = True
+    snapshot.to_dict.return_value = {
+        "case_ref": "WP/123/2025",
+        "pending_review_order_dates": ["2025-03-01"],
+        "orders": [
+            {
+                "order_link": "https://example.test/march.pdf",
+                "order_date": "2025-03-01",
+                "board_date": "2025-03-01",
+                "order_status": "analysed",
+                "order_category": "ADJOURNED",
+            },
+            {
+                "order_link": "https://example.test/june.pdf",
+                "order_date": "2025-06-01",
+                "board_date": "2025-06-01",
+                "order_status": "analysed",
+                "order_category": "HEARD_AND_ADJOURNED",
+            },
+        ],
+    }
+    doc_ref.get.return_value = snapshot
+    db.collection.return_value.document.return_value = doc_ref
+    store = CaseDataStore(db)
+    store.transition_lifecycle = MagicMock(return_value={"success": True})
+
+    store.apply_category_override(
+        "WP/123/2025", "DISPOSED_OFF", "uid-1", order_date="2025-03-01"
+    )
+
+    orders = _written(doc_ref)["orders"]
+    assert orders[0]["order_category"] == "DISPOSED_OFF"
+    # The June order, never mentioned by order_date, must be untouched.
+    assert orders[1]["order_category"] == "HEARD_AND_ADJOURNED"
+    assert "order_manual_override" not in orders[1]
+
+
 def test_case_with_no_orders_still_records_the_decision():
     db = MagicMock()
     doc_ref = MagicMock()

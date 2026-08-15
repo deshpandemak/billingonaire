@@ -1059,6 +1059,132 @@ async def test_review_queue_handles_a_case_with_no_orders_yet(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_review_queue_emits_one_row_per_pending_hearing_date(monkeypatch):
+    """A case can have several hearing dates pending review at once (see
+    CaseDataStore.add_pending_review_date). Before this, a case with, say,
+    two flagged dates collapsed into a single row built from whichever
+    order finished analysis last -- which might not even be a flagged
+    date. Each pending date must now be its own, independently-identified
+    row."""
+    doc = _review_queue_doc(
+        "CP-416-2024",
+        pending_review_order_dates=["2026-04-22", "2025-12-24"],
+        orders=[
+            {
+                "order_link": "https://storage.googleapis.com/bucket/2026-04-22.pdf",
+                "order_category": "ADJOURNED",
+                "order_category_confidence": 0.5,
+                "board_date": "2026-04-22",
+                "order_date": "2026-04-22",
+            },
+            {
+                "order_link": "https://storage.googleapis.com/bucket/2025-12-24.pdf",
+                "order_category": "DISPOSED_OFF",
+                "order_category_confidence": 0.3,
+                "board_date": "2025-12-24",
+                "order_date": "2025-12-24",
+            },
+        ],
+    )
+    mock_db = MagicMock()
+    mock_db.collection.return_value.where.return_value.limit.return_value.stream.return_value = [
+        doc
+    ]
+    monkeypatch.setattr(main, "firestore", SimpleNamespace(client=lambda: mock_db))
+
+    response = await main.get_admin_review_queue(limit=200, current_user=None)
+    import json
+
+    cases = json.loads(response.body)
+    assert len(cases) == 2
+    by_date = {c["order_date"]: c for c in cases}
+    assert by_date["2026-04-22"]["order_category"] == "ADJOURNED"
+    assert by_date["2026-04-22"]["confidence_score"] == 0.5
+    assert (
+        by_date["2026-04-22"]["order_link"]
+        == "https://storage.googleapis.com/bucket/2026-04-22.pdf"
+    )
+    assert by_date["2025-12-24"]["order_category"] == "DISPOSED_OFF"
+    assert by_date["2025-12-24"]["confidence_score"] == 0.3
+    assert (
+        by_date["2025-12-24"]["order_link"]
+        == "https://storage.googleapis.com/bucket/2025-12-24.pdf"
+    )
+
+
+@pytest.mark.asyncio
+async def test_override_endpoint_forwards_order_date_to_the_store(monkeypatch):
+    """A case can have several hearing dates pending review at once, so the
+    override endpoint must tell CaseDataStore.apply_category_override
+    exactly which one is being resolved -- otherwise the correction always
+    lands on whichever order was appended most recently."""
+    mgr = MagicMock()
+    mgr.case_store.apply_category_override = Mock(
+        return_value={
+            "success": True,
+            "case_ref": "CP/416/2024",
+            "order_date": "2026-04-22",
+            "previous_category": "ADJOURNED",
+        }
+    )
+    mgr._update_board_entries_for_case_date = Mock()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+
+    request = _make_request(
+        {"order_category": "DISPOSED_OFF", "order_date": "2026-04-22"}
+    )
+    response = await main.admin_override_order_category(
+        "CP-416-2024", request, current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+    mgr.case_store.apply_category_override.assert_called_once_with(
+        "CP/416/2024",
+        "DISPOSED_OFF",
+        actor_uid="u1",
+        notes=None,
+        review_ai_suggestion=None,
+        order_date="2026-04-22",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_suggestion_forwards_order_date_to_the_order_context_lookup(
+    monkeypatch,
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mgr = MagicMock()
+    mgr._get_case_order_context = Mock(
+        return_value={
+            "order_link": "https://storage.googleapis.com/b/2026-04-22.pdf",
+            "order_text_url": "https://storage.googleapis.com/b/2026-04-22.txt",
+        }
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(
+        main,
+        "_fetch_stored_bytes",
+        Mock(return_value=(b"Order text.", None, None)),
+    )
+    with patch(
+        "review_copilot.call_gemini",
+        return_value={
+            "category": "ADJOURNED",
+            "confidence": 0.9,
+            "rationale": "Stand over.",
+        },
+    ):
+        response = await main.admin_ai_review_suggestion(
+            "CP-416-2024", order_date="2026-04-22", current_user=None
+        )
+
+    assert response.status_code == 200
+    mgr._get_case_order_context.assert_called_once_with(
+        "CP/416/2024", order_date="2026-04-22"
+    )
+
+
+@pytest.mark.asyncio
 async def test_review_queue_limit_is_passed_to_the_query_and_clamped(monkeypatch):
     mock_db = MagicMock()
     limit_mock = mock_db.collection.return_value.where.return_value.limit

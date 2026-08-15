@@ -683,6 +683,32 @@ class CaseDataStore:
             len(orders),
         )
 
+    def add_pending_review_date(self, case_ref: str, order_date: Optional[str]) -> None:
+        """Atomically record that *order_date*'s classification needs a
+        human to confirm it, without touching any other field.
+
+        A case can have several hearing dates being analysed in the same
+        backlog run; a plain read-modify-write here would lose a
+        concurrent addition for a different date the same way
+        append_case_order's full orders[] rewrite can race. ArrayUnion is
+        a server-side transform, so it is safe under that concurrency.
+        """
+        normalized = self._to_iso_date(order_date)
+        if not normalized:
+            return
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        case_doc_ref.set(
+            {"pending_review_order_dates": firestore.ArrayUnion([normalized])},
+            merge=True,
+        )
+
+    def get_pending_review_dates(self, case_ref: str) -> List[str]:
+        """Fresh read of the case's currently-unresolved hearing dates."""
+        details = self.get_case_details(case_ref) or {}
+        return [d for d in (details.get("pending_review_order_dates") or []) if d]
+
     def apply_category_override(
         self,
         case_ref: str,
@@ -690,6 +716,7 @@ class CaseDataStore:
         actor_uid: Optional[str] = None,
         notes: Optional[str] = None,
         review_ai_suggestion: Optional[Dict[str, Any]] = None,
+        order_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Record a human's correction of an order's category.
 
@@ -728,14 +755,32 @@ class CaseDataStore:
         case_ref = data.get("case_ref") or case_ref
         orders = [o for o in (data.get("orders") or []) if isinstance(o, dict)]
 
-        # Correct the order the readers use: the most recent one carrying a
-        # link, falling back to the most recent entry of any kind.
-        orders_with_link = [o for o in orders if o.get("order_link")]
-        target = (
-            orders_with_link[-1]
-            if orders_with_link
-            else (orders[-1] if orders else None)
-        )
+        # A case can have several hearing dates pending review at once (see
+        # add_pending_review_date). When the caller tells us which one they
+        # are resolving, target that exact orders[] entry -- otherwise a
+        # reviewer correcting an older flagged date could silently overwrite
+        # a newer, unrelated order instead, the same class of bug fixed in
+        # /admin/review-queue's field sourcing.
+        target = None
+        normalized_target_date = self._to_iso_date(order_date) if order_date else None
+        if normalized_target_date:
+            for o in reversed(orders):
+                if normalized_target_date in (
+                    self._to_iso_date(o.get("order_date")),
+                    self._to_iso_date(o.get("board_date")),
+                ):
+                    target = o
+                    break
+
+        if target is None:
+            # No date given (legacy callers), or no order matched it --
+            # fall back to the most recent order carrying a link.
+            orders_with_link = [o for o in orders if o.get("order_link")]
+            target = (
+                orders_with_link[-1]
+                if orders_with_link
+                else (orders[-1] if orders else None)
+            )
 
         if target is None:
             # No order on file at all — record the human's decision as the order.
@@ -757,21 +802,47 @@ class CaseDataStore:
         orders_with_link = [o for o in orders if o.get("order_link")]
         latest_with_link = orders_with_link[-1] if orders_with_link else {}
 
-        doc_ref.set(
-            {
-                "orders": orders,
-                # Keep the rollup in step with the corrected entry.
-                "latest_order_category": (
-                    latest_with_link.get("order_category") or order_category
-                ),
-                "latest_order_status": "analysed",
-                "order_manual_override": True,
-                "order_manual_override_by": actor_uid,
-                "order_analysis_timestamp": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            },
-            merge=True,
+        # Clear only the resolved date from the pending set -- other hearing
+        # dates for this same case may still be awaiting review, and the
+        # case must stay manual_review_required until every one of them is
+        # resolved. Forcing "analysed" unconditionally here (the old
+        # behaviour) is exactly how an unrelated flagged date used to get
+        # silently un-flagged before a human ever saw it. ArrayRemove folded
+        # into this same write is still evaluated server-side against
+        # whatever the current stored array is, same as calling it on its
+        # own -- it does not need its own round trip.
+        resolved_date = (
+            normalized_target_date
+            or self._to_iso_date(target.get("order_date"))
+            or self._to_iso_date(target.get("board_date"))
         )
+        existing_pending = [
+            d for d in (data.get("pending_review_order_dates") or []) if d
+        ]
+        still_pending = (
+            [d for d in existing_pending if d != resolved_date]
+            if resolved_date
+            else existing_pending
+        )
+        final_status = "manual_review_required" if still_pending else "analysed"
+
+        write_payload = {
+            "orders": orders,
+            # Keep the rollup in step with the corrected entry.
+            "latest_order_category": (
+                latest_with_link.get("order_category") or order_category
+            ),
+            "latest_order_status": "analysed",
+            "order_manual_override": True,
+            "order_manual_override_by": actor_uid,
+            "order_analysis_timestamp": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        if resolved_date:
+            write_payload["pending_review_order_dates"] = firestore.ArrayRemove(
+                [resolved_date]
+            )
+        doc_ref.set(write_payload, merge=True)
 
         override_metadata = {
             "source": "manual-override",
@@ -784,7 +855,7 @@ class CaseDataStore:
 
         self.transition_lifecycle(
             case_ref,
-            "analysed",
+            final_status,
             reason=notes or "Category corrected by reviewer",
             metadata=override_metadata,
             event_type="manual_override",

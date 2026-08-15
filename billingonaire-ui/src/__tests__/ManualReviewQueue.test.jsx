@@ -12,9 +12,11 @@ import ManualReviewQueue from '../components/ManualReviewQueue';
 
 const mockItems = [
   {
-    // Matches the real /admin/review-queue response shape ("id": doc.id) --
-    // the component reads item.id first, falling back to doc_id/case_ref.
+    // Matches the real /admin/review-queue response shape ("id": doc.id,
+    // "order_date": the specific hearing date this row is for) -- the
+    // component reads item.id first, falling back to doc_id/case_ref.
     id: 'WP-1-2024',
+    order_date: '2024-10-01',
     case_ref: 'WP/1/2024',
     board_date: '2024-10-01',
     petitioner: 'State of Maharashtra',
@@ -25,6 +27,7 @@ const mockItems = [
   },
   {
     id: 'WP-2-2024',
+    order_date: '2024-10-02',
     case_ref: 'WP/2/2024',
     board_date: '2024-10-02',
     petitioner: 'Union of India',
@@ -35,6 +38,7 @@ const mockItems = [
   },
   {
     id: 'WP-3-2024',
+    order_date: '2024-10-03',
     case_ref: 'WP/3/2024',
     board_date: '2024-10-03',
     petitioner: 'Central Govt',
@@ -179,6 +183,111 @@ describe('ManualReviewQueue', () => {
     );
   });
 
+  it('sends order_date so the backend knows exactly which hearing date is being resolved', async () => {
+    api.authenticatedFetchJSON
+      .mockResolvedValueOnce(mockItems)
+      .mockResolvedValueOnce({ success: true });
+
+    render(<ManualReviewQueue />);
+    await waitFor(() => screen.getByText('WP/1/2024'));
+
+    fireEvent.click(screen.getAllByText('Adjourned')[0]);
+
+    await waitFor(() => {
+      expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+        '/admin/orders/WP-1-2024/override',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"order_date":"2024-10-01"'),
+        })
+      );
+    });
+  });
+
+  it('renders a case with multiple pending hearing dates as independent rows, and resolving one leaves the other', async () => {
+    // /admin/review-queue now emits one row per unresolved order_date for
+    // the same case (see CaseDataStore.add_pending_review_date) -- a case
+    // can have several hearing dates flagged for review at once.
+    const twoDatesSameCase = [
+      {
+        id: 'CP-416-2024',
+        order_date: '2026-04-22',
+        case_ref: 'CP/416/2024',
+        board_date: '2026-04-22',
+        petitioner: 'Rahul Vivek Nadkarni',
+        respondent: 'State of Maharashtra',
+        order_category: 'ADJOURNED',
+        confidence_score: 0.5,
+        order_link: 'https://storage.googleapis.com/bucket/2026-04-22.pdf',
+      },
+      {
+        id: 'CP-416-2024',
+        order_date: '2025-12-24',
+        case_ref: 'CP/416/2024',
+        board_date: '2025-12-24',
+        petitioner: 'Rahul Vivek Nadkarni',
+        respondent: 'State of Maharashtra',
+        order_category: 'DISPOSED_OFF',
+        confidence_score: 0.3,
+        order_link: 'https://storage.googleapis.com/bucket/2025-12-24.pdf',
+      },
+    ];
+    api.authenticatedFetchJSON
+      .mockResolvedValueOnce(twoDatesSameCase)
+      .mockResolvedValueOnce({ success: true });
+
+    render(<ManualReviewQueue />);
+    await waitFor(() => {
+      expect(screen.getAllByText('CP/416/2024')).toHaveLength(2);
+    });
+    expect(screen.getByText('2026-04-22')).toBeTruthy();
+    expect(screen.getByText('2025-12-24')).toBeTruthy();
+
+    // Resolve the April row only.
+    fireEvent.click(screen.getAllByText('Adjourned')[0]);
+
+    await waitFor(() => {
+      expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+        '/admin/orders/CP-416-2024/override',
+        expect.objectContaining({
+          body: expect.stringContaining('"order_date":"2026-04-22"'),
+        })
+      );
+    });
+    // The December row for the same case must still be there.
+    expect(screen.getByText('2025-12-24')).toBeTruthy();
+    expect(screen.getAllByText('CP/416/2024')).toHaveLength(1);
+  });
+
+  it('passes order_date as a query param on "Get AI read" so a specific pending date is analysed', async () => {
+    const item = {
+      id: 'CP-416-2024',
+      order_date: '2026-04-22',
+      case_ref: 'CP/416/2024',
+      board_date: '2026-04-22',
+      confidence_score: 0.5,
+    };
+    api.authenticatedFetchJSON
+      .mockResolvedValueOnce([item])
+      .mockResolvedValueOnce({
+        category: 'ADJOURNED',
+        confidence: 0.9,
+        rationale: 'Stand over to next date.',
+      });
+
+    render(<ManualReviewQueue />);
+    await waitFor(() => screen.getByText('CP/416/2024'));
+
+    fireEvent.click(screen.getByText('Get AI read'));
+
+    await waitFor(() => {
+      expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
+        '/admin/orders/CP-416-2024/ai-suggestion?order_date=2026-04-22',
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+  });
+
   it('shows error message when override fails', async () => {
     api.authenticatedFetchJSON
       .mockResolvedValueOnce(mockItems)
@@ -253,7 +362,7 @@ describe('ManualReviewQueue', () => {
         expect(screen.getByText(/Notice was issued to the respondent/)).toBeTruthy();
       });
       expect(api.authenticatedFetchJSON).toHaveBeenCalledWith(
-        '/admin/orders/WP-1-2024/ai-suggestion',
+        '/admin/orders/WP-1-2024/ai-suggestion?order_date=2024-10-01',
         expect.objectContaining({ method: 'POST' })
       );
       // The matching category button is marked as agreeing with the AI read.

@@ -14,12 +14,17 @@ const ManualReviewQueue = () => {
   const [error, setError] = useState('');
   const [overriding, setOverriding] = useState(null);
   const [message, setMessage] = useState(null);
-  // Per-row AI suggestion state, keyed by the case-details doc id (falls
-  // back to case_ref, though that contains "/" and breaks the path param
-  // below -- prefer item.id, which is what /admin/review-queue actually
-  // returns): undefined (not fetched), 'loading',
-  // { category, confidence, rationale }, or { error }.
+  // Per-row AI suggestion state, keyed by rowKey(item) (see below):
+  // undefined (not fetched), 'loading', { category, confidence, rationale },
+  // or { error }.
   const [aiSuggestions, setAiSuggestions] = useState({});
+
+  // A case can have several hearing dates pending review at once, so
+  // item.id (the case-details doc id) alone is no longer a unique row --
+  // /admin/review-queue emits one row per unresolved order_date for the
+  // same case. Combine both so React keys, AI-suggestion state, and the
+  // in-flight override spinner never collide across a case's own rows.
+  const rowKey = (item) => `${item.id || item.doc_id || item.case_ref}::${item.order_date || item.board_date || ''}`;
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -39,10 +44,12 @@ const ManualReviewQueue = () => {
   }, [fetchQueue]);
 
   const handleGetAiRead = async (item) => {
-    const key = item.id || item.doc_id || item.case_ref;
+    const key = rowKey(item);
+    const docId = item.id || item.doc_id || item.case_ref;
     setAiSuggestions(prev => ({ ...prev, [key]: 'loading' }));
     try {
-      const data = await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/ai-suggestion`, {
+      const qs = item.order_date ? `?order_date=${encodeURIComponent(item.order_date)}` : '';
+      const data = await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(docId)}/ai-suggestion${qs}`, {
         method: 'POST',
       });
       setAiSuggestions(prev => ({ ...prev, [key]: data }));
@@ -52,7 +59,8 @@ const ManualReviewQueue = () => {
   };
 
   const handleOverride = async (item, category) => {
-    const key = item.id || item.doc_id || item.case_ref;
+    const key = rowKey(item);
+    const docId = item.id || item.doc_id || item.case_ref;
     setOverriding(key);
     try {
       // When "Get AI read" was used, send its result along so the human's
@@ -64,13 +72,17 @@ const ManualReviewQueue = () => {
       const aiSuggestion = (suggestion && suggestion !== 'loading' && !suggestion.error)
         ? suggestion
         : undefined;
-      await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(key)}/override`, {
+      // order_date tells the backend exactly which hearing date is being
+      // resolved -- a case can have several pending at once, and without
+      // it the correction always lands on whichever order was appended
+      // most recently, which may not be the one shown in this row.
+      await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(docId)}/override`, {
         method: 'POST',
-        body: JSON.stringify({ order_category: category, ai_suggestion: aiSuggestion }),
+        body: JSON.stringify({ order_category: category, ai_suggestion: aiSuggestion, order_date: item.order_date }),
       });
       const catLabel = ORDER_CATEGORIES.find(c => c.value === category)?.label ?? category;
       setMessage({ type: 'success', text: `${item.case_ref || key} — set to ${catLabel}` });
-      setItems(prev => prev.filter(i => (i.id || i.doc_id || i.case_ref) !== key));
+      setItems(prev => prev.filter(i => rowKey(i) !== key));
     } catch (e) {
       setMessage({ type: 'danger', text: `Override failed for ${item.case_ref || key}: ${e.message}` });
     } finally {
@@ -151,7 +163,7 @@ const ManualReviewQueue = () => {
                 </thead>
                 <tbody>
                   {items.map(item => {
-                    const key = item.id || item.doc_id || item.case_ref;
+                    const key = rowKey(item);
                     const isProcessing = overriding === key;
                     const conf = item.confidence_score != null
                       ? Math.round(item.confidence_score * 100)

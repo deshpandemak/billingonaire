@@ -36,6 +36,20 @@ def manager():
         ):
             mgr = AutoOrderManager()
     mgr.case_store = MagicMock()
+    # These tests are about a single order's own confidence crossing the
+    # threshold in isolation. A bare MagicMock().get_pending_review_dates()
+    # would be an unconfigured (and therefore truthy) MagicMock, forcing
+    # every case to look "still pending" regardless of this order's own
+    # confidence -- so fake just enough of add/get_pending_review_date's
+    # real behaviour (a shared list) for the two to agree with each other,
+    # the same way the real CaseDataStore-backed Firestore doc would.
+    pending: list = []
+    mgr.case_store.add_pending_review_date = Mock(
+        side_effect=lambda ref, date: pending.append(date)
+    )
+    mgr.case_store.get_pending_review_dates = Mock(
+        side_effect=lambda ref: list(pending)
+    )
     return mgr
 
 

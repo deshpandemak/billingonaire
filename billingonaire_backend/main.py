@@ -3924,46 +3924,73 @@ async def get_admin_review_queue(
         cases = []
         for doc in docs:
             data = doc.to_dict() or {}
-            orders = data.get("orders") or []
-            # Same "last entry that actually has a link" selection
-            # AutoOrderManager._get_case_order_context and
-            # CaseDataStore.append_case_order use -- status-only entries
-            # (no order_link) must not be mistaken for the analysed order.
-            orders_with_link = [
-                o for o in orders if isinstance(o, dict) and o.get("order_link")
+            orders = [o for o in (data.get("orders") or []) if isinstance(o, dict)]
+            pending_dates = [
+                d for d in (data.get("pending_review_order_dates") or []) if d
             ]
-            latest_order = orders_with_link[-1] if orders_with_link else {}
-            llm_suggestion = (latest_order.get("order_analysis_metadata") or {}).get(
-                "llm_suggestion"
-            )
-            # board_date/order_category/order_link/confidence_score must all
-            # come from this SAME orders[] entry. A case with multiple
-            # hearing dates gets each date fetched and analysed
-            # independently; latest_board_date (written by board ingestion)
-            # and latest_order_category/latest_order_link (written by
-            # append_case_order whenever ANY date finishes analysis) are
-            # each last-write-wins from a different, unsynchronised process,
-            # so mixing them here showed reviewers a category/confidence
-            # from one hearing date next to a board_date and PDF link from
-            # a completely different one. Falling back to the doc-level
-            # rollups only covers the (should-be-rare) case where orders[]
-            # itself is empty.
-            cases.append(
-                {
-                    "id": doc.id,
-                    "case_ref": data.get("case_ref"),
-                    "board_date": latest_order.get("board_date")
-                    or data.get("latest_board_date"),
-                    "petitioner": data.get("petitioner"),
-                    "respondent": data.get("respondent"),
-                    "order_category": latest_order.get("order_category")
-                    or data.get("latest_order_category"),
-                    "confidence_score": latest_order.get("order_category_confidence"),
-                    "order_link": latest_order.get("order_link")
-                    or data.get("latest_order_link"),
-                    "llm_suggestion": llm_suggestion,
-                }
-            )
+
+            def _order_for_date(target_date, _orders=orders):
+                for o in reversed(_orders):
+                    if target_date in (o.get("order_date"), o.get("board_date")):
+                        return o
+                return {}
+
+            if pending_dates:
+                # One row per still-unresolved hearing date. A case can have
+                # several in flight at once during backlog processing (see
+                # CaseDataStore.add_pending_review_date) -- without this a
+                # case with, say, three flagged dates collapsed into one
+                # unidentifiable row built from whichever order finished
+                # analysis last, which could be a date that was never even
+                # flagged.
+                rows = [(d, _order_for_date(d)) for d in pending_dates]
+            else:
+                # Legacy doc predating pending_review_order_dates (or a
+                # manual_review_required status left over from before this
+                # field existed) -- fall back to the single most-recent
+                # order with a link, same as before this field shipped.
+                orders_with_link = [o for o in orders if o.get("order_link")]
+                latest_order = orders_with_link[-1] if orders_with_link else {}
+                fallback_date = latest_order.get("order_date") or latest_order.get(
+                    "board_date"
+                )
+                rows = [(fallback_date, latest_order)]
+
+            for order_date, order_entry in rows:
+                # board_date/order_category/order_link/confidence_score must
+                # all come from this SAME orders[] entry. latest_board_date
+                # (written by board ingestion) and latest_order_category /
+                # latest_order_link (written by append_case_order whenever
+                # ANY date finishes analysis) are each last-write-wins from a
+                # different, unsynchronised process, so mixing them here
+                # showed reviewers a category/confidence from one hearing
+                # date next to a board_date and PDF link from a completely
+                # different one. Falling back to the doc-level rollups only
+                # covers the (should-be-rare) case where orders[] has no
+                # entry for this date at all.
+                llm_suggestion = (order_entry.get("order_analysis_metadata") or {}).get(
+                    "llm_suggestion"
+                )
+                cases.append(
+                    {
+                        "id": doc.id,
+                        "order_date": order_date,
+                        "case_ref": data.get("case_ref"),
+                        "board_date": order_entry.get("board_date")
+                        or order_date
+                        or data.get("latest_board_date"),
+                        "petitioner": data.get("petitioner"),
+                        "respondent": data.get("respondent"),
+                        "order_category": order_entry.get("order_category")
+                        or data.get("latest_order_category"),
+                        "confidence_score": order_entry.get(
+                            "order_category_confidence"
+                        ),
+                        "order_link": order_entry.get("order_link")
+                        or data.get("latest_order_link"),
+                        "llm_suggestion": llm_suggestion,
+                    }
+                )
         return JSONResponse(content=cases)
     except Exception as e:
         logger.error(f"Error fetching review queue: {e}")
@@ -3974,7 +4001,19 @@ async def get_admin_review_queue(
 
 
 @app.post("/admin/orders/{doc_id}/ai-suggestion", tags=["Admin Order Management"])
-async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_admin)):
+async def admin_ai_review_suggestion(
+    doc_id: str,
+    order_date: Optional[str] = Query(
+        None,
+        description=(
+            "The specific hearing date being reviewed. A case can have "
+            "several dates pending review at once; without this the read "
+            "always targets whichever order was most recently appended, "
+            "which may not be the one the reviewer is looking at."
+        ),
+    ),
+    current_user=Depends(require_admin),
+):
     """LLM read of a manual-review case's order text, with a rationale --
     offered as a drafted suggestion alongside the regex classifier's own
     result, never applied automatically. The reviewer still picks one of
@@ -3996,7 +4035,7 @@ async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_a
 
         case_ref = doc_id.replace("-", "/")
         manager = get_auto_order_manager()
-        order_context = manager._get_case_order_context(case_ref)
+        order_context = manager._get_case_order_context(case_ref, order_date=order_date)
         order_link = order_context.get("order_link")
         order_text_url = order_context.get("order_text_url")
         if not order_link:
@@ -4056,7 +4095,15 @@ async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_a
 async def admin_override_order_category(
     doc_id: str, request: Request, current_user=Depends(require_admin)
 ):
-    """Override the order category for a case in the manual review queue."""
+    """Override the order category for a case in the manual review queue.
+
+    ``order_date``, when given, identifies exactly which hearing date's
+    order is being corrected -- a case can have several dates pending
+    review at once (see CaseDataStore.add_pending_review_date), and
+    without it the correction always landed on whichever order was most
+    recently appended, which could silently overwrite an unrelated,
+    newer hearing instead of the one the reviewer is looking at.
+    """
     try:
         body = await request.json()
         order_category = body.get("order_category")
@@ -4075,6 +4122,7 @@ async def admin_override_order_category(
             actor_uid=current_user.get("uid"),
             notes=body.get("notes"),
             review_ai_suggestion=body.get("ai_suggestion"),
+            order_date=body.get("order_date"),
         )
         if not result.get("success"):
             return JSONResponse(
