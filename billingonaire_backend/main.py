@@ -1905,20 +1905,56 @@ def _derive_pdf_filename(source_url: str) -> str:
     return basename
 
 
-def _download_pdf_from_url(source_url: str) -> Dict[str, Any]:
-    # court_get, not requests.get -- court URLs need legacy TLS
-    # renegotiation; non-court URLs (GCS) are unaffected. See court_http.
-    response = court_get(source_url, timeout=60)
-    response.raise_for_status()
+def _fetch_stored_bytes(
+    url: str, timeout: int = 30
+) -> Tuple[bytes, Optional[str], Optional[str]]:
+    """Download bytes from a URL that's either an archived GCS blob
+    (court-orders/... on storage.googleapis.com) or a live court URL.
 
-    file_content = response.content or b""
+    The GCS bucket is deliberately private -- Cloud Run's service account
+    reads it via ADC (google.cloud.storage.Client()), but a plain HTTP GET
+    (court_get or requests.get alike) is an anonymous request and always
+    403s, TLS notwithstanding. This was confirmed live: "Get AI read" was
+    doing exactly that -- court_get(order_text_url) -- and every call
+    failed with "403 Client Error: Forbidden" on the .txt blob. court URLs
+    need the opposite special case (legacy TLS renegotiation, see
+    court_http), which court_get already provides. This is the one place
+    that picks the right path for a given URL, so callers reach it by
+    construction instead of by luck -- get_order_pdf's own inline GCS
+    branch had already learned this the same way and is the origin of
+    this logic.
+
+    Returns (content, content_type, resolved_url) -- the latter two are
+    None for the GCS path (the client library doesn't surface either on
+    download_as_bytes; callers that need to sniff the type should use the
+    magic-bytes check on content instead, which every existing caller
+    already does).
+    """
+    if url.startswith("https://storage.googleapis.com/"):
+        from google.cloud import storage as gcs_storage
+
+        without_prefix = url[len("https://storage.googleapis.com/") :]
+        bucket_name, _, blob_name = without_prefix.partition("/")
+        client = gcs_storage.Client()
+        content = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+        return content, None, None
+
+    response = court_get(url, timeout=timeout)
+    response.raise_for_status()
+    content_type = (response.headers.get("content-type") or "").lower()
+    return response.content or b"", content_type, response.url
+
+
+def _download_pdf_from_url(source_url: str) -> Dict[str, Any]:
+    file_content, content_type, resolved_url = _fetch_stored_bytes(
+        source_url, timeout=60
+    )
     if not file_content:
         raise ValueError("Downloaded file is empty")
 
-    content_type = (response.headers.get("content-type") or "").lower()
     is_pdf = (
         source_url.lower().endswith(".pdf")
-        or "application/pdf" in content_type
+        or (content_type and "application/pdf" in content_type)
         or file_content.startswith(b"%PDF")
     )
     if not is_pdf:
@@ -1931,10 +1967,10 @@ def _download_pdf_from_url(source_url: str) -> Dict[str, Any]:
         "file_content": file_content,
         "metadata": {
             "source_url": source_url,
-            "resolved_url": response.url,
+            "resolved_url": resolved_url or source_url,
             "content_type": content_type,
             "content_length": len(file_content),
-            "status_code": response.status_code,
+            "status_code": 200,
         },
     }
 
@@ -3959,16 +3995,19 @@ async def admin_ai_review_suggestion(doc_id: str, current_user=Depends(require_a
             # AutoOrderManager._upload_order_text_to_gcs) -- fetch that
             # directly instead of re-downloading the PDF and re-running the
             # full analyzer just to recover the same text a second time.
-            text_response = court_get(order_text_url, timeout=15)
-            text_response.raise_for_status()
-            order_text = text_response.text
+            # _fetch_stored_bytes, not court_get directly: order_text_url is
+            # always a private GCS blob, and an anonymous request to it
+            # 403s regardless of TLS handling.
+            text_bytes, _, _ = _fetch_stored_bytes(order_text_url, timeout=15)
+            order_text = text_bytes.decode("utf-8")
         else:
             # Legacy order analysed before text persistence shipped -- fall
-            # back to the original re-download + re-analyze path.
-            pdf_response = court_get(order_link, timeout=30)
-            pdf_response.raise_for_status()
+            # back to the original re-download + re-analyze path. order_link
+            # may itself be a GCS URL (once an order's been archived) or a
+            # live court URL; _fetch_stored_bytes picks the right one.
+            pdf_bytes, _, _ = _fetch_stored_bytes(order_link, timeout=30)
             analysis = manager.order_analyzer.analyze_order_document(
-                f"{doc_id}.pdf", pdf_response.content
+                f"{doc_id}.pdf", pdf_bytes
             )
             order_text = analysis.order_text
 
@@ -5354,15 +5393,7 @@ async def get_order_pdf(doc_id: str):
         # transparently, so the bucket can stay private.
         if order_link.startswith("https://storage.googleapis.com"):
             try:
-                from google.cloud import storage as gcs_storage
-
-                # Parse  https://storage.googleapis.com/{bucket}/{blob_path}
-                without_prefix = order_link[len("https://storage.googleapis.com/") :]
-                bucket_name, _, blob_name = without_prefix.partition("/")
-                client = gcs_storage.Client()
-                pdf_bytes = (
-                    client.bucket(bucket_name).blob(blob_name).download_as_bytes()
-                )
+                pdf_bytes, _, _ = _fetch_stored_bytes(order_link)
                 return Response(
                     content=pdf_bytes,
                     media_type="application/pdf",

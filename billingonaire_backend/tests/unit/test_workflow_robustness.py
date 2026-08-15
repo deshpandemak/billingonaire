@@ -656,6 +656,84 @@ async def test_ai_suggestion_returns_501_without_swallowing_when_unconfigured(
     assert "GEMINI_API_KEY" in json.loads(response.body)["error"]
 
 
+# ---------------------------------------------------------------------------
+# _fetch_stored_bytes -- the one place that decides whether a stored-order
+# URL needs GCS-authenticated download (private bucket, anonymous requests
+# 403 regardless of TLS) or the court_get session (legacy TLS renegotiation,
+# no auth). Three call sites shared this logic before it was factored out
+# here: get_order_pdf's inline GCS branch (already correct), and
+# admin_ai_review_suggestion / _download_pdf_from_url (both were calling
+# court_get unconditionally, 403ing on any GCS URL).
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_stored_bytes_uses_gcs_client_for_a_storage_googleapis_url(monkeypatch):
+    mock_blob = MagicMock()
+    mock_blob.download_as_bytes.return_value = b"order text content"
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_client = MagicMock()
+    mock_client.bucket.return_value = mock_bucket
+
+    court_get_mock = Mock(
+        side_effect=AssertionError("must not call court_get for a GCS URL")
+    )
+    monkeypatch.setattr(main, "court_get", court_get_mock)
+
+    with patch("google.cloud.storage.Client", return_value=mock_client):
+        content, content_type, resolved_url = main._fetch_stored_bytes(
+            "https://storage.googleapis.com/my-bucket/court-orders/WP-1-2025/order.txt"
+        )
+
+    assert content == b"order text content"
+    assert content_type is None
+    assert resolved_url is None
+    mock_client.bucket.assert_called_once_with("my-bucket")
+    mock_bucket.blob.assert_called_once_with("court-orders/WP-1-2025/order.txt")
+    court_get_mock.assert_not_called()
+
+
+def test_fetch_stored_bytes_uses_court_get_for_a_non_gcs_url(monkeypatch):
+    fake_response = SimpleNamespace(
+        content=b"%PDF-fake",
+        raise_for_status=Mock(),
+        headers={"content-type": "application/pdf"},
+        url="https://bombayhighcourt.gov.in/final/order.pdf",
+    )
+    court_get_mock = Mock(return_value=fake_response)
+    monkeypatch.setattr(main, "court_get", court_get_mock)
+
+    content, content_type, resolved_url = main._fetch_stored_bytes(
+        "https://bombayhighcourt.gov.in/final/order.pdf", timeout=20
+    )
+
+    assert content == b"%PDF-fake"
+    assert content_type == "application/pdf"
+    assert resolved_url == "https://bombayhighcourt.gov.in/final/order.pdf"
+    court_get_mock.assert_called_once_with(
+        "https://bombayhighcourt.gov.in/final/order.pdf", timeout=20
+    )
+
+
+def test_download_pdf_from_url_routes_a_gcs_link_through_the_authenticated_path(
+    monkeypatch,
+):
+    """/admin/order-analysis/from-link accepts an admin-supplied URL, which
+    can itself be one of our own archived GCS links -- this must not 403."""
+    fetch_mock = Mock(return_value=(b"%PDF-fake-content", None, None))
+    monkeypatch.setattr(main, "_fetch_stored_bytes", fetch_mock)
+
+    result = main._download_pdf_from_url(
+        "https://storage.googleapis.com/billingonaire-court-orders/court-orders/WP-1-2025/order.pdf"
+    )
+
+    assert result["file_content"] == b"%PDF-fake-content"
+    fetch_mock.assert_called_once_with(
+        "https://storage.googleapis.com/billingonaire-court-orders/court-orders/WP-1-2025/order.pdf",
+        timeout=60,
+    )
+
+
 @pytest.mark.asyncio
 async def test_ai_suggestion_404s_when_case_has_no_order_link(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
@@ -673,7 +751,15 @@ async def test_ai_suggestion_uses_persisted_text_without_redownloading_pdf(
 ):
     """When order_text_url is present (text persisted at analysis time),
     the endpoint must fetch that blob directly and skip re-downloading the
-    PDF and re-running the full analyzer a second time."""
+    PDF and re-running the full analyzer a second time.
+
+    order_text_url is always a private GCS blob (see
+    AutoOrderManager._upload_order_text_to_gcs) -- this must go through
+    _fetch_stored_bytes' GCS-authenticated path, not court_get, which is
+    an anonymous request and 403s on a private bucket regardless of TLS
+    handling. Confirmed live: this was exactly the "Get AI read" 500 --
+    "403 Client Error: Forbidden for url: https://storage.googleapis.com/
+    .../order.txt" -- before this endpoint was fixed to use it."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     mgr = MagicMock()
     mgr._get_case_order_context = Mock(
@@ -683,14 +769,12 @@ async def test_ai_suggestion_uses_persisted_text_without_redownloading_pdf(
         }
     )
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
-    get_mock = Mock(
-        return_value=SimpleNamespace(
-            text="Persisted order text",
-            content=b"unused",
-            raise_for_status=Mock(),
-        )
+    fetch_mock = Mock(return_value=(b"Persisted order text", None, None))
+    monkeypatch.setattr(main, "_fetch_stored_bytes", fetch_mock)
+    court_get_mock = Mock(
+        side_effect=AssertionError("must not call court_get for a GCS URL")
     )
-    monkeypatch.setattr(main, "court_get", get_mock)
+    monkeypatch.setattr(main, "court_get", court_get_mock)
 
     import review_copilot
 
@@ -709,9 +793,10 @@ async def test_ai_suggestion_uses_persisted_text_without_redownloading_pdf(
     response = await main.admin_ai_review_suggestion("WP-1-2026", current_user=None)
     assert response.status_code == 200
 
-    get_mock.assert_called_once_with(
+    fetch_mock.assert_called_once_with(
         "https://storage.googleapis.com/bucket/order.txt", timeout=15
     )
+    court_get_mock.assert_not_called()
     mgr.order_analyzer.analyze_order_document.assert_not_called()
     call_gemini_text = review_copilot.call_gemini.call_args[0][0]
     assert call_gemini_text == "Persisted order text"
@@ -732,7 +817,12 @@ async def test_ai_suggestion_returns_category_confidence_and_rationale(monkeypat
         main,
         "court_get",
         Mock(
-            return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
+            return_value=SimpleNamespace(
+                content=b"%PDF-fake",
+                raise_for_status=Mock(),
+                headers={},
+                url="https://example.com/order.pdf",
+            )
         ),
     )
 
@@ -775,7 +865,12 @@ async def test_ai_suggestion_returns_502_when_gemini_call_fails(monkeypatch):
         main,
         "court_get",
         Mock(
-            return_value=SimpleNamespace(content=b"%PDF-fake", raise_for_status=Mock())
+            return_value=SimpleNamespace(
+                content=b"%PDF-fake",
+                raise_for_status=Mock(),
+                headers={},
+                url="https://example.com/order.pdf",
+            )
         ),
     )
 
