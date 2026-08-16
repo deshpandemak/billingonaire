@@ -160,14 +160,23 @@ const Upload = () => {
           <div className="card-body">
             {user ? (
               <form onSubmit={uploadFile}>
-                {/* ── Drop zone ── */}
+                {/* ── Drop zone ──
+                    The file input is a real, tappable element layered
+                    directly over this zone (absolutely positioned,
+                    opacity: 0) rather than display:none behind a
+                    JS-triggered fileInput.current.click(). Several Android
+                    browsers/WebViews silently refuse to open the file
+                    picker when .click() is called programmatically on a
+                    display:none input -- there is no error, the tap just
+                    does nothing. A native tap landing directly on the real
+                    input sidesteps that entirely and works everywhere. */}
                 <div
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDragOver={handleDragOver}
                   onDrop={handleDrop}
-                  onClick={() => !isUploading && fileInput.current.click()}
                   style={{
+                    position: 'relative',
                     border: `2px dashed ${isDragging ? 'var(--primary-color)' : 'var(--gray-300)'}`,
                     borderRadius: 'var(--radius-lg)',
                     padding: '2.5rem 1.5rem',
@@ -180,6 +189,23 @@ const Upload = () => {
                     marginBottom: 'var(--spacing-lg)',
                   }}
                 >
+                  <input
+                    id="file"
+                    type="file"
+                    accept="application/pdf"
+                    ref={fileInput}
+                    multiple
+                    onChange={handleFileChange}
+                    disabled={isUploading}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: isUploading ? 'default' : 'pointer',
+                    }}
+                  />
                   <svg
                     width="44"
                     height="44"
@@ -207,16 +233,6 @@ const Upload = () => {
                   <p style={{ fontSize: '0.875rem', color: 'var(--gray-500)', marginBottom: 0 }}>
                     or click to browse
                   </p>
-                  <input
-                    id="file"
-                    type="file"
-                    accept="application/pdf"
-                    ref={fileInput}
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={handleFileChange}
-                    disabled={isUploading}
-                  />
                 </div>
 
                 {/* ── Selected files list ── */}
