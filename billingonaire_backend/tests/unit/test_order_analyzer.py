@@ -432,13 +432,12 @@ class TestCategoryClassification:
     def test_matched_nothing_never_crosses_the_review_gate(
         self, analyzer, document_type
     ):
-        """The abbreviated 'S.O.' form (standard Bombay HC shorthand for
-        'stand over') matches no classification pattern. Regardless of
+        """Text matching no classification pattern at all. Regardless of
         document_type, the enhanced classifier's confidence must stay
         below AutoOrderManager.REVIEW_CONFIDENCE_THRESHOLD (0.55) so the
         case reaches manual review / the LLM assist instead of being
         billed as a silent guess."""
-        text = "S.O. to 3 weeks."
+        text = "Registry to verify the record."
         structure = {"document_type": document_type, "advocates_section": ""}
         category, confidence = analyzer._classify_order_enhanced(text, structure)
         assert category == "ADJOURNED"
@@ -449,10 +448,60 @@ class TestCategoryClassification:
     ):
         """Direct regression for the exact arithmetic that broke: 0.5 * 1.15
         = 0.575, which used to clear the 0.55 gate."""
-        text = "S.O. to 3 weeks."
+        text = "Registry to verify the record."
         structure = {"document_type": "COMPLETE_ORDER", "advocates_section": ""}
         category, confidence = analyzer._classify_order_enhanced(text, structure)
         assert confidence == 0.5
+
+    def test_so_abbreviation_now_matches_the_adjourned_stand_over_pattern(
+        self, analyzer
+    ):
+        """'S.O.' is the standard Bombay HC shorthand for 'stand over'
+        ('S.O. to 27/01/2026', 'S. O. to 21/09/2023', bare 'S.O. <date>'
+        with no 'to'). Confirmed from production logs as the single
+        largest driver of orders landing in the matched_nothing floor even
+        when an AGP was named -- matched_nothing returns before the
+        AGP-presence business rule ever runs, so these orders needed a
+        human even though the AGP override exists for exactly this case.
+        This is no longer matched_nothing; it is a real (if still weak on
+        its own) ADJOURNED signal, the same as the spelled-out form."""
+        for text in [
+            "S.O. to 3 weeks.",
+            "S. O. to 21/09/2023",
+            "S.O. 27/01/2026",
+        ]:
+            category, confidence, matched_nothing = analyzer._classify_order(text)
+            assert matched_nothing is False, text
+            assert category == "ADJOURNED", text
+
+    def test_so_abbreviation_does_not_match_the_common_english_word_so(self, analyzer):
+        """The pattern requires literal periods after both letters
+        specifically so it cannot fire on ordinary prose containing the
+        word "so" under the case-insensitive match every pattern here runs
+        with."""
+        category, confidence, matched_nothing = analyzer._classify_order(
+            "The petitioner was unable to appear, so the matter could not "
+            "be taken up so to speak."
+        )
+        # "could not be taken up" is itself a real ADJOURNED pattern, so this
+        # text is expected to match -- the point is that it must not ALSO
+        # double-count "so"/"so to speak" as a second S.O. hit.
+        assert matched_nothing is False
+
+    def test_so_abbreviation_combines_with_agp_presence_to_clear_review(self, analyzer):
+        """The real-world case this fix exists for: an order using only the
+        abbreviated form, with an AGP named, must now clear the review gate
+        via the existing AGP-presence confidence floor -- which never ran
+        before because matched_nothing short-circuited it first."""
+        text = (
+            "The matter was called with 'Ms. Priyanka B. Chavan, AGP, for "
+            "Respondent-State' appearing, and the court directed to 'List "
+            "the petition on 23/04/2026.' S.O. to 23/04/2026."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+        assert confidence >= 0.55
 
     def test_genuine_low_confidence_match_still_reaches_review(self, analyzer):
         """A real (non-matched_nothing) but weak match should still be able
@@ -577,6 +626,53 @@ class TestCategoryClassification:
         category, confidence = analyzer._classify_order_enhanced(text, structure)
         assert category == "ADJOURNED"
         assert confidence == 0.95
+
+    def test_agp_presence_tolerates_a_missing_space_after_the_title(self, analyzer):
+        """Confirmed from production logs: entity_patterns["AGP_ENHANCED"]
+        (built for name extraction, where getting the space-normalisation
+        wrong matters) requires a space after the honorific and caps the
+        name at ~2 words plus one middle initial -- neither holds for a
+        real order naming 'Ms.Pooja Joshi Deshpande. AGP' (no space, three
+        full name words). The classification-only AGP-presence check must
+        not depend on that structure."""
+        text = (
+            "Ms.Pooja Joshi Deshpande. AGP for Respondents No. 1, 2 & 7 "
+            "appeared. Stand over to 21/04/2025."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+        assert confidence >= 0.55
+
+    def test_agp_presence_matches_role_before_name_ordering(self, analyzer):
+        """'AGP Ms. Neha Bhide appeared' -- the role token precedes the
+        name, the reverse of every entity_patterns["AGP_ENHANCED"] pattern.
+        Confirmed as a real, recurring shape in production order text."""
+        text = (
+            "AGP Ms. Neha Bhide appeared for the Respondent-State. "
+            "Stand over to 24/10/2022."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+        assert confidence >= 0.55
+
+    def test_agp_presence_does_not_fire_on_case_caption_boilerplate(self, analyzer):
+        """'State of Maharashtra thr. AGP, Respondent' names no individual
+        -- it is the routine case-caption description of the government as
+        a party, present on every hearing for that case regardless of
+        whether anyone actually appeared that day. Loosening the
+        AGP-presence check to match bare role tokens without a paired
+        honorific+name would make this business rule fire on nearly every
+        government-respondent case, not just the ones an AGP genuinely
+        showed up for."""
+        text = (
+            "State of Maharashtra thr. AGP, Respondent. The matter is "
+            "adjourned to 12th September, 2025."
+        )
+        structure = {"document_type": "PARTIAL", "advocates_section": ""}
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
 
 
 class TestEntityExtraction:

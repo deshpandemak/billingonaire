@@ -93,6 +93,9 @@ class OrderDocumentAnalyzer:
         self._compiled_strong_disposal = [
             re.compile(p, re.IGNORECASE) for p in self.STRONG_DISPOSAL_PATTERNS
         ]
+        self._compiled_agp_presence = [
+            re.compile(p, re.IGNORECASE) for p in self.AGP_PRESENCE_PATTERNS
+        ]
         # Build an explicit per-pattern weight map.  Keyed by the exact pattern
         # string so lookups are O(1) and immune to substring-matching bugs.
         self._pattern_weights = self._build_pattern_weights()
@@ -141,6 +144,20 @@ class OrderDocumentAnalyzer:
             ],
             "ADJOURNED": [
                 r"\bstands?\s+over\s+to\b",
+                # "S.O." is the standard Bombay HC shorthand for "stand over"
+                # ("S.O. to 27/01/2026", "S. O. to 21/09/2023", or bare
+                # "S.O. <date>" with no "to"). Requiring the literal periods
+                # after both letters is what keeps this from matching the
+                # common English word "so" ("so to speak") under the
+                # case-insensitive match every pattern here runs with.
+                # Confirmed from production logs: this was the single
+                # largest driver of orders landing in matched_nothing (the
+                # unmodifiable 0.5-confidence floor) even when an AGP was
+                # named on the order -- matched_nothing returns before the
+                # AGP-presence business rule below ever runs, so those
+                # orders needed a human even though the AGP override exists
+                # for exactly this situation.
+                r"\bS\.\s*O\.(?:\s+to)?",
                 r"\badjourned?\s+to\b",
                 r"\blist(?:ed)?\s+(?:the\s+same\s+)?on\b",
                 r"\bnext\s+(?:date|hearing)\s+(?:of|on)\b",
@@ -271,6 +288,7 @@ class OrderDocumentAnalyzer:
         # --- ADJOURNED weights ----------------------------------------------
         for p in [
             r"\bstands?\s+over\s+to\b",
+            r"\bS\.\s*O\.(?:\s+to)?",
             r"\binterim\s+order.*?to\s+continue\b",
         ]:
             weights[p] = 1.5  # "stand over" is a reliable adjournment signal
@@ -507,6 +525,34 @@ class OrderDocumentAnalyzer:
         r"\bfinal\s+disposal\b",
         r"\bfinal\s+judgment\b",
         r"\brule\s+(?:is\s+)?made\s+absolute\b",
+    ]
+
+    # Purely a yes/no signal for the AGP-presence business rule in
+    # _classify_order_enhanced -- deliberately NOT used for name extraction
+    # (entity_patterns["AGP_ENHANCED"] stays the source of truth for that),
+    # so this can be more permissive about title/name formatting quirks
+    # that name extraction must still get exactly right: a missing space
+    # after the title ("Ms.Pooja Joshi Deshpande"), a three-word name (no
+    # existing AGP_ENHANCED pattern allows more than one word + one middle
+    # initial), or role-before-name ordering ("AGP Ms. Neha Bhide").
+    # Confirmed from production logs as a real, recurring miss: multiple
+    # orders scored ADJOURNED (0.15, a genuine "stand over to" match, not
+    # matched_nothing) with an AGP clearly named in exactly these shapes,
+    # so the AGP-presence override below never got a chance to fire.
+    #
+    # Still requires an explicit honorific (Smt/Shri/Ms/Mrs/Mr/Adv) directly
+    # against the name -- NOT a bare "AGP" appearing anywhere. Case-caption
+    # boilerplate ("State of Maharashtra thr. AGP, Respondent") names no
+    # individual and must not match: a real appearance record always pairs
+    # the role with an actual honorific+name pair, and there is no other
+    # gate this business rule can use to tell "an AGP genuinely appears
+    # today" apart from "the State happens to be a party" if that
+    # constraint is loosened.
+    AGP_PRESENCE_PATTERNS: List[str] = [
+        r"(?:Smt|Shri|Ms|Mrs|Mr|Adv)\.?\s*(?:[A-Z][a-zA-Z.]*[\s.,]*){1,4}"
+        r"(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)\b",
+        r"\b(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)\b\s+"
+        r"(?:Smt|Shri|Ms|Mrs|Mr|Adv)\.?\s*[A-Z]",
     ]
 
     def _classify_order(self, text: str) -> Tuple[str, float, bool]:
@@ -1451,10 +1497,7 @@ class OrderDocumentAnalyzer:
         # directly against the raw text sidesteps that broken pipeline
         # entirely -- confirmed against real orders where advocates_section
         # was empty but an AGP name was genuinely present in the text.
-        has_agp_names = any(
-            re.search(pattern, text, re.IGNORECASE)
-            for pattern in self.entity_patterns["AGP_ENHANCED"]
-        )
+        has_agp_names = any(p.search(text) for p in self._compiled_agp_presence)
 
         # AGP presence is treated as strong, near-decisive evidence for this
         # business rule (confirmed with the user) -- a multiplicative boost
