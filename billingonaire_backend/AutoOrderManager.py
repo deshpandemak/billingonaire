@@ -52,6 +52,20 @@ class AutoOrderManager:
         os.getenv("ORDER_REVIEW_CONFIDENCE_THRESHOLD", "0.55")
     )
 
+    # When the regex classifier lands below REVIEW_CONFIDENCE_THRESHOLD and
+    # disagrees with the LLM, the case normally still goes to manual review
+    # (see _maybe_llm_assist) -- two disagreeing signals is not enough to
+    # trust either one blindly. HEARD_AND_ADJOURNED is the one exception:
+    # the regex scorer is the weakest at telling it apart from ADJOURNED
+    # (a routine "stand over" with an AGP named as present is
+    # HEARD_AND_ADJOURNED, not ADJOURNED -- see order_analyzer's
+    # AGP-presence rule), while the LLM reads this distinction reliably.
+    # A confident LLM read of HEARD_AND_ADJOURNED is trusted outright and
+    # applied directly instead of being parked for a human.
+    LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE = float(
+        os.getenv("LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE", "0.80")
+    )
+
     def __init__(self):
         self.db = firestore.client()
         self.order_analyzer = OrderDocumentAnalyzer()
@@ -780,12 +794,18 @@ class AutoOrderManager:
         i.e. cases a human would otherwise have to look at anyway.
 
         Auto-resolves (raises confidence enough to clear the review gate)
-        ONLY when the LLM independently agrees with the regex category --
-        two independent signals agreeing is a materially stronger bar than
-        either alone. On disagreement, the regex result is left completely
-        unchanged (still goes to manual review, same as before this
-        existed) but the LLM's read is attached to the analysis metadata so
-        the review queue can show it without a second, duplicate API call.
+        when the LLM independently agrees with the regex category -- two
+        independent signals agreeing is a materially stronger bar than
+        either alone. On disagreement, the regex result is normally left
+        completely unchanged (still goes to manual review) but the LLM's
+        read is attached to the analysis metadata so the review queue can
+        show it without a second, duplicate API call. The one exception:
+        a confident LLM read of HEARD_AND_ADJOURNED (see
+        LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE) is trusted outright and
+        REPLACES the regex category rather than being parked for a human --
+        the regex scorer is the least reliable at telling
+        HEARD_AND_ADJOURNED apart from ADJOURNED, and the LLM reads that
+        distinction well.
 
         The SAME Gemini call also extracts petitioner/government-side
         advocate names (review_copilot's prompt covers both), so whenever
@@ -799,8 +819,7 @@ class AutoOrderManager:
         names, ``result["government_pleader_fallback"]`` carries them so
         the caller can fill the gap. This never overrides a NON-empty
         regex result -- the regex extractor stays authoritative whenever
-        it found anything at all, same "offer alongside, never silently
-        override" posture as the category itself.
+        it found anything at all.
 
         No-op without GEMINI_API_KEY -- e.g. local dev, or the feature is
         turned off by removing the key -- and any call failure (timeout,
@@ -877,25 +896,51 @@ class AutoOrderManager:
             )
             result["confidence"] = new_confidence
         else:
-            # Disagreement is the interesting case for tuning the regex
-            # classifier or the LLM prompt -- the case still goes to manual
-            # review either way (confidence is deliberately left untouched
-            # here), but until this line existed there was no log signal
-            # for it at all: only the "agree" branch above logged anything,
-            # so a disagreement was indistinguishable from the LLM call
-            # never having been attempted. The (regex, LLM, human) triple
-            # this and tools/export_correction_dataset.py are meant to
-            # build depends on being able to find these.
-            logger.info(
-                "LLM-assist: regex and LLM DISAGREE for case_ref=%s -- "
-                "regex=%s (%.2f), llm=%s (%.2f): %s",
-                case_ref or "unknown",
-                category,
-                confidence,
-                suggestion.get("category"),
-                suggestion.get("confidence") or 0.0,
-                (suggestion.get("rationale") or "")[:200],
-            )
+            llm_category = suggestion.get("category")
+            llm_confidence = float(suggestion.get("confidence") or 0.0)
+            if (
+                llm_category == "HEARD_AND_ADJOURNED"
+                and llm_confidence >= self.LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE
+            ):
+                # Trust a confident LLM HEARD_AND_ADJOURNED read outright --
+                # see LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE above. This is
+                # the one case where the LLM's category REPLACES the
+                # regex's, not just raises confidence alongside it.
+                logger.info(
+                    "LLM-assist: regex said %s (%.2f) but LLM confidently read "
+                    "HEARD_AND_ADJOURNED (%.2f) for case_ref=%s -- adopting the "
+                    "LLM's classification instead of parking for manual "
+                    "review: %s",
+                    category,
+                    confidence,
+                    llm_confidence,
+                    case_ref or "unknown",
+                    (suggestion.get("rationale") or "")[:200],
+                )
+                result["category"] = llm_category
+                result["confidence"] = llm_confidence
+                result["llm_suggestion"]["auto_applied"] = True
+            else:
+                # Disagreement is the interesting case for tuning the regex
+                # classifier or the LLM prompt -- the case still goes to
+                # manual review either way (confidence is deliberately left
+                # untouched here), but until this line existed there was no
+                # log signal for it at all: only the "agree" branch above
+                # logged anything, so a disagreement was indistinguishable
+                # from the LLM call never having been attempted. The
+                # (regex, LLM, human) triple this and
+                # tools/export_correction_dataset.py are meant to build
+                # depends on being able to find these.
+                logger.info(
+                    "LLM-assist: regex and LLM DISAGREE for case_ref=%s -- "
+                    "regex=%s (%.2f), llm=%s (%.2f): %s",
+                    case_ref or "unknown",
+                    category,
+                    confidence,
+                    llm_category,
+                    llm_confidence,
+                    (suggestion.get("rationale") or "")[:200],
+                )
         return result
 
     def _download_gcs_text(self, url: str) -> str:

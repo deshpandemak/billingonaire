@@ -1634,14 +1634,16 @@ class TestMaybeLlmAssist:
         self, auto_order_manager, monkeypatch
     ):
         """The case must still go to manual review exactly as it would have
-        without this feature -- disagreement never auto-resolves."""
+        without this feature -- disagreement never auto-resolves, except
+        for the confident-HEARD_AND_ADJOURNED carve-out tested separately
+        below."""
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         with patch(
             "review_copilot.call_gemini",
             return_value={
-                "category": "HEARD_AND_ADJOURNED",
+                "category": "DISPOSED_OFF",
                 "confidence": 0.9,
-                "rationale": "Notice was issued.",
+                "rationale": "Petition allowed.",
             },
         ):
             result = auto_order_manager._maybe_llm_assist(
@@ -1650,8 +1652,57 @@ class TestMaybeLlmAssist:
 
         assert result["category"] == "ADJOURNED"
         assert result["confidence"] == 0.4
-        assert result["llm_suggestion"]["category"] == "HEARD_AND_ADJOURNED"
+        assert result["llm_suggestion"]["category"] == "DISPOSED_OFF"
         assert result["llm_suggestion"]["agreed_with_regex"] is False
+        assert "auto_applied" not in result["llm_suggestion"]
+
+    def test_confident_llm_heard_and_adjourned_disagreement_auto_applies(
+        self, auto_order_manager, monkeypatch
+    ):
+        """HEARD_AND_ADJOURNED is the one carve-out: the regex scorer is the
+        least reliable at telling it apart from ADJOURNED, so a confident
+        LLM read of HEARD_AND_ADJOURNED is trusted and applied directly
+        instead of being parked for manual review, even on disagreement."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "AGP Deshpande appeared and sought time.",
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+
+        assert result["category"] == "HEARD_AND_ADJOURNED"
+        assert result["confidence"] == 0.9
+        assert result["llm_suggestion"]["agreed_with_regex"] is False
+        assert result["llm_suggestion"]["auto_applied"] is True
+
+    def test_low_confidence_llm_heard_and_adjourned_disagreement_still_parks(
+        self, auto_order_manager, monkeypatch
+    ):
+        """Below LLM_HEARD_AND_ADJOURNED_AUTO_CONFIDENCE, the carve-out does
+        not apply -- an unconfident LLM read is not enough to override the
+        regex and skip manual review."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.6,
+                "rationale": "Possibly heard.",
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4)
+            )
+
+        assert result["category"] == "ADJOURNED"
+        assert result["confidence"] == 0.4
+        assert "auto_applied" not in result["llm_suggestion"]
 
     def test_llm_call_failure_falls_back_to_regex_result_unchanged(
         self, auto_order_manager, monkeypatch
@@ -1788,9 +1839,9 @@ class TestMaybeLlmAssist:
         with patch(
             "review_copilot.call_gemini",
             return_value={
-                "category": "HEARD_AND_ADJOURNED",
+                "category": "DISPOSED_OFF",
                 "confidence": 0.9,
-                "rationale": "Notice was issued.",
+                "rationale": "Petition allowed.",
             },
         ):
             with caplog.at_level("INFO"):
@@ -1805,7 +1856,7 @@ class TestMaybeLlmAssist:
         assert len(disagreement_logs) == 1
         assert "WP/16083/2022" in disagreement_logs[0]
         assert "ADJOURNED" in disagreement_logs[0]
-        assert "HEARD_AND_ADJOURNED" in disagreement_logs[0]
+        assert "DISPOSED_OFF" in disagreement_logs[0]
 
     def test_agreement_is_logged_with_the_case_ref(
         self, auto_order_manager, monkeypatch, caplog
