@@ -24,7 +24,12 @@ vi.mock('ag-grid-react', () => {
             'span',
             { 'data-testid': 'gp-in-order' },
             gpInOrderCol?.valueGetter({ data: row })
-          )
+          ),
+          // Normalized (post normalizeCaseRecord) values, straight off rowData --
+          // these are the fields the "Court Order"/"Outcome" columns read.
+          React.createElement('span', { 'data-testid': 'order-link' }, row.order_link || ''),
+          React.createElement('span', { 'data-testid': 'order-category' }, row.order_category || ''),
+          React.createElement('span', { 'data-testid': 'order-date' }, row.order_date || '')
         )
       )
     );
@@ -171,6 +176,45 @@ describe('Table Component', () => {
     await waitFor(() => {
       expect(screen.getByTestId('gp-in-order').textContent).toBe('AGP From Order');
     });
+  });
+
+  it('a board date with no analysed order of its own never borrows a different date\'s order', async () => {
+    // Regression: WP/9336/2025's 3rd-July row was showing the 30th-July
+    // order (link, category, GP) because the row-normalizer fell back to
+    // order_history's *latest* entry whenever this row's own date-matched
+    // fields were empty. order_history holds every hearing for the case,
+    // so "latest" can be a completely different date than this row.
+    api.authenticatedFetchJSON.mockResolvedValueOnce([
+      {
+        case_no: 'WP/9336/2025',
+        board_date: '2025-07-03',
+        // Backend (Board._hydrate_with_case_details) found no order dated
+        // 2025-07-03, so these are the honest, un-matched defaults:
+        order_link: null,
+        order_status: 'not_linked',
+        order_category: null,
+        order_date: null,
+        government_pleader: [],
+        // The case's actual order history -- a later, unrelated hearing.
+        order_history: [
+          {
+            order_date: '2025-07-30',
+            board_date: '2025-07-30',
+            order_link: 'https://storage.example/2025-07-30.pdf',
+            order_status: 'analysed',
+            order_category: 'DISPOSED_OFF',
+            government_pleader: ['AGP From 30th July'],
+          },
+        ],
+      },
+    ]);
+    render(<Table />);
+    await waitFor(() => {
+      expect(screen.getByTestId('gp-in-order').textContent).toBe('-');
+    });
+    expect(screen.getByTestId('order-link').textContent).toBe('');
+    expect(screen.getByTestId('order-category').textContent).toBe('');
+    expect(screen.getByTestId('order-date').textContent).toBe('');
   });
 
   it('shows search error inside the form when the API throws', async () => {

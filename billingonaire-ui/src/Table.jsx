@@ -112,19 +112,23 @@ const Table = () => {
     const latestOrder = getLatestOrder(row);
     return {
       ...row,
-      order_link: row?.order_link || latestOrder.order_link || null,
-      order_status: row?.order_status || latestOrder.order_status || 'not_linked',
-      order_category: row?.order_category || latestOrder.order_category || null,
-      order_date: row?.order_date || latestOrder.order_date || null,
+      // order_link/status/category/date/government_pleader are facts about ONE
+      // specific hearing -- the backend already matches them to this row's own
+      // board_date (Board._hydrate_with_case_details). latestOrder is simply
+      // the most recent order anywhere in the case's history, which can be a
+      // different date entirely, so it must never fill in for these: that was
+      // exactly the "3rd July row shows the 30th July order" bug. When this
+      // row's own date has no matched order yet, the honest state is "not
+      // linked", not another date's order.
+      order_link: row?.order_link || null,
+      order_status: row?.order_status || 'not_linked',
+      order_category: row?.order_category || null,
+      order_date: row?.order_date || null,
+      // Petitioner/respondent are stable for the whole case (not per-hearing),
+      // so falling back to the case-level rollup / any prior order is safe.
       order_petitioner: row?.order_petitioner || row?.petitioner || latestOrder.petitioner || null,
       order_respondent: row?.order_respondent || row?.respondent || latestOrder.respondent || null,
-      // Order-extracted only -- assigned_government_pleaders is the board's
-      // respondent_lawyer assignment, not anything read from the order PDF,
-      // so it must not bleed into the "AGP in order" figure.
-      government_pleader: [
-        ...asArray(row?.government_pleader),
-        ...asArray(latestOrder.government_pleader)
-      ]
+      government_pleader: asArray(row?.government_pleader)
     };
   };
 
