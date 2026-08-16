@@ -587,6 +587,112 @@ def test_process_all_orders_from_api_skips_already_analysed(auto_order_manager):
     auto_order_manager._analyze_order_with_api_metadata.assert_not_called()
 
 
+def test_process_all_orders_from_api_force_reprocess_bypasses_the_skip(
+    auto_order_manager,
+):
+    """Confirmed live: three real cases had empty petitioner/respondent
+    from their first analysis and stayed empty through every subsequent
+    explicit "retry" click, because order_status="analysed" made this
+    dedup silently skip the re-download every time. force_reprocess=True
+    must re-download and re-analyse regardless of prior status."""
+    auto_order_manager.court_scraper._fetch_with_provider = Mock(
+        return_value={
+            "result": {"_dummy": True},
+            "provider_sequence": ["http"],
+            "provider_attempts": [
+                {"step": "http", "status": "success", "duration_ms": 100}
+            ],
+        }
+    )
+    auto_order_manager.court_scraper._enrich_case_orders_result = Mock(
+        return_value={
+            "status": "found",
+            "petitioner": "P",
+            "respondent": "R",
+            "case_orders": [
+                {"date": "2025-03-01", "download_link": "https://court.example/o1.pdf"},
+            ],
+        }
+    )
+    # Both dedup signals say "already analysed" -- force_reprocess must
+    # override both anyway.
+    auto_order_manager._is_order_already_analysed = Mock(return_value=True)
+    auto_order_manager._get_analysed_order_for_date = Mock(
+        return_value={
+            "order_link": "https://storage.googleapis.com/b/2025-03-01.pdf",
+            "order_category": "ADJOURNED",
+        }
+    )
+    auto_order_manager._analyze_order_with_api_metadata = Mock(
+        return_value={"success": True, "data": {"order_category": "ADJOURNED"}}
+    )
+    auto_order_manager._update_board_entries_for_case_date = Mock()
+    auto_order_manager.case_store.update_case_party_names = Mock()
+
+    with patch("billingonaire_backend.AutoOrderManager.court_get") as mock_get:
+        mock_get.return_value = Mock(
+            status_code=200,
+            headers={"Content-Type": "application/pdf"},
+            content=b"%PDF-1.4",
+        )
+        result = auto_order_manager._process_all_orders_from_api(
+            case_ref="WP/123/2025",
+            case_id="board-abc",
+            board_date="2025-03-01",
+            force_reprocess=True,
+        )
+
+    assert result["orders_skipped"] == 0
+    auto_order_manager._analyze_order_with_api_metadata.assert_called_once()
+
+
+def test_process_single_case_reads_and_clears_force_reprocess(auto_order_manager):
+    """The flag is one-shot: read from case_data for this call, then
+    cleared in Firestore in the same write so a later, unrelated poll
+    cycle can never accidentally force-reprocess this case again."""
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager._process_all_orders_from_api = Mock(
+        return_value={"success": True, "orders_processed": 1, "order_link": "x"}
+    )
+
+    auto_order_manager._process_single_case(
+        {
+            "id": "2025-03-01-WP-123-2025",
+            "case_ref": "WP/123/2025",
+            "board_date": "2025-03-01",
+            "force_reprocess": True,
+        }
+    )
+
+    api_call = auto_order_manager._process_all_orders_from_api.call_args
+    assert api_call.kwargs["force_reprocess"] is True
+
+    fetch_started_call = next(
+        c
+        for c in auto_order_manager.case_store.transition_lifecycle.call_args_list
+        if c.kwargs.get("event_type") == "fetch_started"
+    )
+    assert fetch_started_call.kwargs["extra_fields"] == {"force_reprocess": False}
+
+
+def test_process_single_case_defaults_force_reprocess_to_false(auto_order_manager):
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager._process_all_orders_from_api = Mock(
+        return_value={"success": True, "orders_processed": 1, "order_link": "x"}
+    )
+
+    auto_order_manager._process_single_case(
+        {"id": "x", "case_ref": "WP/123/2025", "board_date": "2025-03-01"}
+    )
+
+    api_call = auto_order_manager._process_all_orders_from_api.call_args
+    assert api_call.kwargs["force_reprocess"] is False
+
+
 def test_process_all_orders_from_api_no_orders_returns_failure(auto_order_manager):
     """Return failure when API returns an empty order list."""
     auto_order_manager.court_scraper.get_case_orders = Mock(

@@ -1471,6 +1471,7 @@ class AutoOrderManager:
         case_ref: str,
         case_id: str,
         board_date: Optional[str] = None,
+        force_reprocess: bool = False,
     ) -> Dict[str, Any]:
         """Fetch **all** orders for a case from the court direct API and process each.
 
@@ -1486,7 +1487,16 @@ class AutoOrderManager:
           ``court-orders/<case-ref-dashes>/<order-date>.pdf`` so that the stored URL
           never expires.  If GCS is not configured the original download link is kept.
         * Orders whose date is already ``analysed`` in ``case-details`` are skipped
-          without re-downloading.
+          without re-downloading -- UNLESS *force_reprocess* is set, in which case
+          every order is re-downloaded and re-analysed regardless of prior status.
+          Confirmed live: an explicit per-case "retry" (POST
+          /auto-orders/process-case) correctly forces the lifecycle back to
+          fetch_queued, but this dedup skip then made the actual re-fetch a
+          silent no-op for any date already marked analysed -- three real
+          cases (WP/9445/2026, WP/9468/2026, WP/989/2007) had empty
+          petitioner/respondent from their first analysis and stayed empty
+          through every subsequent "retry" click, because nothing ever
+          re-downloaded or re-parsed the PDF a second time.
         * Orders are stored in ``case-details`` regardless of whether a matching
           board entry exists (board matching happens at query time).
         """
@@ -1568,8 +1578,9 @@ class AutoOrderManager:
             # the portal call entirely — just re-link the existing order to the
             # board entry and return.  This is the hot path for re-uploaded boards
             # and for secondary hearing dates after the first analysis already
-            # fetched all historical orders.
-            if normalized_bd:
+            # fetched all historical orders. Bypassed entirely when the caller
+            # explicitly asked for a force_reprocess.
+            if normalized_bd and not force_reprocess:
                 existing_for_bd = self._get_analysed_order_for_date(
                     case_ref, normalized_bd
                 )
@@ -1608,8 +1619,13 @@ class AutoOrderManager:
                 # Skip orders already fully analysed for this date.
                 # Opportunistically re-link them to board entries so that any
                 # board entries inserted after the initial analysis are backfilled.
-                if order_date_str and self._is_order_already_analysed(
-                    case_ref, order_date_str
+                # Bypassed when force_reprocess is set -- see the fast-path
+                # comment above for why this dedup cannot be allowed to
+                # silently swallow an explicit user-requested retry.
+                if (
+                    not force_reprocess
+                    and order_date_str
+                    and self._is_order_already_analysed(case_ref, order_date_str)
                 ):
                     result["orders_skipped"] += 1
                     ex_order = self._get_analysed_order_for_date(
@@ -1805,11 +1821,21 @@ class AutoOrderManager:
             result["error"] = reason
             return result
 
+        # force_reprocess is a one-shot signal set by POST /auto-orders/process-case
+        # (the per-case "retry" action) via transition_lifecycle's extra_fields.
+        # Read it now, then clear it in this SAME write so it can never
+        # accidentally force-reprocess this case again on some later,
+        # unrelated poll cycle.
+        force_reprocess = bool(case_data.get("force_reprocess"))
         self.case_store.transition_lifecycle(
             case_ref,
             "fetch_in_progress",
-            metadata={"source": "auto_order_manager"},
+            metadata={
+                "source": "auto_order_manager",
+                "force_reprocess": force_reprocess,
+            },
             event_type="fetch_started",
+            extra_fields={"force_reprocess": False},
         )
 
         # Scraper path: direct API first, Playwright as fallback (configured in CourtScraper).
@@ -1821,6 +1847,7 @@ class AutoOrderManager:
             case_ref=case_ref,
             case_id=case_id,
             board_date=board_date_str or None,
+            force_reprocess=force_reprocess,
         )
         if api_result.get("success"):
             result["download_success"] = True

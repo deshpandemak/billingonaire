@@ -609,6 +609,11 @@ async def fetch_poll_loop():
                     "board_date": case_data.get("board_date")
                     or case_data.get("latest_board_date"),
                     "board_assignment_ids": case_data.get("board_assignment_ids") or [],
+                    # Set by POST /auto-orders/process-case's explicit retry --
+                    # _query_claim_candidates reads case-details directly, so
+                    # this extra_fields write is visible here without any
+                    # extra query. _process_single_case reads and clears it.
+                    "force_reprocess": bool(case_data.get("force_reprocess")),
                 }
                 await _fetch_semaphore.acquire()
                 _track_task(asyncio.create_task(_process_claimed_fetch_case(case_info)))
@@ -3325,7 +3330,15 @@ async def process_single_case(request: Request, current_user=Depends(get_current
             extra_fields={
                 "latest_board_date": auto_mgr.case_store._to_iso_date(
                     board_date or case_data.get("board_date")
-                )
+                ),
+                # A case already order_status="analysed" for this board_date
+                # would otherwise hit _process_all_orders_from_api's dedup
+                # skip and never actually re-download/re-parse the PDF --
+                # silently turning this explicit user-requested retry into
+                # a no-op. force=True above only resets the LIFECYCLE
+                # status; this is the separate signal that tells the fetch
+                # poll loop to bypass that dedup for this one run.
+                "force_reprocess": True,
             },
         )
         _wake_fetch_poll.set()
