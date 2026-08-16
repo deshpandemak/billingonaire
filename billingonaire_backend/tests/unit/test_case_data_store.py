@@ -191,6 +191,103 @@ def test_append_case_order_updates_existing_event_and_supports_normalized_party_
     assert updated_case["government_pleader"] == ["Pooja Deshpande"]
 
 
+def test_set_order_compliance_directives_updates_matching_order_by_link():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    case_doc_id = "WP-201-2025"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/201/2025",
+            "orders": [
+                {
+                    "order_link": "https://example.com/order-1.pdf",
+                    "order_status": "analysed",
+                    "order_category": "HEARD_AND_ADJOURNED",
+                    "order_date": "2026-07-08",
+                }
+            ],
+        }
+    )
+
+    directives = [
+        {
+            "directive_type": "FILE_REPLY_AFFIDAVIT",
+            "description": "file reply affidavit",
+            "deadline_date": "2026-08-13",
+        }
+    ]
+    found = store.set_order_compliance_directives(
+        "WP/201/2025", "https://example.com/order-1.pdf", "2026-07-08", directives
+    )
+
+    assert found is True
+    updated_order = db.get_collection("case-details")[case_doc_id]["orders"][0]
+    assert updated_order["compliance_directives"] == directives
+    assert "compliance_scanned_at" in updated_order
+    # Everything else about the order entry is untouched.
+    assert updated_order["order_category"] == "HEARD_AND_ADJOURNED"
+    assert updated_order["order_status"] == "analysed"
+
+
+def test_set_order_compliance_directives_matches_by_date_when_link_missing():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    case_doc_id = "WP-202-2025"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/202/2025",
+            "orders": [{"order_link": None, "order_date": "2026-07-08"}],
+        }
+    )
+
+    found = store.set_order_compliance_directives("WP/202/2025", None, "2026-07-08", [])
+
+    assert found is True
+    updated_order = db.get_collection("case-details")[case_doc_id]["orders"][0]
+    assert updated_order["compliance_directives"] == []
+
+
+def test_set_order_compliance_directives_is_a_noop_when_no_order_matches():
+    """A compliance scan only ever targets an already-analysed order -- a
+    missing match means the caller has the wrong case/date, and this must
+    never create a phantom order entry with no order_status/category."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    case_doc_id = "WP-203-2025"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/203/2025",
+            "orders": [
+                {
+                    "order_link": "https://example.com/other.pdf",
+                    "order_date": "2026-01-01",
+                }
+            ],
+        }
+    )
+
+    found = store.set_order_compliance_directives(
+        "WP/203/2025", "https://example.com/order-1.pdf", "2026-07-08", []
+    )
+
+    assert found is False
+    assert len(db.get_collection("case-details")[case_doc_id]["orders"]) == 1
+
+
+def test_set_order_compliance_directives_is_a_noop_when_case_does_not_exist():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    found = store.set_order_compliance_directives(
+        "WP/999/2025", "https://example.com/order-1.pdf", "2026-07-08", []
+    )
+
+    assert found is False
+
+
 def test_get_case_details_map_returns_requested_refs():
     db = FakeFirestore()
     store = CaseDataStore(db)

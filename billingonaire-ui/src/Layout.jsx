@@ -7,6 +7,7 @@ import Dashboard from './Dashboard';
 import Table from './Table';
 import Upload from './Upload';
 import BillGeneration from './BillGeneration';
+import ComplianceTracker from './ComplianceTracker';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import AdminOrderManagement from './AdminOrderManagement';
@@ -151,6 +152,9 @@ const Layout = ({ children }) => {
                   <Nav.Link as={Link} to="/bills" className={isActive('/bills')} title="Ctrl+B">
                     Bill Generation
                   </Nav.Link>
+                  <Nav.Link as={Link} to="/compliance" className={isActive('/compliance')}>
+                    Compliance Tracker
+                  </Nav.Link>
                   <Nav.Link as={Link} to="/profile" className={isActive('/profile')}>
                     My Profile
                   </Nav.Link>
@@ -285,6 +289,7 @@ const App = () => (
         <Route path="/table" element={<Table />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/bills" element={<BillGeneration />} />
+        <Route path="/compliance" element={<ComplianceTracker />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<RequireAdmin><AdminUserManagement /></RequireAdmin>} />
         <Route path="/admin/orders" element={<RequireAdmin><AdminOrderManagement /></RequireAdmin>} />

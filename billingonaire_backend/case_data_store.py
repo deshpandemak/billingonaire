@@ -583,6 +583,55 @@ class CaseDataStore:
             "update_case_party_names: persisted parties for case_ref=%s", case_ref
         )
 
+    def set_order_compliance_directives(
+        self,
+        case_ref: str,
+        order_link: Optional[str],
+        order_date: Optional[str],
+        directives: List[Dict],
+    ) -> bool:
+        """Cache a compliance-directive scan result onto the matching order
+        entry so a re-scan of the same order (POST /compliance/scan run
+        again, or over an overlapping date range) is free -- no LLM call,
+        no write. Unlike append_case_order, this NEVER creates a new order
+        entry: a compliance scan only ever runs against an order that was
+        already analysed, so a missing match means the caller looked up
+        the wrong case/date and the write must be a no-op, not a phantom
+        entry with no order_status/category. Returns whether a matching
+        entry was found and updated.
+        """
+        if not case_ref:
+            return False
+
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        snapshot = case_doc_ref.get()
+        if not snapshot.exists:
+            return False
+        existing = snapshot.to_dict() or {}
+        orders = list(existing.get("orders") or [])
+
+        normalized_link = (order_link or "").strip()
+        normalized_date = self._to_iso_date(order_date) if order_date else None
+
+        for idx, item in enumerate(orders):
+            if not isinstance(item, dict):
+                continue
+            matches = (
+                normalized_link and item.get("order_link") == normalized_link
+            ) or (normalized_date and item.get("order_date") == normalized_date)
+            if not matches:
+                continue
+            merged = dict(item)
+            merged["compliance_directives"] = directives
+            merged["compliance_scanned_at"] = datetime.now().isoformat()
+            orders[idx] = merged
+            case_doc_ref.set({"orders": orders}, merge=True)
+            return True
+
+        return False
+
     def append_case_order(
         self,
         case_ref: str,

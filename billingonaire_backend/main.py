@@ -1209,6 +1209,157 @@ async def get_cases_lifecycle(
         raise HTTPException(status_code=500, detail="Error retrieving lifecycle data")
 
 
+_COMPLIANCE_CANONICAL_CATEGORIES = {"ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"}
+
+# Legacy/display spellings that mean the same three categories -- mirrors
+# billingonaire-ui/src/lib/lifecycleUtils.js's CATEGORY_ALIASES so an older
+# board row's differently-spelled category isn't silently excluded from a
+# compliance scan.
+_COMPLIANCE_CATEGORY_ALIASES = {
+    "HEARD & ADJN": "HEARD_AND_ADJOURNED",
+    "HEARD & ADJN.": "HEARD_AND_ADJOURNED",
+    "HEARD & ADJRN": "HEARD_AND_ADJOURNED",
+    "HEARD AND ADJOURNED": "HEARD_AND_ADJOURNED",
+    "WP DISPOSED OF": "DISPOSED_OFF",
+    "DISPOSED OF": "DISPOSED_OFF",
+    "DISPOSAL": "DISPOSED_OFF",
+    "ADJOURNMENT": "ADJOURNED",
+}
+
+
+def _canonical_compliance_category(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = str(value).strip().upper()
+    if raw in _COMPLIANCE_CANONICAL_CATEGORIES:
+        return raw
+    return _COMPLIANCE_CATEGORY_ALIASES.get(raw)
+
+
+@app.post("/compliance/scan", tags=["Compliance"])
+async def compliance_scan(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    user_name: Optional[str] = Query(
+        None, description="Admin only: run the scan for a specific AGP by name"
+    ),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Ad-hoc scan over already-classified HEARD_AND_ADJOURNED / DISPOSED_OFF
+    orders in a date range: extracts government-facing compliance
+    directives ("file reply affidavit by <date>", etc.) via
+    compliance_extractor, plus a plain count of disposed cases in range.
+
+    ADJOURNED orders are skipped entirely -- the matter was never reached,
+    so there is nothing to direct anyone to do. Results are cached onto
+    each order entry (case_data_store.set_order_compliance_directives), so
+    scanning an overlapping date range twice only pays the LLM cost once
+    per order. Without GEMINI_API_KEY, disposed cases still get reported
+    (ai_available=False in the response) but directive extraction is
+    skipped -- the endpoint degrades rather than failing outright, same
+    posture as every other GenAI feature in this codebase.
+    """
+    try:
+        uid = current_user_with_profile.get("uid")
+        user_manager = get_user_manager()
+        is_admin = user_manager.is_admin(uid)
+
+        if user_name and not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only administrators can run a compliance scan for another user",
+            )
+        agp_filter = user_name if user_name else user_manager.get_user_agp_filter(uid)
+
+        board = Board()
+        rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        auto_mgr = get_auto_order_manager()
+        case_store = auto_mgr.case_store
+
+        from compliance_extractor import extract_directives
+
+        disposed_count = 0
+        newly_scanned = 0
+        llm_errors = 0
+        results = []
+
+        for row in rows:
+            category = _canonical_compliance_category(row.get("order_category"))
+            if category not in ("HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
+                continue
+            if category == "DISPOSED_OFF":
+                disposed_count += 1
+
+            # order_history is the case's full, unfiltered order list --
+            # find the entry matching THIS row's own board_date, same
+            # date-matching Board._hydrate_with_case_details already did to
+            # populate row's own order_category/order_date/order_link.
+            order_entry = None
+            for o in reversed(row.get("order_history") or []):
+                if isinstance(o, dict) and o.get("board_date") == row.get("board_date"):
+                    order_entry = o
+                    break
+            if not order_entry:
+                continue
+
+            directives = order_entry.get("compliance_directives")
+            if directives is None:
+                text_url = order_entry.get("order_text_url")
+                if not text_url or not api_key:
+                    directives = []
+                else:
+                    try:
+                        order_text = auto_mgr._download_gcs_text(text_url)
+                        directives = extract_directives(
+                            order_text, api_key, order_date=row.get("order_date")
+                        )
+                        case_store.set_order_compliance_directives(
+                            row.get("case_ref"),
+                            row.get("order_link"),
+                            row.get("order_date"),
+                            directives,
+                        )
+                        newly_scanned += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "compliance_scan: extraction failed for case_ref=%s "
+                            "order_date=%s: %s",
+                            row.get("case_ref"),
+                            row.get("order_date"),
+                            exc,
+                        )
+                        llm_errors += 1
+                        directives = []
+
+            if directives or category == "DISPOSED_OFF":
+                results.append(
+                    {
+                        "case_ref": row.get("case_ref"),
+                        "board_date": row.get("board_date"),
+                        "order_date": row.get("order_date"),
+                        "order_category": category,
+                        "order_link": row.get("order_link"),
+                        "directives": directives,
+                    }
+                )
+
+        return {
+            "count": len(results),
+            "disposed_count": disposed_count,
+            "newly_scanned": newly_scanned,
+            "llm_errors": llm_errors,
+            "ai_available": bool(api_key),
+            "results": results,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running compliance scan: {e}")
+        raise HTTPException(status_code=500, detail="Error running compliance scan")
+
+
 @app.get("/cases/{case_ref:path}/timeline", tags=["Data Retrieval"])
 async def get_case_timeline(
     case_ref: str,

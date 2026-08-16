@@ -80,36 +80,21 @@ class ReviewCopilotError(RuntimeError):
     """Raised for any failure calling the LLM -- callers surface str(e)."""
 
 
-def call_gemini(text: str, api_key: str, model: str = DEFAULT_MODEL) -> Dict[str, Any]:
+def call_gemini_json(
+    prompt: str,
+    response_schema: Dict[str, Any],
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+) -> Dict[str, Any]:
+    """Low-level Gemini call shared by every structured-JSON prompt in this
+    codebase (order classification here, compliance-directive extraction in
+    compliance_extractor.py) -- one request/response/error-handling shape,
+    schema and prompt supplied by the caller."""
     payload = {
-        "contents": [{"parts": [{"text": PROMPT_TEMPLATE.format(text=text)}]}],
+        "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "category": {"type": "STRING", "enum": list(CATEGORIES)},
-                    "confidence": {"type": "NUMBER"},
-                    "rationale": {"type": "STRING"},
-                    "petitioner_advocates": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                    },
-                    "government_advocates": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                    },
-                    "roles": {"type": "ARRAY", "items": {"type": "STRING"}},
-                },
-                "required": [
-                    "category",
-                    "confidence",
-                    "rationale",
-                    "petitioner_advocates",
-                    "government_advocates",
-                    "roles",
-                ],
-            },
+            "responseSchema": response_schema,
         },
     }
     try:
@@ -124,3 +109,26 @@ def call_gemini(text: str, api_key: str, model: str = DEFAULT_MODEL) -> Dict[str
         return json.loads(raw)
     except Exception as exc:  # noqa: BLE001 - normalize every failure mode for callers
         raise ReviewCopilotError(str(exc)) from exc
+
+
+def call_gemini(text: str, api_key: str, model: str = DEFAULT_MODEL) -> Dict[str, Any]:
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "category": {"type": "STRING", "enum": list(CATEGORIES)},
+            "confidence": {"type": "NUMBER"},
+            "rationale": {"type": "STRING"},
+            "petitioner_advocates": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "government_advocates": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "roles": {"type": "ARRAY", "items": {"type": "STRING"}},
+        },
+        "required": [
+            "category",
+            "confidence",
+            "rationale",
+            "petitioner_advocates",
+            "government_advocates",
+            "roles",
+        ],
+    }
+    return call_gemini_json(PROMPT_TEMPLATE.format(text=text), schema, api_key, model)
