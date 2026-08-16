@@ -214,13 +214,31 @@ const ComplianceTracker = () => {
                             {report && (
                                 <>
                                     <Row className="mb-3">
-                                        <Col md={3}>
+                                        <Col md={2}>
+                                            <Card body className="text-center">
+                                                <div className="text-muted small">Matters in range</div>
+                                                <div className="h4 mb-0">{report.total_matters}</div>
+                                            </Card>
+                                        </Col>
+                                        <Col md={2}>
+                                            <Card body className="text-center" title="HEARD_AND_ADJOURNED and DISPOSED_OFF orders examined -- adjourned-only hearings are skipped by design.">
+                                                <div className="text-muted small">Orders scanned</div>
+                                                <div className="h4 mb-0">{report.orders_scanned}</div>
+                                            </Card>
+                                        </Col>
+                                        <Col md={2}>
+                                            <Card body className="text-center">
+                                                <div className="text-muted small">Adjourned (skipped)</div>
+                                                <div className="h4 mb-0">{report.adjourned_skipped}</div>
+                                            </Card>
+                                        </Col>
+                                        <Col md={2}>
                                             <Card body className="text-center">
                                                 <div className="text-muted small">Disposed cases</div>
                                                 <div className="h4 mb-0">{report.disposed_count}</div>
                                             </Card>
                                         </Col>
-                                        <Col md={3}>
+                                        <Col md={2}>
                                             <Card body className="text-center">
                                                 <div className="text-muted small">Rows with a directive</div>
                                                 <div className="h4 mb-0">
@@ -228,14 +246,14 @@ const ComplianceTracker = () => {
                                                 </div>
                                             </Card>
                                         </Col>
-                                        <Col md={3}>
+                                        <Col md={2}>
                                             <Card body className="text-center">
                                                 <div className="text-muted small">Newly scanned</div>
                                                 <div className="h4 mb-0">{report.newly_scanned}</div>
                                             </Card>
                                         </Col>
                                         {report.llm_errors > 0 && (
-                                            <Col md={3}>
+                                            <Col md={2}>
                                                 <Card body className="text-center border-warning">
                                                     <div className="text-muted small">Scan errors</div>
                                                     <div className="h4 mb-0 text-warning">{report.llm_errors}</div>

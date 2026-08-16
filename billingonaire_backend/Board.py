@@ -1043,7 +1043,19 @@ class Board:
                     expected_ct = case_type + ("(ST)" if case_stage == "Stamp" else "")
                     query = query.where("case_type", "==", expected_ct)
 
-            query = query.limit(self._SEARCH_RESULT_LIMIT)
+            # advocate_name / agp_filter can only be applied after hydration
+            # (fuzzy matching needs government_pleader from case-details,
+            # which Firestore can't filter on). Capping the raw fetch here
+            # would silently drop candidate rows before the name filter ever
+            # sees them -- e.g. a month with >500 board rows across all AGPs
+            # would only ever inspect the newest 500, undercounting one
+            # AGP's matters relative to an unbounded caller like bill
+            # generation (which streams the full date range). Only skip the
+            # cap when there's a date range to bound the scan by -- an
+            # unfiltered full-collection scan still needs the safety limit.
+            name_filter_pending = bool(advocate_name or agp_filter)
+            if not (has_date_filter and name_filter_pending):
+                query = query.limit(self._SEARCH_RESULT_LIMIT)
 
             # --- Compute expected case_type value for Python-side filter ---
             expected_case_type = ""

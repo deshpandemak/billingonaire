@@ -1283,12 +1283,22 @@ async def compliance_scan(
         disposed_count = 0
         newly_scanned = 0
         llm_errors = 0
+        orders_scanned = 0
+        adjourned_skipped = 0
         results = []
+
+        # Full universe this AGP+date-range matched, before any category
+        # filtering -- lets the UI show "scanned N of M matters" instead of
+        # leaving the ADJOURNED-skip and any upstream matching gap invisible.
+        total_matters = len(rows)
 
         for row in rows:
             category = _canonical_compliance_category(row.get("order_category"))
             if category not in ("HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
+                if category == "ADJOURNED":
+                    adjourned_skipped += 1
                 continue
+            orders_scanned += 1
             if category == "DISPOSED_OFF":
                 disposed_count += 1
 
@@ -1347,6 +1357,9 @@ async def compliance_scan(
 
         return {
             "count": len(results),
+            "total_matters": total_matters,
+            "orders_scanned": orders_scanned,
+            "adjourned_skipped": adjourned_skipped,
             "disposed_count": disposed_count,
             "newly_scanned": newly_scanned,
             "llm_errors": llm_errors,

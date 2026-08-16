@@ -111,6 +111,38 @@ async def test_adjourned_rows_are_skipped_entirely(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_response_reports_scan_transparency_counts(monkeypatch):
+    """The scan should surface how much of the AGP's matter universe it
+    actually examined -- total matters in range, how many were eligible
+    (HEARD_AND_ADJOURNED/DISPOSED_OFF) vs skipped as ADJOURNED -- so the UI
+    can show "scanned N of M" instead of leaving that invisible."""
+    rows = [
+        _row(case_ref="WP/1/2026", order_category="ADJOURNED"),
+        _row(case_ref="WP/2/2026", order_category="ADJOURNED"),
+        _row(case_ref="WP/3/2026", order_category="HEARD_AND_ADJOURNED"),
+        _row(case_ref="WP/4/2026", order_category="DISPOSED_OFF"),
+    ]
+    board_cls, board_instance = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    with patch("compliance_extractor.extract_directives", return_value=[]):
+        result = await main.compliance_scan(
+            start_date="2026-07-01",
+            end_date="2026-07-31",
+            user_name=None,
+            current_user_with_profile={"uid": "u1"},
+        )
+
+    assert result["total_matters"] == 4
+    assert result["orders_scanned"] == 2
+    assert result["adjourned_skipped"] == 2
+    assert result["disposed_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_heard_and_adjourned_order_gets_scanned_and_cached(monkeypatch):
     rows = [_row(order_category="HEARD_AND_ADJOURNED")]
     board_cls, board_instance = _mock_board(rows)

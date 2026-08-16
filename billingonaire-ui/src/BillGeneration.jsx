@@ -12,6 +12,7 @@ import {
     labelForResult,
     formatFee,
 } from './lib/billing.js';
+import { canonicalOrderCategory, ORDER_CATEGORY_LABELS } from './lib/lifecycleUtils';
 
 const BillGeneration = () => {
     const [dateRange, setDateRange] = useState({
@@ -224,8 +225,31 @@ const BillGeneration = () => {
         setTempEditData({});
     };
 
-    const saveEdit = () => {
+    // Writes a corrected outcome back to the case record itself (not just
+    // this bill) via the same admin override endpoint the Manual Review
+    // Queue uses, so Search & Orders, Compliance Tracker, and any future
+    // bill for this case see the correction too. Admin-only, matching that
+    // endpoint's own auth gate. Returns true if a write was actually made.
+    const persistOutcomeOverride = async (entry) => {
+        const canonicalCategory = canonicalOrderCategory(entry.results);
+        if (!canonicalCategory) return false;
+        if (!entry.case_type || !entry.case_no || !entry.case_year) return false;
+        const caseRef = `${entry.case_type}/${entry.case_no}/${entry.case_year}`;
+        const docId = caseRef.replace(/\//g, '-');
+        await authenticatedFetchJSON(`/admin/orders/${encodeURIComponent(docId)}/override`, {
+            method: 'POST',
+            body: JSON.stringify({
+                order_category: canonicalCategory,
+                order_date: entry.date,
+                notes: 'Corrected via Bill Generation',
+            }),
+        });
+        return true;
+    };
+
+    const saveEdit = async () => {
         const updatedEntries = [...billData.bill_entries];
+        const originalEntry = billData.bill_entries[editingRow];
         // The outcome is what the user chose; the fee follows from it.
         const resultText = tempEditData.results || DEFAULT_OUTCOME.result;
         const updatedEntry = {
@@ -243,6 +267,27 @@ const BillGeneration = () => {
 
         setEditingRow(null);
         setTempEditData({});
+
+        // A genuinely new outcome on a real case (not a manually-added row)
+        // is worth persisting; re-saving the same outcome or editing an
+        // unrelated field (parties, date typo) is not an override.
+        const isRealCase = updatedEntry.id && !String(updatedEntry.id).startsWith('new_');
+        if (isAdmin && isRealCase && resultText !== originalEntry.results) {
+            try {
+                const persisted = await persistOutcomeOverride(updatedEntry);
+                if (persisted) {
+                    setSaveMessage({
+                        type: 'success',
+                        text: `Correction saved to the case record for ${updatedEntry.case_detail} — future bills and searches will show the updated outcome.`,
+                    });
+                }
+            } catch (err) {
+                setSaveMessage({
+                    type: 'error',
+                    text: `Outcome updated on this bill, but saving the correction to the case record failed: ${err.message || err}`,
+                });
+            }
+        }
     };
 
     const deleteRow = (index) => {
@@ -654,6 +699,33 @@ const BillGeneration = () => {
                                                     </p>
                                                 );
                                             })()}
+                                            {(() => {
+                                                // Outcome sets the fee, so a breakdown here shows at a
+                                                // glance how much of this bill rests on a confirmed
+                                                // court order vs an assumed adjournment.
+                                                const entries = billData.bill_entries || [];
+                                                if (!entries.length) return null;
+                                                const counts = { DISPOSED_OFF: 0, HEARD_AND_ADJOURNED: 0, ADJOURNED: 0 };
+                                                let assumed = 0;
+                                                entries.forEach((e) => {
+                                                    if (isUnverifiedResult(e.results)) { assumed += 1; return; }
+                                                    const canonical = canonicalOrderCategory(e.order_category) || canonicalOrderCategory(e.results);
+                                                    if (canonical && counts[canonical] !== undefined) counts[canonical] += 1;
+                                                    else assumed += 1;
+                                                });
+                                                return (
+                                                    <p className="mb-0 mt-1 d-flex gap-2 flex-wrap" style={{ fontSize: '0.8rem' }}>
+                                                        <span className="badge bg-success">{ORDER_CATEGORY_LABELS.DISPOSED_OFF}: {counts.DISPOSED_OFF}</span>
+                                                        <span className="badge bg-info text-dark">{ORDER_CATEGORY_LABELS.HEARD_AND_ADJOURNED}: {counts.HEARD_AND_ADJOURNED}</span>
+                                                        <span className="badge bg-warning text-dark">{ORDER_CATEGORY_LABELS.ADJOURNED}: {counts.ADJOURNED}</span>
+                                                        {assumed > 0 && (
+                                                            <span className="badge bg-secondary" title="No analysed order on file — adjournment assumed.">
+                                                                Assumed (no order): {assumed}
+                                                            </span>
+                                                        )}
+                                                    </p>
+                                                );
+                                            })()}
                                         </div>
                                         {(() => {
                                             // Three separate ways an entry can be a guess. All of
@@ -893,7 +965,9 @@ const BillGeneration = () => {
                                                                             fees_rs: feeForResult(result)
                                                                         });
                                                                     }}
-                                                                    title="What the court did. The fee follows from this."
+                                                                    title={isAdmin
+                                                                        ? "What the court did. The fee follows from this. Saving a change here also corrects the case record."
+                                                                        : "What the court did. The fee follows from this. Only administrators can correct the case record itself."}
                                                                 >
                                                                     {/* An unverified entry keeps its marker as an option so
                                                                         editing another field cannot silently confirm it. */}

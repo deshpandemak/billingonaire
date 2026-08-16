@@ -741,6 +741,79 @@ def test_getData_advocate_name_checks_additional_respondent_lawyers(mock_firesto
 
 
 @patch("Board.firestore.client")
+def test_getData_advocate_name_with_date_range_skips_raw_fetch_cap(mock_firestore):
+    """
+    advocate_name/agp_filter can only be applied after hydration (fuzzy
+    matching needs government_pleader from case-details, which Firestore
+    can't filter on). Capping the raw date-range fetch before that filter
+    runs would silently drop rows for a busy date range -- e.g. a month
+    with >500 board rows across all AGPs would only ever inspect the
+    newest 500, undercounting one AGP's actual matters relative to bill
+    generation's unbounded date-range stream (which found 281 cases for
+    an AGP the capped search only found 20 of).
+    """
+    from Board import Board
+
+    doc = MagicMock(
+        id="2024-01-01-WP-1-2024",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2024",
+            "board_date": "2024-01-01",
+            "respondent_lawyer": "SHRI DESHPANDE, AGP",
+            "additional_respondent_lawyers": [],
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+    result = board.getData(
+        {
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-31",
+            "advocateName": "deshpande",
+        }
+    )
+
+    mock_query.limit.assert_not_called()
+    assert len(result) == 1
+
+
+@patch("Board.firestore.client")
+def test_getData_no_name_filter_with_date_range_still_caps_raw_fetch(mock_firestore):
+    """A plain date-range search (no advocate/AGP filter) keeps the safety
+    cap on the raw fetch -- only name-filtered searches need it lifted."""
+    from Board import Board
+
+    doc = MagicMock(
+        id="2024-01-01-WP-1-2024",
+        to_dict=lambda: {
+            "case_type": "WP",
+            "case_no": "1",
+            "case_year": "2024",
+            "board_date": "2024-01-01",
+        },
+    )
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.stream.return_value = [doc]
+    mock_firestore.return_value.collection.return_value.where.return_value = mock_query
+
+    board = Board()
+    board.getData({"startDate": "2024-01-01", "endDate": "2024-01-31"})
+
+    mock_query.limit.assert_called_once_with(board._SEARCH_RESULT_LIMIT)
+
+
+@patch("Board.firestore.client")
 def test_getData_case_year_as_string_vs_numeric(mock_firestore):
     """
     case_year stored as string "2025" must match search criteria "2025",
