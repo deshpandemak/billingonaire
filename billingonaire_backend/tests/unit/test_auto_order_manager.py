@@ -350,6 +350,55 @@ def test_analyze_order_with_api_metadata_llm_agreement_avoids_manual_review(
     assert transition_call.args[1] == "analysed"
 
 
+def test_analyze_order_with_api_metadata_fills_government_pleader_from_llm(
+    auto_order_manager, monkeypatch
+):
+    """Integration: when the regex extractor's analysis_result.cases is
+    empty (no government_pleader found at all) but GenAI -- already being
+    consulted for this low-confidence case -- independently extracted an
+    AGP name from the same text, the stored order must carry that name
+    rather than an empty government_pleader list."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    auto_order_manager.case_store.transition_lifecycle = Mock(
+        return_value={"applied": True}
+    )
+    auto_order_manager.case_store.append_case_order = Mock()
+    auto_order_manager.order_analyzer.analyze_order_document = Mock(
+        return_value=Mock(
+            order_category="HEARD_AND_ADJOURNED",
+            category_confidence=0.4,
+            order_text="AGP Ms. Neha Bhide appeared. Stand over to 24/10/2022.",
+            analysis_metadata={},
+            cases=[],
+        )
+    )
+
+    with patch(
+        "review_copilot.call_gemini",
+        return_value={
+            "category": "HEARD_AND_ADJOURNED",
+            "confidence": 0.95,
+            "rationale": "AGP appeared and the matter was called.",
+            "petitioner_advocates": [],
+            "government_advocates": ["Neha Bhide"],
+            "roles": ["AGP"],
+        },
+    ):
+        result = auto_order_manager._analyze_order_with_api_metadata(
+            case_id="board-abc",
+            case_ref="CP/304/2022",
+            pdf_content=b"%PDF-1.4",
+            api_order_date="2022-10-24",
+            api_petitioner="Petitioner Co",
+            api_respondent="State of Maharashtra",
+            order_link="https://example.com/order.pdf",
+        )
+
+    assert result["data"]["government_pleader"] == ["Neha Bhide, AGP"]
+    call_kwargs = auto_order_manager.case_store.append_case_order.call_args[0][1]
+    assert call_kwargs["government_pleader"] == ["Neha Bhide, AGP"]
+
+
 def test_analyze_order_with_api_metadata_flags_a_low_confidence_result(
     auto_order_manager,
 ):
@@ -1414,6 +1463,7 @@ class TestMaybeLlmAssist:
             "category": "ADJOURNED",
             "confidence": 0.4,
             "llm_suggestion": None,
+            "government_pleader_fallback": None,
         }
 
     def test_no_op_when_confidence_already_above_review_threshold(
@@ -1508,6 +1558,113 @@ class TestMaybeLlmAssist:
         assert result["category"] == "ADJOURNED"
         assert result["confidence"] == 0.4
         assert result["llm_suggestion"] is None
+
+    # ------------------------------------------------------------------
+    # GenAI must fetch the same breadth of information as the regex
+    # extractor whenever it is already reading an order for classification
+    # assist -- petitioner/government advocate names, not just a category.
+    # ------------------------------------------------------------------
+
+    def test_llm_suggestion_carries_the_extracted_advocates(
+        self, auto_order_manager, monkeypatch
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "Stand over, no hearing.",
+                "petitioner_advocates": ["Rakesh Saroj"],
+                "government_advocates": ["Pooja Joshi Deshpande"],
+                "roles": ["AGP"],
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4),
+                regex_government_pleader=["Pooja Joshi Deshpande, AGP"],
+            )
+
+        assert result["llm_suggestion"]["petitioner_advocates"] == ["Rakesh Saroj"]
+        assert result["llm_suggestion"]["government_advocates"] == [
+            "Pooja Joshi Deshpande"
+        ]
+        assert result["llm_suggestion"]["roles"] == ["AGP"]
+
+    def test_fills_government_pleader_when_regex_found_nothing(
+        self, auto_order_manager, monkeypatch
+    ):
+        """The real gap this exists for: entity_patterns["AGP_ENHANCED"] and
+        _extract_govt_pleader_from_text's cascading fallbacks can both
+        legitimately find nothing on some real orders. When GenAI is
+        already being consulted (low confidence) and independently finds a
+        name, that must not be thrown away."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.95,
+                "rationale": "AGP appeared.",
+                "petitioner_advocates": [],
+                "government_advocates": ["Neha Bhide"],
+                "roles": ["AGP"],
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="HEARD_AND_ADJOURNED", confidence=0.4),
+                regex_government_pleader=[],
+            )
+
+        assert result["government_pleader_fallback"] == ["Neha Bhide, AGP"]
+
+    def test_does_not_touch_government_pleader_when_regex_already_found_someone(
+        self, auto_order_manager, monkeypatch
+    ):
+        """The regex extractor stays authoritative whenever it found
+        anything at all -- the fallback exists only to fill a genuine gap,
+        never to second-guess a non-empty regex result."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.95,
+                "rationale": "AGP appeared.",
+                "petitioner_advocates": [],
+                "government_advocates": ["A Different Name"],
+                "roles": ["AGP"],
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="HEARD_AND_ADJOURNED", confidence=0.4),
+                regex_government_pleader=["Existing Regex Name, AGP"],
+            )
+
+        assert result["government_pleader_fallback"] is None
+
+    def test_missing_extraction_fields_default_to_empty_lists(
+        self, auto_order_manager, monkeypatch
+    ):
+        """A legacy-shaped mock response (category/confidence/rationale
+        only, no extraction fields) must not crash -- the code that reads
+        the new fields always has an empty-list default."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "ADJOURNED",
+                "confidence": 0.9,
+                "rationale": "x",
+            },
+        ):
+            result = auto_order_manager._maybe_llm_assist(
+                self._analysis_result(category="ADJOURNED", confidence=0.4),
+                regex_government_pleader=[],
+            )
+
+        assert result["llm_suggestion"]["government_advocates"] == []
+        assert result["government_pleader_fallback"] is None
 
     def test_disagreement_is_logged_with_the_case_ref(
         self, auto_order_manager, monkeypatch, caplog
@@ -1703,6 +1860,52 @@ class TestReclassifyPendingOrder:
         # No other pending dates -- the case must return to analysed.
         transition_args = auto_order_manager.case_store.transition_lifecycle.call_args
         assert transition_args.args[1] == "analysed"
+
+    def test_fills_government_pleader_from_llm_when_stored_order_had_none(
+        self, auto_order_manager, monkeypatch
+    ):
+        """The reclassify backfill must get the same GenAI-extraction
+        benefit as a fresh analysis: if the order on file has no
+        government_pleader recorded at all, and GenAI (already being
+        consulted because classification confidence was low) finds one
+        from the stored text, that must be saved -- not silently dropped."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        order = self._order(government_pleader=[])
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager.case_store.get_pending_review_dates = Mock(
+            return_value=["2026-04-22"]
+        )
+        auto_order_manager.case_store.append_case_order = Mock()
+        auto_order_manager.case_store.transition_lifecycle = Mock(
+            return_value={"applied": True}
+        )
+        auto_order_manager._download_gcs_text = Mock(
+            return_value="AGP Ms. Neha Bhide appeared. Stand over to 24/10/2022."
+        )
+        auto_order_manager.order_analyzer._parse_document_structure = Mock(
+            return_value={"document_type": "PARTIAL", "advocates_section": ""}
+        )
+        auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+            return_value=("HEARD_AND_ADJOURNED", 0.4)
+        )
+        with patch(
+            "review_copilot.call_gemini",
+            return_value={
+                "category": "HEARD_AND_ADJOURNED",
+                "confidence": 0.95,
+                "rationale": "AGP appeared.",
+                "petitioner_advocates": [],
+                "government_advocates": ["Neha Bhide"],
+                "roles": ["AGP"],
+            },
+        ):
+            auto_order_manager.reclassify_pending_order("CP/416/2024", "2026-04-22")
+
+        write_kwargs = auto_order_manager.case_store.append_case_order.call_args
+        payload = write_kwargs.args[1] if write_kwargs.args[1:] else write_kwargs.kwargs
+        assert payload["government_pleader"] == ["Neha Bhide, AGP"]
 
     def test_stays_manual_review_required_when_another_date_is_still_pending(
         self, auto_order_manager

@@ -767,7 +767,10 @@ class AutoOrderManager:
             return 0
 
     def _maybe_llm_assist(
-        self, analysis_result, case_ref: Optional[str] = None
+        self,
+        analysis_result,
+        case_ref: Optional[str] = None,
+        regex_government_pleader: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Roadmap #2: route only the ambiguous cases to an LLM, not every
         order. The regex classifier's hard gates (NO_TIME_PATTERNS,
@@ -784,6 +787,21 @@ class AutoOrderManager:
         existed) but the LLM's read is attached to the analysis metadata so
         the review queue can show it without a second, duplicate API call.
 
+        The SAME Gemini call also extracts petitioner/government-side
+        advocate names (review_copilot's prompt covers both), so whenever
+        GenAI is already reading an order it fetches the same breadth of
+        entity data order_analyzer's regex extractor does -- not just a
+        category. *regex_government_pleader*, when given, is the case's
+        own regex-extracted list; when that list is empty (a real,
+        recurring failure mode -- entity_patterns["AGP_ENHANCED"] and
+        _extract_govt_pleader_from_text's cascading fallbacks can both
+        legitimately find nothing on some real orders) but the LLM found
+        names, ``result["government_pleader_fallback"]`` carries them so
+        the caller can fill the gap. This never overrides a NON-empty
+        regex result -- the regex extractor stays authoritative whenever
+        it found anything at all, same "offer alongside, never silently
+        override" posture as the category itself.
+
         No-op without GEMINI_API_KEY -- e.g. local dev, or the feature is
         turned off by removing the key -- and any call failure (timeout,
         quota, bad response) falls back to the unmodified regex result
@@ -795,6 +813,7 @@ class AutoOrderManager:
             "category": category,
             "confidence": confidence,
             "llm_suggestion": None,
+            "government_pleader_fallback": None,
         }
 
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -826,7 +845,25 @@ class AutoOrderManager:
             "confidence": suggestion.get("confidence"),
             "rationale": suggestion.get("rationale"),
             "agreed_with_regex": agreed,
+            "petitioner_advocates": suggestion.get("petitioner_advocates") or [],
+            "government_advocates": suggestion.get("government_advocates") or [],
+            "roles": suggestion.get("roles") or [],
         }
+
+        llm_government_advocates = suggestion.get("government_advocates") or []
+        if not (regex_government_pleader or []) and llm_government_advocates:
+            roles = suggestion.get("roles") or []
+            result["government_pleader_fallback"] = [
+                f"{name}, {roles[i]}" if i < len(roles) else name
+                for i, name in enumerate(llm_government_advocates)
+            ]
+            logger.info(
+                "LLM-assist: regex found no government pleader for case_ref=%s -- "
+                "using LLM extraction as a fallback: %s",
+                case_ref or "unknown",
+                result["government_pleader_fallback"],
+            )
+
         if agreed:
             new_confidence = max(confidence, float(suggestion.get("confidence") or 0.0))
             logger.info(
@@ -946,9 +983,17 @@ class AutoOrderManager:
             category_confidence=new_confidence,
             order_text=order_text,
         )
-        llm_assist = self._maybe_llm_assist(analysis_stub, case_ref=case_ref)
+        existing_government_pleader = order.get("government_pleader") or []
+        llm_assist = self._maybe_llm_assist(
+            analysis_stub,
+            case_ref=case_ref,
+            regex_government_pleader=existing_government_pleader,
+        )
         new_category = llm_assist["category"]
         new_confidence = llm_assist["confidence"]
+        government_pleader = (
+            llm_assist["government_pleader_fallback"] or existing_government_pleader
+        )
 
         if new_confidence < self.REVIEW_CONFIDENCE_THRESHOLD:
             return {
@@ -985,7 +1030,7 @@ class AutoOrderManager:
                 "order_category_confidence": new_confidence,
                 "petitioner": order.get("petitioner"),
                 "respondent": order.get("respondent"),
-                "government_pleader": order.get("government_pleader"),
+                "government_pleader": government_pleader,
                 "order_analysis_metadata": analysis_metadata,
                 "order_text_url": order_text_url,
             },
@@ -1128,13 +1173,6 @@ class AutoOrderManager:
                 api_order_date,
             )
 
-            llm_assist = self._maybe_llm_assist(analysis_result, case_ref=case_ref)
-            if llm_assist["llm_suggestion"] is not None:
-                analysis_metadata = {
-                    **analysis_metadata,
-                    "llm_suggestion": llm_assist["llm_suggestion"],
-                }
-
             # Extract government pleaders from the analysis result.
             # Try to find the CaseInfo that matches case_ref; fall back to
             # the first case (or combine all when there is only one case).
@@ -1150,6 +1188,24 @@ class AutoOrderManager:
                 if target_case is None:
                     target_case = analysis_result.cases[0]
                 gp_list = list(target_case.government_pleader or [])
+
+            llm_assist = self._maybe_llm_assist(
+                analysis_result,
+                case_ref=case_ref,
+                regex_government_pleader=gp_list,
+            )
+            if llm_assist["llm_suggestion"] is not None:
+                analysis_metadata = {
+                    **analysis_metadata,
+                    "llm_suggestion": llm_assist["llm_suggestion"],
+                }
+            # The regex extractor found nothing for this case, but LLM-assist
+            # (called above only because classification confidence was also
+            # low) independently extracted government advocates from the
+            # same text -- use that rather than leaving the case with no
+            # government_pleader on file at all.
+            if llm_assist["government_pleader_fallback"]:
+                gp_list = llm_assist["government_pleader_fallback"]
 
             order_analysis: Dict[str, Any] = {
                 "order_category": llm_assist["category"],

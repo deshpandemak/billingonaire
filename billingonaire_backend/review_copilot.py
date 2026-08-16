@@ -3,6 +3,15 @@ an order, with a rationale, offered alongside (never in place of) the
 regex classifier's own result -- used by the manual review queue UI and by
 tools/review_copilot_prototype.py's offline comparison harness.
 
+Also extracts petitioner/government-side advocate names in the SAME call
+(merged from what was a separate, shadow-mode-only extraction_copilot.py
+prompt) -- wired into the live pipeline (AutoOrderManager._maybe_llm_assist)
+so that whenever an order is already being sent to Gemini for a low-
+confidence classification, the response carries the same breadth of
+entity data the regex extractor produces, at no extra API call. Still
+never overrides the regex extractor's result outright; see
+_maybe_llm_assist's fallback-only-when-regex-found-nothing logic.
+
 Kept deliberately small and dependency-light (stdlib + requests only) so it
 can be imported from both main.py at request time and from a standalone
 CLI tool without pulling in the rest of the backend.
@@ -19,9 +28,11 @@ CATEGORIES = ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF")
 
 DEFAULT_MODEL = "gemini-flash-latest"
 
-PROMPT_TEMPLATE = """You are classifying a single entry from a Bombay High Court daily
+PROMPT_TEMPLATE = """You are reading a single entry from a Bombay High Court daily
 cause-list order sheet, for AGP (Assistant Government Pleader) billing purposes.
-Classify it into exactly one of these three categories:
+Do two things:
+
+1. Classify it into exactly one of these three categories:
 
 - DISPOSED_OFF: the matter was finally decided/disposed of on this date.
 - HEARD_AND_ADJOURNED: the matter was called before the court and then
@@ -39,13 +50,29 @@ Classify it into exactly one of these three categories:
   adjourned for want/paucity of court time, or a generic date-shift with
   no advocate or AGP named as present for this specific matter.
 
+2. Extract the advocates named in the text:
+- petitioner_advocates: full names of advocates for the petitioner/applicant
+  side. Do not include titles (Mr./Ms./Shri/Smt) or role markers -- just
+  the name.
+- government_advocates: full names of advocates appearing for the
+  government / respondent-State side (anyone carrying an AGP / GP /
+  Addl. GP / B'Pnl marker).
+- roles: one entry per government_advocates name (same order), giving the
+  role marker exactly as printed in the text (e.g. "AGP", "Addl. GP",
+  "B'Pnl").
+Only extract names that actually appear in the text -- never invent one.
+If a side has no advocates listed, return an empty list for it.
+
 Order text:
 \"\"\"{text}\"\"\"
 
 Respond with ONLY a JSON object, no other text, matching this shape:
 {{"category": "DISPOSED_OFF" | "HEARD_AND_ADJOURNED" | "ADJOURNED",
   "confidence": <float 0 to 1>,
-  "rationale": "<one sentence, must quote the specific phrase(s) from the text that justify the category>"}}
+  "rationale": "<one sentence, must quote the specific phrase(s) from the text that justify the category>",
+  "petitioner_advocates": ["<name>", ...],
+  "government_advocates": ["<name>", ...],
+  "roles": ["<role for the government_advocates entry at the same index>", ...]}}
 """
 
 
@@ -64,8 +91,24 @@ def call_gemini(text: str, api_key: str, model: str = DEFAULT_MODEL) -> Dict[str
                     "category": {"type": "STRING", "enum": list(CATEGORIES)},
                     "confidence": {"type": "NUMBER"},
                     "rationale": {"type": "STRING"},
+                    "petitioner_advocates": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"},
+                    },
+                    "government_advocates": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"},
+                    },
+                    "roles": {"type": "ARRAY", "items": {"type": "STRING"}},
                 },
-                "required": ["category", "confidence", "rationale"],
+                "required": [
+                    "category",
+                    "confidence",
+                    "rationale",
+                    "petitioner_advocates",
+                    "government_advocates",
+                    "roles",
+                ],
             },
         },
     }
