@@ -583,8 +583,23 @@ class CaseDataStore:
             "update_case_party_names: persisted parties for case_ref=%s", case_ref
         )
 
-    def append_case_order(self, case_ref: str, order_payload: Dict) -> None:
-        """Append or update an order event under case-details.orders."""
+    def append_case_order(
+        self,
+        case_ref: str,
+        order_payload: Dict,
+        resolve_pending_date: Optional[str] = None,
+    ) -> None:
+        """Append or update an order event under case-details.orders.
+
+        ``resolve_pending_date``, when given, atomically removes that date
+        from ``pending_review_order_dates`` in the SAME write (see
+        add_pending_review_date/CaseDataStore.apply_category_override for
+        why this must be a server-side ArrayRemove) -- used when
+        re-classifying an already-flagged order from its stored text and
+        the new confidence clears the review gate, so the write that
+        updates the order's category and the write that un-flags it are
+        never two separate, raceable calls.
+        """
         if not case_ref:
             return
 
@@ -674,6 +689,14 @@ class CaseDataStore:
         }
         if not snapshot.exists:
             update_data["created_at"] = update_data["updated_at"]
+
+        normalized_resolve_date = (
+            self._to_iso_date(resolve_pending_date) if resolve_pending_date else None
+        )
+        if normalized_resolve_date:
+            update_data["pending_review_order_dates"] = firestore.ArrayRemove(
+                [normalized_resolve_date]
+            )
 
         case_doc_ref.set(update_data, merge=True)
         logger.info(

@@ -1149,6 +1149,40 @@ async def test_override_endpoint_forwards_order_date_to_the_store(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reclassify_review_queue_endpoint_returns_the_backfill_summary(
+    monkeypatch,
+):
+    """A classifier fix only changes the outcome for orders analysed AFTER
+    it ships -- this endpoint re-runs classification against the ALREADY-
+    STORED text of every manual_review_required case so a fix can also
+    shrink the existing backlog."""
+    mgr = MagicMock()
+    mgr.reclassify_all_pending_reviews = Mock(
+        return_value={
+            "cases_scanned": 12,
+            "dates_scanned": 15,
+            "resolved": 4,
+            "still_pending": 11,
+            "errors": 0,
+            "results": [],
+        }
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+
+    response = await main.admin_reclassify_review_queue(
+        limit=50, current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+    import json
+
+    body = json.loads(response.body)
+    assert body["resolved"] == 4
+    assert body["cases_scanned"] == 12
+    mgr.reclassify_all_pending_reviews.assert_called_once_with(50)
+
+
+@pytest.mark.asyncio
 async def test_ai_suggestion_forwards_order_date_to_the_order_context_lookup(
     monkeypatch,
 ):

@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
@@ -859,6 +860,241 @@ class AutoOrderManager:
                 (suggestion.get("rationale") or "")[:200],
             )
         return result
+
+    def _download_gcs_text(self, url: str) -> str:
+        """Download a stored order-text blob (court-orders/.../<date>.txt)
+        by its full https://storage.googleapis.com/... URL. Raises on any
+        failure -- callers decide how to handle it."""
+        if not gcs_storage:
+            raise RuntimeError("google-cloud-storage is not installed")
+        prefix = "https://storage.googleapis.com/"
+        if not url.startswith(prefix):
+            raise ValueError(f"not a GCS URL: {url}")
+        bucket_name, _, blob_name = url[len(prefix) :].partition("/")
+        client = gcs_storage.Client()
+        return (
+            client.bucket(bucket_name)
+            .blob(blob_name)
+            .download_as_bytes()
+            .decode("utf-8")
+        )
+
+    def reclassify_pending_order(
+        self, case_ref: str, order_date: str
+    ) -> Dict[str, Any]:
+        """Re-run classification against an order's ALREADY-STORED text,
+        without re-fetching or re-parsing the PDF.
+
+        Built for shrinking the manual-review backlog: a case flagged for
+        review under an older classifier scores forever at that old
+        confidence -- nothing ever re-evaluates it after the classifier
+        improves (e.g. the AGP-presence confidence floor, or the LLM prompt
+        no longer requiring "substantive arguments" for HEARD_AND_ADJOURNED),
+        so every fix only helps orders analysed AFTER it ships and the
+        existing backlog never shrinks on its own. This lets an admin job
+        clear it out safely, reusing the exact same classification and
+        LLM-assist code path a fresh analysis would use.
+
+        Only ever raises confidence and only writes to Firestore when the
+        new score actually clears REVIEW_CONFIDENCE_THRESHOLD -- a case
+        that's still ambiguous is left completely untouched, still exactly
+        where a human would expect to find it.
+
+        Returns a dict describing what happened; see the ``reason`` values
+        below. Never raises -- every failure mode is caught and reported.
+        """
+        normalized_date = self._normalise_order_date(order_date) or order_date
+        base_result = {"case_ref": case_ref, "order_date": normalized_date}
+
+        order = self._get_analysed_order_for_date(case_ref, normalized_date)
+        if not order:
+            return {**base_result, "resolved": False, "reason": "order_not_found"}
+
+        order_text_url = order.get("order_text_url")
+        if not order_text_url:
+            # Predates order-text persistence (Stage 2) -- reclassifying would
+            # require re-downloading and re-OCR'ing the PDF, which this
+            # deliberately does not do (that's a full re-analysis, not a
+            # cheap backfill). Left for manual review as before.
+            return {**base_result, "resolved": False, "reason": "no_stored_text"}
+
+        old_category = order.get("order_category")
+        old_confidence = float(order.get("order_category_confidence") or 0.0)
+
+        try:
+            order_text = self._download_gcs_text(order_text_url)
+        except Exception as exc:
+            logger.warning(
+                "reclassify_pending_order: could not fetch stored text for "
+                "case_ref=%s date=%s: %s",
+                case_ref,
+                normalized_date,
+                exc,
+            )
+            return {**base_result, "resolved": False, "reason": "text_fetch_failed"}
+
+        if not order_text.strip():
+            return {**base_result, "resolved": False, "reason": "empty_stored_text"}
+
+        document_structure = self.order_analyzer._parse_document_structure(order_text)
+        new_category, new_confidence = self.order_analyzer._classify_order_enhanced(
+            order_text, document_structure
+        )
+
+        analysis_stub = SimpleNamespace(
+            order_category=new_category,
+            category_confidence=new_confidence,
+            order_text=order_text,
+        )
+        llm_assist = self._maybe_llm_assist(analysis_stub, case_ref=case_ref)
+        new_category = llm_assist["category"]
+        new_confidence = llm_assist["confidence"]
+
+        if new_confidence < self.REVIEW_CONFIDENCE_THRESHOLD:
+            return {
+                **base_result,
+                "resolved": False,
+                "reason": "still_below_threshold",
+                "old_category": old_category,
+                "old_confidence": old_confidence,
+                "new_category": new_category,
+                "new_confidence": new_confidence,
+            }
+
+        # This case's other pending dates (if any) must be read BEFORE the
+        # write below, which will atomically remove *this* date -- the
+        # difference between the two tells us whether the case is fully
+        # resolved or must stay manual_review_required for another date.
+        pending_before = self.case_store.get_pending_review_dates(case_ref)
+        still_pending_after = [d for d in pending_before if d != normalized_date]
+
+        analysis_metadata = dict(order.get("order_analysis_metadata") or {})
+        analysis_metadata["llm_suggestion"] = llm_assist["llm_suggestion"]
+        analysis_metadata["reclassified_from"] = {
+            "category": old_category,
+            "confidence": old_confidence,
+        }
+        self.case_store.append_case_order(
+            case_ref,
+            {
+                "order_link": order.get("order_link"),
+                "order_status": "analysed",
+                "order_category": new_category,
+                "order_date": order.get("order_date"),
+                "board_date": order.get("board_date"),
+                "order_category_confidence": new_confidence,
+                "petitioner": order.get("petitioner"),
+                "respondent": order.get("respondent"),
+                "government_pleader": order.get("government_pleader"),
+                "order_analysis_metadata": analysis_metadata,
+                "order_text_url": order_text_url,
+            },
+            resolve_pending_date=normalized_date,
+        )
+        self._update_board_entries_for_case_date(
+            case_ref, normalized_date, order.get("order_link"), new_category
+        )
+
+        final_status = "manual_review_required" if still_pending_after else "analysed"
+        self.case_store.transition_lifecycle(
+            case_ref,
+            final_status,
+            reason=(
+                f"Reclassified {old_category} ({old_confidence:.2f}) -> "
+                f"{new_category} ({new_confidence:.2f}) from stored text "
+                "using updated classifier logic"
+            ),
+            metadata={
+                "source": "reclassify_pending_order",
+                "old_category": old_category,
+                "old_confidence": old_confidence,
+                "new_category": new_category,
+                "new_confidence": new_confidence,
+            },
+            event_type="manual_review_reclassified",
+            force=True,
+        )
+        logger.info(
+            "reclassify_pending_order: resolved case_ref=%s date=%s "
+            "%s (%.2f) -> %s (%.2f)",
+            case_ref,
+            normalized_date,
+            old_category,
+            old_confidence,
+            new_category,
+            new_confidence,
+        )
+        return {
+            **base_result,
+            "resolved": True,
+            "reason": "cleared_review_threshold",
+            "old_category": old_category,
+            "old_confidence": old_confidence,
+            "new_category": new_category,
+            "new_confidence": new_confidence,
+        }
+
+    def reclassify_all_pending_reviews(self, limit: int = 500) -> Dict[str, Any]:
+        """Run reclassify_pending_order over every currently
+        manual_review_required case's pending dates, bounded by *limit*
+        cases per call so one request can't run indefinitely against a
+        large backlog -- call again (or on a schedule) to keep draining it.
+        """
+        db = self.case_store.db
+        docs = (
+            db.collection(self.case_store.case_collection)
+            .where("lifecycle_status", "==", "manual_review_required")
+            .limit(max(1, min(limit, 2000)))
+            .stream()
+        )
+        summary = {
+            "cases_scanned": 0,
+            "dates_scanned": 0,
+            "resolved": 0,
+            "still_pending": 0,
+            "errors": 0,
+            "results": [],
+        }
+        for doc in docs:
+            data = doc.to_dict() or {}
+            case_ref = data.get("case_ref")
+            if not case_ref:
+                continue
+            summary["cases_scanned"] += 1
+            pending_dates = [
+                d for d in (data.get("pending_review_order_dates") or []) if d
+            ]
+            for pending_date in pending_dates:
+                summary["dates_scanned"] += 1
+                try:
+                    result = self.reclassify_pending_order(case_ref, pending_date)
+                except Exception as exc:  # noqa: BLE001 - one bad case must not
+                    # abort the whole backfill run.
+                    logger.error(
+                        "reclassify_all_pending_reviews: unexpected error for "
+                        "case_ref=%s date=%s: %s",
+                        case_ref,
+                        pending_date,
+                        exc,
+                        exc_info=True,
+                    )
+                    summary["errors"] += 1
+                    continue
+                if result.get("resolved"):
+                    summary["resolved"] += 1
+                    summary["results"].append(result)
+                else:
+                    summary["still_pending"] += 1
+        logger.info(
+            "reclassify_all_pending_reviews: scanned %d cases / %d dates, "
+            "resolved %d, still pending %d, errors %d",
+            summary["cases_scanned"],
+            summary["dates_scanned"],
+            summary["resolved"],
+            summary["still_pending"],
+            summary["errors"],
+        )
+        return summary
 
     def _analyze_order_with_api_metadata(
         self,

@@ -1,6 +1,7 @@
 import sys
 import types
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -1633,3 +1634,230 @@ class TestGetCaseOrderContextTargetsADate:
         assert (
             context["order_link"] == "https://storage.googleapis.com/b/2025-12-24.pdf"
         )
+
+
+class TestReclassifyPendingOrder:
+    """Built for shrinking the manual-review backlog: re-run classification
+    against an already-flagged case's stored order text, using the current
+    classifier logic, without re-fetching the PDF. A classifier fix only
+    changes the outcome for orders analysed AFTER it ships -- this is the
+    backfill that lets it also resolve the existing backlog."""
+
+    def _order(self, **overrides):
+        order = {
+            "order_link": "https://storage.googleapis.com/b/2026-04-22.pdf",
+            "order_date": "2026-04-22",
+            "board_date": "2026-04-22",
+            "order_status": "analysed",
+            "order_category": "ADJOURNED",
+            "order_category_confidence": 0.5,
+            "order_text_url": "https://storage.googleapis.com/b/2026-04-22.txt",
+            "petitioner": "P",
+            "respondent": "R",
+            "government_pleader": ["A. Deshpande, AGP"],
+        }
+        order.update(overrides)
+        return order
+
+    def test_resolves_when_the_new_classification_clears_the_threshold(
+        self, auto_order_manager
+    ):
+        order = self._order()
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager.case_store.get_pending_review_dates = Mock(
+            return_value=["2026-04-22"]
+        )
+        auto_order_manager.case_store.append_case_order = Mock()
+        auto_order_manager.case_store.transition_lifecycle = Mock(
+            return_value={"applied": True}
+        )
+        auto_order_manager._download_gcs_text = Mock(
+            return_value="By consent, stand over to 1st May 2026. Ms. A. "
+            "Deshpande, AGP for the Respondent-State."
+        )
+        auto_order_manager.order_analyzer._parse_document_structure = Mock(
+            return_value={"document_type": "PARTIAL", "advocates_section": ""}
+        )
+        auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+            return_value=("HEARD_AND_ADJOURNED", 0.75)
+        )
+
+        result = auto_order_manager.reclassify_pending_order(
+            "CP/416/2024", "2026-04-22"
+        )
+
+        assert result["resolved"] is True
+        assert result["reason"] == "cleared_review_threshold"
+        assert result["new_category"] == "HEARD_AND_ADJOURNED"
+        assert result["new_confidence"] == 0.75
+
+        # The order entry write must carry the new classification.
+        write_kwargs = auto_order_manager.case_store.append_case_order.call_args
+        payload = write_kwargs.args[1] if write_kwargs.args[1:] else write_kwargs.kwargs
+        assert payload["order_category"] == "HEARD_AND_ADJOURNED"
+        assert payload["order_category_confidence"] == 0.75
+        assert write_kwargs.kwargs.get("resolve_pending_date") == "2026-04-22"
+
+        # No other pending dates -- the case must return to analysed.
+        transition_args = auto_order_manager.case_store.transition_lifecycle.call_args
+        assert transition_args.args[1] == "analysed"
+
+    def test_stays_manual_review_required_when_another_date_is_still_pending(
+        self, auto_order_manager
+    ):
+        order = self._order()
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager.case_store.get_pending_review_dates = Mock(
+            return_value=["2026-04-22", "2025-12-24"]
+        )
+        auto_order_manager.case_store.append_case_order = Mock()
+        auto_order_manager.case_store.transition_lifecycle = Mock(
+            return_value={"applied": True}
+        )
+        auto_order_manager._download_gcs_text = Mock(return_value="Some order text.")
+        auto_order_manager.order_analyzer._parse_document_structure = Mock(
+            return_value={"document_type": "PARTIAL", "advocates_section": ""}
+        )
+        auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+            return_value=("HEARD_AND_ADJOURNED", 0.8)
+        )
+
+        auto_order_manager.reclassify_pending_order("CP/416/2024", "2026-04-22")
+
+        transition_args = auto_order_manager.case_store.transition_lifecycle.call_args
+        assert transition_args.args[1] == "manual_review_required"
+
+    def test_leaves_a_still_ambiguous_case_completely_untouched(
+        self, auto_order_manager
+    ):
+        order = self._order()
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager.case_store.append_case_order = Mock()
+        auto_order_manager.case_store.transition_lifecycle = Mock()
+        auto_order_manager._download_gcs_text = Mock(return_value="Some order text.")
+        auto_order_manager.order_analyzer._parse_document_structure = Mock(
+            return_value={"document_type": "PARTIAL", "advocates_section": ""}
+        )
+        # Still below REVIEW_CONFIDENCE_THRESHOLD (0.55) even after re-running.
+        auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+            return_value=("ADJOURNED", 0.5)
+        )
+
+        result = auto_order_manager.reclassify_pending_order(
+            "CP/416/2024", "2026-04-22"
+        )
+
+        assert result["resolved"] is False
+        assert result["reason"] == "still_below_threshold"
+        auto_order_manager.case_store.append_case_order.assert_not_called()
+        auto_order_manager.case_store.transition_lifecycle.assert_not_called()
+
+    def test_reports_no_stored_text_without_touching_anything(self, auto_order_manager):
+        """Legacy orders that predate order-text persistence (Stage 2) can't
+        be reclassified without re-fetching the PDF -- this deliberately
+        does not do that (it's a cheap backfill, not a full re-analysis)."""
+        order = self._order(order_text_url=None)
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager.case_store.append_case_order = Mock()
+        auto_order_manager.case_store.transition_lifecycle = Mock()
+
+        result = auto_order_manager.reclassify_pending_order(
+            "CP/416/2024", "2026-04-22"
+        )
+
+        assert result["resolved"] is False
+        assert result["reason"] == "no_stored_text"
+        auto_order_manager.case_store.append_case_order.assert_not_called()
+
+    def test_reports_order_not_found_for_an_unmatched_date(self, auto_order_manager):
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [self._order()]}
+        )
+        result = auto_order_manager.reclassify_pending_order(
+            "CP/416/2024", "2099-01-01"
+        )
+        assert result["resolved"] is False
+        assert result["reason"] == "order_not_found"
+
+    def test_a_text_fetch_failure_is_reported_not_raised(self, auto_order_manager):
+        order = self._order()
+        auto_order_manager.case_store.get_case_details = Mock(
+            return_value={"orders": [order]}
+        )
+        auto_order_manager._download_gcs_text = Mock(
+            side_effect=Exception("blob missing")
+        )
+        result = auto_order_manager.reclassify_pending_order(
+            "CP/416/2024", "2026-04-22"
+        )
+        assert result["resolved"] is False
+        assert result["reason"] == "text_fetch_failed"
+
+
+class TestReclassifyAllPendingReviews:
+    def test_scans_every_pending_date_and_summarises_the_outcome(
+        self, auto_order_manager, mock_firestore
+    ):
+        case_a = SimpleNamespace(
+            to_dict=lambda: {
+                "case_ref": "CP/416/2024",
+                "pending_review_order_dates": ["2026-04-22", "2025-12-24"],
+            }
+        )
+        case_b = SimpleNamespace(
+            to_dict=lambda: {
+                "case_ref": "WP/1/2026",
+                "pending_review_order_dates": ["2026-01-01"],
+            }
+        )
+        query = (
+            mock_firestore.client.return_value.collection.return_value.where.return_value
+        )
+        query.limit.return_value.stream.return_value = [case_a, case_b]
+
+        def _fake_reclassify(case_ref, order_date):
+            if case_ref == "CP/416/2024" and order_date == "2026-04-22":
+                return {"resolved": True}
+            return {"resolved": False}
+
+        auto_order_manager.reclassify_pending_order = Mock(side_effect=_fake_reclassify)
+
+        summary = auto_order_manager.reclassify_all_pending_reviews(limit=10)
+
+        assert summary["cases_scanned"] == 2
+        assert summary["dates_scanned"] == 3
+        assert summary["resolved"] == 1
+        assert summary["still_pending"] == 2
+        assert summary["errors"] == 0
+        assert auto_order_manager.reclassify_pending_order.call_count == 3
+
+    def test_one_bad_case_does_not_abort_the_whole_run(
+        self, auto_order_manager, mock_firestore
+    ):
+        case_a = SimpleNamespace(
+            to_dict=lambda: {
+                "case_ref": "CP/416/2024",
+                "pending_review_order_dates": ["2026-04-22"],
+            }
+        )
+        query = (
+            mock_firestore.client.return_value.collection.return_value.where.return_value
+        )
+        query.limit.return_value.stream.return_value = [case_a]
+
+        auto_order_manager.reclassify_pending_order = Mock(
+            side_effect=RuntimeError("boom")
+        )
+
+        summary = auto_order_manager.reclassify_all_pending_reviews(limit=10)
+
+        assert summary["errors"] == 1
+        assert summary["resolved"] == 0

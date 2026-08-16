@@ -4163,6 +4163,50 @@ async def admin_override_order_category(
         )
 
 
+@app.post("/admin/review-queue/reclassify", tags=["Admin Order Management"])
+async def admin_reclassify_review_queue(
+    limit: int = Query(
+        100,
+        description=(
+            "Maximum manual_review_required cases to re-scan in this call "
+            "(each case may have several pending dates). Call again to "
+            "keep draining a larger backlog."
+        ),
+    ),
+    current_user=Depends(require_admin),
+):
+    """Re-run classification against every currently manual_review_required
+    case's ALREADY-STORED order text, using the current classifier + LLM
+    logic instead of whatever was live when each case was first analysed.
+
+    A classifier fix (e.g. the AGP-presence confidence floor, or the LLM
+    prompt no longer requiring "substantive arguments" for
+    HEARD_AND_ADJOURNED) only changes the outcome for orders analysed AFTER
+    it ships -- nothing ever revisits a case that was already flagged under
+    the OLD logic, so the review backlog only ever grows and classifier
+    fixes never shrink it. This endpoint is the backfill: it costs one GCS
+    text read (and, only for cases still ambiguous after the regex
+    re-check, one LLM call) per pending date, no PDF re-fetch or re-OCR.
+
+    Only ever raises confidence and only writes when a case's new score
+    actually clears the review gate -- a case that's still genuinely
+    ambiguous is left exactly where a human would expect to find it.
+    """
+    try:
+        manager = get_auto_order_manager()
+        loop = asyncio.get_event_loop()
+        summary = await loop.run_in_executor(
+            executor, manager.reclassify_all_pending_reviews, limit
+        )
+        return JSONResponse(content=summary)
+    except Exception as e:
+        logger.error(f"Error reclassifying review queue: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to reclassify review queue: {str(e)}"},
+        )
+
+
 @app.post("/admin/bulk-order-processing", tags=["Admin Order Management"])
 async def admin_bulk_order_processing(
     request: Request, current_user=Depends(require_admin)
