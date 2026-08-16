@@ -1183,6 +1183,81 @@ async def test_reclassify_review_queue_endpoint_returns_the_backfill_summary(
 
 
 @pytest.mark.asyncio
+async def test_reclassify_review_queue_maps_resolved_cases_to_users(monkeypatch):
+    """A case resolved by the backfill reaches "analysed" the same as a
+    fresh analysis would -- without also running auto_map_case_to_users
+    (the same step the normal fetch/analysis pipeline runs on success), it
+    would never appear in any AGP's bill-generation matches despite being
+    correctly classified now."""
+    mgr = MagicMock()
+    mgr.reclassify_all_pending_reviews = Mock(
+        return_value={
+            "cases_scanned": 1,
+            "dates_scanned": 1,
+            "resolved": 1,
+            "still_pending": 0,
+            "errors": 0,
+            "results": [
+                {
+                    "case_ref": "CP/416/2024",
+                    "order_date": "2026-04-22",
+                    "resolved": True,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    mapped = Mock(return_value=None)
+
+    async def _fake_map(case_id, case_info):
+        mapped(case_id, case_info)
+
+    monkeypatch.setattr(main, "auto_map_case_to_users", _fake_map)
+
+    await main.admin_reclassify_review_queue(limit=50, current_user={"uid": "u1"})
+
+    mapped.assert_called_once_with(
+        "2026-04-22-CP-416-2024",
+        {"case_ref": "CP/416/2024", "board_date": "2026-04-22"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_reclassify_review_queue_mapping_failure_does_not_break_the_response(
+    monkeypatch,
+):
+    mgr = MagicMock()
+    mgr.reclassify_all_pending_reviews = Mock(
+        return_value={
+            "cases_scanned": 1,
+            "dates_scanned": 1,
+            "resolved": 1,
+            "still_pending": 0,
+            "errors": 0,
+            "results": [
+                {
+                    "case_ref": "CP/416/2024",
+                    "order_date": "2026-04-22",
+                    "resolved": True,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("mapping boom")
+
+    monkeypatch.setattr(main, "auto_map_case_to_users", _boom)
+
+    response = await main.admin_reclassify_review_queue(
+        limit=50, current_user={"uid": "u1"}
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_ai_suggestion_forwards_order_date_to_the_order_context_lookup(
     monkeypatch,
 ):

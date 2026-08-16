@@ -4191,6 +4191,13 @@ async def admin_reclassify_review_queue(
     Only ever raises confidence and only writes when a case's new score
     actually clears the review gate -- a case that's still genuinely
     ambiguous is left exactly where a human would expect to find it.
+
+    A resolved case is also mapped to registered AGP users (the same
+    auto_map_case_to_users step the normal fetch/analysis pipeline runs on
+    success) -- without this, a case resolved here would reach "analysed"
+    but never appear in anyone's bill-generation matches, the same gap
+    /admin/remap-user-matters exists to backfill for the older
+    case-details-vs-daily-boards id mismatch.
     """
     try:
         manager = get_auto_order_manager()
@@ -4198,6 +4205,23 @@ async def admin_reclassify_review_queue(
         summary = await loop.run_in_executor(
             executor, manager.reclassify_all_pending_reviews, limit
         )
+        for result in summary.get("results") or []:
+            case_ref = result.get("case_ref") or ""
+            order_date = result.get("order_date")
+            parts = case_ref.split("/")
+            if len(parts) != 3 or not order_date:
+                continue
+            case_type, case_no, case_year = parts
+            board_doc_id = f"{order_date}-{case_type}-{case_no}-{case_year}"
+            try:
+                await auto_map_case_to_users(
+                    board_doc_id, {"case_ref": case_ref, "board_date": order_date}
+                )
+            except Exception as mapping_error:
+                logger.error(
+                    f"Error mapping users after reclassify for {case_ref}: "
+                    f"{mapping_error}"
+                )
         return JSONResponse(content=summary)
     except Exception as e:
         logger.error(f"Error reclassifying review queue: {e}")
@@ -5449,25 +5473,37 @@ async def get_order_pdf(doc_id: str):
                     )
                     if _details_snap.exists:
                         _details = _details_snap.to_dict() or {}
-                        # Try to find the order matching this board entry's date
+                        _orders = _details.get("orders") or []
+                        # Find the order matching THIS board entry's own date --
+                        # deliberately no "latest_order_link" or "most recent
+                        # order" fallback when the case HAS dated order
+                        # history. A case with several hearing dates can be
+                        # mid-backlog-processing at the exact moment this
+                        # request lands (confirmed live: WP/9336/2025's
+                        # 2026-07-03 request landed while a DIFFERENT date's
+                        # order was being appended), so "whichever order was
+                        # last written" is frequently an unrelated date, not
+                        # this one -- serving it would be a silently wrong
+                        # document, worse than a clear not-yet-available
+                        # response.
                         if _order_date:
-                            for _o in _details.get("orders") or []:
-                                if isinstance(_o, dict) and _o.get("order_link"):
-                                    if (
-                                        str(_o.get("order_date", ""))[:10]
-                                        == _order_date
-                                    ):
-                                        order_link = _o["order_link"].strip()
-                                        break
-                        if not order_link:
+                            for _o in _orders:
+                                if not isinstance(_o, dict) or not _o.get("order_link"):
+                                    continue
+                                if _order_date in (
+                                    str(_o.get("order_date", ""))[:10],
+                                    str(_o.get("board_date", ""))[:10],
+                                ):
+                                    order_link = _o["order_link"].strip()
+                                    break
+                        if not order_link and not _orders:
+                            # Genuinely legacy doc predating the orders[]
+                            # array -- latest_order_link is the only signal
+                            # that exists, so it's the correct source here,
+                            # not a same-case-different-date guess.
                             order_link = (
                                 _details.get("latest_order_link") or ""
                             ).strip()
-                        if not order_link:
-                            for _o in reversed(_details.get("orders") or []):
-                                if isinstance(_o, dict) and _o.get("order_link"):
-                                    order_link = _o["order_link"].strip()
-                                    break
         else:
             # Board entry not found — doc_id may be a constructed ID for a historical
             # order that has no board entry.  Parse: YYYY-MM-DD-{case-details-id}
@@ -5480,12 +5516,19 @@ async def get_order_pdf(doc_id: str):
                 )
                 if _details_snap.exists:
                     _details = _details_snap.to_dict() or {}
-                    for _o in _details.get("orders") or []:
-                        if isinstance(_o, dict) and _o.get("order_link"):
-                            if str(_o.get("order_date", ""))[:10] == _order_date:
-                                order_link = _o["order_link"].strip()
-                                break
-                    if not order_link:
+                    _orders = _details.get("orders") or []
+                    # Same reasoning as above: match THIS date only when the
+                    # case has dated order history -- no latest-order guess.
+                    for _o in _orders:
+                        if not isinstance(_o, dict) or not _o.get("order_link"):
+                            continue
+                        if _order_date in (
+                            str(_o.get("order_date", ""))[:10],
+                            str(_o.get("board_date", ""))[:10],
+                        ):
+                            order_link = _o["order_link"].strip()
+                            break
+                    if not order_link and not _orders:
                         order_link = (_details.get("latest_order_link") or "").strip()
             if not order_link:
                 raise HTTPException(status_code=404, detail="Case not found")

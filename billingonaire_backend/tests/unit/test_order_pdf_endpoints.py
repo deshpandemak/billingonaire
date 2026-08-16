@@ -117,6 +117,139 @@ def test_get_order_pdf_no_order_link_anywhere(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# GET /orders/pdf/{doc_id}  — a case with multiple hearing dates must never
+# serve a DIFFERENT date's PDF than the one requested. Confirmed live:
+# WP/9336/2025's board_date=2026-07-03 request was served the 2026-07-21
+# order instead, because that later date happened to be the last one
+# _process_all_orders_from_api appended to orders[] at the exact moment
+# the request landed (the case was mid-backlog-processing across several
+# hearing dates). latest_order_link and "last order in orders[]" are both
+# case-wide rollups with no date awareness, so falling back to either one
+# when the requested date's own order isn't found yet is exactly how a
+# silently wrong PDF gets served.
+# ---------------------------------------------------------------------------
+
+DATED_DOC_ID = "2026-07-03-WP-9336-2025"
+OTHER_DATE_URL = "https://storage.googleapis.com/billingonaire-court-orders/court-orders/WP-9336-2025/2026-07-21.pdf"
+REQUESTED_DATE_URL = "https://storage.googleapis.com/billingonaire-court-orders/court-orders/WP-9336-2025/2026-07-03.pdf"
+
+
+def test_get_order_pdf_does_not_fall_back_to_a_different_dated_order(
+    client, monkeypatch
+):
+    """The requested date (2026-07-03) has no order_link on the board entry
+    yet and no matching entry in orders[] yet -- only a DIFFERENT date
+    (2026-07-21, appended more recently by the backlog run) is on file.
+    This must 404, never silently serve the 2026-07-21 PDF."""
+    board_snap = _make_snap(
+        True,
+        {
+            "case_type": "WP",
+            "case_no": "9336",
+            "case_year": "2025",
+            "order_link": "",
+        },
+    )
+    details_snap = _make_snap(
+        True,
+        {
+            "latest_order_link": OTHER_DATE_URL,
+            "orders": [
+                {
+                    "order_link": OTHER_DATE_URL,
+                    "order_date": "2026-07-21",
+                    "board_date": "2026-07-21",
+                }
+            ],
+        },
+    )
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
+    monkeypatch.setattr(main.firestore, "client", lambda: db)
+
+    resp = client.get(f"/orders/pdf/{DATED_DOC_ID}")
+
+    assert resp.status_code == 404
+
+
+def test_get_order_pdf_serves_the_matching_date_when_present(client, monkeypatch):
+    """Same case, same in-flight backlog run -- but this time the requested
+    date's own order IS in orders[] (alongside the other, newer date).
+    That entry, not latest_order_link, must be the one served."""
+    board_snap = _make_snap(
+        True,
+        {
+            "case_type": "WP",
+            "case_no": "9336",
+            "case_year": "2025",
+            "order_link": "",
+        },
+    )
+    details_snap = _make_snap(
+        True,
+        {
+            "latest_order_link": OTHER_DATE_URL,
+            "orders": [
+                {
+                    "order_link": REQUESTED_DATE_URL,
+                    "order_date": "2026-07-03",
+                    "board_date": "2026-07-03",
+                },
+                {
+                    "order_link": OTHER_DATE_URL,
+                    "order_date": "2026-07-21",
+                    "board_date": "2026-07-21",
+                },
+            ],
+        },
+    )
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
+    monkeypatch.setattr(main.firestore, "client", lambda: db)
+
+    mock_gcs_client = MagicMock()
+    mock_gcs_client.bucket.return_value.blob.return_value.download_as_bytes.return_value = (
+        FAKE_PDF
+    )
+
+    with patch("google.cloud.storage.Client", return_value=mock_gcs_client):
+        resp = client.get(f"/orders/pdf/{DATED_DOC_ID}")
+
+    assert resp.status_code == 200
+    assert resp.content == FAKE_PDF
+
+
+def test_get_order_pdf_legacy_doc_with_no_orders_array_still_uses_latest_link(
+    client, monkeypatch
+):
+    """A case-details doc predating the orders[] array (no key at all) has
+    no dated history to match against -- latest_order_link is the only
+    signal that exists, so it stays the correct fallback here, unlike the
+    two tests above where a same-case-different-date entry exists."""
+    board_snap = _make_snap(
+        True,
+        {
+            "case_type": "WP",
+            "case_no": "9336",
+            "case_year": "2025",
+            "order_link": "",
+        },
+    )
+    details_snap = _make_snap(True, {"latest_order_link": REQUESTED_DATE_URL})
+    db = _make_db(daily_boards_snap=board_snap, case_details_snap=details_snap)
+    monkeypatch.setattr(main.firestore, "client", lambda: db)
+
+    mock_gcs_client = MagicMock()
+    mock_gcs_client.bucket.return_value.blob.return_value.download_as_bytes.return_value = (
+        FAKE_PDF
+    )
+
+    with patch("google.cloud.storage.Client", return_value=mock_gcs_client):
+        resp = client.get(f"/orders/pdf/{DATED_DOC_ID}")
+
+    assert resp.status_code == 200
+    assert resp.content == FAKE_PDF
+
+
+# ---------------------------------------------------------------------------
 # GET /orders/pdf/{doc_id}  — fallback to case-details.latest_order_link
 # ---------------------------------------------------------------------------
 
