@@ -3,12 +3,29 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('ag-grid-react', () => {
-  const AgGridReact = vi.fn(({ rowData }) => {
+  const AgGridReact = vi.fn(({ rowData, columnDefs }) => {
+    const findCol = (headerName) => columnDefs?.find((c) => c.headerName === headerName);
+    const gpInBoardCol = findCol('AGP on board');
+    const gpInOrderCol = findCol('AGP in order');
     return React.createElement(
       'div',
       { 'data-testid': 'ag-grid-mock' },
       rowData?.map((row, i) =>
-        React.createElement('div', { key: i, 'data-testid': 'grid-row' }, row.case_no)
+        React.createElement(
+          'div',
+          { key: i, 'data-testid': 'grid-row' },
+          row.case_no,
+          React.createElement(
+            'span',
+            { 'data-testid': 'gp-in-board' },
+            gpInBoardCol?.valueGetter({ data: row })
+          ),
+          React.createElement(
+            'span',
+            { 'data-testid': 'gp-in-order' },
+            gpInOrderCol?.valueGetter({ data: row })
+          )
+        )
       )
     );
   });
@@ -113,6 +130,46 @@ describe('Table Component', () => {
         '/get-data',
         expect.objectContaining({ method: 'POST' })
       );
+    });
+  });
+
+  it('"AGP in order" only shows names extracted from the order, not the board assignment', async () => {
+    // Regression: assigned_government_pleaders is the board's respondent_lawyer
+    // assignment (set at board upload, before any order exists) and must never
+    // be folded into the "AGP in order" figure -- only government_pleader
+    // (extracted from the downloaded order PDF) belongs there.
+    api.authenticatedFetchJSON.mockResolvedValueOnce([
+      {
+        case_no: 'WP/3/2024',
+        board_date: '2024-01-15',
+        respondent_lawyer: 'AGP Board-Only',
+        additional_respondent_lawyers: [],
+        assigned_government_pleaders: ['AGP Board-Only'],
+        government_pleader: [],
+        order_status: 'not_linked',
+      },
+    ]);
+    render(<Table />);
+    await waitFor(() => {
+      expect(screen.getByTestId('gp-in-board').textContent).toBe('AGP Board-Only');
+    });
+    expect(screen.getByTestId('gp-in-order').textContent).toBe('-');
+  });
+
+  it('"AGP in order" shows names once the order analysis has extracted a GP', async () => {
+    api.authenticatedFetchJSON.mockResolvedValueOnce([
+      {
+        case_no: 'WP/4/2024',
+        board_date: '2024-01-15',
+        respondent_lawyer: 'AGP Board-Only',
+        assigned_government_pleaders: ['AGP Board-Only'],
+        government_pleader: ['AGP From Order'],
+        order_status: 'analysed',
+      },
+    ]);
+    render(<Table />);
+    await waitFor(() => {
+      expect(screen.getByTestId('gp-in-order').textContent).toBe('AGP From Order');
     });
   });
 

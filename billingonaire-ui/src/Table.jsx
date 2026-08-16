@@ -118,9 +118,11 @@ const Table = () => {
       order_date: row?.order_date || latestOrder.order_date || null,
       order_petitioner: row?.order_petitioner || row?.petitioner || latestOrder.petitioner || null,
       order_respondent: row?.order_respondent || row?.respondent || latestOrder.respondent || null,
+      // Order-extracted only -- assigned_government_pleaders is the board's
+      // respondent_lawyer assignment, not anything read from the order PDF,
+      // so it must not bleed into the "AGP in order" figure.
       government_pleader: [
         ...asArray(row?.government_pleader),
-        ...asArray(row?.assigned_government_pleaders),
         ...asArray(latestOrder.government_pleader)
       ]
     };
@@ -303,10 +305,9 @@ const Table = () => {
       width: 220,
       tooltipValueGetter: () => `Named in the downloaded court order. ${GOVERNMENT_ROLES_NOTE}`,
       valueGetter: params => {
-        const gps = [
-          ...asArray(params.data?.government_pleader),
-          ...asArray(params.data?.assigned_government_pleaders)
-        ];
+        // Order-extracted only -- see normalizeCaseRecord for why
+        // assigned_government_pleaders (board data) is excluded here.
+        const gps = asArray(params.data?.government_pleader);
         return [...new Set(gps.filter(Boolean))].join(', ') || '-';
       }
     },
