@@ -1236,6 +1236,21 @@ def _canonical_compliance_category(value: Optional[str]) -> Optional[str]:
     return _COMPLIANCE_CATEGORY_ALIASES.get(raw)
 
 
+# A live court-portal case-status lookup (petitioner/respondent/stage/
+# disposal-date, no PDF download involved) takes far longer than a Gemini
+# call -- observed 10-20s per case against the real portal -- and
+# CourtScraper has no rate-limit/backoff handling for it yet. Cap how many
+# a single compliance-scan call will live-check; the rest stay missing
+# until a later scan run, since a case that already has this data is
+# skipped on every subsequent call (see _run_compliance_scan).
+try:
+    MAX_PORTAL_LOOKUPS_PER_SCAN = max(
+        0, int(os.environ.get("MAX_PORTAL_LOOKUPS_PER_SCAN", "10"))
+    )
+except (ValueError, TypeError):
+    MAX_PORTAL_LOOKUPS_PER_SCAN = 10
+
+
 async def _run_compliance_scan(
     start_date: str, end_date: str, agp_filter: Optional[str]
 ):
@@ -1362,6 +1377,97 @@ async def _run_compliance_scan(
             else:
                 newly_scanned += 1
 
+    # Third phase: best-effort live portal lookup (petitioner/respondent,
+    # plus the new stage-per-date/disposal-date signals) for rows in this
+    # eligible set that are missing petitioner or respondent. Reuses
+    # CourtScraper's already-integrated session/CSRF/retry handling rather
+    # than a standalone scraper -- this is a case-status page fetch only,
+    # no order PDF is downloaded. Rows that already have both names are
+    # skipped entirely: no re-check, no re-cost.
+    court_scraper = auto_mgr.court_scraper
+    needs_portal_check = [
+        i
+        for i, entry in enumerate(row_entries)
+        if not (entry[0].get("order_petitioner") and entry[0].get("order_respondent"))
+    ]
+    portal_check_capped = max(0, len(needs_portal_check) - MAX_PORTAL_LOOKUPS_PER_SCAN)
+    needs_portal_check = needs_portal_check[:MAX_PORTAL_LOOKUPS_PER_SCAN]
+
+    portal_checked = 0
+    portal_check_errors = 0
+
+    if needs_portal_check:
+        loop = asyncio.get_event_loop()
+
+        def _check_one(row):
+            provider_result = court_scraper._fetch_with_provider(
+                case_ref=row.get("case_ref"), date=None, bench="mumbai"
+            )
+            if not provider_result:
+                return None
+            enriched = court_scraper._enrich_case_orders_result(provider_result)
+
+            stage_by_date = {}
+            for order_row in enriched.get("case_orders") or []:
+                iso_date = case_store._to_iso_date(order_row.get("date"))
+                if iso_date and order_row.get("stage"):
+                    stage_by_date[iso_date] = order_row.get("stage")
+
+            case_store.update_case_portal_status(
+                row.get("case_ref"),
+                petitioner=enriched.get("petitioner"),
+                respondent=enriched.get("respondent"),
+                portal_case_status=enriched.get("portal_case_status"),
+                disposal_date=enriched.get("disposal_date"),
+                stage_by_date=stage_by_date,
+            )
+
+            this_row_date = case_store._to_iso_date(
+                row.get("order_date") or row.get("board_date")
+            )
+            return {
+                "petitioner": enriched.get("petitioner"),
+                "respondent": enriched.get("respondent"),
+                "portal_case_status": enriched.get("portal_case_status"),
+                "portal_disposal_date": enriched.get("disposal_date"),
+                "portal_stage": stage_by_date.get(this_row_date),
+            }
+
+        async def _resolve_portal(idx):
+            row = row_entries[idx][0]
+            try:
+                portal_data = await loop.run_in_executor(executor, _check_one, row)
+                return idx, portal_data, None
+            except Exception as exc:  # noqa: BLE001
+                return idx, None, exc
+
+        portal_outcomes = await asyncio.gather(
+            *(_resolve_portal(i) for i in needs_portal_check)
+        )
+        for idx, portal_data, exc in portal_outcomes:
+            row = row_entries[idx][0]
+            if exc is not None:
+                logger.warning(
+                    "compliance_scan: portal lookup failed for case_ref=%s: %s",
+                    row.get("case_ref"),
+                    exc,
+                )
+                portal_check_errors += 1
+                continue
+            portal_checked += 1
+            if not portal_data:
+                continue
+            if portal_data.get("petitioner"):
+                row["order_petitioner"] = portal_data["petitioner"]
+            if portal_data.get("respondent"):
+                row["order_respondent"] = portal_data["respondent"]
+            if portal_data.get("portal_case_status"):
+                row["portal_case_status"] = portal_data["portal_case_status"]
+            if portal_data.get("portal_disposal_date"):
+                row["portal_disposal_date"] = portal_data["portal_disposal_date"]
+            if portal_data.get("portal_stage"):
+                row["portal_stage"] = portal_data["portal_stage"]
+
     results = []
     for row, category, order_entry, directives in row_entries:
         if directives or category == "DISPOSED_OFF":
@@ -1372,6 +1478,11 @@ async def _run_compliance_scan(
                     "order_date": row.get("order_date"),
                     "order_category": category,
                     "order_link": row.get("order_link"),
+                    "petitioner": row.get("order_petitioner"),
+                    "respondent": row.get("order_respondent"),
+                    "portal_case_status": row.get("portal_case_status"),
+                    "portal_disposal_date": row.get("portal_disposal_date"),
+                    "portal_stage": row.get("portal_stage"),
                     "directives": directives,
                 }
             )
@@ -1384,6 +1495,9 @@ async def _run_compliance_scan(
         "disposed_count": disposed_count,
         "newly_scanned": newly_scanned,
         "llm_errors": llm_errors,
+        "portal_checked": portal_checked,
+        "portal_check_errors": portal_check_errors,
+        "portal_check_capped": portal_check_capped,
         "ai_available": bool(api_key),
         "results": results,
     }
@@ -1466,20 +1580,26 @@ def build_compliance_workbook(
         "Board Date",
         "Order Date",
         "Outcome",
+        "Petitioner",
+        "Respondent",
+        "Portal Status",
+        "Portal Stage",
+        "Disposal Date",
         "Directive Type",
         "Directive Description",
         "Deadline",
         "Order Link",
     ]
-    column_widths = [16, 12, 12, 18, 22, 60, 12, 45]
+    column_widths = [16, 12, 12, 18, 24, 24, 14, 22, 14, 22, 50, 12, 45]
+    _left_align_cols = {5, 6, 8, 11, 13}  # Petitioner/Respondent/Stage/Description/Link
 
-    ws.merge_cells("A1:H1")
+    ws.merge_cells("A1:M1")
     title_cell = ws["A1"]
     title_cell.value = f"COMPLIANCE TRACKER REPORT — {agp_name.upper()}"
     title_cell.font = title_font
     title_cell.alignment = left_align
 
-    ws.merge_cells("A2:H2")
+    ws.merge_cells("A2:M2")
     subtitle_cell = ws["A2"]
     subtitle_cell.value = f"Period: {start_date} to {end_date}"
     subtitle_cell.font = body_font
@@ -1504,7 +1624,7 @@ def build_compliance_workbook(
         summary_row += 1
 
     if not report.get("ai_available", True):
-        ws.merge_cells(f"A{summary_row}:H{summary_row}")
+        ws.merge_cells(f"A{summary_row}:M{summary_row}")
         warn_cell = ws[f"A{summary_row}"]
         warn_cell.value = (
             "AI directive extraction was not configured for this scan -- "
@@ -1536,6 +1656,11 @@ def build_compliance_workbook(
                 entry.get("order_date", ""),
                 _canonical_compliance_category(entry.get("order_category"))
                 or entry.get("order_category", ""),
+                entry.get("petitioner", "") or "",
+                entry.get("respondent", "") or "",
+                entry.get("portal_case_status", "") or "",
+                entry.get("portal_stage", "") or "",
+                entry.get("portal_disposal_date", "") or "",
                 (directive or {}).get("directive_type", ""),
                 (directive or {}).get("description", ""),
                 (directive or {}).get("deadline_date", "") or "",
@@ -1545,7 +1670,9 @@ def build_compliance_workbook(
                 cell = ws.cell(row=current_row, column=col_num, value=value)
                 cell.font = body_font
                 cell.border = border_thin
-                cell.alignment = left_align if col_num in (6, 8) else center_align
+                cell.alignment = (
+                    left_align if col_num in _left_align_cols else center_align
+                )
             current_row += 1
 
     return wb

@@ -221,4 +221,52 @@ describe('ComplianceTracker', () => {
     render(<ComplianceTracker />);
     expect(screen.queryByText('Export Excel (XLSX)')).not.toBeInTheDocument();
   });
+
+  it('shows portal-backfilled parties, status, stage and disposal date', async () => {
+    const reportWithPortalData = {
+      ...DISPOSED_REPORT,
+      portal_checked: 1,
+      portal_check_errors: 0,
+      portal_check_capped: 0,
+      results: [
+        {
+          ...DISPOSED_REPORT.results[0],
+          petitioner: 'Alice Petitioner',
+          respondent: 'State of Maharashtra',
+          portal_case_status: 'DISPOSED',
+          portal_disposal_date: '12/05/2026',
+          portal_stage: 'Final Hearing',
+        },
+      ],
+    };
+    api.authenticatedFetchJSON.mockImplementation((url) => {
+      if (url === '/admin/active-users') return Promise.resolve({ user_names: [] });
+      if (url.startsWith('/compliance/scan')) return Promise.resolve(reportWithPortalData);
+      return Promise.resolve({});
+    });
+
+    render(<ComplianceTracker />);
+    await runScan();
+
+    expect(screen.getByText('Alice Petitioner vs State of Maharashtra')).toBeTruthy();
+    expect(screen.getByText('DISPOSED')).toBeTruthy();
+    expect(screen.getByText('Disposed: 12/05/2026')).toBeTruthy();
+    expect(screen.getByText('Final Hearing')).toBeTruthy();
+    expect(screen.getByText('Portal-checked').closest('.card').textContent).toContain('1');
+  });
+
+  it('shows a note when the portal-check cap left cases unchecked', async () => {
+    api.authenticatedFetchJSON.mockImplementation((url) => {
+      if (url === '/admin/active-users') return Promise.resolve({ user_names: [] });
+      if (url.startsWith('/compliance/scan')) {
+        return Promise.resolve({ ...DISPOSED_REPORT, portal_checked: 10, portal_check_capped: 3 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<ComplianceTracker />);
+    await runScan();
+
+    expect(screen.getByText(/3 more case\(s\) are still missing parties/)).toBeTruthy();
+  });
 });

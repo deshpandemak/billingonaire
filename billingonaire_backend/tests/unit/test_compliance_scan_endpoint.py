@@ -71,6 +71,17 @@ def _mock_auto_mgr(
 ):
     mgr = MagicMock()
     mgr._download_gcs_text.return_value = downloaded_text
+    # Real CaseDataStore._to_iso_date is a pure string-format normaliser;
+    # the portal-lookup phase calls it on dates that are already
+    # YYYY-MM-DD in these fixtures, so a pass-through is a faithful stand-in
+    # without needing every test to configure it itself.
+    mgr.case_store._to_iso_date.side_effect = lambda v: v
+    # _row() fixtures don't set order_petitioner/order_respondent, so every
+    # eligible row looks "missing parties" to the portal-lookup phase. Default
+    # the live lookup to "not found on the portal" so tests that aren't
+    # exercising that phase don't pick up a MagicMock as a fake result;
+    # tests that DO want to exercise it override court_scraper explicitly.
+    mgr.court_scraper._fetch_with_provider.return_value = None
     return mgr
 
 
@@ -454,6 +465,37 @@ async def test_export_excel_returns_a_workbook_matching_the_scan(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_export_excel_includes_petitioner_respondent_columns(monkeypatch):
+    from openpyxl import load_workbook
+
+    row = _row(case_ref="WP/3/2026", order_category="DISPOSED_OFF")
+    row["order_petitioner"] = "Alice Petitioner"
+    row["order_respondent"] = "State of Maharashtra"
+    board_cls, board_instance = _mock_board([row])
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    response = await main.export_compliance_excel(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    wb = load_workbook(io.BytesIO(response.body))
+    ws = wb.active
+    all_text = "\n".join(
+        str(cell.value) for row in ws.iter_rows() for cell in row if cell.value
+    )
+    assert "Alice Petitioner" in all_text
+    assert "State of Maharashtra" in all_text
+    assert "Petitioner" in all_text  # header
+    assert "Respondent" in all_text  # header
+
+
+@pytest.mark.asyncio
 async def test_export_excel_denies_non_admin_requesting_another_user(monkeypatch):
     monkeypatch.setattr(
         main, "get_user_manager", lambda: _mock_user_manager(is_admin=False)
@@ -466,3 +508,153 @@ async def test_export_excel_denies_non_admin_requesting_another_user(monkeypatch
             current_user_with_profile={"uid": "u1"},
         )
     assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Live portal lookup (petitioner/respondent/stage/disposal_date backfill)
+# ---------------------------------------------------------------------------
+
+
+def _enriched_portal_result(
+    petitioner="Alice Petitioner",
+    respondent="State of Maharashtra",
+    portal_case_status="DISPOSED",
+    disposal_date="12/05/2026",
+    case_orders=None,
+):
+    return {
+        "petitioner": petitioner,
+        "respondent": respondent,
+        "portal_case_status": portal_case_status,
+        "disposal_date": disposal_date,
+        "case_orders": case_orders
+        if case_orders is not None
+        else [{"date": "2026-07-08", "download_link": "x", "stage": "Final Hearing"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_portal_lookup_skipped_when_parties_already_present(monkeypatch):
+    row = _row(order_category="DISPOSED_OFF")
+    row["order_petitioner"] = "Existing Petitioner"
+    row["order_respondent"] = "Existing Respondent"
+    board_cls, board_instance = _mock_board([row])
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    mgr.court_scraper = MagicMock()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = await main.compliance_scan(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    mgr.court_scraper._fetch_with_provider.assert_not_called()
+    assert result["portal_checked"] == 0
+    assert result["results"][0]["petitioner"] == "Existing Petitioner"
+    assert result["results"][0]["respondent"] == "Existing Respondent"
+
+
+@pytest.mark.asyncio
+async def test_portal_lookup_backfills_missing_parties_and_stage(monkeypatch):
+    row = _row(
+        case_ref="WP/1/2026",
+        order_category="DISPOSED_OFF",
+        order_date="2026-07-08",
+    )
+    board_cls, board_instance = _mock_board([row])
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    mgr.court_scraper = MagicMock()
+    mgr.court_scraper._fetch_with_provider.return_value = {"raw": "provider-result"}
+    mgr.court_scraper._enrich_case_orders_result.return_value = (
+        _enriched_portal_result()
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = await main.compliance_scan(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    mgr.court_scraper._fetch_with_provider.assert_called_once_with(
+        case_ref="WP/1/2026", date=None, bench="mumbai"
+    )
+    assert result["portal_checked"] == 1
+    assert result["portal_check_errors"] == 0
+    row_result = result["results"][0]
+    assert row_result["petitioner"] == "Alice Petitioner"
+    assert row_result["respondent"] == "State of Maharashtra"
+    assert row_result["portal_case_status"] == "DISPOSED"
+    assert row_result["portal_disposal_date"] == "12/05/2026"
+    assert row_result["portal_stage"] == "Final Hearing"
+
+    mgr.case_store.update_case_portal_status.assert_called_once()
+    call_kwargs = mgr.case_store.update_case_portal_status.call_args.kwargs
+    assert call_kwargs["petitioner"] == "Alice Petitioner"
+    assert call_kwargs["stage_by_date"] == {"2026-07-08": "Final Hearing"}
+
+
+@pytest.mark.asyncio
+async def test_portal_lookup_respects_the_per_scan_cap(monkeypatch):
+    rows = [
+        _row(case_ref=f"WP/{i}/2026", order_category="HEARD_AND_ADJOURNED")
+        for i in range(3)
+    ]
+    board_cls, board_instance = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    mgr.court_scraper = MagicMock()
+    mgr.court_scraper._fetch_with_provider.return_value = {"raw": "x"}
+    mgr.court_scraper._enrich_case_orders_result.return_value = _enriched_portal_result(
+        case_orders=[]
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setattr(main, "MAX_PORTAL_LOOKUPS_PER_SCAN", 1)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = await main.compliance_scan(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    assert mgr.court_scraper._fetch_with_provider.call_count == 1
+    assert result["portal_checked"] == 1
+    assert result["portal_check_capped"] == 2
+
+
+@pytest.mark.asyncio
+async def test_portal_lookup_failure_is_counted_not_raised(monkeypatch):
+    row = _row(order_category="DISPOSED_OFF")
+    board_cls, board_instance = _mock_board([row])
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    mgr.court_scraper = MagicMock()
+    mgr.court_scraper._fetch_with_provider.side_effect = RuntimeError("portal down")
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = await main.compliance_scan(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    assert result["portal_check_errors"] == 1
+    assert result["portal_checked"] == 0
+    # A DISPOSED_OFF row still gets reported even though the portal lookup
+    # failed -- the failure must not take down the whole scan.
+    assert result["count"] == 1

@@ -173,7 +173,10 @@ const ComplianceTracker = () => {
                                 action — file a reply affidavit, furnish a compliance report, and
                                 similar — plus which cases were disposed. Adjourned-only hearings are
                                 skipped: the matter was never reached, so there is nothing to act on.
-                                {' '}{GOVERNMENT_ROLES_NOTE}
+                                {' '}{GOVERNMENT_ROLES_NOTE} For cases missing parties, a best-effort
+                                live check against the court portal backfills petitioner/respondent
+                                and a status/stage cross-check — informational only, it never changes
+                                the outcome or fee.
                             </p>
 
                             <Row className="mb-4">
@@ -312,6 +315,12 @@ const ComplianceTracker = () => {
                                                 <div className="h4 mb-0">{report.newly_scanned}</div>
                                             </Card>
                                         </Col>
+                                        <Col md={2}>
+                                            <Card body className="text-center" title="Cases missing petitioner/respondent that were live-checked against the court portal this scan (capped per scan; already-populated cases are never re-checked).">
+                                                <div className="text-muted small">Portal-checked</div>
+                                                <div className="h4 mb-0">{report.portal_checked}</div>
+                                            </Card>
+                                        </Col>
                                         {report.llm_errors > 0 && (
                                             <Col md={2}>
                                                 <Card body className="text-center border-warning">
@@ -320,7 +329,22 @@ const ComplianceTracker = () => {
                                                 </Card>
                                             </Col>
                                         )}
+                                        {report.portal_check_errors > 0 && (
+                                            <Col md={2}>
+                                                <Card body className="text-center border-warning">
+                                                    <div className="text-muted small">Portal check errors</div>
+                                                    <div className="h4 mb-0 text-warning">{report.portal_check_errors}</div>
+                                                </Card>
+                                            </Col>
+                                        )}
                                     </Row>
+
+                                    {report.portal_check_capped > 0 && (
+                                        <Alert variant="light" className="border py-2" style={{ fontSize: '0.85rem' }}>
+                                            {report.portal_check_capped} more case(s) are still missing parties but weren't
+                                            checked this run (per-scan limit) — run the scan again to pick up more.
+                                        </Alert>
+                                    )}
 
                                     <div className="d-flex gap-2 flex-wrap mb-3">
                                         <Button
@@ -359,8 +383,10 @@ const ComplianceTracker = () => {
                                                 <thead>
                                                     <tr>
                                                         <th>Case</th>
+                                                        <th>Parties</th>
                                                         <th>Order Date</th>
                                                         <th>Outcome</th>
+                                                        <th>Portal status</th>
                                                         <th>Directive</th>
                                                         <th>Deadline</th>
                                                         <th>Order</th>
@@ -370,8 +396,28 @@ const ComplianceTracker = () => {
                                                     {filteredRows.map((row) => (
                                                         <tr key={row.key}>
                                                             <td>{row.case_ref}</td>
+                                                            <td style={{ maxWidth: '220px', fontSize: '0.85em' }}>
+                                                                {row.petitioner || row.respondent
+                                                                    ? `${row.petitioner || '—'} vs ${row.respondent || '—'}`
+                                                                    : <span className="text-muted">—</span>}
+                                                            </td>
                                                             <td>{row.order_date || '-'}</td>
                                                             <td>{getOrderCategoryLabel(row.order_category)}</td>
+                                                            <td style={{ fontSize: '0.85em' }} title="Best-effort cross-check from the court portal -- informational only, does not affect the outcome or fee.">
+                                                                {row.portal_case_status && row.portal_case_status !== 'UNKNOWN' ? (
+                                                                    <Badge bg={row.portal_case_status === 'DISPOSED' ? 'success' : 'info'}>
+                                                                        {row.portal_case_status}
+                                                                    </Badge>
+                                                                ) : (
+                                                                    <span className="text-muted">—</span>
+                                                                )}
+                                                                {row.portal_disposal_date && (
+                                                                    <div className="text-muted">Disposed: {row.portal_disposal_date}</div>
+                                                                )}
+                                                                {row.portal_stage && (
+                                                                    <div className="text-muted">{row.portal_stage}</div>
+                                                                )}
+                                                            </td>
                                                             <td>
                                                                 {row.directive
                                                                     ? (DIRECTIVE_LABELS[row.directive.directive_type] || row.directive.directive_type)

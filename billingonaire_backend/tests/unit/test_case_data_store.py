@@ -288,6 +288,90 @@ def test_set_order_compliance_directives_is_a_noop_when_case_does_not_exist():
     assert found is False
 
 
+def test_update_case_portal_status_persists_case_level_fields():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-301-2026"
+    db.collection("case-details").document(case_doc_id).set(
+        {"case_ref": "WP/301/2026", "orders": []}
+    )
+
+    found = store.update_case_portal_status(
+        "WP/301/2026",
+        petitioner="Alice",
+        respondent="State of Maharashtra",
+        portal_case_status="DISPOSED",
+        disposal_date="12/05/2026",
+    )
+
+    assert found is True
+    doc = db.get_collection("case-details")[case_doc_id]
+    assert doc["petitioner"] == "Alice"
+    assert doc["respondent"] == "State of Maharashtra"
+    assert doc["portal_case_status"] == "DISPOSED"
+    assert doc["portal_disposal_date"] == "12/05/2026"
+    assert "portal_checked_at" in doc
+
+
+def test_update_case_portal_status_merges_stage_onto_matching_order():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-302-2026"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/302/2026",
+            "orders": [
+                {"order_date": "2026-07-08", "order_category": "HEARD_AND_ADJOURNED"},
+                {"order_date": "2026-08-01", "order_category": "DISPOSED_OFF"},
+            ],
+        }
+    )
+
+    store.update_case_portal_status(
+        "WP/302/2026",
+        stage_by_date={"2026-07-08": "Final Hearing", "2026-09-01": "No match"},
+    )
+
+    orders = db.get_collection("case-details")[case_doc_id]["orders"]
+    assert orders[0]["portal_stage"] == "Final Hearing"
+    # No order dated 2026-09-01 -- must not create a phantom entry.
+    assert len(orders) == 2
+    assert "portal_stage" not in orders[1]
+
+
+def test_update_case_portal_status_does_not_blank_out_missing_fields():
+    """Only fields the caller actually has a value for are written --
+    calling with just a disposal_date must not erase a previously-stored
+    petitioner/respondent."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-303-2026"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/303/2026",
+            "petitioner": "Existing Petitioner",
+            "respondent": "Existing Respondent",
+            "orders": [],
+        }
+    )
+
+    store.update_case_portal_status("WP/303/2026", disposal_date="01/01/2026")
+
+    doc = db.get_collection("case-details")[case_doc_id]
+    assert doc["petitioner"] == "Existing Petitioner"
+    assert doc["respondent"] == "Existing Respondent"
+    assert doc["portal_disposal_date"] == "01/01/2026"
+
+
+def test_update_case_portal_status_is_a_noop_when_case_does_not_exist():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+
+    found = store.update_case_portal_status("WP/999/2026", petitioner="Someone")
+
+    assert found is False
+
+
 def test_get_case_details_map_returns_requested_refs():
     db = FakeFirestore()
     store = CaseDataStore(db)

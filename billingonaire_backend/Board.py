@@ -786,6 +786,10 @@ class Board:
             record["government_pleader"] = []
             record["assigned_government_pleaders"] = []
             record["order_history"] = []
+            record["portal_case_status"] = None
+            record["portal_disposal_date"] = None
+            record["portal_checked_at"] = None
+            record["portal_stage"] = None
             record["lifecycle_status"] = "board_ingested"
             record["lifecycle_status_updated_at"] = None
             record["lifecycle_timeline"] = []
@@ -818,9 +822,13 @@ class Board:
                 record["government_pleader"] = (
                     date_matched_order.get("government_pleader") or []
                 )
+                record["portal_stage"] = date_matched_order.get("portal_stage")
 
             record["order_petitioner"] = case_detail.get("petitioner")
             record["order_respondent"] = case_detail.get("respondent")
+            record["portal_case_status"] = case_detail.get("portal_case_status")
+            record["portal_disposal_date"] = case_detail.get("portal_disposal_date")
+            record["portal_checked_at"] = case_detail.get("portal_checked_at")
 
             record["assigned_government_pleaders"] = case_detail.get(
                 "assigned_government_pleaders", []

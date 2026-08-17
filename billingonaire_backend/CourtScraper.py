@@ -24,6 +24,56 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Keywords that indicate a disposed/closed matter, or a still-pending one,
+# in the case-status portal's free text. Mirrors bhc_status_verifier.py's
+# standalone verification script -- kept here too since this is the
+# extraction that actually feeds the live pipeline.
+DISPOSAL_KEYWORDS = [
+    "DISPOSED",
+    "WITHDRAWN",
+    "DISMISSED",
+    "STRUCK",
+    "DECIDED",
+    "CLOSED",
+]
+PENDING_KEYWORDS = ["PENDING", "ONGOING", "ADMITTED", "ADMIT"]
+
+# A date-shaped run of digits/separators, e.g. 12/05/2025, 01-06-2025,
+# 2025-06-01 -- deliberately NOT a greedy [\d/.\-]+ run, which would also
+# swallow trailing sentence punctuation like the "." after "...2025."
+_DATE_SHAPE = r"(\d{1,4}[/.\-]\d{1,2}[/.\-]\d{2,4})"
+_DISPOSAL_DATE_PATTERNS = (
+    re.compile(rf"disposed\s+(?:of\s+)?on\s+{_DATE_SHAPE}", re.IGNORECASE),
+    re.compile(rf"disposal\s+date\s*[:\-]?\s*{_DATE_SHAPE}", re.IGNORECASE),
+    re.compile(rf"decided\s+on\s+{_DATE_SHAPE}", re.IGNORECASE),
+)
+
+
+def _classify_portal_status(text: str) -> str:
+    """Best-effort DISPOSED / PENDING / UNKNOWN classification of a chunk of
+    portal text. Never fabricates -- UNKNOWN when no keyword is present."""
+    if not text:
+        return "UNKNOWN"
+    up = text.upper()
+    if any(kw in up for kw in DISPOSAL_KEYWORDS):
+        return "DISPOSED"
+    if any(kw in up for kw in PENDING_KEYWORDS):
+        return "PENDING"
+    return "UNKNOWN"
+
+
+def _extract_disposal_date_from_text(text: str) -> Optional[str]:
+    """Best-effort explicit disposal date from portal text. Returns the raw
+    matched date string (caller normalises format) or None -- never guesses
+    a date that isn't actually written on the page."""
+    if not text:
+        return None
+    for pattern in _DISPOSAL_DATE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return None
+
 
 class BombayHighCourtScraper:
     """Bombay High Court scraper using direct API by default with Playwright fallback."""
@@ -345,10 +395,26 @@ class BombayHighCourtScraper:
                     if full_url in seen_urls:
                         continue
                     seen_urls.add(full_url)
+                    # Stage/purpose column: whatever sits between the date
+                    # (idx 2) and the download link (last cell) -- typically
+                    # a "purpose of listing" or remarks column on a 5-6
+                    # column table. Never verified against a live page (see
+                    # the module-level extraction helpers' docstrings); None
+                    # when there's nothing between them rather than a guess.
+                    stage_cells = cells[3:-1]
+                    stage_text = (
+                        " / ".join(
+                            t
+                            for t in (c.get_text(strip=True) for c in stage_cells)
+                            if t
+                        )
+                        or None
+                    )
                     orders.append(
                         {
                             "listing_date": cells[2].get_text(strip=True) or None,
                             "download_url": full_url,
+                            "stage": stage_text,
                         }
                     )
 
@@ -376,6 +442,7 @@ class BombayHighCourtScraper:
                                 link.get_text(strip=True)
                             ),
                             "download_url": full_url,
+                            "stage": None,
                         }
                     )
         except Exception as exc:
@@ -973,6 +1040,16 @@ class BombayHighCourtScraper:
             if date_match:
                 filing_date = date_match.group(1).strip()
 
+            # Portal-level disposal signal -- best-effort over the WHOLE page
+            # text (not just the case-info block above), since a "Disposed"
+            # marker can sit in the orders table or a separate status field
+            # rather than the filing sentence. Never verified against a live
+            # page (see bhc_status_verifier.py's own caveat); UNKNOWN/None
+            # rather than a guess when nothing matches.
+            full_page_text = soup.get_text(" ", strip=True)
+            portal_case_status = _classify_portal_status(full_page_text)
+            disposal_date_raw = _extract_disposal_date_from_text(full_page_text)
+
             return {
                 "petitioner_name": petitioner or None,
                 "respondent_name": respondent or None,
@@ -980,6 +1057,8 @@ class BombayHighCourtScraper:
                 "case_number": case_ref,
                 "court": "Bombay High Court",
                 "case_status_url": self.case_status_url,
+                "portal_case_status": portal_case_status,
+                "disposal_date": disposal_date_raw,
             }
         except Exception as exc:
             logger.error("Error extracting case details from HTML: %s", exc)
@@ -1030,10 +1109,18 @@ class BombayHighCourtScraper:
             href = link.get_attribute("href") if link else None
             if not href:
                 continue
+            stage_cells = cells[3:-1]
+            stage_text = (
+                " / ".join(
+                    t for t in (c.inner_text().strip() for c in stage_cells) if t
+                )
+                or None
+            )
             orders.append(
                 {
                     "listing_date": cells[2].inner_text().strip() or None,
                     "download_url": requests.compat.urljoin(base_url, href),
+                    "stage": stage_text,
                 }
             )
         return orders
@@ -1420,11 +1507,20 @@ class BombayHighCourtScraper:
         Add the new top-level convenience fields to a provider result dict.
 
         New fields:
-        - case_summary  — full case summary sentence
-        - petitioner    — petitioner / appellant name
-        - respondent    — respondent / defendant name
-        - title         — "<petitioner> against <respondent>"
-        - case_orders   — [{date, download_link}] (mirrors court_orders with renamed keys)
+        - case_summary       — full case summary sentence
+        - petitioner         — petitioner / appellant name
+        - respondent         — respondent / defendant name
+        - title              — "<petitioner> against <respondent>"
+        - portal_case_status — best-effort DISPOSED/PENDING/UNKNOWN read off
+          the case-status page (see CourtScraper's module-level
+          _classify_portal_status) -- a cross-check signal, not a
+          replacement for the LLM-derived order_category.
+        - disposal_date      — explicit disposal date text found on the
+          page, if any; None when the page doesn't state one.
+        - case_orders   — [{date, download_link, stage}] (mirrors
+          court_orders with renamed keys; stage is the best-effort
+          purpose/remarks column between the date and the download link,
+          None when the table only had the 3 baseline columns)
 
         The original case_details and court_orders keys are preserved for
         backward compatibility.
@@ -1443,6 +1539,7 @@ class BombayHighCourtScraper:
             {
                 "date": row.get("listing_date"),
                 "download_link": row.get("download_url"),
+                "stage": row.get("stage"),
             }
             for row in court_orders
             if row.get("download_url")
@@ -1453,6 +1550,8 @@ class BombayHighCourtScraper:
         enriched["petitioner"] = petitioner
         enriched["respondent"] = respondent
         enriched["title"] = title
+        enriched["portal_case_status"] = case_details.get("portal_case_status")
+        enriched["disposal_date"] = case_details.get("disposal_date")
         enriched["case_orders"] = case_orders
         return enriched
 

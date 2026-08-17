@@ -482,6 +482,40 @@ def test_extract_orders_from_html_three_column_table_uses_last_cell():
     assert orders[0]["download_url"] == _NIC_AUTH_URL
 
 
+def test_extract_orders_from_html_captures_stage_column():
+    """The column(s) between the date and the download link -- typically a
+    purpose/remarks column -- are captured as best-effort 'stage'."""
+    scraper = BombayHighCourtScraper()
+    base = "https://bombayhighcourt.gov.in/bhc/casestatus/casenumber"
+    orders = scraper._extract_orders_from_html(_ORDERS_TABLE_HTML, base)
+    assert orders[0]["stage"] == "Some text"
+    assert orders[1]["stage"] == "Some text"
+
+
+def test_extract_orders_from_html_three_column_table_has_no_stage():
+    """With only the 3 baseline columns there's nothing to call 'stage' --
+    must be None, never a guess."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoOrders"><table><tbody>'
+        f'<tr><td>1</td><td>09/04/2025</td><td><a href="{_NIC_AUTH_URL}">Download</a></td></tr>'
+        "</tbody></table></div>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert orders[0]["stage"] is None
+
+
+def test_extract_orders_from_html_fallback_links_have_no_stage():
+    scraper = BombayHighCourtScraper()
+    html = (
+        "<html><body>"
+        f'<a href="{_NIC_AUTH_URL}">Order 09/04/2025</a>'
+        "</body></html>"
+    )
+    orders = scraper._extract_orders_from_html(html, _BASE)
+    assert orders[0]["stage"] is None
+
+
 # ---------------------------------------------------------------------------
 # _fetch_with_http
 # ---------------------------------------------------------------------------
@@ -794,7 +828,11 @@ def test_enrich_case_orders_result_builds_title_when_missing():
     enriched = scraper._enrich_case_orders_result(provider_result)
     assert enriched["title"] == "Alice against Bob"
     assert enriched["case_orders"] == [
-        {"date": "01/01/2025", "download_link": "http://example.com/order.pdf"}
+        {
+            "date": "01/01/2025",
+            "download_link": "http://example.com/order.pdf",
+            "stage": None,
+        }
     ]
 
 
@@ -850,6 +888,80 @@ def test_extract_case_details_from_html_party_name_formats(
     assert result is not None
     assert result["petitioner_name"] == expected_petitioner
     assert result["respondent_name"] == expected_respondent
+
+
+# ---------------------------------------------------------------------------
+# _extract_case_details_from_html — portal_case_status / disposal_date
+# ---------------------------------------------------------------------------
+
+
+def test_extract_case_details_from_html_detects_disposal_and_date():
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoUpdates"><div class="card-header">'
+        "WP/5/2025 filed on 01/01/2025 by Petitioner A against Respondent B"
+        "</div></div>"
+        '<div id="cn_CaseNoOrders">Matter DISPOSED. Disposed on 12/05/2025.</div>'
+    )
+    result = scraper._extract_case_details_from_html(html, "WP/5/2025")
+    assert result["portal_case_status"] == "DISPOSED"
+    assert result["disposal_date"] == "12/05/2025"
+
+
+def test_extract_case_details_from_html_pending_case_has_no_disposal_date():
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoUpdates"><div class="card-header">'
+        "WP/6/2025 filed on 01/01/2025 by Petitioner A against Respondent B"
+        "</div></div>"
+        '<div id="cn_CaseNoOrders">Status: PENDING</div>'
+    )
+    result = scraper._extract_case_details_from_html(html, "WP/6/2025")
+    assert result["portal_case_status"] == "PENDING"
+    assert result["disposal_date"] is None
+
+
+def test_extract_case_details_from_html_unknown_status_never_guesses_date():
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoUpdates"><div class="card-header">'
+        "WP/7/2025 filed on 01/01/2025 by Petitioner A against Respondent B"
+        "</div></div>"
+    )
+    result = scraper._extract_case_details_from_html(html, "WP/7/2025")
+    assert result["portal_case_status"] == "UNKNOWN"
+    assert result["disposal_date"] is None
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Matter was DISPOSED OF today", "DISPOSED"),
+        ("Petition WITHDRAWN by petitioner", "DISPOSED"),
+        ("Case status: PENDING before the bench", "PENDING"),
+        ("no keyword here at all", "UNKNOWN"),
+        ("", "UNKNOWN"),
+    ],
+)
+def test_classify_portal_status(text, expected):
+    from billingonaire_backend.CourtScraper import _classify_portal_status
+
+    assert _classify_portal_status(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("The matter was disposed on 12/05/2025 by consent", "12/05/2025"),
+        ("Disposal date: 01-06-2025", "01-06-2025"),
+        ("Petition decided on 2025-06-01", "2025-06-01"),
+        ("no disposal date mentioned anywhere", None),
+    ],
+)
+def test_extract_disposal_date_from_text(text, expected):
+    from billingonaire_backend.CourtScraper import _extract_disposal_date_from_text
+
+    assert _extract_disposal_date_from_text(text) == expected
 
 
 # ---------------------------------------------------------------------------

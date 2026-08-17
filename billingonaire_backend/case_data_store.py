@@ -583,6 +583,84 @@ class CaseDataStore:
             "update_case_party_names: persisted parties for case_ref=%s", case_ref
         )
 
+    def update_case_portal_status(
+        self,
+        case_ref: str,
+        petitioner: Optional[str] = None,
+        respondent: Optional[str] = None,
+        portal_case_status: Optional[str] = None,
+        disposal_date: Optional[str] = None,
+        stage_by_date: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """Persist a Compliance Tracker live portal lookup: petitioner/
+        respondent (same fields ``update_case_party_names`` writes, reused
+        here so a portal check can backfill them too), plus the new
+        best-effort ``portal_case_status``/``portal_disposal_date`` at the
+        case level, and a per-order ``portal_stage`` merged onto whichever
+        ``orders[]`` entry matches each date in ``stage_by_date``.
+
+        Only ever fills in fields the caller actually has a value for --
+        an empty/None argument leaves the existing stored value alone
+        rather than blanking it out, and a date in ``stage_by_date`` with
+        no matching order entry is silently skipped rather than creating
+        a phantom one. Returns whether the case document exists and was
+        updated.
+        """
+        if not case_ref:
+            return False
+        case_doc_ref = self.db.collection(self.case_collection).document(
+            self._case_doc_id(case_ref)
+        )
+        snapshot = case_doc_ref.get()
+        if not snapshot.exists:
+            return False
+
+        update: Dict[str, Any] = {"portal_checked_at": datetime.now().isoformat()}
+        if petitioner:
+            update["petitioner"] = petitioner
+        if respondent:
+            update["respondent"] = respondent
+        if portal_case_status:
+            update["portal_case_status"] = portal_case_status
+        if disposal_date:
+            update["portal_disposal_date"] = disposal_date
+
+        if stage_by_date:
+            existing = snapshot.to_dict() or {}
+            orders = list(existing.get("orders") or [])
+            changed = False
+            for date_key, stage_text in stage_by_date.items():
+                if not stage_text:
+                    continue
+                normalized_date = self._to_iso_date(date_key)
+                if not normalized_date:
+                    continue
+                for idx, item in enumerate(orders):
+                    if not isinstance(item, dict):
+                        continue
+                    item_date = self._to_iso_date(
+                        item.get("order_date") or item.get("board_date")
+                    )
+                    if item_date == normalized_date:
+                        merged = dict(item)
+                        merged["portal_stage"] = stage_text
+                        orders[idx] = merged
+                        changed = True
+                        break
+            if changed:
+                update["orders"] = orders
+
+        case_doc_ref.set(update, merge=True)
+        logger.info(
+            "update_case_portal_status: persisted portal data for case_ref=%s "
+            "(status=%s disposal_date=%s stage_dates=%d)",
+            case_ref,
+            portal_case_status,
+            disposal_date,
+            len(stage_by_date or {}),
+        )
+        return True
+
     def set_order_compliance_directives(
         self,
         case_ref: str,
