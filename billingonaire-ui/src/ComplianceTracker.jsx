@@ -403,9 +403,9 @@ const ComplianceTracker = () => {
                                                             </td>
                                                             <td>{row.order_date || '-'}</td>
                                                             <td>{getOrderCategoryLabel(row.order_category)}</td>
-                                                            <td style={{ fontSize: '0.85em' }} title="Best-effort cross-check from the court portal -- informational only, does not affect the outcome or fee.">
-                                                                {row.portal_case_status && row.portal_case_status !== 'UNKNOWN' ? (
-                                                                    <Badge bg={row.portal_case_status === 'DISPOSED' ? 'success' : 'info'}>
+                                                            <td style={{ fontSize: '0.85em', maxWidth: '220px' }} title="Best-effort cross-check, verbatim from the court portal -- informational only, does not affect the outcome or fee.">
+                                                                {row.portal_case_status ? (
+                                                                    <Badge bg={/dispos|withdraw|dismiss|struck|decided|closed/i.test(row.portal_case_status) ? 'success' : 'info'}>
                                                                         {row.portal_case_status}
                                                                     </Badge>
                                                                 ) : (

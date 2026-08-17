@@ -49,17 +49,21 @@ _DISPOSAL_DATE_PATTERNS = (
 )
 
 
-def _classify_portal_status(text: str) -> str:
-    """Best-effort DISPOSED / PENDING / UNKNOWN classification of a chunk of
-    portal text. Never fabricates -- UNKNOWN when no keyword is present."""
+def _extract_portal_status_text(text: str) -> Optional[str]:
+    """Best-effort raw status snippet from portal text: the actual words
+    around a disposal/pending keyword, exactly as printed on the page --
+    deliberately NOT reduced to a canonical DISPOSED/PENDING/UNKNOWN
+    bucket, so the reader sees what the portal itself says. Mirrors
+    bhc_status_verifier.py's KEYWORD_SCAN heuristic. Returns None when no
+    keyword is found rather than guessing."""
     if not text:
-        return "UNKNOWN"
-    up = text.upper()
-    if any(kw in up for kw in DISPOSAL_KEYWORDS):
-        return "DISPOSED"
-    if any(kw in up for kw in PENDING_KEYWORDS):
-        return "PENDING"
-    return "UNKNOWN"
+        return None
+    upper_text = text.upper()
+    for kw in DISPOSAL_KEYWORDS + PENDING_KEYWORDS:
+        idx = upper_text.find(kw)
+        if idx != -1:
+            return text[max(0, idx - 20) : idx + len(kw) + 40].strip()
+    return None
 
 
 def _extract_disposal_date_from_text(text: str) -> Optional[str]:
@@ -1043,11 +1047,13 @@ class BombayHighCourtScraper:
             # Portal-level disposal signal -- best-effort over the WHOLE page
             # text (not just the case-info block above), since a "Disposed"
             # marker can sit in the orders table or a separate status field
-            # rather than the filing sentence. Never verified against a live
-            # page (see bhc_status_verifier.py's own caveat); UNKNOWN/None
-            # rather than a guess when nothing matches.
+            # rather than the filing sentence. Kept as the RAW snippet from
+            # the page (not reduced to a canonical DISPOSED/PENDING/UNKNOWN
+            # bucket) so the reader sees the court's own words. Never
+            # verified against a live page (see bhc_status_verifier.py's
+            # own caveat); None rather than a guess when nothing matches.
             full_page_text = soup.get_text(" ", strip=True)
-            portal_case_status = _classify_portal_status(full_page_text)
+            portal_case_status = _extract_portal_status_text(full_page_text)
             disposal_date_raw = _extract_disposal_date_from_text(full_page_text)
 
             return {
@@ -1511,10 +1517,11 @@ class BombayHighCourtScraper:
         - petitioner         — petitioner / appellant name
         - respondent         — respondent / defendant name
         - title              — "<petitioner> against <respondent>"
-        - portal_case_status — best-effort DISPOSED/PENDING/UNKNOWN read off
-          the case-status page (see CourtScraper's module-level
-          _classify_portal_status) -- a cross-check signal, not a
-          replacement for the LLM-derived order_category.
+        - portal_case_status — the raw disposal/pending snippet as printed
+          on the case-status page (see CourtScraper's module-level
+          _extract_portal_status_text) -- a cross-check signal, not a
+          replacement for the LLM-derived order_category, and
+          deliberately NOT canonicalised into a fixed status taxonomy.
         - disposal_date      — explicit disposal date text found on the
           page, if any; None when the page doesn't state one.
         - case_orders   — [{date, download_link, stage}] (mirrors

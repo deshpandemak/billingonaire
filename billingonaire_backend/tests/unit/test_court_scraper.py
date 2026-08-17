@@ -904,7 +904,9 @@ def test_extract_case_details_from_html_detects_disposal_and_date():
         '<div id="cn_CaseNoOrders">Matter DISPOSED. Disposed on 12/05/2025.</div>'
     )
     result = scraper._extract_case_details_from_html(html, "WP/5/2025")
-    assert result["portal_case_status"] == "DISPOSED"
+    # Raw snippet as printed on the page -- NOT canonicalised to a fixed
+    # DISPOSED/PENDING/UNKNOWN bucket.
+    assert "DISPOSED" in result["portal_case_status"]
     assert result["disposal_date"] == "12/05/2025"
 
 
@@ -914,10 +916,10 @@ def test_extract_case_details_from_html_pending_case_has_no_disposal_date():
         '<div id="cn_CaseNoUpdates"><div class="card-header">'
         "WP/6/2025 filed on 01/01/2025 by Petitioner A against Respondent B"
         "</div></div>"
-        '<div id="cn_CaseNoOrders">Status: PENDING</div>'
+        '<div id="cn_CaseNoOrders">Status: PENDING before the Division Bench</div>'
     )
     result = scraper._extract_case_details_from_html(html, "WP/6/2025")
-    assert result["portal_case_status"] == "PENDING"
+    assert "PENDING" in result["portal_case_status"]
     assert result["disposal_date"] is None
 
 
@@ -929,24 +931,34 @@ def test_extract_case_details_from_html_unknown_status_never_guesses_date():
         "</div></div>"
     )
     result = scraper._extract_case_details_from_html(html, "WP/7/2025")
-    assert result["portal_case_status"] == "UNKNOWN"
+    assert result["portal_case_status"] is None
     assert result["disposal_date"] is None
 
 
 @pytest.mark.parametrize(
-    "text, expected",
+    "text, expected_substring",
     [
-        ("Matter was DISPOSED OF today", "DISPOSED"),
-        ("Petition WITHDRAWN by petitioner", "DISPOSED"),
+        ("Matter was DISPOSED OF today", "DISPOSED OF"),
+        ("Petition WITHDRAWN by petitioner", "WITHDRAWN"),
         ("Case status: PENDING before the bench", "PENDING"),
-        ("no keyword here at all", "UNKNOWN"),
-        ("", "UNKNOWN"),
     ],
 )
-def test_classify_portal_status(text, expected):
-    from billingonaire_backend.CourtScraper import _classify_portal_status
+def test_extract_portal_status_text_returns_the_raw_snippet(text, expected_substring):
+    from billingonaire_backend.CourtScraper import _extract_portal_status_text
 
-    assert _classify_portal_status(text) == expected
+    result = _extract_portal_status_text(text)
+    assert result is not None
+    assert expected_substring in result
+    # Must be the actual page text, not a canonical single-word bucket.
+    assert result != "DISPOSED"
+    assert result != "PENDING"
+
+
+@pytest.mark.parametrize("text", ["no keyword here at all", ""])
+def test_extract_portal_status_text_returns_none_when_no_keyword(text):
+    from billingonaire_backend.CourtScraper import _extract_portal_status_text
+
+    assert _extract_portal_status_text(text) is None
 
 
 @pytest.mark.parametrize(

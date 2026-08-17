@@ -233,7 +233,9 @@ describe('ComplianceTracker', () => {
           ...DISPOSED_REPORT.results[0],
           petitioner: 'Alice Petitioner',
           respondent: 'State of Maharashtra',
-          portal_case_status: 'DISPOSED',
+          // Verbatim snippet from the portal, not a canonical enum value --
+          // the UI must render this as-is, not reduce it to "DISPOSED".
+          portal_case_status: 'Matter is DISPOSED OF as withdrawn',
           portal_disposal_date: '12/05/2026',
           portal_stage: 'Final Hearing',
         },
@@ -249,7 +251,7 @@ describe('ComplianceTracker', () => {
     await runScan();
 
     expect(screen.getByText('Alice Petitioner vs State of Maharashtra')).toBeTruthy();
-    expect(screen.getByText('DISPOSED')).toBeTruthy();
+    expect(screen.getByText('Matter is DISPOSED OF as withdrawn')).toBeTruthy();
     expect(screen.getByText('Disposed: 12/05/2026')).toBeTruthy();
     expect(screen.getByText('Final Hearing')).toBeTruthy();
     expect(screen.getByText('Portal-checked').closest('.card').textContent).toContain('1');
