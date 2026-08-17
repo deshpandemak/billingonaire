@@ -76,9 +76,9 @@ def _mock_auto_mgr(
     # YYYY-MM-DD in these fixtures, so a pass-through is a faithful stand-in
     # without needing every test to configure it itself.
     mgr.case_store._to_iso_date.side_effect = lambda v: v
-    # _row() fixtures don't set order_petitioner/order_respondent, so every
-    # eligible row looks "missing parties" to the portal-lookup phase. Default
-    # the live lookup to "not found on the portal" so tests that aren't
+    # _row() fixtures don't set portal_checked_at, so every eligible row
+    # looks "never portal-checked" to the portal-lookup phase. Default the
+    # live lookup to "not found on the portal" so tests that aren't
     # exercising that phase don't pick up a MagicMock as a fake result;
     # tests that DO want to exercise it override court_scraper explicitly.
     mgr.court_scraper._fetch_with_provider.return_value = None
@@ -534,10 +534,16 @@ def _enriched_portal_result(
 
 
 @pytest.mark.asyncio
-async def test_portal_lookup_skipped_when_parties_already_present(monkeypatch):
+async def test_portal_lookup_skipped_when_already_portal_checked(monkeypatch):
+    """The gate is portal_checked_at, not petitioner/respondent presence --
+    those two are usually already populated by the unrelated, pre-existing
+    order-fetch pipeline, so gating on them would skip the live lookup for
+    almost every already-fetched case and stage/disposal_date would never
+    backfill."""
     row = _row(order_category="DISPOSED_OFF")
     row["order_petitioner"] = "Existing Petitioner"
     row["order_respondent"] = "Existing Respondent"
+    row["portal_checked_at"] = "2026-08-01T00:00:00"
     board_cls, board_instance = _mock_board([row])
     monkeypatch.setattr(main, "Board", board_cls)
     monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
@@ -557,6 +563,41 @@ async def test_portal_lookup_skipped_when_parties_already_present(monkeypatch):
     assert result["portal_checked"] == 0
     assert result["results"][0]["petitioner"] == "Existing Petitioner"
     assert result["results"][0]["respondent"] == "Existing Respondent"
+
+
+@pytest.mark.asyncio
+async def test_portal_lookup_runs_even_when_parties_already_present(monkeypatch):
+    """A case that already has petitioner/respondent (from the unrelated
+    party-name pipeline) but has never been portal-checked must still get
+    checked -- otherwise stage/disposal_date never backfill for the huge
+    majority of already-fetched cases."""
+    row = _row(case_ref="WP/1/2026", order_category="DISPOSED_OFF")
+    row["order_petitioner"] = "Existing Petitioner"
+    row["order_respondent"] = "Existing Respondent"
+    # portal_checked_at intentionally left unset.
+    board_cls, board_instance = _mock_board([row])
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    mgr.court_scraper = MagicMock()
+    mgr.court_scraper._fetch_with_provider.return_value = {"raw": "x"}
+    mgr.court_scraper._enrich_case_orders_result.return_value = _enriched_portal_result(
+        case_orders=[]
+    )
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = await main.compliance_scan(
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    mgr.court_scraper._fetch_with_provider.assert_called_once_with(
+        case_ref="WP/1/2026", date=None, bench="mumbai"
+    )
+    assert result["portal_checked"] == 1
 
 
 @pytest.mark.asyncio

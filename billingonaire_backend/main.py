@@ -1378,17 +1378,26 @@ async def _run_compliance_scan(
                 newly_scanned += 1
 
     # Third phase: best-effort live portal lookup (petitioner/respondent,
-    # plus the new stage-per-date/disposal-date signals) for rows in this
-    # eligible set that are missing petitioner or respondent. Reuses
+    # plus the stage-per-date/disposal-date signals) for rows in this
+    # eligible set that have never been portal-checked. Reuses
     # CourtScraper's already-integrated session/CSRF/retry handling rather
     # than a standalone scraper -- this is a case-status page fetch only,
-    # no order PDF is downloaded. Rows that already have both names are
-    # skipped entirely: no re-check, no re-cost.
+    # no order PDF is downloaded.
+    #
+    # Gated on portal_checked_at, NOT on petitioner/respondent being
+    # present: those two are usually already populated by the unrelated,
+    # pre-existing order-fetch pipeline (case_store.update_case_party_names,
+    # run for every case regardless of this feature), so gating on them
+    # meant the lookup silently never ran for the vast majority of
+    # already-fetched cases and stage/disposal_date stayed blank across an
+    # entire report. portal_checked_at is set only by THIS lookup, so it
+    # correctly means "never ran the new check" rather than "already has
+    # party names from something else."
     court_scraper = auto_mgr.court_scraper
     needs_portal_check = [
         i
         for i, entry in enumerate(row_entries)
-        if not (entry[0].get("order_petitioner") and entry[0].get("order_respondent"))
+        if not entry[0].get("portal_checked_at")
     ]
     portal_check_capped = max(0, len(needs_portal_check) - MAX_PORTAL_LOOKUPS_PER_SCAN)
     needs_portal_check = needs_portal_check[:MAX_PORTAL_LOOKUPS_PER_SCAN]
@@ -1611,7 +1620,15 @@ def build_compliance_workbook(
         ("Adjourned (skipped)", report.get("adjourned_skipped", 0)),
         ("Disposed cases", report.get("disposed_count", 0)),
         ("Newly scanned", report.get("newly_scanned", 0)),
+        ("Portal-checked (this scan)", report.get("portal_checked", 0)),
     ]
+    if report.get("portal_check_capped", 0) > 0:
+        summary_pairs.append(
+            (
+                "Still missing portal data (re-scan to continue)",
+                report.get("portal_check_capped", 0),
+            )
+        )
     summary_row = 3
     for label, value in summary_pairs:
         ws.merge_cells(f"A{summary_row}:C{summary_row}")
