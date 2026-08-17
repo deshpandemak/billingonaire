@@ -15,6 +15,7 @@ vi.mock('firebase/auth', () => ({
 
 vi.mock('../lib/api', () => ({
   authenticatedFetchJSON: vi.fn(),
+  authenticatedFetch: vi.fn(),
   getApiUrl: (path) => `https://api.test${path}`,
 }));
 
@@ -86,7 +87,10 @@ const runScan = async () => {
 describe('ComplianceTracker', () => {
   beforeEach(() => {
     api.authenticatedFetchJSON.mockReset();
+    api.authenticatedFetch.mockReset();
     mockAdminUsers();
+    window.URL.createObjectURL = vi.fn(() => 'blob:fake');
+    window.URL.revokeObjectURL = vi.fn();
   });
 
   it('renders the Compliance Tracker heading', () => {
@@ -186,5 +190,35 @@ describe('ComplianceTracker', () => {
     await runScan();
 
     expect(capturedUrl).toContain('user_name=Pooja%20Deshpande');
+  });
+
+  it('exports the report as Excel after a scan', async () => {
+    api.authenticatedFetchJSON.mockImplementation((url) => {
+      if (url === '/admin/active-users') return Promise.resolve({ user_names: [] });
+      if (url.startsWith('/compliance/scan')) return Promise.resolve(DIRECTIVE_REPORT);
+      return Promise.resolve({});
+    });
+    const fakeBlob = new Blob(['fake xlsx bytes']);
+    let capturedUrl = null;
+    api.authenticatedFetch.mockImplementation((url) => {
+      capturedUrl = url;
+      return Promise.resolve({ blob: () => Promise.resolve(fakeBlob) });
+    });
+
+    render(<ComplianceTracker />);
+    await runScan();
+
+    expect(screen.queryByText('Export Excel (XLSX)')).toBeTruthy();
+    fireEvent.click(screen.getByText('Export Excel (XLSX)'));
+
+    await waitFor(() => expect(api.authenticatedFetch).toHaveBeenCalled());
+    expect(capturedUrl).toContain('/compliance/export/excel');
+    expect(capturedUrl).toContain('start_date=');
+    expect(window.URL.createObjectURL).toHaveBeenCalledWith(fakeBlob);
+  });
+
+  it('does not show the export button before a scan has run', () => {
+    render(<ComplianceTracker />);
+    expect(screen.queryByText('Export Excel (XLSX)')).not.toBeInTheDocument();
   });
 });

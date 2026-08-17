@@ -1236,6 +1236,176 @@ def _canonical_compliance_category(value: Optional[str]) -> Optional[str]:
     return _COMPLIANCE_CATEGORY_ALIASES.get(raw)
 
 
+async def _run_compliance_scan(
+    start_date: str, end_date: str, agp_filter: Optional[str]
+):
+    """Core of the compliance scan, shared by the JSON endpoint and the
+    Excel export (so exporting re-derives the same report rather than
+    needing the frontend to round-trip its in-memory results back to the
+    server).
+
+    ADJOURNED orders are skipped entirely -- the matter was never reached,
+    so there is nothing to direct anyone to do. Results are cached onto
+    each order entry (case_data_store.set_order_compliance_directives), so
+    scanning an overlapping date range twice only pays the LLM cost once
+    per order. Without GEMINI_API_KEY, disposed cases still get reported
+    (ai_available=False in the response) but directive extraction is
+    skipped -- the endpoint degrades rather than failing outright, same
+    posture as every other GenAI feature in this codebase.
+    """
+    board = Board()
+    rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    auto_mgr = get_auto_order_manager()
+    case_store = auto_mgr.case_store
+
+    from compliance_extractor import extract_directives
+
+    disposed_count = 0
+    newly_scanned = 0
+    llm_errors = 0
+    orders_scanned = 0
+    adjourned_skipped = 0
+
+    # Full universe this AGP+date-range matched, before any category
+    # filtering -- lets the UI show "scanned N of M matters" instead of
+    # leaving the ADJOURNED-skip and any upstream matching gap invisible.
+    total_matters = len(rows)
+
+    # First pass: bucket every eligible order into "already cached" (free)
+    # or "needs an LLM call". A full month for a busy AGP can have dozens
+    # of uncached orders; running extract_directives sequentially (each a
+    # GCS download plus a synchronous Gemini call) made a full-month scan
+    # slow enough to hit the client/gateway timeout. row_entries keeps
+    # each row alongside its resolved category/order_entry/directives so
+    # the concurrent pass below can fill in directives by index.
+    row_entries = []  # list of [row, category, order_entry, directives]
+    pending_indices = []
+
+    for row in rows:
+        category = _canonical_compliance_category(row.get("order_category"))
+        if category not in ("HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
+            if category == "ADJOURNED":
+                adjourned_skipped += 1
+            continue
+        orders_scanned += 1
+        if category == "DISPOSED_OFF":
+            disposed_count += 1
+
+        # order_history is the case's full, unfiltered order list -- find
+        # the entry matching THIS row's own board_date, same date-matching
+        # Board._hydrate_with_case_details already did to populate row's
+        # own order_category/order_date/order_link.
+        order_entry = None
+        for o in reversed(row.get("order_history") or []):
+            if isinstance(o, dict) and o.get("board_date") == row.get("board_date"):
+                order_entry = o
+                break
+        if not order_entry:
+            continue
+
+        cached = order_entry.get("compliance_directives")
+        if cached is not None:
+            row_entries.append([row, category, order_entry, cached])
+            continue
+
+        text_url = order_entry.get("order_text_url")
+        if not text_url or not api_key:
+            row_entries.append([row, category, order_entry, []])
+            continue
+
+        row_entries.append([row, category, order_entry, None])
+        pending_indices.append(len(row_entries) - 1)
+
+    if pending_indices:
+        loop = asyncio.get_event_loop()
+
+        def _extract_one(row, order_entry):
+            order_text = auto_mgr._download_gcs_text(order_entry.get("order_text_url"))
+            directives = extract_directives(
+                order_text, api_key, order_date=row.get("order_date")
+            )
+            case_store.set_order_compliance_directives(
+                row.get("case_ref"),
+                row.get("order_link"),
+                row.get("order_date"),
+                directives,
+            )
+            return directives
+
+        async def _resolve(idx):
+            row, _category, order_entry, _ = row_entries[idx]
+            try:
+                directives = await loop.run_in_executor(
+                    executor, _extract_one, row, order_entry
+                )
+                return idx, directives, None
+            except Exception as exc:  # noqa: BLE001
+                return idx, [], exc
+
+        # Bounded by the shared executor's worker count -- same thread pool
+        # the fetch/analysis pipeline uses, so a large scan doesn't spawn
+        # unbounded concurrent Gemini calls.
+        outcomes = await asyncio.gather(*(_resolve(i) for i in pending_indices))
+        for idx, directives, exc in outcomes:
+            row_entries[idx][3] = directives
+            if exc is not None:
+                logger.warning(
+                    "compliance_scan: extraction failed for case_ref=%s "
+                    "order_date=%s: %s",
+                    row_entries[idx][0].get("case_ref"),
+                    row_entries[idx][0].get("order_date"),
+                    exc,
+                )
+                llm_errors += 1
+            else:
+                newly_scanned += 1
+
+    results = []
+    for row, category, order_entry, directives in row_entries:
+        if directives or category == "DISPOSED_OFF":
+            results.append(
+                {
+                    "case_ref": row.get("case_ref"),
+                    "board_date": row.get("board_date"),
+                    "order_date": row.get("order_date"),
+                    "order_category": category,
+                    "order_link": row.get("order_link"),
+                    "directives": directives,
+                }
+            )
+
+    return {
+        "count": len(results),
+        "total_matters": total_matters,
+        "orders_scanned": orders_scanned,
+        "adjourned_skipped": adjourned_skipped,
+        "disposed_count": disposed_count,
+        "newly_scanned": newly_scanned,
+        "llm_errors": llm_errors,
+        "ai_available": bool(api_key),
+        "results": results,
+    }
+
+
+def _resolve_compliance_scan_access(
+    user_name: Optional[str], current_user_with_profile: Dict[str, Any]
+) -> str:
+    """Shared admin-gate + AGP-filter resolution for the scan endpoint and
+    the Excel export -- raises the same 403 either way."""
+    uid = current_user_with_profile.get("uid")
+    user_manager = get_user_manager()
+    is_admin = user_manager.is_admin(uid)
+
+    if user_name and not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only administrators can run a compliance scan for another user",
+        )
+    return user_name if user_name else user_manager.get_user_agp_filter(uid)
+
+
 @app.post("/compliance/scan", tags=["Compliance"])
 async def compliance_scan(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
@@ -1249,128 +1419,181 @@ async def compliance_scan(
     orders in a date range: extracts government-facing compliance
     directives ("file reply affidavit by <date>", etc.) via
     compliance_extractor, plus a plain count of disposed cases in range.
-
-    ADJOURNED orders are skipped entirely -- the matter was never reached,
-    so there is nothing to direct anyone to do. Results are cached onto
-    each order entry (case_data_store.set_order_compliance_directives), so
-    scanning an overlapping date range twice only pays the LLM cost once
-    per order. Without GEMINI_API_KEY, disposed cases still get reported
-    (ai_available=False in the response) but directive extraction is
-    skipped -- the endpoint degrades rather than failing outright, same
-    posture as every other GenAI feature in this codebase.
+    See _run_compliance_scan for the scanning logic itself.
     """
     try:
-        uid = current_user_with_profile.get("uid")
-        user_manager = get_user_manager()
-        is_admin = user_manager.is_admin(uid)
-
-        if user_name and not is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail="Only administrators can run a compliance scan for another user",
-            )
-        agp_filter = user_name if user_name else user_manager.get_user_agp_filter(uid)
-
-        board = Board()
-        rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
-
-        api_key = os.environ.get("GEMINI_API_KEY")
-        auto_mgr = get_auto_order_manager()
-        case_store = auto_mgr.case_store
-
-        from compliance_extractor import extract_directives
-
-        disposed_count = 0
-        newly_scanned = 0
-        llm_errors = 0
-        orders_scanned = 0
-        adjourned_skipped = 0
-        results = []
-
-        # Full universe this AGP+date-range matched, before any category
-        # filtering -- lets the UI show "scanned N of M matters" instead of
-        # leaving the ADJOURNED-skip and any upstream matching gap invisible.
-        total_matters = len(rows)
-
-        for row in rows:
-            category = _canonical_compliance_category(row.get("order_category"))
-            if category not in ("HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
-                if category == "ADJOURNED":
-                    adjourned_skipped += 1
-                continue
-            orders_scanned += 1
-            if category == "DISPOSED_OFF":
-                disposed_count += 1
-
-            # order_history is the case's full, unfiltered order list --
-            # find the entry matching THIS row's own board_date, same
-            # date-matching Board._hydrate_with_case_details already did to
-            # populate row's own order_category/order_date/order_link.
-            order_entry = None
-            for o in reversed(row.get("order_history") or []):
-                if isinstance(o, dict) and o.get("board_date") == row.get("board_date"):
-                    order_entry = o
-                    break
-            if not order_entry:
-                continue
-
-            directives = order_entry.get("compliance_directives")
-            if directives is None:
-                text_url = order_entry.get("order_text_url")
-                if not text_url or not api_key:
-                    directives = []
-                else:
-                    try:
-                        order_text = auto_mgr._download_gcs_text(text_url)
-                        directives = extract_directives(
-                            order_text, api_key, order_date=row.get("order_date")
-                        )
-                        case_store.set_order_compliance_directives(
-                            row.get("case_ref"),
-                            row.get("order_link"),
-                            row.get("order_date"),
-                            directives,
-                        )
-                        newly_scanned += 1
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "compliance_scan: extraction failed for case_ref=%s "
-                            "order_date=%s: %s",
-                            row.get("case_ref"),
-                            row.get("order_date"),
-                            exc,
-                        )
-                        llm_errors += 1
-                        directives = []
-
-            if directives or category == "DISPOSED_OFF":
-                results.append(
-                    {
-                        "case_ref": row.get("case_ref"),
-                        "board_date": row.get("board_date"),
-                        "order_date": row.get("order_date"),
-                        "order_category": category,
-                        "order_link": row.get("order_link"),
-                        "directives": directives,
-                    }
-                )
-
-        return {
-            "count": len(results),
-            "total_matters": total_matters,
-            "orders_scanned": orders_scanned,
-            "adjourned_skipped": adjourned_skipped,
-            "disposed_count": disposed_count,
-            "newly_scanned": newly_scanned,
-            "llm_errors": llm_errors,
-            "ai_available": bool(api_key),
-            "results": results,
-        }
+        agp_filter = _resolve_compliance_scan_access(
+            user_name, current_user_with_profile
+        )
+        return await _run_compliance_scan(start_date, end_date, agp_filter)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error running compliance scan: {e}")
         raise HTTPException(status_code=500, detail="Error running compliance scan")
+
+
+def build_compliance_workbook(
+    report: Dict[str, Any], agp_name: str, start_date: str, end_date: str
+):
+    """Build the Compliance Tracker export workbook: a summary block plus
+    one row per directive (a disposed/no-directive case still gets a
+    single row, directive columns blank), mirroring ComplianceTracker.jsx's
+    own row-flattening so the download matches what was on screen.
+
+    Pure function: no Firestore, no auth, no I/O. Returns an openpyxl
+    Workbook: callers save/stream it however they need.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Compliance"
+
+    bold_font = Font(name="Calibri", size=11, bold=True)
+    title_font = Font(name="Calibri", size=14, bold=True)
+    body_font = Font(name="Calibri", size=11)
+    thin_side = Side(style="thin")
+    border_thin = Border(
+        left=thin_side, right=thin_side, top=thin_side, bottom=thin_side
+    )
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    headers = [
+        "Case",
+        "Board Date",
+        "Order Date",
+        "Outcome",
+        "Directive Type",
+        "Directive Description",
+        "Deadline",
+        "Order Link",
+    ]
+    column_widths = [16, 12, 12, 18, 22, 60, 12, 45]
+
+    ws.merge_cells("A1:H1")
+    title_cell = ws["A1"]
+    title_cell.value = f"COMPLIANCE TRACKER REPORT — {agp_name.upper()}"
+    title_cell.font = title_font
+    title_cell.alignment = left_align
+
+    ws.merge_cells("A2:H2")
+    subtitle_cell = ws["A2"]
+    subtitle_cell.value = f"Period: {start_date} to {end_date}"
+    subtitle_cell.font = body_font
+    subtitle_cell.alignment = left_align
+
+    summary_pairs = [
+        ("Matters in range", report.get("total_matters", 0)),
+        ("Orders scanned", report.get("orders_scanned", 0)),
+        ("Adjourned (skipped)", report.get("adjourned_skipped", 0)),
+        ("Disposed cases", report.get("disposed_count", 0)),
+        ("Newly scanned", report.get("newly_scanned", 0)),
+    ]
+    summary_row = 3
+    for label, value in summary_pairs:
+        ws.merge_cells(f"A{summary_row}:C{summary_row}")
+        label_cell = ws[f"A{summary_row}"]
+        label_cell.value = label
+        label_cell.font = bold_font
+        label_cell.alignment = left_align
+        ws[f"D{summary_row}"] = value
+        ws[f"D{summary_row}"].font = body_font
+        summary_row += 1
+
+    if not report.get("ai_available", True):
+        ws.merge_cells(f"A{summary_row}:H{summary_row}")
+        warn_cell = ws[f"A{summary_row}"]
+        warn_cell.value = (
+            "AI directive extraction was not configured for this scan -- "
+            "disposed cases are listed below, but directives could not be "
+            "extracted from order text."
+        )
+        warn_cell.font = Font(name="Calibri", size=10, italic=True, color="B45309")
+        warn_cell.alignment = left_align
+        summary_row += 1
+
+    header_row = summary_row + 1
+    for col_num, (header, width) in enumerate(zip(headers, column_widths), 1):
+        cell = ws.cell(row=header_row, column=col_num, value=header)
+        cell.font = bold_font
+        cell.alignment = center_align
+        cell.border = border_thin
+        ws.column_dimensions[cell.column_letter].width = width
+
+    current_row = header_row + 1
+    for entry in report.get("results", []):
+        directives = entry.get("directives") or []
+        rows_for_entry = (
+            directives if directives else [None]
+        )  # disposed/no-directive -> one blank-directive row
+        for directive in rows_for_entry:
+            values = [
+                entry.get("case_ref", ""),
+                entry.get("board_date", ""),
+                entry.get("order_date", ""),
+                _canonical_compliance_category(entry.get("order_category"))
+                or entry.get("order_category", ""),
+                (directive or {}).get("directive_type", ""),
+                (directive or {}).get("description", ""),
+                (directive or {}).get("deadline_date", "") or "",
+                entry.get("order_link", ""),
+            ]
+            for col_num, value in enumerate(values, 1):
+                cell = ws.cell(row=current_row, column=col_num, value=value)
+                cell.font = body_font
+                cell.border = border_thin
+                cell.alignment = left_align if col_num in (6, 8) else center_align
+            current_row += 1
+
+    return wb
+
+
+@app.get("/compliance/export/excel", tags=["Compliance"])
+async def export_compliance_excel(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    user_name: Optional[str] = Query(
+        None, description="Admin only: export the scan for a specific AGP by name"
+    ),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Export the same report /compliance/scan returns as a formatted
+    Excel workbook. Re-runs the scan rather than accepting the frontend's
+    in-memory results -- eligible orders are already cached
+    (compliance_directives on the order entry), so this only pays LLM cost
+    for orders that were never scanned before."""
+    try:
+        import io
+
+        agp_filter = _resolve_compliance_scan_access(
+            user_name, current_user_with_profile
+        )
+        report = await _run_compliance_scan(start_date, end_date, agp_filter)
+
+        agp_name = (
+            user_name
+            or (current_user_with_profile.get("profile") or {}).get("full_name")
+            or "ASSISTANT GOVERNMENT PLEADER"
+        )
+        wb = build_compliance_workbook(report, agp_name, start_date, end_date)
+
+        output = io.BytesIO()
+        wb.save(output)
+        filename = f"Compliance_Report_{start_date}_to_{end_date}.xlsx"
+
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting compliance report: {e}")
+        raise HTTPException(status_code=500, detail="Error exporting compliance report")
 
 
 @app.get("/cases/{case_ref:path}/timeline", tags=["Data Retrieval"])

@@ -1,5 +1,6 @@
 """Tests for POST /compliance/scan (main.compliance_scan)."""
 
+import io
 import sys
 import types
 from unittest.mock import MagicMock, Mock, patch
@@ -353,3 +354,115 @@ async def test_row_with_no_date_matched_order_entry_is_skipped(monkeypatch):
 
     extract.assert_not_called()
     assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_extraction_resolves_multiple_uncached_orders(monkeypatch):
+    """Uncached orders across a busy range must each still get their own
+    directives and cache write, even though extraction now runs
+    concurrently rather than one row at a time."""
+    rows = [
+        _row(case_ref="WP/1/2026", order_category="HEARD_AND_ADJOURNED"),
+        _row(case_ref="WP/2/2026", order_category="HEARD_AND_ADJOURNED"),
+        _row(case_ref="WP/3/2026", order_category="DISPOSED_OFF"),
+    ]
+    board_cls, board_instance = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    mgr = _mock_auto_mgr()
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: mgr)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    def fake_extract(text, api_key, order_date=None, model=None):
+        return [
+            {
+                "directive_type": "FILE_REPLY_AFFIDAVIT",
+                "description": f"directive for text starting {text[:10]}",
+                "deadline_date": "2026-08-13",
+            }
+        ]
+
+    with patch(
+        "compliance_extractor.extract_directives", side_effect=fake_extract
+    ) as extract:
+        result = await main.compliance_scan(
+            start_date="2026-07-01",
+            end_date="2026-07-31",
+            user_name=None,
+            current_user_with_profile={"uid": "u1"},
+        )
+
+    assert extract.call_count == 3
+    assert result["newly_scanned"] == 3
+    assert mgr.case_store.set_order_compliance_directives.call_count == 3
+    assert {r["case_ref"] for r in result["results"]} == {
+        "WP/1/2026",
+        "WP/2/2026",
+        "WP/3/2026",
+    }
+
+
+@pytest.mark.asyncio
+async def test_export_excel_returns_a_workbook_matching_the_scan(monkeypatch):
+    from openpyxl import load_workbook
+
+    directives = [
+        {
+            "directive_type": "FILE_REPLY_AFFIDAVIT",
+            "description": "file reply affidavit by 13th August",
+            "deadline_date": "2026-08-13",
+        }
+    ]
+    rows = [
+        _row(case_ref="WP/1/2026", order_category="HEARD_AND_ADJOURNED"),
+        _row(case_ref="WP/2/2026", order_category="DISPOSED_OFF"),
+    ]
+    board_cls, board_instance = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    with patch("compliance_extractor.extract_directives", return_value=directives):
+        response = await main.export_compliance_excel(
+            start_date="2026-07-01",
+            end_date="2026-07-31",
+            user_name=None,
+            current_user_with_profile={
+                "uid": "u1",
+                "profile": {"full_name": "Pooja Deshpande"},
+            },
+        )
+
+    assert (
+        response.media_type
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "Compliance_Report_2026-07-01_to_2026-07-31.xlsx" in (
+        response.headers.get("content-disposition") or ""
+    )
+
+    wb = load_workbook(io.BytesIO(response.body))
+    ws = wb.active
+    all_text = "\n".join(
+        str(cell.value) for row in ws.iter_rows() for cell in row if cell.value
+    )
+    assert "POOJA DESHPANDE" in all_text
+    assert "WP/1/2026" in all_text
+    assert "WP/2/2026" in all_text
+    assert "file reply affidavit by 13th August" in all_text
+
+
+@pytest.mark.asyncio
+async def test_export_excel_denies_non_admin_requesting_another_user(monkeypatch):
+    monkeypatch.setattr(
+        main, "get_user_manager", lambda: _mock_user_manager(is_admin=False)
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await main.export_compliance_excel(
+            start_date="2026-07-01",
+            end_date="2026-07-31",
+            user_name="Someone Else",
+            current_user_with_profile={"uid": "u1"},
+        )
+    assert exc_info.value.status_code == 403

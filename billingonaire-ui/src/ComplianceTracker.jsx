@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table as BTable, Alert, Spinner, Badge } from 'react-bootstrap';
-import { authenticatedFetchJSON, getApiUrl } from './lib/api.js';
+import { authenticatedFetchJSON, authenticatedFetch, getApiUrl } from './lib/api.js';
 import { auth } from './lib/firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getOrderCategoryLabel, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
@@ -53,6 +53,15 @@ const ComplianceTracker = () => {
     const [error, setError] = useState('');
     const [report, setReport] = useState(null);
     const [directiveFilter, setDirectiveFilter] = useState('ALL');
+    const [exporting, setExporting] = useState(false);
+    const [exportMessage, setExportMessage] = useState(null);
+
+    // Uncached orders in a busy month each cost a GCS download + a
+    // synchronous Gemini call; the backend now runs those concurrently but
+    // a full month can still take a while the first time it's scanned, so
+    // both the scan and the export (which re-runs the same scan) get a
+    // generous client-side timeout rather than the 45s/120s defaults.
+    const SCAN_TIMEOUT_MS = 240000;
 
     useEffect(() => {
         const today = new Date();
@@ -95,13 +104,39 @@ const ComplianceTracker = () => {
             if (isAdmin && selectedUser) {
                 url += `&user_name=${encodeURIComponent(selectedUser)}`;
             }
-            const response = await authenticatedFetchJSON(url, { method: 'POST', timeoutMs: 120000 });
+            const response = await authenticatedFetchJSON(url, { method: 'POST', timeoutMs: SCAN_TIMEOUT_MS });
             setReport(response);
             setDirectiveFilter('ALL');
         } catch (err) {
             setError(err.message || 'Failed to run compliance scan');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const exportExcel = async () => {
+        if (!dateRange.startDate || !dateRange.endDate) return;
+        setExporting(true);
+        setExportMessage(null);
+        try {
+            let url = `/compliance/export/excel?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`;
+            if (isAdmin && selectedUser) {
+                url += `&user_name=${encodeURIComponent(selectedUser)}`;
+            }
+            const response = await authenticatedFetch(url, { timeoutMs: SCAN_TIMEOUT_MS });
+            const blob = await response.blob();
+            const objectUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = `Compliance_Report_${dateRange.startDate}_to_${dateRange.endDate}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(objectUrl);
+            document.body.removeChild(a);
+        } catch (err) {
+            setExportMessage({ type: 'danger', text: `Export failed: ${err.message || err}` });
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -199,9 +234,34 @@ const ComplianceTracker = () => {
                                         )}
                                     </Button>
                                 </Col>
+                                {report && (
+                                    <Col md={3}>
+                                        <Button
+                                            variant="outline-success"
+                                            onClick={exportExcel}
+                                            disabled={exporting}
+                                            className="w-100"
+                                        >
+                                            {exporting ? (
+                                                <>
+                                                    <Spinner size="sm" className="me-2" />
+                                                    Exporting...
+                                                </>
+                                            ) : (
+                                                'Export Excel (XLSX)'
+                                            )}
+                                        </Button>
+                                    </Col>
+                                )}
                             </Row>
 
                             {error && <Alert variant="danger">{error}</Alert>}
+
+                            {exportMessage && (
+                                <Alert variant={exportMessage.type} dismissible onClose={() => setExportMessage(null)}>
+                                    {exportMessage.text}
+                                </Alert>
+                            )}
 
                             {report && !report.ai_available && (
                                 <Alert variant="warning">
