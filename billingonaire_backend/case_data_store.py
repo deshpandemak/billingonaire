@@ -563,24 +563,34 @@ class CaseDataStore:
 
         Unlike ``append_case_order``, this method does not create or modify any
         order entry, so ``latest_order_*`` fields and the orders list are left intact.
+
+        Only writes the fields that actually have a value this call. A case
+        with more than one hearing date re-runs the full case-status scrape
+        once per new date (see AutoOrderManager._process_all_orders_from_api),
+        and that scrape is a best-effort regex read of free text -- it can
+        successfully extract one name and miss the other on a later call even
+        though an earlier call got both. Writing both fields unconditionally
+        used to let a partial re-extraction silently blank out a name a
+        previous, more successful call had already stored correctly.
         """
-        if not case_ref:
+        if not case_ref or not (petitioner or respondent):
             return
         now = datetime.now().isoformat()
         case_doc_ref = self.db.collection(self.case_collection).document(
             self._case_doc_id(case_ref)
         )
-        case_doc_ref.set(
-            {
-                "case_ref": case_ref,
-                "petitioner": petitioner,
-                "respondent": respondent,
-                "updated_at": now,
-            },
-            merge=True,
-        )
+        update: Dict[str, Any] = {"case_ref": case_ref, "updated_at": now}
+        if petitioner:
+            update["petitioner"] = petitioner
+        if respondent:
+            update["respondent"] = respondent
+        case_doc_ref.set(update, merge=True)
         logger.info(
-            "update_case_party_names: persisted parties for case_ref=%s", case_ref
+            "update_case_party_names: persisted parties for case_ref=%s "
+            "(petitioner=%s respondent=%s)",
+            case_ref,
+            bool(petitioner),
+            bool(respondent),
         )
 
     def update_case_portal_status(

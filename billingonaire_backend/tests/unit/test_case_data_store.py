@@ -288,6 +288,59 @@ def test_set_order_compliance_directives_is_a_noop_when_case_does_not_exist():
     assert found is False
 
 
+def test_update_case_party_names_writes_both_names():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-401-2026"
+    db.collection("case-details").document(case_doc_id).set({"case_ref": "WP/401/2026"})
+
+    store.update_case_party_names(
+        "WP/401/2026", "Alice Petitioner", "State of Maharashtra"
+    )
+
+    doc = db.get_collection("case-details")[case_doc_id]
+    assert doc["petitioner"] == "Alice Petitioner"
+    assert doc["respondent"] == "State of Maharashtra"
+
+
+def test_update_case_party_names_does_not_blank_out_a_name_a_prior_call_stored():
+    """A case with more than one hearing date re-runs the case-status scrape
+    per new date; a later call that only extracted one name must not erase
+    the other name an earlier, more successful call already stored."""
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-402-2026"
+    db.collection("case-details").document(case_doc_id).set(
+        {
+            "case_ref": "WP/402/2026",
+            "petitioner": "Alice Petitioner",
+            "respondent": "State of Maharashtra",
+        }
+    )
+
+    # A later fetch only managed to extract the petitioner this time.
+    store.update_case_party_names("WP/402/2026", "Alice Petitioner", "")
+
+    doc = db.get_collection("case-details")[case_doc_id]
+    assert doc["petitioner"] == "Alice Petitioner"
+    assert doc["respondent"] == "State of Maharashtra"  # untouched, not blanked
+
+
+def test_update_case_party_names_is_a_noop_when_both_names_are_empty():
+    db = FakeFirestore()
+    store = CaseDataStore(db)
+    case_doc_id = "WP-403-2026"
+    db.collection("case-details").document(case_doc_id).set(
+        {"case_ref": "WP/403/2026", "petitioner": "Existing", "respondent": "Existing"}
+    )
+
+    store.update_case_party_names("WP/403/2026", "", "")
+
+    doc = db.get_collection("case-details")[case_doc_id]
+    assert doc["petitioner"] == "Existing"
+    assert doc["respondent"] == "Existing"
+
+
 def test_update_case_portal_status_persists_case_level_fields():
     db = FakeFirestore()
     store = CaseDataStore(db)
