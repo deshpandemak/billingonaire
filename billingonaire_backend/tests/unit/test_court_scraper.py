@@ -890,6 +890,34 @@ def test_extract_case_details_from_html_party_name_formats(
     assert result["respondent_name"] == expected_respondent
 
 
+def test_extract_case_details_from_html_respondent_does_not_swallow_trailing_metadata():
+    """Regression test for CP/420/2025: the case-status page's filing
+    sentence sits directly above a District/Stamp Number/e-Filing metadata
+    block in the same card, and BeautifulSoup's get_text() flattens both
+    into one continuous string with no boundary between them. The
+    respondent capture used to run past the real name all the way to the
+    end of that metadata."""
+    scraper = BombayHighCourtScraper()
+    html = (
+        '<div id="cn_CaseNoUpdates">'
+        '<div class="card-header">'
+        "Case No. CP/420/2025 with CNR No. HCBM010268982025, was filed on "
+        "07/05/2025 at Bombay High Court by Shantikumar Ovalekar against "
+        "Premji Boricha"
+        "</div>"
+        '<div class="card-body">'
+        "<div>District MUMBAI</div>"
+        "<div>Stamp Number CPST/17131/2025</div>"
+        "<div>e-Filing Number AMH20230044544C202500003</div>"
+        "<div>e-Filing Date 06/05/2025</div>"
+        "</div>"
+        "</div>"
+    )
+    result = scraper._extract_case_details_from_html(html, "CP/420/2025")
+    assert result["petitioner_name"] == "Shantikumar Ovalekar"
+    assert result["respondent_name"] == "Premji Boricha"
+
+
 # ---------------------------------------------------------------------------
 # _extract_case_details_from_html — portal_case_status / disposal_date
 # ---------------------------------------------------------------------------

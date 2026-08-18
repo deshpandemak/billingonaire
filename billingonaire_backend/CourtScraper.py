@@ -38,6 +38,45 @@ DISPOSAL_KEYWORDS = [
 ]
 PENDING_KEYWORDS = ["PENDING", "ONGOING", "ADMITTED", "ADMIT"]
 
+# The case-status page's filing sentence ("...was filed on DATE at Bombay
+# High Court by X against Y") sits directly above a District/Stamp Number/
+# CNR/e-Filing metadata block in the same card. BeautifulSoup's
+# get_text(" ", strip=True) joins everything into one continuous string
+# with no structural boundary left between the respondent's name and
+# whatever field label happens to follow it on the page -- so a party-name
+# capture with only "filed" or end-of-string as its stop condition runs
+# straight into that metadata. Confirmed against a real page (CP/420/2025):
+# the respondent capture became "Premji Boricha District MUMBAI Stamp
+# Number CPST/17131/2025 e-Filing Number ... e-Filing Date ...". Used as
+# an additional stop condition on every party-name capture below.
+_TRAILING_METADATA_BOUNDARY = (
+    r"(?:\s+filed"
+    r"|\s+through"
+    r"|\s+district\b"
+    r"|\s+stamp\s+number\b"
+    r"|\s+e-?filing\s+number\b"
+    r"|\s+e-?filing\s+date\b"
+    r"|\s+registration\s+number\b"
+    r"|\s+registration\s+date\b"
+    r"|\s+cnr\s+no\b"
+    r"|\s+case\s+status\b"
+    r"|\s*$)"
+)
+
+# Same boundary keywords as _TRAILING_METADATA_BOUNDARY, but as a bare
+# alternation for use inside an existing lookahead (?=...|...|\s*$) rather
+# than as a self-contained consuming group.
+_TRAILING_METADATA_LOOKAHEAD = (
+    r"\s+district\b"
+    r"|\s+stamp\s+number\b"
+    r"|\s+e-?filing\s+number\b"
+    r"|\s+e-?filing\s+date\b"
+    r"|\s+registration\s+number\b"
+    r"|\s+registration\s+date\b"
+    r"|\s+cnr\s+no\b"
+    r"|\s+case\s+status\b"
+)
+
 # A date-shaped run of digits/separators, e.g. 12/05/2025, 01-06-2025,
 # 2025-06-01 -- deliberately NOT a greedy [\d/.\-]+ run, which would also
 # swallow trailing sentence punctuation like the "." after "...2025."
@@ -976,7 +1015,7 @@ class BombayHighCourtScraper:
             # by PETITIONER against RESPONDENT"
             # After case_ref strip: "...by PETITIONER against RESPONDENT"
             by_match = re.search(
-                r"\bby\s+(.+?)\s+against\s+(.+?)(?:\s+filed|\s*$)",
+                rf"\bby\s+(.+?)\s+against\s+(.+?){_TRAILING_METADATA_BOUNDARY}",
                 stripped_text,
                 re.IGNORECASE,
             )
@@ -987,7 +1026,7 @@ class BombayHighCourtScraper:
             # Pattern 1: "filed by X against Y" (fallback)
             if not petitioner:
                 filed_match = re.search(
-                    r"filed.*?by\s+(.+?)(?:\s+against\s+(.+?))?(?:\s+through|\s*$)",
+                    rf"filed.*?by\s+(.+?)(?:\s+against\s+(.+?))?{_TRAILING_METADATA_BOUNDARY}",
                     stripped_text,
                     re.IGNORECASE,
                 )
@@ -999,7 +1038,7 @@ class BombayHighCourtScraper:
             # Pattern 2: "PETITIONER Versus/VS/V.S./V/S RESPONDENT"
             if not petitioner:
                 vs_match = re.search(
-                    r"^(.+?)\s+(?:versus|v\.?s\.?|v/s)\s+(.+?)(?:\s+filed|\s*$)",
+                    rf"^(.+?)\s+(?:versus|v\.?s\.?|v/s)\s+(.+?){_TRAILING_METADATA_BOUNDARY}",
                     stripped_text,
                     re.IGNORECASE,
                 )
@@ -1010,12 +1049,12 @@ class BombayHighCourtScraper:
             # Pattern 3: labelled "Petitioner(s): X  Respondent(s): Y"
             if not petitioner:
                 pet_match = re.search(
-                    r"Petitioner(?:\(s\))?\s*:\s*(.+?)(?=\s*Respondent\b|\s*$)",
+                    rf"Petitioner(?:\(s\))?\s*:\s*(.+?)(?=\s*Respondent\b|{_TRAILING_METADATA_LOOKAHEAD}|\s*$)",
                     stripped_text,
                     re.IGNORECASE,
                 )
                 res_match = re.search(
-                    r"Respondent(?:\(s\))?\s*:\s*(.+?)(?=\s*Petitioner\b|\s*$)",
+                    rf"Respondent(?:\(s\))?\s*:\s*(.+?)(?=\s*Petitioner\b|{_TRAILING_METADATA_LOOKAHEAD}|\s*$)",
                     stripped_text,
                     re.IGNORECASE,
                 )
@@ -1024,10 +1063,20 @@ class BombayHighCourtScraper:
                 if res_match:
                     respondent = res_match.group(1).strip()
 
-            # Strip any trailing filing-date suffix that leaked into the name
+            # Belt-and-suspenders: strip a trailing filing-date/metadata
+            # suffix that leaked into the name despite the boundaries above
+            # (e.g. a page layout none of the patterns anticipated).
             _label_suffixes = (
                 r"\s+[Ff]iled.*$",
                 r"\s+\d{2}/\d{2}/\d{4}.*$",
+                r"\s+[Dd]istrict\b.*$",
+                r"\s+[Ss]tamp\s+[Nn]umber\b.*$",
+                r"\s+[Ee]-?[Ff]iling\s+[Nn]umber\b.*$",
+                r"\s+[Ee]-?[Ff]iling\s+[Dd]ate\b.*$",
+                r"\s+[Rr]egistration\s+[Nn]umber\b.*$",
+                r"\s+[Rr]egistration\s+[Dd]ate\b.*$",
+                r"\s+CNR\s+[Nn]o\b.*$",
+                r"\s+[Cc]ase\s+[Ss]tatus\b.*$",
             )
             for _suffix in _label_suffixes:
                 if petitioner:
