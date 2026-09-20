@@ -155,27 +155,26 @@ async def test_flags_a_case_disposed_under_a_different_agp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_appearance_before_the_selected_window_is_still_found(monkeypatch):
-    """The AGP's own appearance can fall well before the user's chosen
-    date range -- e.g. handled last quarter, disposed under someone else
-    this quarter -- and must still surface. Board.getData is queried with
-    a widened lookback window to find it."""
+async def test_query_uses_exact_selected_date_range_no_lookback(monkeypatch):
+    """Board.getData is queried with exactly the user-selected range --
+    no widened lookback. An appearance the selected AGP made outside that
+    range simply isn't in scope; the caller should pick a wider range to
+    include it."""
     order_history = [
         _order(
-            "2026-01-15",
+            "2026-07-10",
             "HEARD_AND_ADJOURNED",
             government_pleader=["Pooja Deshpande"],
         ),
         _order("2026-09-08", "DISPOSED_OFF", government_pleader=["Rajan Pawar"]),
     ]
-    rows = [_row("WP/11/2026", "2026-01-15", "HEARD_AND_ADJOURNED", order_history)]
+    rows = [_row("WP/11/2026", "2026-07-10", "HEARD_AND_ADJOURNED", order_history)]
     board_cls, board_instance = _mock_board(rows)
     monkeypatch.setattr(main, "Board", board_cls)
     monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
     monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
 
     result = await main.cross_agp_disposal_report(
-        # The user only asked about Q3, well after the January appearance.
         start_date="2026-07-01",
         end_date="2026-09-30",
         user_name=None,
@@ -183,18 +182,19 @@ async def test_appearance_before_the_selected_window_is_still_found(monkeypatch)
     )
 
     search_criteria = board_instance.getData.call_args[0][0]
-    assert search_criteria["startDate"] <= "2026-01-15"
+    assert search_criteria["startDate"] == "2026-07-01"
     assert search_criteria["endDate"] == "2026-09-30"
     assert result["flagged_count"] == 1
-    assert result["results"][0]["appearances"][0]["date"] == "2026-01-15"
+    assert result["results"][0]["appearances"][0]["date"] == "2026-07-10"
 
 
 @pytest.mark.asyncio
 async def test_disposal_outside_the_selected_range_is_excluded(monkeypatch):
-    """The widened lookback query can surface a disposal that happened
-    before the user's own chosen start_date -- that's not what they asked
-    to see, so it must be excluded from the flagged list (and counted
-    separately) even though the underlying data would otherwise qualify."""
+    """A case's order_history can still contain a disposal entry that
+    falls outside [start_date, end_date] even when Board.getData matched
+    a row for it (e.g. a case with several hearings, only some of which
+    are in range) -- that disposal isn't what the user asked to see, so
+    it must be excluded from the flagged list (and counted separately)."""
     order_history = [
         _order(
             "2025-01-10",
@@ -471,10 +471,9 @@ async def test_admin_can_run_report_for_a_specific_agp(monkeypatch):
     mock_resolve.assert_called_once_with("Rajan Pawar", {"uid": "admin1"})
     call_args, call_kwargs = board_instance.getData.call_args
     assert call_args[1] == "Rajan Pawar"
-    # The underlying query is widened backward for appearance lookback but
-    # never narrower than what the caller asked for, and the end date is
-    # exactly what was requested.
-    assert call_args[0]["startDate"] <= "2026-07-01"
+    # The underlying query uses exactly the caller-selected range, no
+    # widening.
+    assert call_args[0]["startDate"] == "2026-07-01"
     assert call_args[0]["endDate"] == "2026-09-30"
     assert result["flagged_count"] == 1
 

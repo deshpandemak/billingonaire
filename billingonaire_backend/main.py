@@ -1792,12 +1792,15 @@ async def _run_cross_agp_disposal_report(
     Board.getData already hydrates onto every row from case-details for
     every other report in this app.
 
+    Scoped strictly to [start_date, end_date]: both the selected AGP's own
+    appearances and the disposal itself must fall inside the range the
+    caller asked for. A case the AGP handled in an earlier period, then
+    disposed under someone else's name outside this window, is out of
+    scope -- select a wider range to include it.
+
     A case is flagged only when:
     - it has a DISPOSED_OFF entry in its order history, with a disposal
-      date that actually falls in [start_date, end_date] -- the user's
-      range describes when they want to see DISPOSALS happen, not a hard
-      cutoff on how far back the selected AGP's own prior appearances can
-      be (see the widened query below),
+      date that falls in [start_date, end_date],
     - that disposal entry actually names a government pleader -- either
       the order's own extracted government_pleader, or (when that
       extraction found nothing) the board's own assigned
@@ -1810,24 +1813,8 @@ async def _run_cross_agp_disposal_report(
     - the selected AGP has at least one appearance (any category) in the
       same case strictly before the disposal date.
     """
-    # Board.getData only returns rows whose board_date falls inside the
-    # queried range. Scoping that query to exactly [start_date, end_date]
-    # meant a case the AGP handled in an earlier quarter, then disposed
-    # under someone else's name in the quarter being checked, never
-    # surfaced at all -- the AGP's own appearance fell outside the window
-    # and Board.getData simply never returned a row for that case. Query a
-    # generously widened lookback for appearances, and filter the actual
-    # disposal date back down to what the user asked for afterwards.
-    APPEARANCE_LOOKBACK_DAYS = 730  # ~2 years
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-    user_start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    lookback_start_dt = end_dt - timedelta(days=APPEARANCE_LOOKBACK_DAYS)
-    query_start_date = min(user_start_dt, lookback_start_dt).strftime("%Y-%m-%d")
-
     board = Board()
-    rows = board.getData(
-        {"startDate": query_start_date, "endDate": end_date}, agp_filter
-    )
+    rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
     case_store = get_auto_order_manager().case_store
 
     # Board.getData has ALREADY matched every one of these rows to the

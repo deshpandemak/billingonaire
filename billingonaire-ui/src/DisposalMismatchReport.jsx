@@ -87,12 +87,11 @@ const DisposalMismatchReport = () => {
                                 Finds matters where the selected AGP appeared on one or more hearing
                                 dates but the case was eventually disposed under a <strong>different</strong>{' '}
                                 AGP's name — e.g. you appeared and the matter was heard &amp; adjourned,
-                                but someone else's name is on the disposal order. The date range is when
-                                you want to see <strong>disposals</strong> happen — your own prior
-                                appearance can fall well before it (the scan looks back automatically),
-                                so a case handled last quarter and disposed this quarter under someone
-                                else's name still gets found. A disposal order that names no one is left
-                                out rather than guessed at.
+                                but someone else's name is on the disposal order. Both your appearance
+                                and the disposal must fall within the selected date range — a case you
+                                handled in an earlier period, disposed under someone else's name outside
+                                this window, won't surface; pick a wider range to include it. A disposal
+                                order that names no one is left out rather than guessed at.
                                 {' '}{GOVERNMENT_ROLES_NOTE}
                             </p>
 
