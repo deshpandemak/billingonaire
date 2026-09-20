@@ -27,6 +27,7 @@ const FLAGGED_REPORT = {
   already_disposed_by_same_agp: 2,
   no_disposal_yet: 1,
   disposal_agp_unnamed: 1,
+  disposed_outside_range: 0,
   results: [
     {
       case_ref: 'WP/1/2026',
@@ -46,6 +47,7 @@ const EMPTY_REPORT = {
   already_disposed_by_same_agp: 3,
   no_disposal_yet: 0,
   disposal_agp_unnamed: 0,
+  disposed_outside_range: 0,
   results: [],
 };
 
@@ -132,6 +134,21 @@ describe('DisposalMismatchReport', () => {
 
     expect(screen.getByText(/No mismatches found/)).toBeTruthy();
     expect(screen.getByText('Same AGP disposed').closest('.card').textContent).toContain('3');
+  });
+
+  it('shows how many mismatches were found but fall outside the selected date range', async () => {
+    api.authenticatedFetchJSON.mockImplementation((url) => {
+      if (url === '/admin/active-users') return Promise.resolve({ user_names: [] });
+      if (url.startsWith('/reports/cross-agp-disposals')) {
+        return Promise.resolve({ ...EMPTY_REPORT, disposed_outside_range: 4 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<DisposalMismatchReport />);
+    await runReport();
+
+    expect(screen.getByText('Outside date range').closest('.card').textContent).toContain('4');
   });
 
   it('an admin can pick a specific AGP and the report includes user_name', async () => {

@@ -1740,6 +1740,45 @@ async def export_compliance_excel(
         raise HTTPException(status_code=500, detail="Error exporting compliance report")
 
 
+def _board_assigned_names_for_case_date(
+    case_ref: str, board_date_iso: Optional[str]
+) -> List[str]:
+    """Fallback government-pleader names for one specific (case, hearing
+    date) when the order's own text extraction found none -- the board
+    assignment for that date (respondent_lawyer / additional_respondent_
+    lawyers), read directly off the daily-boards doc via its deterministic
+    id (same "{board_date}-{case_type}-{case_no}-{case_year}" key
+    Board.saveData writes and /orders/pdf/{doc_id} reads). A single,
+    bounded doc GET -- only ever called for the disposal candidates whose
+    order-level extraction was empty, not for every case."""
+    if not case_ref or not board_date_iso:
+        return []
+    try:
+        doc_id = f"{board_date_iso}-{case_ref.replace('/', '-')}"
+        doc = firestore.client().collection("daily-boards").document(doc_id).get()
+        if not doc.exists:
+            return []
+        data = doc.to_dict() or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_board_assigned_names_for_case_date: lookup failed for %s on %s: %s",
+            case_ref,
+            board_date_iso,
+            exc,
+        )
+        return []
+
+    names = []
+    respondent_lawyer = data.get("respondent_lawyer")
+    if respondent_lawyer:
+        names.append(str(respondent_lawyer))
+    additional = data.get("additional_respondent_lawyers") or []
+    if isinstance(additional, str):
+        additional = [additional]
+    names.extend(str(n) for n in additional if n)
+    return names
+
+
 async def _run_cross_agp_disposal_report(
     start_date: str, end_date: str, agp_filter: Optional[str]
 ):
@@ -1751,57 +1790,89 @@ async def _run_cross_agp_disposal_report(
 
     Pure Firestore read, no live portal calls: reuses order_history, which
     Board.getData already hydrates onto every row from case-details for
-    every other report in this app -- the full order history for a case
-    is the same regardless of which of its hearing dates matched the date
-    range, so one row per case is enough.
+    every other report in this app.
 
     A case is flagged only when:
-    - it has a DISPOSED_OFF entry in its order history,
-    - that disposal entry actually names a government pleader (an
-      unnamed disposal -- e.g. a terse "Rule made absolute" with no
-      appearance recorded -- can't be proven to be a different AGP, so
-      it's excluded rather than guessed at), and
+    - it has a DISPOSED_OFF entry in its order history, with a disposal
+      date that actually falls in [start_date, end_date] -- the user's
+      range describes when they want to see DISPOSALS happen, not a hard
+      cutoff on how far back the selected AGP's own prior appearances can
+      be (see the widened query below),
+    - that disposal entry actually names a government pleader -- either
+      the order's own extracted government_pleader, or (when that
+      extraction found nothing) the board's own assigned
+      respondent_lawyer/additional_respondent_lawyers for that specific
+      hearing date, the same union-of-sources fallback Board.getData
+      itself already relies on elsewhere. An unnamed disposal even after
+      that fallback can't be proven to be a different AGP, so it's
+      excluded rather than guessed at,
     - none of the disposal-time names fuzzy-match the selected AGP, and
     - the selected AGP has at least one appearance (any category) in the
-      same case's order history strictly before the disposal date.
+      same case strictly before the disposal date.
     """
+    # Board.getData only returns rows whose board_date falls inside the
+    # queried range. Scoping that query to exactly [start_date, end_date]
+    # meant a case the AGP handled in an earlier quarter, then disposed
+    # under someone else's name in the quarter being checked, never
+    # surfaced at all -- the AGP's own appearance fell outside the window
+    # and Board.getData simply never returned a row for that case. Query a
+    # generously widened lookback for appearances, and filter the actual
+    # disposal date back down to what the user asked for afterwards.
+    APPEARANCE_LOOKBACK_DAYS = 730  # ~2 years
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    user_start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    lookback_start_dt = end_dt - timedelta(days=APPEARANCE_LOOKBACK_DAYS)
+    query_start_date = min(user_start_dt, lookback_start_dt).strftime("%Y-%m-%d")
+
     board = Board()
-    rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
+    rows = board.getData(
+        {"startDate": query_start_date, "endDate": end_date}, agp_filter
+    )
     case_store = get_auto_order_manager().case_store
 
-    seen_cases = set()
+    # Board.getData has ALREADY matched every one of these rows to the
+    # selected AGP via its own robust union logic (the order's own
+    # extracted government_pleader OR the board-assigned
+    # respondent_lawyer/additional_respondent_lawyers for that specific
+    # hearing date) -- grouping by case and reading each row's own
+    # board_date/order_category is a strictly more reliable appearance
+    # signal than re-deriving it from an order's own (sometimes-failed)
+    # PDF text extraction alone, which is what this used to do.
+    rows_by_case: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        case_ref = row.get("case_ref")
+        if case_ref:
+            rows_by_case.setdefault(case_ref, []).append(row)
+
     flagged = []
     cases_checked = 0
     no_disposal_yet = 0
     already_disposed_by_same_agp = 0
     disposal_agp_unnamed = 0
+    disposed_outside_range = 0
 
-    for row in rows:
-        case_ref = row.get("case_ref")
-        if not case_ref or case_ref in seen_cases:
-            continue
-        seen_cases.add(case_ref)
+    for case_ref, case_rows in rows_by_case.items():
         cases_checked += 1
 
-        order_history = row.get("order_history") or []
-        agp_appearances = []
+        agp_appearances = [
+            {
+                "date": case_store._to_iso_date(r.get("board_date")),
+                "category": _canonical_compliance_category(r.get("order_category")),
+            }
+            for r in case_rows
+            if r.get("board_date")
+        ]
+
+        order_history = case_rows[0].get("order_history") or []
         disposal_entry = None
         disposal_iso_date = None
-
         for o in order_history:
             if not isinstance(o, dict):
                 continue
             category = _canonical_compliance_category(o.get("order_category"))
-            gp_names = o.get("government_pleader") or []
-            if isinstance(gp_names, str):
-                gp_names = [gp_names]
             o_iso_date = case_store._to_iso_date(
                 o.get("order_date") or o.get("board_date")
             )
-
-            if agp_filter and any_name_matches(agp_filter, gp_names):
-                agp_appearances.append({"date": o_iso_date, "category": category})
-
             if category == "DISPOSED_OFF" and (
                 disposal_iso_date is None
                 or (o_iso_date or "") >= (disposal_iso_date or "")
@@ -1813,10 +1884,24 @@ async def _run_cross_agp_disposal_report(
             no_disposal_yet += 1
             continue
 
+        if not disposal_iso_date or not (start_date <= disposal_iso_date <= end_date):
+            disposed_outside_range += 1
+            continue
+
+        disposal_board_date = (
+            case_store._to_iso_date(disposal_entry.get("board_date"))
+            or disposal_iso_date
+        )
+
         disposal_gp_names = disposal_entry.get("government_pleader") or []
         if isinstance(disposal_gp_names, str):
             disposal_gp_names = [disposal_gp_names]
         disposal_gp_names = [n for n in disposal_gp_names if n and str(n).strip()]
+
+        if not disposal_gp_names:
+            disposal_gp_names = _board_assigned_names_for_case_date(
+                case_ref, disposal_board_date
+            )
 
         if not disposal_gp_names:
             disposal_agp_unnamed += 1
@@ -1827,9 +1912,7 @@ async def _run_cross_agp_disposal_report(
             continue
 
         prior_appearances = [
-            a
-            for a in agp_appearances
-            if a["date"] and disposal_iso_date and a["date"] < disposal_iso_date
+            a for a in agp_appearances if a["date"] and a["date"] < disposal_iso_date
         ]
         if not prior_appearances:
             continue
@@ -1844,10 +1927,7 @@ async def _run_cross_agp_disposal_report(
                 # proxy every other screen's "View" link uses) is keyed by
                 # board_date, not order_date -- they're usually the same
                 # hearing but not guaranteed to be identical.
-                "disposal_board_date": case_store._to_iso_date(
-                    disposal_entry.get("board_date")
-                )
-                or disposal_iso_date,
+                "disposal_board_date": disposal_board_date,
                 "disposal_agp_names": disposal_gp_names,
                 "order_link": disposal_entry.get("order_link"),
             }
@@ -1861,6 +1941,7 @@ async def _run_cross_agp_disposal_report(
         "no_disposal_yet": no_disposal_yet,
         "already_disposed_by_same_agp": already_disposed_by_same_agp,
         "disposal_agp_unnamed": disposal_agp_unnamed,
+        "disposed_outside_range": disposed_outside_range,
         "results": flagged,
     }
 

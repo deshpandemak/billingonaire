@@ -87,8 +87,12 @@ const DisposalMismatchReport = () => {
                                 Finds matters where the selected AGP appeared on one or more hearing
                                 dates but the case was eventually disposed under a <strong>different</strong>{' '}
                                 AGP's name — e.g. you appeared and the matter was heard &amp; adjourned,
-                                but someone else's name is on the disposal order. A disposal order that
-                                names no one is left out rather than guessed at.
+                                but someone else's name is on the disposal order. The date range is when
+                                you want to see <strong>disposals</strong> happen — your own prior
+                                appearance can fall well before it (the scan looks back automatically),
+                                so a case handled last quarter and disposed this quarter under someone
+                                else's name still gets found. A disposal order that names no one is left
+                                out rather than guessed at.
                                 {' '}{GOVERNMENT_ROLES_NOTE}
                             </p>
 
@@ -182,9 +186,15 @@ const DisposalMismatchReport = () => {
                                             </Card>
                                         </Col>
                                         <Col md={2}>
-                                            <Card body className="text-center" title="Disposal order names no government pleader -- can't confirm a mismatch, so excluded from the flagged list.">
+                                            <Card body className="text-center" title="Disposal order names no government pleader (even after checking the board assignment for that date) -- can't confirm a mismatch, so excluded from the flagged list.">
                                                 <div className="text-muted small">Disposal AGP unnamed</div>
                                                 <div className="h4 mb-0">{report.disposal_agp_unnamed}</div>
+                                            </Card>
+                                        </Col>
+                                        <Col md={2}>
+                                            <Card body className="text-center" title="Disposed under a different AGP, but before the selected start date -- outside what you asked to see. Widen the date range to include it.">
+                                                <div className="text-muted small">Outside date range</div>
+                                                <div className="h4 mb-0">{report.disposed_outside_range}</div>
                                             </Card>
                                         </Col>
                                     </Row>
