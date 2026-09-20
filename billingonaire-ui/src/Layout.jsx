@@ -8,6 +8,7 @@ import Table from './Table';
 import Upload from './Upload';
 import BillGeneration from './BillGeneration';
 import ComplianceTracker from './ComplianceTracker';
+import DisposalMismatchReport from './DisposalMismatchReport';
 import UserProfile from './UserProfile';
 import AdminUserManagement from './AdminUserManagement';
 import AdminOrderManagement from './AdminOrderManagement';
@@ -155,6 +156,9 @@ const Layout = ({ children }) => {
                   <Nav.Link as={Link} to="/compliance" className={isActive('/compliance')}>
                     Compliance Tracker
                   </Nav.Link>
+                  <Nav.Link as={Link} to="/disposal-mismatches" className={isActive('/disposal-mismatches')}>
+                    Disposal Mismatches
+                  </Nav.Link>
                   <Nav.Link as={Link} to="/profile" className={isActive('/profile')}>
                     My Profile
                   </Nav.Link>
@@ -290,6 +294,7 @@ const App = () => (
         <Route path="/upload" element={<Upload />} />
         <Route path="/bills" element={<BillGeneration />} />
         <Route path="/compliance" element={<ComplianceTracker />} />
+        <Route path="/disposal-mismatches" element={<DisposalMismatchReport />} />
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/admin/users" element={<RequireAdmin><AdminUserManagement /></RequireAdmin>} />
         <Route path="/admin/orders" element={<RequireAdmin><AdminOrderManagement /></RequireAdmin>} />

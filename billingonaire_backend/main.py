@@ -58,7 +58,7 @@ from CourtScraper import BombayHighCourtScraper  # noqa: E402
 from Dashboard import DashboardData  # noqa: E402
 from OrderManager import OrderManager  # noqa: E402
 from UserManager import UserManager  # noqa: E402
-from UserMatterMatcher import UserRole, is_bare_initials  # noqa: E402
+from UserMatterMatcher import UserRole, any_name_matches, is_bare_initials  # noqa: E402
 
 app = FastAPI(
     title="Billingonaire API",
@@ -1738,6 +1738,150 @@ async def export_compliance_excel(
     except Exception as e:
         logger.error(f"Error exporting compliance report: {e}")
         raise HTTPException(status_code=500, detail="Error exporting compliance report")
+
+
+async def _run_cross_agp_disposal_report(
+    start_date: str, end_date: str, agp_filter: Optional[str]
+):
+    """Find cases where the selected AGP appeared on one or more hearing
+    dates but the eventual disposal happened under a DIFFERENT AGP's name
+    -- e.g. Pooja Joshi Deshpande appeared on 7 Aug 2026
+    (HEARD_AND_ADJOURNED) but the matter was disposed on 8 Sep 2026 under
+    Rajan Pawar's name instead.
+
+    Pure Firestore read, no live portal calls: reuses order_history, which
+    Board.getData already hydrates onto every row from case-details for
+    every other report in this app -- the full order history for a case
+    is the same regardless of which of its hearing dates matched the date
+    range, so one row per case is enough.
+
+    A case is flagged only when:
+    - it has a DISPOSED_OFF entry in its order history,
+    - that disposal entry actually names a government pleader (an
+      unnamed disposal -- e.g. a terse "Rule made absolute" with no
+      appearance recorded -- can't be proven to be a different AGP, so
+      it's excluded rather than guessed at), and
+    - none of the disposal-time names fuzzy-match the selected AGP, and
+    - the selected AGP has at least one appearance (any category) in the
+      same case's order history strictly before the disposal date.
+    """
+    board = Board()
+    rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
+    case_store = get_auto_order_manager().case_store
+
+    seen_cases = set()
+    flagged = []
+    cases_checked = 0
+    no_disposal_yet = 0
+    already_disposed_by_same_agp = 0
+    disposal_agp_unnamed = 0
+
+    for row in rows:
+        case_ref = row.get("case_ref")
+        if not case_ref or case_ref in seen_cases:
+            continue
+        seen_cases.add(case_ref)
+        cases_checked += 1
+
+        order_history = row.get("order_history") or []
+        agp_appearances = []
+        disposal_entry = None
+        disposal_iso_date = None
+
+        for o in order_history:
+            if not isinstance(o, dict):
+                continue
+            category = _canonical_compliance_category(o.get("order_category"))
+            gp_names = o.get("government_pleader") or []
+            if isinstance(gp_names, str):
+                gp_names = [gp_names]
+            o_iso_date = case_store._to_iso_date(
+                o.get("order_date") or o.get("board_date")
+            )
+
+            if agp_filter and any_name_matches(agp_filter, gp_names):
+                agp_appearances.append({"date": o_iso_date, "category": category})
+
+            if category == "DISPOSED_OFF" and (
+                disposal_iso_date is None
+                or (o_iso_date or "") >= (disposal_iso_date or "")
+            ):
+                disposal_entry = o
+                disposal_iso_date = o_iso_date
+
+        if not disposal_entry:
+            no_disposal_yet += 1
+            continue
+
+        disposal_gp_names = disposal_entry.get("government_pleader") or []
+        if isinstance(disposal_gp_names, str):
+            disposal_gp_names = [disposal_gp_names]
+        disposal_gp_names = [n for n in disposal_gp_names if n and str(n).strip()]
+
+        if not disposal_gp_names:
+            disposal_agp_unnamed += 1
+            continue
+
+        if agp_filter and any_name_matches(agp_filter, disposal_gp_names):
+            already_disposed_by_same_agp += 1
+            continue
+
+        prior_appearances = [
+            a
+            for a in agp_appearances
+            if a["date"] and disposal_iso_date and a["date"] < disposal_iso_date
+        ]
+        if not prior_appearances:
+            continue
+
+        flagged.append(
+            {
+                "case_ref": case_ref,
+                "appearances": prior_appearances,
+                "appearances_count": len(prior_appearances),
+                "disposal_date": disposal_iso_date,
+                "disposal_agp_names": disposal_gp_names,
+                "order_link": disposal_entry.get("order_link"),
+            }
+        )
+
+    flagged.sort(key=lambda f: f["disposal_date"] or "", reverse=True)
+
+    return {
+        "cases_checked": cases_checked,
+        "flagged_count": len(flagged),
+        "no_disposal_yet": no_disposal_yet,
+        "already_disposed_by_same_agp": already_disposed_by_same_agp,
+        "disposal_agp_unnamed": disposal_agp_unnamed,
+        "results": flagged,
+    }
+
+
+@app.post("/reports/cross-agp-disposals", tags=["Compliance"])
+async def cross_agp_disposal_report(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    user_name: Optional[str] = Query(
+        None, description="Admin only: run the report for a specific AGP by name"
+    ),
+    current_user_with_profile=Depends(get_user_with_profile),
+):
+    """Report cases where the selected AGP's own appearances (HEARD_AND_
+    ADJOURNED or otherwise) were followed by a disposal recorded under a
+    different AGP's name -- see _run_cross_agp_disposal_report for the
+    exact matching rules."""
+    try:
+        agp_filter = _resolve_compliance_scan_access(
+            user_name, current_user_with_profile
+        )
+        return await _run_cross_agp_disposal_report(start_date, end_date, agp_filter)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running cross-AGP disposal report: {e}")
+        raise HTTPException(
+            status_code=500, detail="Error running cross-AGP disposal report"
+        )
 
 
 @app.get("/cases/{case_ref:path}/timeline", tags=["Data Retrieval"])
