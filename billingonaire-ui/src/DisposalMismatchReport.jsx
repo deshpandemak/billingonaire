@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Form, Button, Table as BTable, Alert, Spinner } from 'react-bootstrap';
-import { authenticatedFetchJSON } from './lib/api.js';
+import { authenticatedFetchJSON, getApiUrl } from './lib/api.js';
 import { auth } from './lib/firebase.js';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getOrderCategoryLabel, GOVERNMENT_ROLES_NOTE } from './lib/lifecycleUtils';
@@ -223,7 +223,11 @@ const DisposalMismatchReport = () => {
                                                             </td>
                                                             <td>
                                                                 {row.order_link ? (
-                                                                    <a href={row.order_link} target="_blank" rel="noopener noreferrer">
+                                                                    <a
+                                                                        href={getApiUrl(`/orders/pdf/${row.disposal_board_date}-${row.case_ref.replace(/\//g, '-')}`)}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                    >
                                                                         View
                                                                     </a>
                                                                 ) : '-'}

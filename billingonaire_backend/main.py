@@ -1840,6 +1840,14 @@ async def _run_cross_agp_disposal_report(
                 "appearances": prior_appearances,
                 "appearances_count": len(prior_appearances),
                 "disposal_date": disposal_iso_date,
+                # The daily-boards doc id (and so the /orders/pdf/{doc_id}
+                # proxy every other screen's "View" link uses) is keyed by
+                # board_date, not order_date -- they're usually the same
+                # hearing but not guaranteed to be identical.
+                "disposal_board_date": case_store._to_iso_date(
+                    disposal_entry.get("board_date")
+                )
+                or disposal_iso_date,
                 "disposal_agp_names": disposal_gp_names,
                 "order_link": disposal_entry.get("order_link"),
             }

@@ -33,6 +33,7 @@ const FLAGGED_REPORT = {
       appearances: [{ date: '2026-08-07', category: 'HEARD_AND_ADJOURNED' }],
       appearances_count: 1,
       disposal_date: '2026-09-08',
+      disposal_board_date: '2026-09-08',
       disposal_agp_names: ['Rajan Pawar'],
       order_link: 'https://storage.example/disposal.pdf',
     },
@@ -110,6 +111,13 @@ describe('DisposalMismatchReport', () => {
     expect(screen.getByText('2026-09-08')).toBeTruthy();
     expect(screen.getByText('Rajan Pawar')).toBeTruthy();
     expect(screen.getByText('Flagged').closest('.card').textContent).toContain('1');
+
+    // The order PDF link must go through the backend proxy (which streams
+    // via service-account credentials), never the raw GCS object URL --
+    // the bucket isn't publicly readable, so a direct link 403s.
+    const viewLink = screen.getByText('View');
+    expect(viewLink.getAttribute('href')).toBe('https://api.test/orders/pdf/2026-09-08-WP-1-2026');
+    expect(viewLink.getAttribute('href')).not.toContain('storage.googleapis.com');
   });
 
   it('shows a friendly empty state when nothing is flagged', async () => {

@@ -122,8 +122,53 @@ async def test_flags_a_case_disposed_under_a_different_agp(monkeypatch):
     assert flagged["appearances"][0]["date"] == "2026-08-07"
     assert flagged["appearances"][0]["category"] == "HEARD_AND_ADJOURNED"
     assert flagged["disposal_date"] == "2026-09-08"
+    assert flagged["disposal_board_date"] == "2026-09-08"
     assert flagged["disposal_agp_names"] == ["Rajan Pawar"]
     assert flagged["order_link"] == "https://storage.example/disposal.pdf"
+
+
+@pytest.mark.asyncio
+async def test_disposal_board_date_used_for_pdf_link_can_differ_from_order_date(
+    monkeypatch,
+):
+    """The daily-boards doc id (and so the /orders/pdf/{doc_id} proxy link)
+    is keyed by board_date, not order_date -- usually the same hearing but
+    not guaranteed identical, so the report must expose board_date
+    separately rather than only the order's own date."""
+    rows = [
+        _row(
+            "WP/10/2026",
+            [
+                _order(
+                    "2026-08-07",
+                    "HEARD_AND_ADJOURNED",
+                    government_pleader=["Pooja Deshpande"],
+                ),
+                {
+                    "order_date": "2026-09-10",
+                    "board_date": "2026-09-08",
+                    "order_category": "DISPOSED_OFF",
+                    "government_pleader": ["Rajan Pawar"],
+                    "order_link": "https://storage.example/disposal.pdf",
+                },
+            ],
+        )
+    ]
+    board_cls, _ = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
+
+    result = await main.cross_agp_disposal_report(
+        start_date="2026-07-01",
+        end_date="2026-09-30",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    flagged = result["results"][0]
+    assert flagged["disposal_date"] == "2026-09-10"
+    assert flagged["disposal_board_date"] == "2026-09-08"
 
 
 @pytest.mark.asyncio
