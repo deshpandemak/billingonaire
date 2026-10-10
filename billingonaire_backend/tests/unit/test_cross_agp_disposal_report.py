@@ -255,11 +255,12 @@ async def test_not_flagged_when_same_agp_disposed_it(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_not_flagged_when_disposal_names_no_one(monkeypatch):
-    """A terse disposal order ('Rule made absolute') with no appearance
-    recorded, and no board assignment on file either, can't be proven to
-    be a different AGP -- excluded rather than guessed at, and counted
-    separately for transparency."""
+async def test_flagged_with_blank_name_when_disposal_names_no_one(monkeypatch):
+    """A terse disposal order ('Rule made absolute') with no board
+    assignment on file either can't be proven to be a different AGP --
+    but the selected AGP's own earlier appearance on the case is still a
+    discrepancy worth a second look, so it's flagged with a blank
+    disposal name rather than hidden, and counted separately."""
     order_history = [
         _order(
             "2026-08-07",
@@ -281,8 +282,37 @@ async def test_not_flagged_when_disposal_names_no_one(monkeypatch):
         current_user_with_profile={"uid": "u1"},
     )
 
-    assert result["flagged_count"] == 0
+    assert result["flagged_count"] == 1
     assert result["disposal_agp_unnamed"] == 1
+    assert result["results"][0]["disposal_agp_names"] == []
+
+
+@pytest.mark.asyncio
+async def test_not_flagged_when_disposal_unnamed_and_no_prior_appearance(monkeypatch):
+    """An unnamed disposal with no appearance by the selected AGP strictly
+    before it has nothing to compare against -- not flagged, and not
+    counted in disposal_agp_unnamed either (that stat tracks flagged
+    results only)."""
+    order_history = [
+        _order("2026-09-08", "DISPOSED_OFF", government_pleader=[]),
+    ]
+    # The only matched row is the disposal hearing itself -- no appearance
+    # strictly before the disposal date.
+    rows = [_row("WP/14/2026", "2026-09-08", "DISPOSED_OFF", order_history)]
+    board_cls, _ = _mock_board(rows)
+    monkeypatch.setattr(main, "Board", board_cls)
+    monkeypatch.setattr(main, "get_user_manager", lambda: _mock_user_manager())
+    monkeypatch.setattr(main, "get_auto_order_manager", lambda: _mock_auto_mgr())
+
+    result = await main.cross_agp_disposal_report(
+        start_date="2026-07-01",
+        end_date="2026-09-30",
+        user_name=None,
+        current_user_with_profile={"uid": "u1"},
+    )
+
+    assert result["flagged_count"] == 0
+    assert result["disposal_agp_unnamed"] == 0
 
 
 @pytest.mark.asyncio

@@ -1801,17 +1801,18 @@ async def _run_cross_agp_disposal_report(
     A case is flagged only when:
     - it has a DISPOSED_OFF entry in its order history, with a disposal
       date that falls in [start_date, end_date],
-    - that disposal entry actually names a government pleader -- either
-      the order's own extracted government_pleader, or (when that
-      extraction found nothing) the board's own assigned
-      respondent_lawyer/additional_respondent_lawyers for that specific
-      hearing date, the same union-of-sources fallback Board.getData
-      itself already relies on elsewhere. An unnamed disposal even after
-      that fallback can't be proven to be a different AGP, so it's
-      excluded rather than guessed at,
-    - none of the disposal-time names fuzzy-match the selected AGP, and
+    - the disposal names a government pleader -- either the order's own
+      extracted government_pleader, or (when that extraction found
+      nothing) the board's own assigned respondent_lawyer/additional_
+      respondent_lawyers for that specific hearing date, the same
+      union-of-sources fallback Board.getData itself already relies on
+      elsewhere -- and that name does NOT fuzzy-match the selected AGP,
+      OR the disposal names no one at all even after that fallback (it
+      can't be proven to be a different AGP, so it's shown with a blank
+      name rather than guessed at, instead of being hidden), and
     - the selected AGP has at least one appearance (any category) in the
-      same case strictly before the disposal date.
+      same case strictly before the disposal date -- without that, there
+      is nothing to compare the disposal against, named or not.
     """
     board = Board()
     rows = board.getData({"startDate": start_date, "endDate": end_date}, agp_filter)
@@ -1890,11 +1891,11 @@ async def _run_cross_agp_disposal_report(
                 case_ref, disposal_board_date
             )
 
-        if not disposal_gp_names:
-            disposal_agp_unnamed += 1
-            continue
-
-        if agp_filter and any_name_matches(agp_filter, disposal_gp_names):
+        if (
+            disposal_gp_names
+            and agp_filter
+            and any_name_matches(agp_filter, disposal_gp_names)
+        ):
             already_disposed_by_same_agp += 1
             continue
 
@@ -1903,6 +1904,12 @@ async def _run_cross_agp_disposal_report(
         ]
         if not prior_appearances:
             continue
+
+        # An unnamed disposal can't be proven to be a different AGP, but the
+        # selected AGP's own prior appearance on this case is itself worth a
+        # second look -- flag it with a blank name rather than hiding it.
+        if not disposal_gp_names:
+            disposal_agp_unnamed += 1
 
         flagged.append(
             {

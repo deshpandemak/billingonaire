@@ -151,6 +151,39 @@ describe('DisposalMismatchReport', () => {
     expect(screen.getByText('Outside date range').closest('.card').textContent).toContain('4');
   });
 
+  it('shows a flagged case with an unnamed disposal as a blank "Disposed under" cell, not hidden', async () => {
+    const UNNAMED_DISPOSAL_REPORT = {
+      ...EMPTY_REPORT,
+      flagged_count: 1,
+      disposal_agp_unnamed: 1,
+      results: [
+        {
+          case_ref: 'WP/3/2026',
+          appearances: [{ date: '2026-08-07', category: 'HEARD_AND_ADJOURNED' }],
+          appearances_count: 1,
+          disposal_date: '2026-09-08',
+          disposal_board_date: '2026-09-08',
+          disposal_agp_names: [],
+          order_link: 'https://storage.example/disposal.pdf',
+        },
+      ],
+    };
+    api.authenticatedFetchJSON.mockImplementation((url) => {
+      if (url === '/admin/active-users') return Promise.resolve({ user_names: [] });
+      if (url.startsWith('/reports/cross-agp-disposals')) return Promise.resolve(UNNAMED_DISPOSAL_REPORT);
+      return Promise.resolve({});
+    });
+
+    render(<DisposalMismatchReport />);
+    await runReport();
+
+    const row = screen.getByText('WP/3/2026').closest('tr');
+    expect(row.textContent).not.toContain('No mismatches found');
+    const disposedUnderCell = row.querySelectorAll('td')[3];
+    expect(disposedUnderCell.textContent).toBe('');
+    expect(screen.getByText('Disposal AGP unnamed').closest('.card').textContent).toContain('1');
+  });
+
   it('an admin can pick a specific AGP and the report includes user_name', async () => {
     mockAdminUsers(['Pooja Deshpande']);
     let capturedUrl = null;

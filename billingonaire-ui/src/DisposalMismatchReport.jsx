@@ -91,7 +91,9 @@ const DisposalMismatchReport = () => {
                                 and the disposal must fall within the selected date range — a case you
                                 handled in an earlier period, disposed under someone else's name outside
                                 this window, won't surface; pick a wider range to include it. A disposal
-                                order that names no one is left out rather than guessed at.
+                                order that names no one can't be proven to be a different AGP, but your
+                                earlier appearance is still a discrepancy worth a look — it's flagged
+                                with a blank name rather than hidden.
                                 {' '}{GOVERNMENT_ROLES_NOTE}
                             </p>
 
@@ -185,7 +187,7 @@ const DisposalMismatchReport = () => {
                                             </Card>
                                         </Col>
                                         <Col md={2}>
-                                            <Card body className="text-center" title="Disposal order names no government pleader (even after checking the board assignment for that date) -- can't confirm a mismatch, so excluded from the flagged list.">
+                                            <Card body className="text-center" title="Among the flagged cases, these disposal orders name no government pleader (even after checking the board assignment for that date) -- shown with a blank 'Disposed under' rather than guessed at.">
                                                 <div className="text-muted small">Disposal AGP unnamed</div>
                                                 <div className="h4 mb-0">{report.disposal_agp_unnamed}</div>
                                             </Card>
