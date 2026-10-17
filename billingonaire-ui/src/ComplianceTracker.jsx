@@ -296,6 +296,12 @@ const ComplianceTracker = () => {
                                             </Card>
                                         </Col>
                                         <Col md={2}>
+                                            <Card body className="text-center" title="Bare 'S.O. to <date>' orders -- a billable appearance, but nothing substantive to direct anyone to do, so skipped the same as a plain adjournment.">
+                                                <div className="text-muted small">Stand over (skipped)</div>
+                                                <div className="h4 mb-0">{report.stand_over_skipped}</div>
+                                            </Card>
+                                        </Col>
+                                        <Col md={2}>
                                             <Card body className="text-center">
                                                 <div className="text-muted small">Disposed cases</div>
                                                 <div className="h4 mb-0">{report.disposed_count}</div>

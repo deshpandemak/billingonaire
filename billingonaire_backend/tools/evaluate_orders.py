@@ -73,7 +73,7 @@ if "spacy" not in sys.modules:
         sys.modules["spacy"] = spacy_stub
         sys.modules["spacy.matcher"] = matcher_stub
 
-CATEGORIES = ("ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF")
+CATEGORIES = ("ADJOURNED", "HEARD_AND_ADJOURNED", "STAND_OVER", "DISPOSED_OFF")
 
 # Accept common spellings of the categories in labels/folder names.
 _CATEGORY_ALIASES = {
@@ -87,6 +87,11 @@ _CATEGORY_ALIASES = {
     "HEARD&ADJOURNED": "HEARD_AND_ADJOURNED",
     "HEARD": "HEARD_AND_ADJOURNED",
     "H_AND_A": "HEARD_AND_ADJOURNED",
+    "STAND_OVER": "STAND_OVER",
+    "STAND OVER": "STAND_OVER",
+    "STANDOVER": "STAND_OVER",
+    "S.O.": "STAND_OVER",
+    "SO": "STAND_OVER",
     "DISPOSED_OFF": "DISPOSED_OFF",
     "DISPOSED OFF": "DISPOSED_OFF",
     "DISPOSED": "DISPOSED_OFF",

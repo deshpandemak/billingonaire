@@ -13,6 +13,7 @@ try:
 except ImportError:  # pragma: no cover
     gcs_storage = None  # type: ignore[assignment]
 
+from Board import Board
 from CourtScraper import BombayHighCourtScraper
 
 try:
@@ -1182,6 +1183,167 @@ class AutoOrderManager:
             summary["dates_scanned"],
             summary["resolved"],
             summary["still_pending"],
+            summary["errors"],
+        )
+        return summary
+
+    # Legacy/display spellings of HEARD_AND_ADJOURNED -- a backfill scan has
+    # to recognise whichever one a case was stored under, same as
+    # main._COMPLIANCE_CATEGORY_ALIASES (duplicated here in miniature to
+    # avoid an AutoOrderManager -> main import, which main already imports
+    # the other way around).
+    _HEARD_AND_ADJOURNED_SPELLINGS = frozenset(
+        {
+            "HEARD_AND_ADJOURNED",
+            "HEARD & ADJN",
+            "HEARD & ADJN.",
+            "HEARD & ADJRN",
+            "HEARD AND ADJOURNED",
+        }
+    )
+
+    def find_standover_backfill_candidates(
+        self, start_date: str, end_date: str, limit: int = 500
+    ) -> Dict[str, Any]:
+        """Scan already-analysed HEARD_AND_ADJOURNED orders in
+        [start_date, end_date] and report which ones the CURRENT classifier
+        -- now that it knows about the bare-stand-over STAND_OVER category --
+        would reclassify, without writing anything.
+
+        Read-only preview for apply_standover_backfill below: re-derives
+        each candidate's category from its already-stored order text (the
+        same GCS text blob reclassify_pending_order reads, no PDF re-fetch
+        or re-OCR) and reports it, but never writes. Only orders whose
+        stored text resolves to the new STAND_OVER category are surfaced as
+        candidates -- most HEARD_AND_ADJOURNED orders are genuine hearings
+        and are expected to classify the same way as before.
+
+        A case analysed before order-text persistence shipped has no
+        order_text_url and cannot be previewed this way; it is counted in
+        ``no_stored_text`` rather than silently skipped.
+        """
+        board = Board()
+        rows = board.getData({"startDate": start_date, "endDate": end_date}, None)
+
+        seen: Set[Any] = set()
+        candidates: List[Dict[str, Any]] = []
+        scanned = 0
+        no_stored_text = 0
+        errors = 0
+
+        for row in rows:
+            case_ref = row.get("case_ref")
+            category_raw = str(row.get("order_category") or "").strip().upper()
+            if not case_ref or category_raw not in self._HEARD_AND_ADJOURNED_SPELLINGS:
+                continue
+            order_date = self._normalise_order_date(
+                row.get("order_date") or row.get("board_date")
+            )
+            if not order_date:
+                continue
+            key = (case_ref, order_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(seen) > limit:
+                break
+            scanned += 1
+
+            order = self._get_analysed_order_for_date(case_ref, order_date) or {}
+            order_text_url = order.get("order_text_url")
+            if not order_text_url:
+                no_stored_text += 1
+                continue
+
+            try:
+                order_text = self._download_gcs_text(order_text_url)
+            except Exception as exc:  # noqa: BLE001 - one bad blob must not
+                # abort the whole scan.
+                logger.warning(
+                    "find_standover_backfill_candidates: text fetch failed "
+                    "for case_ref=%s date=%s: %s",
+                    case_ref,
+                    order_date,
+                    exc,
+                )
+                errors += 1
+                continue
+
+            if not order_text.strip():
+                no_stored_text += 1
+                continue
+
+            document_structure = self.order_analyzer._parse_document_structure(
+                order_text
+            )
+            new_category, new_confidence = self.order_analyzer._classify_order_enhanced(
+                order_text, document_structure
+            )
+            if new_category == "STAND_OVER":
+                candidates.append(
+                    {
+                        "case_ref": case_ref,
+                        "order_date": order_date,
+                        "board_date": row.get("board_date"),
+                        "old_category": category_raw,
+                        "new_confidence": new_confidence,
+                    }
+                )
+
+        logger.info(
+            "find_standover_backfill_candidates: scanned %d, candidates %d, "
+            "no_stored_text %d, errors %d",
+            scanned,
+            len(candidates),
+            no_stored_text,
+            errors,
+        )
+        return {
+            "scanned": scanned,
+            "candidates_found": len(candidates),
+            "no_stored_text": no_stored_text,
+            "errors": errors,
+            "candidates": candidates,
+        }
+
+    def apply_standover_backfill(
+        self, candidates: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Write the STAND_OVER reclassification for each candidate found by
+        find_standover_backfill_candidates.
+
+        Delegates the actual write to reclassify_pending_order -- the exact
+        same tested code path reclassify_all_pending_reviews uses -- rather
+        than duplicating its Firestore/daily-boards update logic here.
+        """
+        summary = {"applied": 0, "unchanged": 0, "errors": 0, "results": []}
+        for candidate in candidates:
+            case_ref = candidate.get("case_ref")
+            order_date = candidate.get("order_date")
+            try:
+                result = self.reclassify_pending_order(case_ref, order_date)
+            except Exception as exc:  # noqa: BLE001 - one bad case must not
+                # abort the whole backfill run.
+                logger.error(
+                    "apply_standover_backfill: unexpected error for "
+                    "case_ref=%s date=%s: %s",
+                    case_ref,
+                    order_date,
+                    exc,
+                    exc_info=True,
+                )
+                summary["errors"] += 1
+                continue
+            if result.get("resolved") and result.get("new_category") == "STAND_OVER":
+                summary["applied"] += 1
+            else:
+                summary["unchanged"] += 1
+            summary["results"].append(result)
+
+        logger.info(
+            "apply_standover_backfill: applied %d, unchanged %d, errors %d",
+            summary["applied"],
+            summary["unchanged"],
             summary["errors"],
         )
         return summary

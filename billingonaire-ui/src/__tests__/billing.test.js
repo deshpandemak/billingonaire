@@ -16,6 +16,7 @@ describe('billing contract', () => {
     expect(BILLING_OUTCOMES.map((o) => o.result)).toEqual([
       'ADJOURNED',
       'HEARD & ADJN.',
+      'STAND OVER',
       'WP DISPOSED OF',
     ]);
   });
@@ -23,6 +24,7 @@ describe('billing contract', () => {
   it('keeps the exact fee amounts', () => {
     expect(feeForResult('ADJOURNED')).toBe(1250);
     expect(feeForResult('HEARD & ADJN.')).toBe(1875);
+    expect(feeForResult('STAND OVER')).toBe(1875);
     expect(feeForResult('WP DISPOSED OF')).toBe(2500);
   });
 

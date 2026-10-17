@@ -2220,4 +2220,258 @@ class TestReclassifyAllPendingReviews:
         summary = auto_order_manager.reclassify_all_pending_reviews(limit=10)
 
         assert summary["errors"] == 1
-        assert summary["resolved"] == 0
+
+
+class TestFindStandoverBackfillCandidates:
+    """Read-only preview for the STAND_OVER backfill: re-derives each
+    already-stored HEARD_AND_ADJOURNED order's category from its stored
+    text (same GCS blob reclassify_pending_order reads) and reports which
+    ones the current classifier -- now STAND_OVER-aware -- would flip,
+    without writing anything."""
+
+    def _row(self, case_ref, order_date, category="HEARD_AND_ADJOURNED", **overrides):
+        row = {
+            "case_ref": case_ref,
+            "order_date": order_date,
+            "board_date": order_date,
+            "order_category": category,
+        }
+        row.update(overrides)
+        return row
+
+    def test_reports_a_candidate_that_now_resolves_to_stand_over(
+        self, auto_order_manager
+    ):
+        rows = [self._row("WP/1/2026", "2026-09-30")]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                return_value="S. O. to 06/10/2026 ( at 3.00 pm)."
+            )
+            auto_order_manager.order_analyzer._parse_document_structure = Mock(
+                return_value={"document_type": "COMPLETE_ORDER"}
+            )
+            auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+                return_value=("STAND_OVER", 0.9)
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        mock_board_cls.return_value.getData.assert_called_once_with(
+            {"startDate": "2026-09-01", "endDate": "2026-09-30"}, None
+        )
+        assert result["scanned"] == 1
+        assert result["candidates_found"] == 1
+        assert result["no_stored_text"] == 0
+        assert result["errors"] == 0
+        assert result["candidates"][0]["case_ref"] == "WP/1/2026"
+        assert result["candidates"][0]["order_date"] == "2026-09-30"
+        assert result["candidates"][0]["new_confidence"] == 0.9
+
+    def test_a_genuine_heard_and_adjourned_is_not_a_candidate(self, auto_order_manager):
+        rows = [self._row("WP/2/2026", "2026-09-30")]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                return_value="Heard, stand over to 10/10/2026."
+            )
+            auto_order_manager.order_analyzer._parse_document_structure = Mock(
+                return_value={"document_type": "COMPLETE_ORDER"}
+            )
+            auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+                return_value=("HEARD_AND_ADJOURNED", 0.85)
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 1
+        assert result["candidates_found"] == 0
+        assert result["candidates"] == []
+
+    def test_rows_outside_heard_and_adjourned_are_never_scanned(
+        self, auto_order_manager
+    ):
+        rows = [
+            self._row("WP/3/2026", "2026-09-10", category="ADJOURNED"),
+            self._row("WP/4/2026", "2026-09-11", category="DISPOSED_OFF"),
+        ]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock()
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 0
+        auto_order_manager._get_analysed_order_for_date.assert_not_called()
+
+    def test_legacy_spellings_of_heard_and_adjourned_are_recognised(
+        self, auto_order_manager
+    ):
+        rows = [self._row("WP/5/2026", "2026-09-12", category="HEARD & ADJN.")]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                return_value="S.O. to 1/1/2027."
+            )
+            auto_order_manager.order_analyzer._parse_document_structure = Mock(
+                return_value={"document_type": "COMPLETE_ORDER"}
+            )
+            auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+                return_value=("STAND_OVER", 0.9)
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 1
+        assert result["candidates_found"] == 1
+
+    def test_missing_order_text_url_is_counted_not_skipped_silently(
+        self, auto_order_manager
+    ):
+        rows = [self._row("WP/6/2026", "2026-09-13")]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(return_value={})
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 1
+        assert result["no_stored_text"] == 1
+        assert result["candidates_found"] == 0
+
+    def test_a_text_fetch_failure_is_counted_not_raised(self, auto_order_manager):
+        rows = [self._row("WP/7/2026", "2026-09-14")]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                side_effect=Exception("blob missing")
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 1
+        assert result["errors"] == 1
+        assert result["candidates_found"] == 0
+
+    def test_duplicate_rows_for_the_same_case_and_date_are_counted_once(
+        self, auto_order_manager
+    ):
+        """A case adjourned/heard multiple times in one day's board scan
+        can produce more than one row for the same (case, date) pair --
+        must not be double-scanned or double-reported."""
+        rows = [
+            self._row("WP/8/2026", "2026-09-15"),
+            self._row("WP/8/2026", "2026-09-15"),
+        ]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                return_value="S.O. to 1/1/2027."
+            )
+            auto_order_manager.order_analyzer._parse_document_structure = Mock(
+                return_value={"document_type": "COMPLETE_ORDER"}
+            )
+            auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+                return_value=("STAND_OVER", 0.9)
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30"
+            )
+
+        assert result["scanned"] == 1
+        assert result["candidates_found"] == 1
+
+    def test_limit_bounds_how_many_candidate_pairs_are_scanned(
+        self, auto_order_manager
+    ):
+        rows = [self._row(f"WP/{i}/2026", f"2026-09-{10 + i:02d}") for i in range(5)]
+        with patch("billingonaire_backend.AutoOrderManager.Board") as mock_board_cls:
+            mock_board_cls.return_value.getData.return_value = rows
+            auto_order_manager._get_analysed_order_for_date = Mock(
+                return_value={
+                    "order_text_url": "https://storage.googleapis.com/b/t.txt"
+                }
+            )
+            auto_order_manager._download_gcs_text = Mock(
+                return_value="S.O. to 1/1/2027."
+            )
+            auto_order_manager.order_analyzer._parse_document_structure = Mock(
+                return_value={"document_type": "COMPLETE_ORDER"}
+            )
+            auto_order_manager.order_analyzer._classify_order_enhanced = Mock(
+                return_value=("STAND_OVER", 0.9)
+            )
+
+            result = auto_order_manager.find_standover_backfill_candidates(
+                "2026-09-01", "2026-09-30", limit=2
+            )
+
+        assert result["scanned"] == 2
+
+
+class TestApplyStandoverBackfill:
+    """Writes the STAND_OVER reclassification for each candidate found by
+    find_standover_backfill_candidates, delegating to the already-tested
+    reclassify_pending_order for the actual write."""
+
+    def test_tallies_applied_unchanged_and_errors(self, auto_order_manager):
+        candidates = [
+            {"case_ref": "WP/1/2026", "order_date": "2026-09-30"},
+            {"case_ref": "WP/2/2026", "order_date": "2026-09-30"},
+            {"case_ref": "WP/3/2026", "order_date": "2026-09-30"},
+        ]
+
+        def _fake_reclassify(case_ref, order_date):
+            if case_ref == "WP/1/2026":
+                return {"resolved": True, "new_category": "STAND_OVER"}
+            if case_ref == "WP/2/2026":
+                return {"resolved": True, "new_category": "HEARD_AND_ADJOURNED"}
+            raise RuntimeError("boom")
+
+        auto_order_manager.reclassify_pending_order = Mock(side_effect=_fake_reclassify)
+
+        summary = auto_order_manager.apply_standover_backfill(candidates)
+
+        assert summary["applied"] == 1
+        assert summary["unchanged"] == 1
+        assert summary["errors"] == 1
+        assert len(summary["results"]) == 2
+        assert auto_order_manager.reclassify_pending_order.call_count == 3

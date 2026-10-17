@@ -5,6 +5,7 @@ import { authenticatedFetchJSON, getApiUrl } from '../lib/api';
 const ORDER_CATEGORIES = [
   { value: 'ADJOURNED',           label: 'Adjourned',    variant: 'warning' },
   { value: 'HEARD_AND_ADJOURNED', label: 'Heard & Adj.', variant: 'info'    },
+  { value: 'STAND_OVER',          label: 'Stand Over',   variant: 'secondary' },
   { value: 'DISPOSED_OFF',        label: 'Disposed',     variant: 'success' },
 ];
 

@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 FEE_SCHEDULE = {
     "WP DISPOSED OF": 2500,
     "HEARD & ADJN.": 1875,
+    "STAND OVER": 1875,
     "ADJOURNED": 1250,
     "*ADJOURNED*": 1250,
 }

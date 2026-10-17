@@ -1209,9 +1209,14 @@ async def get_cases_lifecycle(
         raise HTTPException(status_code=500, detail="Error retrieving lifecycle data")
 
 
-_COMPLIANCE_CANONICAL_CATEGORIES = {"ADJOURNED", "HEARD_AND_ADJOURNED", "DISPOSED_OFF"}
+_COMPLIANCE_CANONICAL_CATEGORIES = {
+    "ADJOURNED",
+    "HEARD_AND_ADJOURNED",
+    "STAND_OVER",
+    "DISPOSED_OFF",
+}
 
-# Legacy/display spellings that mean the same three categories -- mirrors
+# Legacy/display spellings that mean the same four categories -- mirrors
 # billingonaire-ui/src/lib/lifecycleUtils.js's CATEGORY_ALIASES so an older
 # board row's differently-spelled category isn't silently excluded from a
 # compliance scan.
@@ -1220,6 +1225,8 @@ _COMPLIANCE_CATEGORY_ALIASES = {
     "HEARD & ADJN.": "HEARD_AND_ADJOURNED",
     "HEARD & ADJRN": "HEARD_AND_ADJOURNED",
     "HEARD AND ADJOURNED": "HEARD_AND_ADJOURNED",
+    "STAND OVER": "STAND_OVER",
+    "S.O.": "STAND_OVER",
     "WP DISPOSED OF": "DISPOSED_OFF",
     "DISPOSED OF": "DISPOSED_OFF",
     "DISPOSAL": "DISPOSED_OFF",
@@ -1282,6 +1289,7 @@ async def _run_compliance_scan(
     llm_errors = 0
     orders_scanned = 0
     adjourned_skipped = 0
+    stand_over_skipped = 0
 
     # Full universe this AGP+date-range matched, before any category
     # filtering -- lets the UI show "scanned N of M matters" instead of
@@ -1303,6 +1311,13 @@ async def _run_compliance_scan(
         if category not in ("HEARD_AND_ADJOURNED", "DISPOSED_OFF"):
             if category == "ADJOURNED":
                 adjourned_skipped += 1
+            elif category == "STAND_OVER":
+                # A bare "S.O. to <date>" order has nothing substantive to
+                # direct anyone to do -- same reasoning as skipping a plain
+                # ADJOURNED, just tracked separately so the breakdown stays
+                # legible (it's still a billable appearance, unlike a true
+                # ADJOURNED).
+                stand_over_skipped += 1
             continue
         orders_scanned += 1
         if category == "DISPOSED_OFF":
@@ -1501,6 +1516,7 @@ async def _run_compliance_scan(
         "total_matters": total_matters,
         "orders_scanned": orders_scanned,
         "adjourned_skipped": adjourned_skipped,
+        "stand_over_skipped": stand_over_skipped,
         "disposed_count": disposed_count,
         "newly_scanned": newly_scanned,
         "llm_errors": llm_errors,
@@ -1618,6 +1634,7 @@ def build_compliance_workbook(
         ("Matters in range", report.get("total_matters", 0)),
         ("Orders scanned", report.get("orders_scanned", 0)),
         ("Adjourned (skipped)", report.get("adjourned_skipped", 0)),
+        ("Stand over (skipped)", report.get("stand_over_skipped", 0)),
         ("Disposed cases", report.get("disposed_count", 0)),
         ("Newly scanned", report.get("newly_scanned", 0)),
         ("Portal-checked (this scan)", report.get("portal_checked", 0)),
@@ -3404,6 +3421,7 @@ def get_analysis_statistics(current_user=Depends(get_current_user)):
             "category_distribution": {
                 "ADJOURNED": 0,
                 "HEARD_AND_ADJOURNED": 0,
+                "STAND_OVER": 0,
                 "DISPOSED_OFF": 0,
             },
             "avg_confidence": 0.0,
@@ -4999,6 +5017,60 @@ async def admin_reclassify_review_queue(
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to reclassify review queue: {str(e)}"},
+        )
+
+
+@app.post("/admin/orders/standover-backfill", tags=["Admin Order Management"])
+async def admin_standover_backfill(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    dry_run: bool = Query(
+        True,
+        description=(
+            "True (default): scan and report candidates without writing "
+            "anything. False: also apply the reclassification to every "
+            "candidate found."
+        ),
+    ),
+    limit: int = Query(
+        500, description="Maximum candidate (case, date) pairs to scan."
+    ),
+    current_user=Depends(require_admin),
+):
+    """Backfill the new STAND_OVER category onto already-analysed orders.
+
+    A bare "S.O. to <date>" order with an AGP named used to be classified
+    HEARD_AND_ADJOURNED (the AGP-presence business rule had no finer
+    category to use); the classifier now tells those apart. This endpoint
+    re-derives the category for every HEARD_AND_ADJOURNED order already on
+    file in [start_date, end_date] from its stored order text (no PDF
+    re-fetch) and, unless dry_run, writes the STAND_OVER reclassification
+    for whichever ones now resolve to it -- genuine heard-and-adjourned
+    orders are left untouched.
+    """
+    try:
+        manager = get_auto_order_manager()
+        loop = asyncio.get_event_loop()
+        scan = await loop.run_in_executor(
+            executor,
+            manager.find_standover_backfill_candidates,
+            start_date,
+            end_date,
+            limit,
+        )
+
+        if dry_run or not scan.get("candidates"):
+            return JSONResponse(content={"dry_run": dry_run, **scan})
+
+        apply_summary = await loop.run_in_executor(
+            executor, manager.apply_standover_backfill, scan["candidates"]
+        )
+        return JSONResponse(content={"dry_run": False, **scan, "apply": apply_summary})
+    except Exception as e:
+        logger.error(f"Error running stand-over backfill: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Stand-over backfill failed: {str(e)}"},
         )
 
 
@@ -7417,6 +7489,22 @@ def calculate_case_fee(
         elif "HEARD" in order_category and "ADJOURNED" in order_category:
             return {
                 "result": "HEARD & ADJN.",
+                "fee": 1875,
+                "order_link": order_link,
+                "order_category": order_category,
+                "order_category_confidence": category_confidence,
+            }
+
+        # Stand over: a bare "S.O. to <date>" order with an AGP named -- still
+        # a billable appearance (same reasoning as heard & adjourned, the
+        # category this used to be folded into), so it carries the same
+        # fee. Checked before the plain "ADJOURNED" branch below --
+        # "STAND_OVER" does not contain the substring "ADJOURNED" so order
+        # does not actually matter here, but keeping it alongside the HEARD
+        # branch above keeps the billable-appearance categories grouped.
+        elif "STAND_OVER" in order_category:
+            return {
+                "result": "STAND OVER",
                 "fee": 1875,
                 "order_link": order_link,
                 "order_category": order_category,

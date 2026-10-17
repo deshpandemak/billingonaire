@@ -705,7 +705,7 @@ const BillGeneration = () => {
                                                 // court order vs an assumed adjournment.
                                                 const entries = billData.bill_entries || [];
                                                 if (!entries.length) return null;
-                                                const counts = { DISPOSED_OFF: 0, HEARD_AND_ADJOURNED: 0, ADJOURNED: 0 };
+                                                const counts = { DISPOSED_OFF: 0, HEARD_AND_ADJOURNED: 0, STAND_OVER: 0, ADJOURNED: 0 };
                                                 let assumed = 0;
                                                 entries.forEach((e) => {
                                                     if (isUnverifiedResult(e.results)) { assumed += 1; return; }
@@ -717,6 +717,7 @@ const BillGeneration = () => {
                                                     <p className="mb-0 mt-1 d-flex gap-2 flex-wrap" style={{ fontSize: '0.8rem' }}>
                                                         <span className="badge bg-success">{ORDER_CATEGORY_LABELS.DISPOSED_OFF}: {counts.DISPOSED_OFF}</span>
                                                         <span className="badge bg-info text-dark">{ORDER_CATEGORY_LABELS.HEARD_AND_ADJOURNED}: {counts.HEARD_AND_ADJOURNED}</span>
+                                                        <span className="badge" style={{ backgroundColor: '#e2d9f3', color: '#4b2e83' }}>{ORDER_CATEGORY_LABELS.STAND_OVER}: {counts.STAND_OVER}</span>
                                                         <span className="badge bg-warning text-dark">{ORDER_CATEGORY_LABELS.ADJOURNED}: {counts.ADJOURNED}</span>
                                                         {assumed > 0 && (
                                                             <span className="badge bg-secondary" title="No analysed order on file — adjournment assumed.">
@@ -987,8 +988,12 @@ const BillGeneration = () => {
                                                                     className={`badge ${
                                                                         isUnverifiedResult(entry.results) ? 'bg-secondary' :
                                                                         entry.results.includes('DISPOSED') ? 'bg-success' :
+                                                                        entry.results.includes('STAND OVER') ? 'text-dark' :
                                                                         entry.results.includes('ADJOURNED') ? 'bg-warning' : 'bg-info'
                                                                     }`}
+                                                                    style={!isUnverifiedResult(entry.results) && entry.results.includes('STAND OVER')
+                                                                        ? { backgroundColor: '#e2d9f3', color: '#4b2e83' }
+                                                                        : undefined}
                                                                     title={isUnverifiedResult(entry.results)
                                                                         ? 'No analysed order on file for this hearing — adjournment assumed. Check before billing.'
                                                                         : undefined}

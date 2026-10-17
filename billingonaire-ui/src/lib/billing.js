@@ -13,6 +13,7 @@
 export const BILLING_OUTCOMES = [
   { result: 'ADJOURNED',      fee: 1250, label: 'Adjourned' },
   { result: 'HEARD & ADJN.',  fee: 1875, label: 'Heard & adjourned' },
+  { result: 'STAND OVER',     fee: 1875, label: 'Stand over' },
   { result: 'WP DISPOSED OF', fee: 2500, label: 'Disposed of' },
 ];
 

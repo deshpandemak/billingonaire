@@ -169,15 +169,18 @@ export const getSimpleStatus = (lifecycleStatus) => {
 export const ORDER_CATEGORY_LABELS = {
   ADJOURNED:           'Adjourned',
   HEARD_AND_ADJOURNED: 'Heard & adjourned',
+  STAND_OVER:          'Stand over',
   DISPOSED_OFF:        'Disposed of',
 };
 
-// Legacy/display spellings that mean the same three things.
+// Legacy/display spellings that mean the same four things.
 const CATEGORY_ALIASES = {
   'HEARD & ADJN': 'HEARD_AND_ADJOURNED',
   'HEARD & ADJN.': 'HEARD_AND_ADJOURNED',
   'HEARD & ADJRN': 'HEARD_AND_ADJOURNED',
   'HEARD AND ADJOURNED': 'HEARD_AND_ADJOURNED',
+  'STAND OVER': 'STAND_OVER',
+  'S.O.': 'STAND_OVER',
   'WP DISPOSED OF': 'DISPOSED_OFF',
   'DISPOSED OF': 'DISPOSED_OFF',
   'DISPOSAL': 'DISPOSED_OFF',

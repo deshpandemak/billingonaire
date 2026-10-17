@@ -25,6 +25,15 @@ const AdminOrderManagement = () => {
     const [limit, setLimit] = useState(100);
     const [daysBack, setDaysBack] = useState(30);
     const [confirmState, setConfirmState] = useState({ show: false, title: '', body: '', onConfirm: null });
+    const [standoverRange, setStandoverRange] = useState(() => {
+        const today = new Date();
+        const start = new Date(today);
+        start.setDate(start.getDate() - 90);
+        const fmt = (d) => d.toISOString().slice(0, 10);
+        return { startDate: fmt(start), endDate: fmt(today) };
+    });
+    const [standoverScanning, setStandoverScanning] = useState(false);
+    const [standoverResult, setStandoverResult] = useState(null);
     // /admin/review now redirects here with ?tab=review.
     const [activeTab, setActiveTab] = useState(
         () => (new URLSearchParams(window.location.search).get('tab') === 'review' ? 'review' : 'pipeline')
@@ -246,6 +255,46 @@ const AdminOrderManagement = () => {
             setMessage({ type: 'danger', text: 'Failed to queue analysis: ' + error.message });
         } finally {
             setProcessing(false);
+        }
+    };
+
+    const runStandoverBackfill = async (dryRun) => {
+        try {
+            setStandoverScanning(true);
+            setMessage(null);
+            const idToken = await currentUser.getIdToken();
+            const params = new URLSearchParams({
+                start_date: standoverRange.startDate,
+                end_date: standoverRange.endDate,
+                dry_run: String(dryRun),
+                limit: '500',
+            });
+            const response = await fetch(`${API_URL}/admin/orders/standover-backfill?${params}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${idToken}` },
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                setMessage({ type: 'danger', text: data.error || 'Stand-over backfill failed' });
+                return;
+            }
+            setStandoverResult(data);
+            if (dryRun) {
+                setMessage({
+                    type: 'info',
+                    text: `Scanned ${data.scanned} Heard & Adjourned order(s) — ${data.candidates_found} would become Stand Over.`
+                });
+            } else {
+                setMessage({
+                    type: 'success',
+                    text: `✅ Applied: ${data.apply?.applied ?? 0} reclassified to Stand Over (${data.apply?.errors ?? 0} errors).`
+                });
+                setStandoverResult(null);
+            }
+        } catch (error) {
+            setMessage({ type: 'danger', text: 'Stand-over backfill failed: ' + error.message });
+        } finally {
+            setStandoverScanning(false);
         }
     };
 
@@ -593,6 +642,99 @@ const AdminOrderManagement = () => {
                                     </Col>
                                 </Row>
                             </Form>
+                        </Card.Body>
+                    </Card>
+                </Col>
+            </Row>
+
+            <Row>
+                <Col lg={12}>
+                    <Card className="shadow-sm">
+                        <Card.Header className="bg-secondary text-white">
+                            <h5 className="mb-0">Stand Over Backfill</h5>
+                        </Card.Header>
+                        <Card.Body>
+                            <p className="text-muted">
+                                A bare &quot;S.O. to &lt;date&gt;&quot; order with an AGP named used to be
+                                classified Heard &amp; Adjourned. The classifier now tells those apart as
+                                a separate Stand Over category. This re-derives the category for every
+                                already-analysed Heard &amp; Adjourned order in the range below from its
+                                stored order text (no PDF re-fetch) — <strong>Preview</strong> shows what
+                                would change without writing anything; <strong>Apply</strong> writes the
+                                reclassification for whatever Preview found.
+                            </p>
+                            <Form>
+                                <Row className="mb-3">
+                                    <Col md={3}>
+                                        <Form.Group>
+                                            <Form.Label><strong>Start Date</strong></Form.Label>
+                                            <Form.Control
+                                                type="date"
+                                                value={standoverRange.startDate}
+                                                onChange={(e) => setStandoverRange(r => ({ ...r, startDate: e.target.value }))}
+                                            />
+                                        </Form.Group>
+                                    </Col>
+                                    <Col md={3}>
+                                        <Form.Group>
+                                            <Form.Label><strong>End Date</strong></Form.Label>
+                                            <Form.Control
+                                                type="date"
+                                                value={standoverRange.endDate}
+                                                onChange={(e) => setStandoverRange(r => ({ ...r, endDate: e.target.value }))}
+                                            />
+                                        </Form.Group>
+                                    </Col>
+                                </Row>
+                                <Row>
+                                    <Col>
+                                        <Button
+                                            variant="outline-secondary"
+                                            onClick={() => runStandoverBackfill(true)}
+                                            disabled={standoverScanning}
+                                            className="me-2"
+                                        >
+                                            {standoverScanning ? (
+                                                <>
+                                                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                    Scanning...
+                                                </>
+                                            ) : 'Preview'}
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            onClick={() => requireConfirm(
+                                                'Apply Stand Over Backfill',
+                                                `Reclassify ${standoverResult?.candidates_found ?? 0} order(s) from Heard & Adjourned to Stand Over?`,
+                                                () => runStandoverBackfill(false)
+                                            )}
+                                            disabled={standoverScanning || !standoverResult?.candidates_found}
+                                        >
+                                            Apply
+                                        </Button>
+                                    </Col>
+                                </Row>
+                            </Form>
+                            {standoverResult && (
+                                <Table size="sm" className="mt-3 mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Case</th>
+                                            <th>Order date</th>
+                                            <th>New confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(standoverResult.candidates || []).map((c) => (
+                                            <tr key={`${c.case_ref}-${c.order_date}`}>
+                                                <td>{c.case_ref}</td>
+                                                <td>{c.order_date}</td>
+                                                <td>{c.new_confidence?.toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </Table>
+                            )}
                         </Card.Body>
                     </Card>
                 </Col>

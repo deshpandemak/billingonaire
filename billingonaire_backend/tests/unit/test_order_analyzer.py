@@ -674,6 +674,138 @@ class TestCategoryClassification:
         category, confidence = analyzer._classify_order_enhanced(text, structure)
         assert category == "ADJOURNED"
 
+    # ------------------------------------------------------------------
+    # STAND_OVER: a bare "S.O. to <date>" order -- the ENTIRE operative
+    # text between the "P.C. :" marker and the court's own PDF-footer
+    # boilerplate is nothing but that clause -- with an AGP named is still
+    # a billable appearance, but distinct from a genuine
+    # HEARD_AND_ADJOURNED outcome where something was actually argued.
+    # ------------------------------------------------------------------
+
+    def test_bare_standover_with_agp_named_is_stand_over(self, analyzer):
+        """The real order this category exists for: WP/8071/2026, 30 Sep
+        2026 -- an AGP and Addl. GP are both named, and the entire order
+        is 'S. O. to 06/10/2026 ( at 3.00 pm).', nothing else."""
+        text = (
+            "Board Sr.No.:-2 IN THE HIGH COURT OF JUDICATURE AT BOMBAY "
+            "APPELLATE SIDE CIVIL JURISDICTION WRIT PETITION NO. 8071 OF "
+            "2026 Ketan Pandurang Nayak ....PETITIONER V/S State Of "
+            "Maharashtra And Ors ....RESPONDENT Sr. Adv. Abhay "
+            "Khandeparkar a/w Adv. Prerak Sharma i/by Adv. Prerak Sharma "
+            "for Petitioner. Adv. Krishkumar Jain for Respondent No.3. "
+            "Adv. P. P. Kakade, Addl. GP a/w Adv. P. J. Gavhane, AGP for "
+            "State. CORAM : HON'BLE SHRI JUSTICE ARUN R. PEDNEKER J DATE "
+            ": 30th September, 2026 P.C. : S. O. to 06/10/2026 ( at 3.00 "
+            "pm). ( FOR REGISTRAR JUDICIAL - I ) Page 1/1 CNR No : "
+            "HCBM010276382026 Uploaded on - 30/09/2026 Downloaded on - "
+            "07/10/2026 19:48:57 Powered by TCPDF (www.tcpdf.org) "
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "STAND_OVER"
+        assert confidence >= 0.55
+
+    def test_bare_standover_without_to_and_without_time_is_stand_over(self, analyzer):
+        """'S.O. <date>' with no 'to' and no time -- still a bare clause."""
+        text = (
+            "WRIT PETITION NO. 103 OF 2026 Adv. P. P. Kakade, AGP for "
+            "State. CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 "
+            "P.C. : S.O. 10/01/2026. ( FOR REGISTRAR JUDICIAL - I ) Page "
+            "1/1 CNR No : X"
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "STAND_OVER"
+
+    def test_bare_standover_without_agp_named_stays_adjourned(self, analyzer):
+        """The same bare clause with no AGP named at all is an ordinary,
+        non-billable ADJOURNED -- there is no appearance to credit."""
+        text = (
+            "WRIT PETITION NO. 102 OF 2026 Adv. Someone for Petitioner. "
+            "CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 P.C. : "
+            "S. O. to 10/01/2026. ( FOR REGISTRAR JUDICIAL - I ) Page 1/1 "
+            "CNR No : X"
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+
+    def test_standover_with_extra_substance_before_it_stays_heard_and_adjourned(
+        self, analyzer
+    ):
+        """'S.O.' is present, but it is not the WHOLE body -- the AGP
+        sought time first, which is real substance the bare-stand-over
+        gate must not swallow. Falls through to the ordinary AGP-presence
+        business rule, same as before this category existed."""
+        text = (
+            "WRIT PETITION NO. 101 OF 2026 Adv. P. P. Kakade, AGP for "
+            "State. CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 "
+            "P.C. : Learned AGP seeks time to take instructions. S. O. "
+            "to 10/01/2026. ( FOR REGISTRAR JUDICIAL - I ) Page 1/1 CNR "
+            "No : X"
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+
+    def test_heard_stand_over_with_agp_stays_heard_and_adjourned(self, analyzer):
+        """'Heard, stand over to <date>' -- a genuine hearing happened, not
+        a bare stand-over -- must keep its existing HEARD_AND_ADJOURNED
+        classification, not get swept into STAND_OVER."""
+        text = (
+            "WRIT PETITION NO. 100 OF 2026 Adv. P. P. Kakade, AGP for "
+            "State. CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 "
+            "P.C. : Heard learned counsel for the parties. Heard, stand "
+            "over to 10/01/2026. ( FOR REGISTRAR JUDICIAL - I ) Page 1/1 "
+            "CNR No : X"
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+
+    def test_bare_standover_without_pc_marker_is_not_detected(self, analyzer):
+        """_is_bare_standover_order anchors on the 'P.C. :' marker; text
+        missing it (an atypical template) must simply fall through to the
+        normal scorer rather than raising or guessing. With an AGP named,
+        that means the existing AGP-presence override still applies."""
+        text = (
+            "WRIT PETITION NO. 105 OF 2026 Adv. P. P. Kakade, AGP for "
+            "State. CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 "
+            "S. O. to 10/01/2026."
+        )
+        assert analyzer._is_bare_standover_order(text) is False
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "HEARD_AND_ADJOURNED"
+
+    def test_no_time_gate_still_takes_priority_over_stand_over(self, analyzer):
+        """A paucity-of-time order must stay ADJOURNED even if it happens
+        to also contain a bare S.O. clause and a named AGP -- the NO_TIME
+        hard gate runs first and returns immediately, before the
+        bare-stand-over check ever gets a chance to look at the text."""
+        text = (
+            "Adv. P. P. Kakade, AGP for State. P.C. : Due to paucity of "
+            "time, S. O. to 10/01/2026."
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "ADJOURNED"
+        assert confidence == 0.95
+
+    def test_disposed_off_order_with_agp_named_is_unaffected(self, analyzer):
+        """A disposal order with a 'P.C. :' marker and an AGP named must
+        stay DISPOSED_OFF -- the bare-stand-over gate only ever fires on
+        text that reduces to nothing but an S.O. clause."""
+        text = (
+            "WRIT PETITION NO. 104 OF 2026 Adv. P. P. Kakade, AGP for "
+            "State. CORAM : HON'BLE JUSTICE X DATE : 1st January, 2026 "
+            "P.C. : The petition is disposed off. ( FOR REGISTRAR "
+            "JUDICIAL - I ) Page 1/1 CNR No : X"
+        )
+        structure = analyzer._parse_document_structure(text)
+        category, confidence = analyzer._classify_order_enhanced(text, structure)
+        assert category == "DISPOSED_OFF"
+
 
 class TestEntityExtraction:
     """Test entity extraction from orders"""

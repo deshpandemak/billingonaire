@@ -203,6 +203,7 @@ const Table = () => {
       case 'DISPOSED_OFF':        return { backgroundColor: '#d4edda', color: '#155724' };
       case 'ADJOURNED':           return { backgroundColor: '#fff3cd', color: '#856404' };
       case 'HEARD_AND_ADJOURNED': return { backgroundColor: '#cce7ff', color: '#004085' };
+      case 'STAND_OVER':          return { backgroundColor: '#e2d9f3', color: '#4b2e83' };
       default:                    return null;
     }
   };
@@ -859,6 +860,7 @@ const Table = () => {
                     <option value="">All Outcomes</option>
                     <option value="ADJOURNED">Adjourned</option>
                     <option value="HEARD_AND_ADJOURNED">Heard &amp; adjourned</option>
+                    <option value="STAND_OVER">Stand over</option>
                     <option value="DISPOSED_OFF">Disposed of</option>
                   </select>
                 </div>

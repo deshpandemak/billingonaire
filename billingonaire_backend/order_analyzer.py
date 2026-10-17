@@ -65,7 +65,7 @@ class CaseInfo:
 class OrderAnalysisResult:
     """Result from order document analysis - simplified structure"""
 
-    order_category: str  # ADJOURNED, HEARD_AND_ADJOURNED, DISPOSED_OFF
+    order_category: str  # ADJOURNED, HEARD_AND_ADJOURNED, STAND_OVER, DISPOSED_OFF
     category_confidence: float
     order_date: Optional[str]  # Specific date of the order
     cases: List[CaseInfo]  # Multiple cases can be clubbed together
@@ -96,6 +96,11 @@ class OrderDocumentAnalyzer:
         self._compiled_agp_presence = [
             re.compile(p, re.IGNORECASE) for p in self.AGP_PRESENCE_PATTERNS
         ]
+        self._order_body_start = re.compile(
+            self.ORDER_BODY_START_PATTERN, re.IGNORECASE
+        )
+        self._order_body_end = re.compile(self.ORDER_BODY_END_PATTERN, re.IGNORECASE)
+        self._bare_standover = re.compile(self.BARE_STANDOVER_PATTERN, re.IGNORECASE)
         # Build an explicit per-pattern weight map.  Keyed by the exact pattern
         # string so lookups are O(1) and immune to substring-matching bugs.
         self._pattern_weights = self._build_pattern_weights()
@@ -554,6 +559,60 @@ class OrderDocumentAnalyzer:
         r"\b(?:Addl\.?\s*)?(?:AGP|A\.?\s*G\.?\s*P\.?)\b\s+"
         r"(?:Smt|Shri|Ms|Mrs|Mr|Adv)\.?\s*[A-Z]",
     ]
+
+    # A "bare stand-over" order: the court's standard per-curiam marker
+    # ("P.C. :") is immediately followed by nothing but "S.O. to <date>"
+    # (optionally with a time) before the court's own PDF-footer
+    # boilerplate -- i.e. the case was called, an AGP was named, and the
+    # ENTIRE substance of what happened is "stood over to the next date".
+    # That is a billable appearance (AGP_PRESENCE_PATTERNS still applies),
+    # but it is not the same as a matter that was genuinely argued, so it
+    # gets its own STAND_OVER category instead of HEARD_AND_ADJOURNED.
+    #
+    # ORDER_BODY_START anchors on the "P.C. :" marker that introduces the
+    # operative order text in every short Bombay HC order of this shape --
+    # deliberately NOT a bare "P.C." without the colon, since that is also
+    # a plausible (if unlikely) substring of a person's initials.
+    ORDER_BODY_START_PATTERN: str = r"\bP\.?\s*C\.?\s*:\s*"
+
+    # Boilerplate the court's own PDF generator appends after the order
+    # text on every downloaded order -- marks where the operative text
+    # ends, so content after it (CNR number, upload/download timestamps,
+    # page numbers) is never mistaken for part of the order body.
+    ORDER_BODY_END_PATTERN: str = (
+        r"\(\s*FOR\s+REGISTRAR\b[^)]*\)"
+        r"|CNR\s+No\b"
+        r"|Page\s+\d+\s*/\s*\d+"
+        r"|Uploaded\s+on\s*-"
+        r"|Powered\s+by\s+TCPDF"
+    )
+
+    # The WHOLE order body (after ORDER_BODY_START, before ORDER_BODY_END)
+    # must reduce to exactly this clause -- nothing more. A longer order
+    # that happens to use "S.O." somewhere in a larger discussion does not
+    # match this; only a body with no other substance does.
+    BARE_STANDOVER_PATTERN: str = (
+        r"^\s*S\.?\s*O\.?\s*(?:to)?\s*"
+        r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+        r"\s*(?:\(\s*at\s+[\d.:]+\s*(?:a\.?\s*m\.?|p\.?\s*m\.?)?\s*\))?"
+        r"\s*\.?\s*$"
+    )
+
+    def _is_bare_standover_order(self, text: str) -> bool:
+        """True when the order's entire operative text is nothing but a
+        stand-over clause, with no other substance -- see
+        BARE_STANDOVER_PATTERN. Returns False (never matches) when the
+        "P.C. :" marker this relies on is absent, which real substantive
+        orders usually still have, but an atypical template might not --
+        in that case this simply declines to fire and classification
+        falls through to the normal scorer, the safer failure mode."""
+        start_match = self._order_body_start.search(text)
+        if not start_match:
+            return False
+        remainder = text[start_match.end() :]
+        end_match = self._order_body_end.search(remainder)
+        body = remainder[: end_match.start()] if end_match else remainder
+        return bool(self._bare_standover.match(body.strip()))
 
     def _classify_order(self, text: str) -> Tuple[str, float, bool]:
         """Classify order into categories with confidence score.
@@ -1463,6 +1522,26 @@ class OrderDocumentAnalyzer:
             logging.info("⏱️ NO_TIME gate triggered — classifying as ADJOURNED")
             return "ADJOURNED", 0.95
 
+        # Computed once up front and reused below by the AGP-presence
+        # business rule -- see its own comment there for what this checks.
+        has_agp_names = any(p.search(text) for p in self._compiled_agp_presence)
+
+        # Gate: a bare "S.O. to <date>" order -- the entire operative text
+        # is nothing but a stand-over clause, no hearing of any substance
+        # took place -- with an AGP actually named on it. Still a billable
+        # appearance (same reasoning as the AGP-presence business rule
+        # below), but distinct from a genuine HEARD_AND_ADJOURNED outcome,
+        # so it gets its own category instead of being folded into it.
+        # Checked before the ML scorer so scoring noise (e.g. "State" in
+        # the case caption weakly tripping a HEARD_AND_ADJOURNED pattern)
+        # cannot override this. Without an AGP named, this intentionally
+        # falls through to the normal scorer/NO_TIME-style handling --
+        # there is no billable-appearance story to tell apart from the
+        # ordinary ADJOURNED case.
+        if has_agp_names and self._is_bare_standover_order(text):
+            logging.info("📋 Bare stand-over with AGP named — classifying as STAND_OVER")
+            return "STAND_OVER", 0.9
+
         # For all document types, use the improved classification logic
         category, confidence, matched_nothing = self._classify_order(text)
 
@@ -1483,6 +1562,10 @@ class OrderDocumentAnalyzer:
         # counsel appeared -- even if the matter was only adjourned/stood
         # over, that is a billable appearance, not a silent non-appearance
         # adjournment. Classify as HEARD_AND_ADJOURNED instead of ADJOURNED.
+        # (has_agp_names was computed above, before the bare-stand-over gate
+        # -- a bare stand-over with an AGP named already returned STAND_OVER
+        # by this point, so this only ever runs for orders with some other
+        # substance beyond a lone "S.O. to <date>" clause.)
         #
         # This used to also require the literal phrase "stand over" AND used
         # document_structure["advocates_section"] to detect the AGP, which
@@ -1497,7 +1580,6 @@ class OrderDocumentAnalyzer:
         # directly against the raw text sidesteps that broken pipeline
         # entirely -- confirmed against real orders where advocates_section
         # was empty but an AGP name was genuinely present in the text.
-        has_agp_names = any(p.search(text) for p in self._compiled_agp_presence)
 
         # AGP presence is treated as strong, near-decisive evidence for this
         # business rule (confirmed with the user) -- a multiplicative boost
